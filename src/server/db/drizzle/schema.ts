@@ -709,11 +709,14 @@ export const deliverySlaSettings = pgTable(
       .references(() => companySettings.id, { onDelete: 'cascade' }),
     atRiskMinutes: integer('at_risk_minutes').notNull().default(60),
     escalateAfterMinutes: integer('escalate_after_minutes').notNull().default(60),
+    /** Who is mailed when a delivery is at risk or late (the dispatchers) and when it has been late too long (the supervisors). */
+    notifyDispatch: text('notify_dispatch').array().notNull().default(sql`'{}'::text[]`),
+    notifySupervisor: text('notify_supervisor').array().notNull().default(sql`'{}'::text[]`),
     version: integer('version').notNull().default(1),
     updatedBy: text('updated_by'),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [check('delivery_sla_settings_chk', sql`${t.atRiskMinutes} BETWEEN 0 AND 1440 AND ${t.escalateAfterMinutes} BETWEEN 1 AND 1440`)],
+  (t) => [check('delivery_sla_settings_chk', sql`${t.atRiskMinutes} BETWEEN 0 AND 1440 AND ${t.escalateAfterMinutes} BETWEEN 1 AND 1440 AND cardinality(${t.notifyDispatch}) <= 10 AND cardinality(${t.notifySupervisor}) <= 10`)],
 );
 
 /**
@@ -743,6 +746,38 @@ export const deliverySlaEvents = pgTable(
   ],
 );
 
+/**
+ * A mail about a lateness level, one for each event and address: queued in the same transaction that raises the event, sent afterwards
+ * by the worker (leased, retried with a growing wait, and in the end left visible as failed). The address is kept as it was when the event
+ * was raised, so changing the settings later does not change who was told.
+ */
+export const deliverySlaNotices = pgTable(
+  'delivery_sla_notices',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    eventId: uuid('event_id')
+      .notNull()
+      .references(() => deliverySlaEvents.id, { onDelete: 'restrict' }),
+    recipient: text('recipient').notNull(),
+    status: text('status').$type<'queued' | 'sent' | 'failed'>().notNull().default('queued'),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+    nextTryAt: timestamp('next_try_at', { withTimezone: true }).notNull().defaultNow(),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_sla_notices_once_uidx').on(t.eventId, t.recipient),
+    index('delivery_sla_notices_due_idx').on(t.status, t.nextTryAt),
+    check('delivery_sla_notices_status_chk', sql`${t.status} IN ('queued','sent','failed')`),
+    check('delivery_sla_notices_attempts_chk', sql`${t.attempts} >= 0`),
+  ],
+);
+export type DeliverySlaNoticeRow = typeof deliverySlaNotices.$inferSelect;
+
 /** Someone saying they have seen it and what is being done. */
 export const deliverySlaAcks = pgTable('delivery_sla_acks', {
   eventId: uuid('event_id')
@@ -752,6 +787,35 @@ export const deliverySlaAcks = pgTable('delivery_sla_acks', {
   acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }).notNull().defaultNow(),
   note: text('note'),
 });
+
+/**
+ * The slot a shopper asked for at checkout. It sits beside the order's frozen delivery record and is turned into a booking when the delivery is
+ * made; a slot that has filled up by then leaves the delivery unbooked and says so here, and the sale is never held back for it.
+ */
+export const orderSlotRequests = pgTable(
+  'order_slot_requests',
+  {
+    orderId: text('order_id')
+      .primaryKey()
+      .references(() => orders.id, { onDelete: 'cascade' }),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    slotId: uuid('slot_id')
+      .notNull()
+      .references(() => deliverySlots.id, { onDelete: 'restrict' }),
+    day: date('day').notNull(),
+    requestedAt: timestamp('requested_at', { withTimezone: true }).notNull().defaultNow(),
+    outcome: text('outcome').$type<'pending' | 'booked' | 'unavailable'>().notNull().default('pending'),
+    deliveryId: uuid('delivery_id').references(() => deliveries.id, { onDelete: 'set null' }),
+    outcomeNote: text('outcome_note'),
+    settledAt: timestamp('settled_at', { withTimezone: true }),
+  },
+  (t) => [
+    check('order_slot_requests_outcome_chk', sql`${t.outcome} IN ('pending','booked','unavailable')`),
+    index('order_slot_requests_slot_idx').on(t.slotId, t.day),
+  ],
+);
 
 /** A rider's trip: several ready deliveries taken out together, in an order. Planned, then on the road, then closed. */
 export const deliveryRuns = pgTable(
@@ -999,7 +1063,7 @@ export const deliveryCosts = pgTable(
     companyId: uuid('company_id')
       .notNull()
       .references(() => companySettings.id, { onDelete: 'cascade' }),
-    kind: text('kind').$type<'rider_delivery' | 'rider_day' | 'courier' | 'other'>().notNull(),
+    kind: text('kind').$type<'rider_delivery' | 'rider_day' | 'courier' | 'fuel' | 'vehicle' | 'other'>().notNull(),
     /** Positive is a cost; a reversal carries the opposite sign. */
     amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
     currency: text('currency').notNull(),
@@ -1019,7 +1083,7 @@ export const deliveryCosts = pgTable(
     index('delivery_costs_delivery_idx').on(t.deliveryId),
     index('delivery_costs_rider_idx').on(t.riderId, t.createdAt),
     index('delivery_costs_company_time_idx').on(t.companyId, t.createdAt),
-    check('delivery_costs_kind_chk', sql`${t.kind} IN ('rider_delivery','rider_day','courier','other')`),
+    check('delivery_costs_kind_chk', sql`${t.kind} IN ('rider_delivery','rider_day','courier','fuel','vehicle','other')`),
     check('delivery_costs_amount_chk', sql`${t.amount} <> 0`),
     check('delivery_costs_rider_chk', sql`${t.kind} NOT IN ('rider_delivery','rider_day') OR ${t.riderId} IS NOT NULL`),
     check('delivery_costs_delivery_chk', sql`${t.kind} NOT IN ('rider_delivery','courier') OR ${t.deliveryId} IS NOT NULL`),
@@ -1029,6 +1093,62 @@ export const deliveryCosts = pgTable(
   ],
 );
 export type DeliveryCostRow = typeof deliveryCosts.$inferSelect;
+
+/**
+ * An invoice a courier sent us, typed in as it reads, to be matched to the charges we have kept for its parcels. Its words never change; a
+ * wrong one is voided with a reason (which lets its charges be matched to another). It is not a supplier invoice (those belong to a purchase
+ * order); paying it is done in the usual way.
+ */
+export const courierInvoices = pgTable(
+  'courier_invoices',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    courierName: text('courier_name').notNull(),
+    invoiceNo: text('invoice_no').notNull(),
+    invoiceDate: date('invoice_date', { mode: 'string' }).notNull(),
+    total: numeric('total', { precision: 14, scale: 2 }).notNull(),
+    currency: text('currency').notNull(),
+    note: text('note'),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    voidedAt: timestamp('voided_at', { withTimezone: true }),
+    voidedBy: text('voided_by'),
+    voidReason: text('void_reason'),
+  },
+  (t) => [
+    // One live invoice for a courier and a number, whatever the case; a voided one frees the number.
+    uniqueIndex('courier_invoices_live_uidx')
+      .on(t.companyId, sql`lower(${t.courierName})`, sql`lower(${t.invoiceNo})`)
+      .where(sql`${t.voidedAt} IS NULL`),
+    index('courier_invoices_company_idx').on(t.companyId, t.createdAt.desc()),
+    check('courier_invoices_total_chk', sql`${t.total} > 0`),
+    check('courier_invoices_void_chk', sql`(${t.voidedAt} IS NULL) = (${t.voidedBy} IS NULL) AND (${t.voidedAt} IS NULL) = (${t.voidReason} IS NULL)`),
+  ],
+);
+export type CourierInvoiceRow = typeof courierInvoices.$inferSelect;
+
+/** A courier charge counted on an invoice. A charge is on at most one invoice. */
+export const courierInvoiceCharges = pgTable(
+  'courier_invoice_charges',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    invoiceId: uuid('invoice_id')
+      .notNull()
+      .references(() => courierInvoices.id, { onDelete: 'restrict' }),
+    costId: uuid('cost_id')
+      .notNull()
+      .references(() => deliveryCosts.id, { onDelete: 'restrict' }),
+    matchedBy: text('matched_by').notNull(),
+    matchedAt: timestamp('matched_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('courier_invoice_charges_cost_uidx').on(t.costId), index('courier_invoice_charges_invoice_idx').on(t.invoiceId)],
+);
 
 /**
  * Whether a rider-pay cost has reached the books. A queue: the cost is saved first and posted afterwards, retrying with a growing
@@ -1419,6 +1539,36 @@ export const deliveryMessages = pgTable(
 export type DeliveryMessageRow = typeof deliveryMessages.$inferSelect;
 
 /** What a courier company has told us about a delivery sent with them. One per delivery; the courier's own news is typed in until an adapter brings it. */
+/** A courier the company sends parcels with, and how we talk to it. The key and the webhook secret are kept sealed and are never read back to a screen. */
+export const courierAccounts = pgTable(
+  'courier_accounts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    adapter: text('adapter').$type<'manual' | 'http_json'>().notNull().default('manual'),
+    /** Everything about the connection that is not a secret: the address, the paths, the mapping of its answers. */
+    settings: jsonb('settings').$type<Record<string, unknown>>().notNull().default({}),
+    secretsSealed: jsonb('secrets_sealed').$type<EncryptedCredentialsBlob>(),
+    /** The unguessable part of the address the courier pushes its news to. */
+    webhookKey: text('webhook_key').notNull(),
+    isActive: boolean('is_active').notNull().default(true),
+    version: integer('version').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    updatedBy: text('updated_by'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('courier_accounts_name_uidx').on(t.companyId, sql`lower(${t.name})`),
+    uniqueIndex('courier_accounts_webhook_uidx').on(t.webhookKey),
+    check('courier_accounts_adapter_chk', sql`${t.adapter} IN ('manual','http_json')`),
+  ],
+);
+export type CourierAccountRow = typeof courierAccounts.$inferSelect;
+
 export const deliveryShipments = pgTable(
   'delivery_shipments',
   {
@@ -1436,14 +1586,54 @@ export const deliveryShipments = pgTable(
     lastNote: text('last_note'),
     lastUpdateAt: timestamp('last_update_at', { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    /** The courier's own connection used for this parcel, if it has one; a parcel with none is followed by hand. */
+    accountId: uuid('account_id').references(() => courierAccounts.id, { onDelete: 'restrict' }),
+    labelUrl: text('label_url'),
+    trackingUrl: text('tracking_url'),
+    podUrl: text('pod_url'),
+    podName: text('pod_name'),
+    /** What the background worker owes this parcel: booking it, cancelling it, or nothing. */
+    syncState: text('sync_state').$type<'idle' | 'book_pending' | 'book_failed' | 'cancel_pending' | 'cancel_failed' | 'cancelled'>().notNull().default('idle'),
+    syncTries: integer('sync_tries').notNull().default(0),
+    /** When the worker next looks at this parcel: to try a booking again, or to ask the courier for news. */
+    syncNextAt: timestamp('sync_next_at', { withTimezone: true }),
+    syncError: text('sync_error'),
   },
   (t) => [
     uniqueIndex('delivery_shipments_delivery_uidx').on(t.deliveryId),
     index('delivery_shipments_company_idx').on(t.companyId, t.status),
+    index('delivery_shipments_sync_idx').on(t.syncNextAt).where(sql`${t.accountId} IS NOT NULL AND ${t.syncNextAt} IS NOT NULL`),
+    index('delivery_shipments_tracking_idx').on(t.accountId, t.trackingNumber).where(sql`${t.accountId} IS NOT NULL`),
     check('delivery_shipments_status_chk', sql`${t.status} IN ('booked','in_transit','delivered','exception')`),
+    check('delivery_shipments_sync_chk', sql`${t.syncState} IN ('idle','book_pending','book_failed','cancel_pending','cancel_failed','cancelled')`),
   ],
 );
 export type DeliveryShipmentRow = typeof deliveryShipments.$inferSelect;
+
+/** Every piece of news a courier gave us, as it came (pushed or asked for). The same piece sent twice is kept once. Kept for good. */
+export const courierEvents = pgTable(
+  'courier_events',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    shipmentId: uuid('shipment_id')
+      .notNull()
+      .references(() => deliveryShipments.id, { onDelete: 'restrict' }),
+    source: text('source').$type<'webhook' | 'poll'>().notNull(),
+    dedupKey: text('dedup_key').notNull(),
+    state: text('state').notNull(),
+    note: text('note'),
+    /** The courier's own time for it, beside ours; never used to order anything. */
+    courierAt: timestamp('courier_at', { withTimezone: true }),
+    receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('courier_events_once_uidx').on(t.shipmentId, t.dedupKey),
+    check('courier_events_source_chk', sql`${t.source} IN ('webhook','poll')`),
+  ],
+);
 
 /** What a delivery carries, product by product: planned, then picked (possibly short), then delivered. */
 export const deliveryLines = pgTable(
@@ -11028,6 +11218,36 @@ export const wishlistItems = pgTable(
   (t) => [
     primaryKey({ columns: [t.userId, t.productId] }),
     index('wishlist_items_user_idx').on(t.userId, t.createdAt),
+  ],
+);
+
+/**
+ * A signed-in shopper's cart, kept on the server so it follows them to another phone or computer and so the shop can remind them
+ * of what they left. One row per shopper: product ids and quantities only (prices and stock are read fresh whenever it is
+ * shown). `lines` is replaced whole on every save; an empty cart is an empty list, the row stays so the choice to stop
+ * reminders is not forgotten. `reminded_at` is when the one reminder for the cart as it stood was sent.
+ */
+export const shopCarts = pgTable(
+  'shop_carts',
+  {
+    userId: uuid('user_id')
+      .primaryKey()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    lines: jsonb('lines').notNull().default(sql`'[]'::jsonb`),
+    /** When the shopper last changed the cart (set by the server, never by the browser). */
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    remindedAt: timestamp('reminded_at', { withTimezone: true }),
+    remindersOff: boolean('reminders_off').notNull().default(false),
+    /** Opaque, in the stop-reminders link of every reminder. */
+    optoutToken: text('optout_token').notNull(),
+  },
+  (t) => [
+    uniqueIndex('shop_carts_optout_token_uidx').on(t.optoutToken),
+    // The reminder sweep: carts with something in them, oldest change first.
+    index('shop_carts_sweep_idx')
+      .on(t.updatedAt)
+      .where(sql`${t.remindersOff} = false AND ${t.lines} <> '[]'::jsonb`),
+    check('shop_carts_lines_chk', sql`jsonb_typeof(${t.lines}) = 'array' AND jsonb_array_length(${t.lines}) <= 100`),
   ],
 );
 

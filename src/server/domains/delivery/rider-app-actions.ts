@@ -45,6 +45,11 @@ export async function myRunsAction() {
   return await runRider(async (self) => ({ self: { id: self.riderId, name: self.name, kind: self.kind }, held: await getContainer().doorPayments.heldBy(self), ...(await getContainer().riderRuns.mine(self)) }));
 }
 
+/** The rider's own pay: what is owed now, this month, the latest entries and what has been paid. Only ever their own. */
+export async function myPayAction() {
+  return await runRider(async (self) => await getContainer().riderPay.mine(self));
+}
+
 /** One of the rider's own runs with its stops. Another rider's run answers "not found". */
 export async function myRunAction(runId: unknown) {
   return await runRider(async (self) => {

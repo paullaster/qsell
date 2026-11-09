@@ -108,4 +108,59 @@ test.describe('delivery at the shop checkout', () => {
       deliveryTool('close', tag);
     }
   });
+
+  test('the shopper is shown the delivery times, chooses one, and the order keeps it and has it booked when the delivery is made', async ({ page }, testInfo) => {
+    test.slow();
+    const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}`;
+    const branchName = deliveryTool('open', tag).branchName ?? '';
+    const slotName = deliveryTool('slot', tag).name ?? '';
+    try {
+      await cartWithSalt(page);
+      await page.goto('/checkout');
+      await expect(page.getByRole('heading', { name: 'Checkout', level: 1 })).toBeVisible({ timeout: 30_000 });
+      const section = page.getByRole('group', { name: 'Where to deliver and what it costs' });
+      await expect(section).toBeVisible({ timeout: 30_000 });
+      await page.getByLabel('Full name').fill('Wanjiru Timed');
+      await page.getByLabel('Mobile phone').fill('0711 000 555');
+      await page.getByLabel('Street, building or office').fill('2 Moi Avenue');
+      await page.getByLabel('City or town').fill('Nairobi');
+      await page.getByLabel('County or region').fill('Nairobi');
+      await page.getByLabel(/Estate or area/).fill('Westlands');
+      await expect(section.getByRole('status').filter({ hasText: `Delivery from ${branchName}` })).toContainText('348', { timeout: 30_000 });
+
+      // The times come with the price: the earliest first, a choice is optional, and a time can be taken back.
+      const times = section.getByRole('group', { name: /When would you like it/ });
+      await expect(times).toBeVisible({ timeout: 30_000 });
+      await expect(times).toContainText('Earliest:');
+      await expect(times.getByLabel('No preference')).toBeChecked();
+      await noNativeSelect(page);
+      await noInnerHorizontalScroll(page);
+      await noHorizontalScroll(page);
+      await times.getByRole('button', { name: 'Choose this time' }).click();
+      await expect(times.getByRole('button', { name: 'Chosen' })).toBeDisabled();
+      await expect(times.getByLabel('No preference')).not.toBeChecked();
+      await times.getByLabel('No preference').click();
+      await expect(times.getByLabel('No preference')).toBeChecked();
+      await times.getByRole('button', { name: 'Choose this time' }).click();
+      await expect(times.getByRole('button', { name: 'Chosen' })).toBeVisible();
+
+      await page.getByLabel(/number to pay from$/).fill('0733 555 777');
+      await page.getByRole('button', { name: /^Pay / }).click();
+      const failed = page.getByRole('region', { name: 'Payment not completed' });
+      const waiting = page.getByRole('region', { name: 'Waiting for payment' });
+      await expect(failed.or(waiting)).toBeVisible({ timeout: 90_000 });
+      const text = await page.locator('main, body').first().innerText();
+      const orderNumber = /order\s+([A-Z]{2,}-[A-Z0-9-]*\d[A-Z0-9-]*)/i.exec(text)?.[1] ?? '';
+      expect(orderNumber, 'the page names the order').toBeTruthy();
+
+      // The order keeps the choice; the delivery, when it is made, holds the slot.
+      expect(deliveryTool('slot-request', orderNumber)).toMatchObject({ outcome: 'pending', slot: slotName });
+      deliveryTool('pay', orderNumber);
+      deliveryTool('ready', orderNumber, 'draft');
+      expect(deliveryTool('slot-request', orderNumber)).toMatchObject({ outcome: 'booked', slot: slotName });
+      expect(deliveryTool('slot-request', orderNumber).booked_day).toBe(deliveryTool('slot-request', orderNumber).day);
+    } finally {
+      deliveryTool('close', tag);
+    }
+  });
 });

@@ -89,7 +89,8 @@ describe.skipIf(!has(url))('cash at the door (database)', () => {
     madeBranches.push(id);
     return id;
   };
-  const today = () => new Date().toISOString().slice(0, 10);
+  /** The business day, in Nairobi: between midnight and 3am the UTC date is still yesterday. */
+  const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(new Date());
   const runFor = async (riderId: string, branchId: string) => {
     const r = await c.deliveryRuns.create(dispatcher(), { branchId, runDate: today(), riderId });
     if (!r.ok) throw new Error(r.message);
@@ -278,5 +279,112 @@ describe.skipIf(!has(url))('cash at the door (database)', () => {
   it('refuses days that make no sense', async () => {
     expect(await c.deliveryReports.summary(companyId, { from: '2026-11-05', to: '2026-11-01' })).toMatchObject({ ok: false, reason: 'bad_input' });
     expect(await c.deliveryReports.summary(companyId, { from: '2020-01-01', to: '2026-11-01' })).toMatchObject({ ok: false, reason: 'bad_input' });
+  });
+  describe('performance: on time, first try, riders, couriers and delivery times', () => {
+    const performance = async (from = today(), to = today()) => {
+      const r = await c.deliveryPerformance.summary(companyId, { from, to });
+      if (!r.ok) throw new Error(r.message);
+      return r.data;
+    };
+    /** Gives a delivery a delivery time on a slot of its branch, today, with a window that ends this many minutes from now. */
+    const promise = async (deliveryId: string, slotId: string, endsInMinutes: number) => {
+      const now = new Date();
+      await db.update(schema.deliveries).set({ slotId, slotDay: today(), windowStart: new Date(now.getTime() + (endsInMinutes - 120) * 60_000), windowEnd: new Date(now.getTime() + endsInMinutes * 60_000), slotBookedAt: now, slotBookedBy: 'dispatcher-1' }).where(eq(schema.deliveries.id, deliveryId));
+    };
+    const slotOf = async (deliveryId: string, capacity = 2) => {
+      const branchId = (await c.deliveryDocuments.get(companyId, deliveryId))?.branch.id ?? '';
+      const made = await c.deliverySlots.create(dispatcher(), { branchId, name: `Perf ${code()}`, weekdays: [1, 2, 3, 4, 5, 6, 7], startsAt: '09:00', endsAt: '12:00', capacity, cutoffMinutes: 0 });
+      if (!made.ok) throw new Error(made.message);
+      return made.data.id;
+    };
+
+    it('counts what was delivered in time, what was late and by how much, the first try, and who handed it over', async () => {
+      const rider = await staffRider();
+      const early = await onTheRoad(rider);
+      const late = await onTheRoad(rider);
+      const none = await onTheRoad(rider);
+      const slot = await slotOf(early.deliveryId, 5);
+      await promise(early.deliveryId, slot, 60);
+      await promise(late.deliveryId, slot, -30);
+      for (const at of [early, late, none]) expect((await c.doorWork.deliver(at.self, { runId: at.runId, deliveryId: at.deliveryId, clientKey: key(), receivedBy: 'Mama' })).ok).toBe(true);
+      const mine = (await performance()).byRider.find((r) => r.riderId === rider.id);
+      // Two were promised a window and one of them was in time; the third was promised nothing, so it is not in the rate.
+      expect(mine).toMatchObject({ delivered: 3, promised: 2, onTime: 1, onTimePercent: 50, firstTryPercent: 100 });
+      expect(mine?.averageTransitMinutes).not.toBeNull();
+      const total = (await performance()).total;
+      expect(total.averageLateMinutes).not.toBeNull();
+      expect(total.onTimePercent).not.toBeNull();
+    });
+
+    it('a delivery that was sent again is not counted as delivered at the first try', async () => {
+      const rider = await staffRider();
+      const at = await onTheRoad(rider);
+      expect((await c.doorWork.fail(at.self, { runId: at.runId, deliveryId: at.deliveryId, clientKey: key(), reasonCode: 'customer_absent' })).ok).toBe(true);
+      expect((await c.doorWork.finish(at.self, at.runId)).ok).toBe(true);
+      expect((await c.deliveryDocuments.reattempt(dispatcher(), at.deliveryId, { note: 'Try again' })).ok).toBe(true);
+      const branchId = (await c.deliveryDocuments.get(companyId, at.deliveryId))?.branch.id ?? '';
+      const run = await runFor(rider.id, branchId);
+      expect((await c.deliveryRuns.addStop(dispatcher(), run.id, at.deliveryId)).ok).toBe(true);
+      expect((await c.deliveryRuns.start(dispatcher(), run.id)).ok).toBe(true);
+      expect((await c.doorWork.deliver(at.self, { runId: run.id, deliveryId: at.deliveryId, clientKey: key(), receivedBy: 'Mama' })).ok).toBe(true);
+      const mine = (await performance()).byRider.find((r) => r.riderId === rider.id);
+      expect(mine).toMatchObject({ delivered: 1, firstTryPercent: 0, promised: 0, onTimePercent: null });
+    });
+
+    it('shows a courier by what was sent, what arrived and in time, what did not get through and what could not be booked', async () => {
+      const name = `Perf Couriers ${code()}`;
+      const a = await readyDelivery();
+      const b = await readyDelivery();
+      const slot = await slotOf(a.deliveryId, 5);
+      for (const r of [a, b]) {
+        await db.update(schema.deliveries).set({ method: 'courier' }).where(eq(schema.deliveries.id, r.deliveryId));
+        expect((await c.deliveryDocuments.dispatch(dispatcher(), r.deliveryId, { courierName: name, trackingNumber: `T${code()}` })).ok).toBe(true);
+      }
+      await promise(a.deliveryId, slot, -10);
+      expect((await c.deliveryDocuments.deliver(dispatcher(), a.deliveryId, { receivedBy: 'Mama' })).ok).toBe(true);
+      await db.update(schema.deliveryShipments).set({ syncState: 'book_failed', syncError: 'The courier could not be reached.' }).where(eq(schema.deliveryShipments.deliveryId, b.deliveryId));
+      const row = (await performance()).byCourier.find((x) => x.courier === name);
+      expect(row).toMatchObject({ sent: 2, delivered: 1, promised: 1, onTimePercent: 0, problems: 1 });
+      expect(row?.averageTransitMinutes).not.toBeNull();
+    });
+
+    it('measures how full a delivery time ran, the days it was full, closed days, and times chosen that were not kept', async () => {
+      await db.delete(schema.deliveryClosedDays).where(eq(schema.deliveryClosedDays.companyId, companyId));
+      const rider = await staffRider();
+      const one = await onTheRoad(rider);
+      const two = await onTheRoad(rider);
+      const slot = await slotOf(one.deliveryId, 2);
+      await promise(one.deliveryId, slot, 60);
+      await promise(two.deliveryId, slot, 90);
+      const before = await performance();
+      const row = before.bySlot.find((s) => s.slotId === slot);
+      // One day in the period, room for two, both booked: used in full.
+      expect(row).toMatchObject({ openDays: 1, offered: 2, booked: 2, fullDays: 1, fillPercent: 100, capacity: 2 });
+      // A closed day takes the slot's room away for that day.
+      const closed = await c.deliverySlots.close(dispatcher(), { day: today(), reason: 'Public holiday' });
+      expect(closed.ok).toBe(true);
+      const after = (await performance()).bySlot.find((s) => s.slotId === slot);
+      expect(after).toMatchObject({ openDays: 0, offered: 0, booked: 2, fillPercent: null });
+      // A time a customer chose at checkout that had gone by the time the delivery was made is counted as not kept.
+      const asked = await readyDelivery();
+      await db.insert(schema.orderSlotRequests).values({ orderId: asked.orderId, companyId, slotId: slot, day: today(), outcome: 'unavailable', outcomeNote: 'It filled up', settledAt: new Date() });
+      const wanted = await performance();
+      expect(wanted.notKept - before.notKept).toBe(1);
+      expect(wanted.chosen - before.chosen).toBe(1);
+      // A cancelled delivery no longer holds a place.
+      await db.update(schema.deliveries).set({ status: 'cancelled', closedAt: new Date() }).where(eq(schema.deliveries.id, two.deliveryId));
+      expect((await performance()).bySlot.find((s) => s.slotId === slot)?.booked).toBe(1);
+      await db.delete(schema.deliveryClosedDays).where(eq(schema.deliveryClosedDays.companyId, companyId));
+    });
+
+    it('is empty and honest for days with nothing, and refuses days that make no sense', async () => {
+      const old = await performance('2001-01-01', '2001-01-31');
+      expect(old.total).toMatchObject({ delivered: 0, onTimePercent: null, firstTryPercent: null, averageTransitMinutes: null, averageLateMinutes: null, averageTotalMinutes: null });
+      expect(old.byRider).toEqual([]);
+      expect(old.byCourier).toEqual([]);
+      expect(old.chosen).toBe(0);
+      expect(await c.deliveryPerformance.summary(companyId, { from: '2026-11-05', to: '2026-11-01' })).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect(await c.deliveryPerformance.summary(companyId, { from: '2020-01-01', to: '2026-11-01' })).toMatchObject({ ok: false, reason: 'bad_input' });
+    });
   });
 });

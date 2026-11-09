@@ -86,6 +86,17 @@ export function OrderDeliveriesPanel({ orderId, onChanged }: { orderId: string; 
         <Chip tone={STATE_TONE[data.state]}>{ORDER_STATE_WORDS[data.state]}</Chip>
       </h3>
 
+      {data.chosen == null ? null : (
+        <p role="status" className="flex flex-wrap items-center gap-2 text-xs">
+          <Chip tone={data.chosen.outcome === 'unavailable' ? 'amber' : 'sky'}>{data.chosen.outcome === 'unavailable' ? 'Chosen time not kept' : 'Customer chose a time'}</Chip>
+          <span className="text-fg">
+            {new Date(`${data.chosen.day}T12:00:00+03:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Africa/Nairobi' })}, {data.chosen.slotName} {data.chosen.startsAt} to {data.chosen.endsAt}
+            {data.chosen.outcome === 'pending' ? '. It is booked when the delivery is made.' : ''}
+            {data.chosen.note === null ? '' : `. ${data.chosen.note} The customer has been told.`}
+          </span>
+        </p>
+      )}
+
       <ul className="divide-y divide-line text-xs" aria-label="What is left to deliver">
         {data.lines.map((l) => (
           <li key={l.productId} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 py-1.5">

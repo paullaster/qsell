@@ -36,6 +36,7 @@ export class OrdersService {
     };
     items: { productId: string; quantity: number }[];
     paymentMethod: PaymentProvider;
+    couponCodes?: string[];
     delivery?: DeliveryInput;
     currency?: 'KES' | 'USD';
     userId?: string;
@@ -47,6 +48,10 @@ export class OrdersService {
         };
   }): Promise<Order> {
     const session = await auth();
+    // The shop knows who is buying only from the session. An email typed into the form proves nothing, so it may neither charge a
+    // customer's credit account nor change a registered customer's card; only the signed-in person with that email may.
+    const typedEmail = params.customerEmail.trim().toLowerCase();
+    const identityVerified = typedEmail !== '' && session?.user.email.trim().toLowerCase() === typedEmail;
     const { organizations, companySettings, branches } = getContainer();
     const company = await companySettings.ensureSeeded();
     const { branch } = await organizations.ensureDefaultOrgAndBranch(
@@ -59,6 +64,7 @@ export class OrdersService {
       userId: params.userId || session?.user?.customerStoreId || session?.user?.id || null,
       customerId: session?.user.customerStoreId ?? null,
       checkoutStartedAt: params.checkoutStartedAt ?? null,
+      identityVerified,
       branchId: sellingBranch.id,
       customerName: params.customerName,
       customerEmail: params.customerEmail,
@@ -69,7 +75,8 @@ export class OrdersService {
       items: params.items,
       currency: params.currency || 'KES',
       paymentMethod: params.paymentMethod,
-      ...(params.delivery === undefined ? {} : { delivery: { method: params.delivery.method, ...(params.delivery.pickupBranchId === null ? {} : { pickupBranchId: params.delivery.pickupBranchId }), pin: params.delivery.pin, ...(params.delivery.address === null ? {} : { address: params.delivery.address }), recipient: params.delivery.recipient, notes: params.delivery.notes, expectedCharge: params.delivery.expectedCharge } }),
+      ...(params.couponCodes === undefined ? {} : { couponCodes: params.couponCodes }),
+      ...(params.delivery === undefined ? {} : { delivery: { method: params.delivery.method, ...(params.delivery.pickupBranchId === null ? {} : { pickupBranchId: params.delivery.pickupBranchId }), pin: params.delivery.pin, ...(params.delivery.address === null ? {} : { address: params.delivery.address }), recipient: params.delivery.recipient, notes: params.delivery.notes, expectedCharge: params.delivery.expectedCharge, slot: params.delivery.slot } }),
       dimensionFields: params.dimensionFields,
     });
 

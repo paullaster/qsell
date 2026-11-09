@@ -10,7 +10,11 @@ vi.mock('next/headers', () => ({ headers: () => Promise.resolve({ get: (name: st
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 vi.mock('@sentry/nextjs', () => ({}));
 vi.mock('@/auth', () => ({ auth: vi.fn() }));
-vi.mock('@/server/di/container', () => ({ getContainer: () => ({ rateLimits: { hit: (...a: unknown[]) => hit(...a) as unknown }, orders: { getById: (...a: unknown[]) => getById(...a) as unknown } }) }));
+vi.mock('@/server/di/container', () => ({ getContainer: () => ({ rateLimits: { hit: (...a: unknown[]) => hit(...a) as unknown }, orders: { getById: (...a: unknown[]) => getById(...a) as unknown, findByNumberAndContact: (...a: unknown[]) => getById(...a) as unknown } }) }));
+const enqueueOrderEmail = vi.fn(() => Promise.resolve());
+vi.mock('@/server/queue/worker', () => ({ enqueueOrderEmail: (...a: unknown[]) => (enqueueOrderEmail as (...x: unknown[]) => unknown)(...a) }));
+const rehold = vi.fn(() => Promise.resolve({ ok: true } as { ok: true } | { ok: false; error: string }));
+vi.mock('@/server/domains/inventory/reservation-service', () => ({ InventoryReservationService: { reholdOrder: (...a: unknown[]) => (rehold as (...x: unknown[]) => unknown)(...a) } }));
 vi.mock('@/server/domains/payments/start-payment', () => ({ startOrderPayment: (...a: unknown[]) => startOrderPayment(...a) as unknown }));
 const attemptStart = vi.fn();
 const attemptRefuse = vi.fn();
@@ -51,7 +55,7 @@ beforeEach(() => {
   for (const f of [startOrderPayment, createCheckout, hit, getById, attemptStart, attemptRefuse, attemptPlaced]) f.mockReset();
   attemptStart.mockResolvedValue({ id: 'att1', startedAt: new Date('2026-01-01T10:00:00Z') });
   hit.mockResolvedValue({ allowed: true, retryAfterSeconds: 0 });
-  createCheckout.mockResolvedValue({ id: 'o1', orderNumber: 'ORD-1', customerPhone: '0711 111 111' });
+  createCheckout.mockResolvedValue({ id: 'o1', orderNumber: 'ORD-1', customerEmail: '', customerPhone: '0711 111 111' });
   startOrderPayment.mockResolvedValue({ attemptId: 'a1', status: 'pending', customerMessage: 'Enter your PIN.' });
 });
 
@@ -91,34 +95,65 @@ describe('placing an order paid by a phone prompt', () => {
   it('sends no prompt number for a payment that does not use a phone', async () => {
     await actions.placeOrderAction(form({ paymentMethod: 'pesapal_v3', paymentPhone: '0722222222' }));
     expect(startOrderPayment).toHaveBeenCalledWith({ orderId: 'o1', providerCode: 'pesapal_v3', payerPhone: '254722222222', source: 'shop' });
-    expect(hit).not.toHaveBeenCalled();
+    expect(hit).not.toHaveBeenCalledWith('payment_prompt_ip', expect.anything());
+  });
+
+  it('queues the mail that says the order is held, only when there is an address to write to', async () => {
+    createCheckout.mockResolvedValue({ id: 'o1', orderNumber: 'SO-1', customerEmail: 'a@x.co', customerPhone: '0711111111' });
+    await actions.placeOrderAction(form({ paymentMethod: 'pay_on_delivery' }));
+    expect(enqueueOrderEmail).toHaveBeenCalledWith('o1', 'placed');
+    enqueueOrderEmail.mockClear();
+    createCheckout.mockResolvedValue({ id: 'o2', orderNumber: 'SO-2', customerEmail: '', customerPhone: '0711111111' });
+    await actions.placeOrderAction(form({ paymentMethod: 'pay_on_delivery' }));
+    expect(enqueueOrderEmail).not.toHaveBeenCalled();
+  });
+
+  it('limits how many orders one address and one phone can place', async () => {
+    hit.mockImplementation((rule: string) => Promise.resolve(rule === 'checkout_contact' ? { allowed: false, retryAfterSeconds: 90 } : { allowed: true, retryAfterSeconds: 0 }));
+    const out = await actions.placeOrderAction(form());
+    expect(out.ok).toBe(false);
+    expect(createCheckout).not.toHaveBeenCalled();
+    expect(attemptRefuse).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ code: 'rate_limited' }));
   });
 });
 
 describe('trying a payment again', () => {
-  const order = { id: 'o1', customerPhone: '0711 111 111', paymentPhone: '254711111111' };
+  const order = { id: 'o1', orderNumber: 'SO-1', customerPhone: '0711 111 111', paymentPhone: '254711111111' };
 
   it('uses the number typed now, which replaces the earlier one', async () => {
     getById.mockResolvedValue(order);
-    const out = await actions.retryPaymentAction({ orderId: 'o1', providerCode: 'mpesa_daraja', paymentPhone: '0733 333 333' });
+    const out = await actions.retryPaymentAction({ orderNumber: 'SO-1', contact: '0711 111 111', providerCode: 'mpesa_daraja', paymentPhone: '0733 333 333' });
     expect(out.ok).toBe(true);
     expect(startOrderPayment).toHaveBeenCalledWith({ orderId: 'o1', providerCode: 'mpesa_daraja', payerPhone: '254733333333', source: 'shop' });
   });
 
   it('keeps the number the order was last paid from when none is typed', async () => {
     getById.mockResolvedValue({ ...order, paymentPhone: '254744444444' });
-    await actions.retryPaymentAction({ orderId: 'o1', providerCode: 'mpesa_daraja' });
+    await actions.retryPaymentAction({ orderNumber: 'SO-1', contact: '0711 111 111', providerCode: 'mpesa_daraja' });
     expect(startOrderPayment).toHaveBeenCalledWith({ orderId: 'o1', providerCode: 'mpesa_daraja', payerPhone: '254744444444', source: 'shop' });
+  });
+
+  it('holds the stock again first, and does not start a payment when that cannot be done', async () => {
+    getById.mockResolvedValue(order);
+    rehold.mockResolvedValueOnce({ ok: false, error: 'Please place the order again.' });
+    expect(await actions.retryPaymentAction({ orderNumber: 'SO-1', contact: '0711 111 111', providerCode: 'mpesa_daraja' })).toEqual({ ok: false, error: 'Please place the order again.' });
+    expect(startOrderPayment).not.toHaveBeenCalled();
+  });
+
+  it('needs the order number and the contact it was placed with', async () => {
+    getById.mockResolvedValue(null);
+    expect(await actions.retryPaymentAction({ orderNumber: 'SO-1', contact: 'wrong', providerCode: 'mpesa_daraja' })).toEqual({ ok: false, error: 'That order could not be found.' });
+    expect(startOrderPayment).not.toHaveBeenCalled();
   });
 
   it('refuses a bad number in words and a missing order, and is limited like the first try', async () => {
     getById.mockResolvedValue(order);
-    expect(await actions.retryPaymentAction({ orderId: 'o1', providerCode: 'mpesa_daraja', paymentPhone: 'abc' })).toEqual({ ok: false, error: 'That is not a Kenyan mobile number. Enter the number to pay from, like 0712 345 678.' });
+    expect(await actions.retryPaymentAction({ orderNumber: 'SO-1', contact: '0711 111 111', providerCode: 'mpesa_daraja', paymentPhone: 'abc' })).toEqual({ ok: false, error: 'That is not a Kenyan mobile number. Enter the number to pay from, like 0712 345 678.' });
     getById.mockResolvedValue(null);
-    expect(await actions.retryPaymentAction({ orderId: 'nope', providerCode: 'mpesa_daraja' })).toEqual({ ok: false, error: 'That order could not be found.' });
+    expect(await actions.retryPaymentAction({ orderNumber: 'nope', contact: 'x', providerCode: 'mpesa_daraja' })).toEqual({ ok: false, error: 'That order could not be found.' });
     getById.mockResolvedValue(order);
     hit.mockResolvedValue({ allowed: false, retryAfterSeconds: 60 });
-    const limited = await actions.retryPaymentAction({ orderId: 'o1', providerCode: 'mpesa_daraja', paymentPhone: '0733333333' });
+    const limited = await actions.retryPaymentAction({ orderNumber: 'SO-1', contact: '0711 111 111', providerCode: 'mpesa_daraja', paymentPhone: '0733333333' });
     expect(limited.ok).toBe(false);
     expect(startOrderPayment).not.toHaveBeenCalled();
   });

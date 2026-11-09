@@ -89,7 +89,8 @@ describe.skipIf(!has(url))('cash at the door (database)', () => {
     madeBranches.push(id);
     return id;
   };
-  const today = () => new Date().toISOString().slice(0, 10);
+  /** The business day, in Nairobi: between midnight and 3am the UTC date is still yesterday. */
+  const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(new Date());
   const runFor = async (riderId: string, branchId: string) => {
     const r = await c.deliveryRuns.create(dispatcher(), { branchId, runDate: today(), riderId });
     if (!r.ok) throw new Error(r.message);
@@ -294,6 +295,125 @@ describe.skipIf(!has(url))('cash at the door (database)', () => {
     });
   });
 
+  describe('courier invoices matched to the charges', () => {
+    /** A delivery with a courier of this name and `amount` charged for it; returns the cost's id. */
+    const charged = async (courier: string, amount: number) => {
+      const ready = await readyDelivery();
+      await db.update(schema.deliveries).set({ method: 'courier', courierName: courier, status: 'out_for_delivery' }).where(eq(schema.deliveries.id, ready.deliveryId));
+      const made = await c.deliveryCosts.recordCourier(dispatcher(), ready.deliveryId, { amount, note: `Waybill ${randomUUID().slice(0, 6)}` });
+      if (!made.ok) throw new Error(made.message);
+      return made.data.id;
+    };
+    const invoice = async (courier: string, total: number, no = `INV-${randomUUID().slice(0, 8)}`) => {
+      const made = await c.courierInvoices.add(dispatcher(), { courierName: courier, invoiceNo: no, invoiceDate: '2026-01-15', total });
+      if (!made.ok) throw new Error(made.message);
+      return made.data.id;
+    };
+    const viewOf = async (id: string, courier: string) => (await c.courierInvoices.list(companyId, { courier })).rows.find((r) => r.id === id);
+
+    it('records an invoice once for a courier and a number, with a day that is not in the future and money that makes sense', async () => {
+      const courier = `Invoice Couriers ${randomUUID().slice(0, 6)}`;
+      const id = await invoice(courier, 1000, 'SW-1');
+      expect(await viewOf(id, courier)).toMatchObject({ courierName: courier, invoiceNo: 'SW-1', total: '1000.00', matchedCount: 0, matched: '0.00', difference: '-1000.00', state: 'open', voided: null });
+      expect(await c.courierInvoices.add(dispatcher(), { courierName: courier.toUpperCase(), invoiceNo: 'sw-1', invoiceDate: '2026-01-15', total: 5 })).toMatchObject({ ok: false, reason: 'conflict' });
+      for (const bad of [{ total: 0 }, { invoiceDate: '2099-01-01' }, { invoiceNo: '' }, { courierName: '' }]) {
+        expect(await c.courierInvoices.add(dispatcher(), { courierName: courier, invoiceNo: 'SW-2', invoiceDate: '2026-01-15', total: 100, ...bad })).toMatchObject({ ok: false, reason: 'bad_input' });
+      }
+    });
+
+    it('cannot be edited or deleted, only voided', async () => {
+      const courier = `Guard Couriers ${randomUUID().slice(0, 6)}`;
+      const id = await invoice(courier, 400);
+      await expect(db.update(schema.courierInvoices).set({ total: '1.00' }).where(eq(schema.courierInvoices.id, id))).rejects.toThrow();
+      await expect(db.update(schema.courierInvoices).set({ invoiceNo: 'CHANGED' }).where(eq(schema.courierInvoices.id, id))).rejects.toThrow();
+      await expect(db.delete(schema.courierInvoices).where(eq(schema.courierInvoices.id, id))).rejects.toThrow();
+      expect((await c.courierInvoices.voidInvoice(dispatcher(), id, { reason: 'Typed in by mistake' })).ok).toBe(true);
+      // Once voided it is fixed for good, and a void needs its reason (both or none).
+      await expect(db.update(schema.courierInvoices).set({ voidReason: 'Edited later' }).where(eq(schema.courierInvoices.id, id))).rejects.toThrow();
+      const other = await invoice(courier, 10, 'G-2');
+      await expect(db.update(schema.courierInvoices).set({ voidedAt: new Date() }).where(eq(schema.courierInvoices.id, other))).rejects.toThrow();
+    });
+
+    it('matches only this courier\'s charges, says short, agreed or over, never counts a charge twice, and lets one be taken off', async () => {
+      const courier = `Match Couriers ${randomUUID().slice(0, 6)}`;
+      const a = await charged(courier, 300);
+      const b = await charged(courier, 200.5);
+      const other = await charged(`Other ${randomUUID().slice(0, 6)}`, 100);
+      const id = await invoice(courier, 600);
+      // The candidates are this courier's, not on an invoice, newest first.
+      expect((await c.courierInvoices.candidates(companyId, id)).rows.map((r) => r.costId).sort()).toEqual([a, b].sort());
+      expect(await c.courierInvoices.match(dispatcher(), id, { costIds: [other] })).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect(await c.courierInvoices.match(dispatcher(), id, { costIds: [randomUUID()] })).toMatchObject({ ok: false, reason: 'not_found' });
+      expect(await c.courierInvoices.match(dispatcher(), id, { costIds: [] })).toMatchObject({ ok: false, reason: 'bad_input' });
+      const first = await c.courierInvoices.match(dispatcher(), id, { costIds: [a] });
+      expect(first).toMatchObject({ ok: true, data: { matchedCount: 1, matched: '300.00', difference: '-300.00', state: 'short' } });
+      // All or none: a charge already on the invoice refuses the lot, and nothing of it is counted.
+      expect(await c.courierInvoices.match(dispatcher(), id, { costIds: [a, b] })).toMatchObject({ ok: false, reason: 'conflict' });
+      expect((await viewOf(id, courier))?.matchedCount).toBe(1);
+      const second = await c.courierInvoices.match(dispatcher(), id, { costIds: [b] });
+      expect(second).toMatchObject({ ok: true, data: { matched: '500.50', difference: '-99.50', state: 'short' } });
+      expect((await c.courierInvoices.matchedCharges(companyId, id)).map((r) => r.costId).sort()).toEqual([a, b].sort());
+      // A charge is on one invoice only: another invoice cannot take it.
+      const id2 = await invoice(courier, 300);
+      expect(await c.courierInvoices.match(dispatcher(), id2, { costIds: [a] })).toMatchObject({ ok: false, reason: 'conflict' });
+      expect((await c.courierInvoices.candidates(companyId, id2)).rows).toHaveLength(0);
+      // Taken off, it is free again; matching it again gives agreement and then, with another charge, over.
+      expect(await c.courierInvoices.unmatch(dispatcher(), id, { costId: b })).toMatchObject({ ok: true, data: { matchedCount: 1, state: 'short' } });
+      expect(await c.courierInvoices.unmatch(dispatcher(), id, { costId: b })).toMatchObject({ ok: false, reason: 'not_found' });
+      const c2 = await charged(courier, 300);
+      expect(await c.courierInvoices.match(dispatcher(), id, { costIds: [c2] })).toMatchObject({ ok: true, data: { matched: '600.00', difference: '0.00', state: 'agreed' } });
+      expect(await c.courierInvoices.match(dispatcher(), id, { costIds: [b] })).toMatchObject({ ok: true, data: { state: 'over', difference: '200.50' } });
+    });
+
+    it('does not count a charge that was taken back, and a company cannot reach another company\'s invoice or charge', async () => {
+      const courier = `Back Couriers ${randomUUID().slice(0, 6)}`;
+      const a = await charged(courier, 120);
+      const id = await invoice(courier, 120);
+      expect((await c.deliveryCosts.reverse(dispatcher(), a, { reason: 'Charged to the wrong courier' })).ok).toBe(true);
+      expect((await c.courierInvoices.candidates(companyId, id)).rows).toHaveLength(0);
+      expect(await c.courierInvoices.match(dispatcher(), id, { costIds: [a] })).toMatchObject({ ok: false, reason: 'conflict' });
+      const live = await charged(courier, 80);
+      const stranger = { companyId: randomUUID(), userId: 'x' };
+      expect(await c.courierInvoices.match(stranger, id, { costIds: [live] })).toMatchObject({ ok: false, reason: 'not_found' });
+      expect(await c.courierInvoices.voidInvoice(stranger, id, { reason: 'Not yours to void' })).toMatchObject({ ok: false, reason: 'not_found' });
+      expect((await c.courierInvoices.list(randomUUID(), { courier })).rows).toEqual([]);
+      expect((await c.courierInvoices.candidates(randomUUID(), id)).rows).toEqual([]);
+    });
+
+    it('voids an invoice with a reason, frees its charges for another invoice and frees its number', async () => {
+      const courier = `Void Couriers ${randomUUID().slice(0, 6)}`;
+      const a = await charged(courier, 250);
+      const id = await invoice(courier, 250, 'V-1');
+      expect((await c.courierInvoices.match(dispatcher(), id, { costIds: [a] })).ok).toBe(true);
+      expect((await c.courierInvoices.unbilled(companyId)).find((u) => u.courier === courier)).toBeUndefined();
+      expect(await c.courierInvoices.voidInvoice(dispatcher(), id, { reason: 'x' })).toMatchObject({ ok: false, reason: 'bad_input' });
+      const voided = await c.courierInvoices.voidInvoice(dispatcher(), id, { reason: 'Typed against the wrong courier' });
+      expect(voided).toMatchObject({ ok: true, data: { voided: { reason: 'Typed against the wrong courier' }, matchedCount: 0 } });
+      expect(await c.courierInvoices.voidInvoice(dispatcher(), id, { reason: 'Again please' })).toMatchObject({ ok: false, reason: 'conflict' });
+      expect(await c.courierInvoices.match(dispatcher(), id, { costIds: [a] })).toMatchObject({ ok: false, reason: 'not_allowed' });
+      expect(await c.courierInvoices.unmatch(dispatcher(), id, { costId: a })).toMatchObject({ ok: false, reason: 'not_allowed' });
+      expect((await c.courierInvoices.unbilled(companyId)).find((u) => u.courier === courier)).toMatchObject({ count: 1, total: '250.00' });
+      // The number is free again, and the freed charge goes on the new one.
+      const again = await invoice(courier, 250, 'V-1');
+      expect(await c.courierInvoices.match(dispatcher(), again, { costIds: [a] })).toMatchObject({ ok: true, data: { state: 'agreed' } });
+      const log = await db.select().from(schema.decisionLog).where(eq(schema.decisionLog.subjectId, id));
+      expect(log.map((l) => l.action).sort()).toEqual(['courier_invoice.added', 'courier_invoice.matched', 'courier_invoice.voided']);
+    });
+
+    it('lists newest first, one page at a time', async () => {
+      const courier = `Page Couriers ${randomUUID().slice(0, 6)}`;
+      const ids: string[] = [];
+      for (let i = 0; i < 22; i += 1) ids.push(await invoice(courier, 10 + i));
+      const first = await c.courierInvoices.list(companyId, { courier });
+      expect(first.rows).toHaveLength(20);
+      expect(first.rows[0]?.id).toBe(ids[21]);
+      expect(first.nextCursor).not.toBeNull();
+      const next = await c.courierInvoices.list(companyId, { courier, cursor: first.nextCursor });
+      expect(next.rows.map((r) => r.id)).toEqual([ids[1], ids[0]]);
+      expect(next.nextCursor).toBeNull();
+    });
+  });
+
   describe('taking a cost back', () => {
     it('is a reversing entry with a reason, once, and the first stays on record', async () => {
       await setPay(50, 0);
@@ -329,6 +449,46 @@ describe.skipIf(!has(url))('cash at the door (database)', () => {
     });
   });
 
+  describe('fuel and vehicle costs', () => {
+    it('are saved with what they were for, tied to a run when the office says so, once for a form, and appear in the report', async () => {
+      const rider = await staffRider();
+      const at = await onTheRoad(rider);
+      const before = await c.deliveryReports.summary(companyId, {});
+      const clientKey = randomUUID();
+      const made = await c.deliveryCosts.recordRunning(dispatcher(), { kind: 'fuel', amount: 1500.5, note: 'KDA 123X, Thika road', runId: at.runId, clientKey });
+      expect(made).toMatchObject({ ok: true, data: { replayed: false } });
+      // The same form sent again (a double click, a retry) saves nothing more.
+      expect(await c.deliveryCosts.recordRunning(dispatcher(), { kind: 'fuel', amount: 1500.5, note: 'KDA 123X, Thika road', runId: at.runId, clientKey })).toMatchObject({ ok: true, data: { replayed: true } });
+      expect((await c.deliveryCosts.recordRunning(dispatcher(), { kind: 'vehicle', amount: 800, note: 'Puncture', clientKey: randomUUID() })).ok).toBe(true);
+      const rows = await costsOf({ riderId: rider.id });
+      const fuel = rows.find((r) => r.kind === 'fuel');
+      expect(fuel).toMatchObject({ amount: '1500.50', note: 'KDA 123X, Thika road' });
+      const shown = (await c.deliveryCosts.list(companyId, { riderId: rider.id })).rows.find((r) => r.id === fuel?.id);
+      expect(shown?.runNumber).not.toBeNull();
+      expect(shown?.kindWords).toBe('Fuel');
+      const after = await c.deliveryReports.summary(companyId, {});
+      if (!before.ok || !after.ok) throw new Error('report');
+      expect(Number(after.data.fuelCosts) - Number(before.data.fuelCosts)).toBe(1500.5);
+      expect(Number(after.data.vehicleCosts) - Number(before.data.vehicleCosts)).toBe(800);
+      expect(Number(after.data.cost) - Number(before.data.cost)).toBe(2300.5);
+      // They are not rider pay: nothing is owed to the rider for them and nothing is queued for the books.
+      const queued = await db.select({ id: schema.deliveryCostPostings.costId }).from(schema.deliveryCostPostings).where(eq(schema.deliveryCostPostings.costId, fuel?.id ?? ''));
+      expect(queued).toHaveLength(0);
+      // A mistake is taken back with a reason, like any cost.
+      expect((await c.deliveryCosts.reverse(dispatcher(), fuel?.id ?? '', { reason: 'Typed twice by mistake' })).ok).toBe(true);
+    });
+
+    it('are refused without a kind, money, words or a form key, and for a run that is not the company\'s', async () => {
+      const ok = { kind: 'fuel', amount: 100, note: 'Diesel', clientKey: randomUUID() };
+      expect(await c.deliveryCosts.recordRunning(dispatcher(), { ...ok, kind: 'courier' })).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect(await c.deliveryCosts.recordRunning(dispatcher(), { ...ok, amount: 0 })).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect(await c.deliveryCosts.recordRunning(dispatcher(), { ...ok, note: '' })).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect(await c.deliveryCosts.recordRunning(dispatcher(), { ...ok, clientKey: 'x' })).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect(await c.deliveryCosts.recordRunning(dispatcher(), { ...ok, runId: randomUUID() })).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect(await c.deliveryCosts.recordRunning({ ...dispatcher(), companyId: randomUUID() }, { ...ok, runId: randomUUID() })).toMatchObject({ ok: false });
+    });
+  });
+
   describe('listing', () => {
     it('is newest first, by kind and rider, one page at a time', async () => {
       await setPay(50, 100);
@@ -344,7 +504,7 @@ describe.skipIf(!has(url))('cash at the door (database)', () => {
       const onlyDays = await c.deliveryCosts.list(companyId, { riderId: rider.id, kind: 'rider_day' });
       expect(onlyDays.rows.every((r) => r.kind === 'rider_day')).toBe(true);
       expect(onlyDays.rows[0]).toMatchObject({ riderName: expect.any(String) as string, kindWords: 'Rider pay for a day on a run' });
-      const today = new Date().toISOString().slice(0, 10);
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(new Date());
       expect((await c.deliveryCosts.list(companyId, { riderId: rider.id, from: today, to: today })).rows.length).toBe(all.rows.length);
       expect((await c.deliveryCosts.list(companyId, { riderId: rider.id, from: '2001-01-01', to: '2001-01-02' })).rows).toHaveLength(0);
     });

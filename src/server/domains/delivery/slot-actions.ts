@@ -65,8 +65,8 @@ export async function deliverySlotAction(raw: unknown) {
     const c = getContainer();
     const delivery = await c.deliveryDocuments.get(ctx.companyId, deliveryId);
     if (delivery === null) throw new DeliveryError('That delivery could not be found.', 'NOT_FOUND');
-    const [held, offer] = await Promise.all([c.deliverySlots.heldBy(ctx.companyId, deliveryId), c.deliverySlots.offer(ctx.companyId, { branchId: delivery.branch.id, from: i.from, days: 7, deliveryId })]);
-    return { held, offer };
+    const [held, offer, asked] = await Promise.all([c.deliverySlots.heldBy(ctx.companyId, deliveryId), c.deliverySlots.offer(ctx.companyId, { branchId: delivery.branch.id, from: i.from, days: 7, deliveryId }), c.deliverySlots.requestFor(ctx.companyId, delivery.orderId)]);
+    return { held, offer, asked };
   });
 }
 
@@ -107,6 +107,11 @@ export async function slaSettingsAction() {
 export async function setSlaSettingsAction(raw: unknown) {
   return await runDelivery('delivery_slots:manage', async (ctx) => {
     const i = objectOf(raw);
-    return dataOf(await getContainer().deliverySla.setSettings({ companyId: ctx.companyId, userId: ctx.userId }, { atRiskMinutes: i.atRiskMinutes, escalateAfterMinutes: i.escalateAfterMinutes, expectedVersion: i.expectedVersion }));
+    return dataOf(await getContainer().deliverySla.setSettings({ companyId: ctx.companyId, userId: ctx.userId }, { atRiskMinutes: i.atRiskMinutes, escalateAfterMinutes: i.escalateAfterMinutes, notifyDispatch: i.notifyDispatch, notifySupervisor: i.notifySupervisor, expectedVersion: i.expectedVersion }));
   }, PATHS);
+}
+
+/** How well delivery is doing over a stretch of days: on time, first-time success, riders, couriers and how full the delivery times run. */
+export async function deliveryPerformanceAction(raw?: unknown) {
+  return await runDelivery('deliveries:dispatch', async (ctx) => dataOf(await getContainer().deliveryPerformance.summary(ctx.companyId, objectOf(raw))));
 }

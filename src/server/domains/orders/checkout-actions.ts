@@ -13,6 +13,11 @@ import { parseCheckoutInput } from '@/lib/checkout-input';
 import { orElse } from '@/lib/values';
 import { paymentUsesPhone, resolvePaymentPhone } from '@/lib/payment-phone';
 import { clientAddress, waitMessage } from '@/lib/rate-limit';
+import { proveOrder } from './order-proof';
+import { enqueueOrderEmail } from '@/server/queue/worker';
+import { auth } from '@/auth';
+import { ShopCartService } from '@/server/domains/cart/service';
+import { InventoryReservationService } from '@/server/domains/inventory/reservation-service';
 import type { Order } from '@/types/index';
 
 /** Checkout answers as data: the text of a thrown server-action error is masked in production, so a shopper would never see the reason. */
@@ -96,6 +101,16 @@ export async function placeOrderAction(raw: unknown): Promise<CheckoutResult<Che
       return { ok: false, error: limited };
     }
   }
+  // Placing an order holds stock, so it is limited per address and per phone: one visitor cannot hold everything on the shelves.
+  const address = clientAddress(h.get('x-real-ip'), h.get('x-forwarded-for'));
+  for (const [rule, subject] of [['checkout_ip', address], ['checkout_contact', input.value.customerPhone.replace(/\D/g, '')]] as const) {
+    const verdict = await getContainer().rateLimits.hit(rule, subject);
+    if (!verdict.allowed) {
+      const limited = waitMessage(verdict.retryAfterSeconds);
+      await CheckoutAttempts.refuse(attempt, { stage: 'rate_limit', code: 'rate_limited', message: limited });
+      return { ok: false, error: limited };
+    }
+  }
   let order: Order;
   try {
     order = await OrdersService.createCheckout({ ...input.value, checkoutStartedAt: attempt?.startedAt ?? null });
@@ -113,6 +128,17 @@ export async function placeOrderAction(raw: unknown): Promise<CheckoutResult<Che
   revalidatePath('/admin/customers');
   revalidatePath('/admin/inventory');
   revalidatePath('/');
+  // The order holds the cart's stock, so a signed-in shopper's saved cart is spent too (it must not come back on another device or be sent as a reminder).
+  try {
+    const user = (await auth())?.user;
+    if (user?.role === 'customer') await ShopCartService.clear(user.id);
+  } catch (error) {
+    console.error('[checkout] could not clear the saved cart', error);
+  }
+  // The shopper is written to that the order is held; a queue that is down never stops the order.
+  if (order.customerEmail.trim() !== '') await enqueueOrderEmail(order.id, 'placed').catch((error: unknown) => console.error('[checkout] could not queue the order mail', error));
+  // An order on account is invoiced as it is placed, so its tax invoice is issued now (numbering is once per order; KRA signing follows the company's rules).
+  if (method === 'on_account') void getContainer().invoices.generatePdf(order.id, 'tax_invoice').catch((error: unknown) => console.error('[checkout] tax invoice not issued', order.id, error));
   // On account is paid on its invoice; pay on delivery is paid to the rider at the door. Neither starts a payment now.
   if (method === 'on_account' || method === 'pay_on_delivery') return { ok: true, data: { order, payment: { kind: 'none' } } };
   // Card payments go through the hosted checkout, as before.
@@ -120,17 +146,23 @@ export async function placeOrderAction(raw: unknown): Promise<CheckoutResult<Che
   return { ok: true, data: { order, payment: await startPayment(order.id, provider, payerPhone ?? promptTo) } };
 }
 
-/** Public: tries the payment of an order again (a declined prompt, a closed window), optionally from a different phone number. */
+/**
+ * Public: tries the payment of an order again (a declined prompt, a closed window), optionally from a different phone number. The
+ * caller proves the order with its number and the phone or email it was placed with, and the stock is held again first: a failed
+ * payment gives its hold back, and paying without it would sell the same stock twice.
+ */
 export async function retryPaymentAction(raw: unknown): Promise<CheckoutResult<CheckoutPayment>> {
   const input = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
-  const { orderId, providerCode, paymentPhone } = input;
-  if (typeof orderId !== 'string' || orderId === '' || orderId.length > 100) return { ok: false, error: 'That order could not be found.' };
+  const { orderNumber, contact, providerCode, paymentPhone } = input;
+  if (typeof orderNumber !== 'string' || typeof contact !== 'string' || orderNumber.length > 60 || contact.length > 254) return { ok: false, error: 'That order could not be found.' };
   const code = (['mpesa_daraja', 'pesapal_v3', 'jenga_hq', 'kcb_buni'] as const).find((value) => value === providerCode);
   if (code === undefined) return { ok: false, error: 'Please choose how you will pay.' };
+  const proof = await proveOrder(orderNumber, contact);
+  if (!proof.ok) return { ok: false, error: proof.error };
+  const order = proof.order;
+  if (order === null) return { ok: false, error: 'That order could not be found.' };
   let payerPhone: string | null = null;
   if (paymentUsesPhone(code)) {
-    const order = await getContainer().orders.getById(orderId);
-    if (!order) return { ok: false, error: 'That order could not be found.' };
     // A number typed now wins; otherwise the one the order was last paid from, else the contact number.
     const typed = typeof paymentPhone === 'string' && paymentPhone.length <= 40 && paymentPhone.trim() !== '' ? paymentPhone : null;
     const resolved = resolvePaymentPhone({ method: code, contactPhone: order.customerPhone, paymentPhone: typed ?? order.paymentPhone });
@@ -141,7 +173,9 @@ export async function retryPaymentAction(raw: unknown): Promise<CheckoutResult<C
       if (limited !== null) return { ok: false, error: limited };
     }
   }
-  return { ok: true, data: await startPayment(orderId, code, payerPhone) };
+  const held = await InventoryReservationService.reholdOrder(order.id);
+  if (!held.ok) return { ok: false, error: held.error };
+  return { ok: true, data: await startPayment(order.id, code, payerPhone) };
 }
 
 /** Public: the order as the shop has it now, for someone who knows its number and the phone or email it was placed with. */
@@ -150,7 +184,8 @@ export async function confirmedOrderAction(raw: unknown): Promise<CheckoutResult
   const { orderNumber, contact } = input;
   if (typeof orderNumber !== 'string' || typeof contact !== 'string' || orderNumber.length > 60 || contact.length > 254) return { ok: false, error: 'That order could not be found.' };
   try {
-    return { ok: true, data: await getContainer().orders.findByNumberAndContact(orderNumber, contact) };
+    const proof = await proveOrder(orderNumber, contact);
+    return proof.ok ? { ok: true, data: proof.order } : { ok: false, error: proof.error };
   } catch (error) {
     console.error('[checkout] confirm order', error);
     return { ok: false, error: 'The order could not be checked just now.' };

@@ -319,10 +319,12 @@ function SlaPanel({ sla, onChanged, onError }: { sla: Screen['sla']; onChanged: 
   const uid = useId();
   const [atRisk, setAtRisk] = useState(String(sla.atRiskMinutes));
   const [escalate, setEscalate] = useState(String(sla.escalateAfterMinutes));
+  const [dispatchTo, setDispatchTo] = useState(sla.notifyDispatch.join(', '));
+  const [supervisorTo, setSupervisorTo] = useState(sla.notifySupervisor.join(', '));
   const [busy, setBusy] = useState(false);
   const save = async () => {
     setBusy(true);
-    const r = await attempt(setSlaSettingsAction({ atRiskMinutes: Number(atRisk), escalateAfterMinutes: Number(escalate), expectedVersion: sla.version }));
+    const r = await attempt(setSlaSettingsAction({ atRiskMinutes: Number(atRisk), escalateAfterMinutes: Number(escalate), notifyDispatch: dispatchTo, notifySupervisor: supervisorTo, expectedVersion: sla.version }));
     setBusy(false);
     if (r.ok) onChanged('Saved. The Late deliveries screen uses these from now on.');
     else onError(r.error);
@@ -346,10 +348,17 @@ function SlaPanel({ sla, onChanged, onError }: { sla: Screen['sla']; onChanged: 
         <Field id={`${uid}-e`} label="Tell the supervisor after this many minutes late">
           <input id={`${uid}-e`} inputMode="numeric" className={fieldClass} value={escalate} onChange={(e) => setEscalate(e.target.value)} required />
         </Field>
+        <Field id={`${uid}-d`} label="Mail the dispatchers when a delivery is at risk or late">
+          <input id={`${uid}-d`} type="text" inputMode="email" className={fieldClass} value={dispatchTo} onChange={(e) => setDispatchTo(e.target.value)} placeholder="dispatch@example.com, ops@example.com" autoComplete="off" />
+        </Field>
+        <Field id={`${uid}-s`} label="Mail the supervisors when it has been late too long">
+          <input id={`${uid}-s`} type="text" inputMode="email" className={fieldClass} value={supervisorTo} onChange={(e) => setSupervisorTo(e.target.value)} placeholder="supervisor@example.com" autoComplete="off" />
+        </Field>
         <button type="submit" className={`${primaryClass} self-end`} disabled={busy}>
           Save
         </button>
       </div>
+      <p className="text-xs text-fg-muted">Addresses are separated by commas, up to ten for each. Each level is mailed once for a delivery and a window. Leave empty to send no mail; the Late deliveries screen shows everything either way.</p>
     </form>
   );
 }

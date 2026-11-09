@@ -46,7 +46,7 @@ export class TrackedOrders {
         .orderBy(asc(deliveries.createdAt), asc(deliveries.id), asc(products.name)),
     ]);
     const ids = [...new Set(rows.map((r) => r.d.id))];
-    const shipments = ids.length === 0 ? [] : await this.db.select({ deliveryId: deliveryShipments.deliveryId, courierName: deliveryShipments.courierName, trackingNumber: deliveryShipments.trackingNumber }).from(deliveryShipments).where(inArray(deliveryShipments.deliveryId, ids));
+    const shipments = ids.length === 0 ? [] : await this.db.select({ deliveryId: deliveryShipments.deliveryId, courierName: deliveryShipments.courierName, trackingNumber: deliveryShipments.trackingNumber, trackingUrl: deliveryShipments.trackingUrl }).from(deliveryShipments).where(inArray(deliveryShipments.deliveryId, ids));
     const shipment = new Map(shipments.map((s) => [s.deliveryId, s]));
     const byId = new Map<string, TrackedOrder['deliveries'][number]>();
     // What the customer can see on a delivery; the rest is still to be sent, whether or not the shop has begun to prepare it.
@@ -58,7 +58,7 @@ export class TrackedOrders {
       const quantity = Number(r.d.status === 'delivered' ? r.lineDelivered : (r.linePicked ?? r.lineQuantity));
       if (quantity > 0) cur.items.push({ name: r.lineProduct, quantity });
       const s = shipment.get(r.d.id);
-      if (s !== undefined && cur.courier === null) cur.courier = { name: s.courierName, trackingNumber: s.trackingNumber };
+      if (s !== undefined && cur.courier === null) cur.courier = { name: s.courierName, trackingNumber: s.trackingNumber, trackingUrl: s.trackingUrl };
       byId.set(r.d.id, cur);
     }
     return {

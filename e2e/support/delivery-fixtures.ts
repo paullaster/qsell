@@ -11,6 +11,8 @@
  *   tsx e2e/support/delivery-fixtures.ts set-email <order number> <address>  the email address the customer typed
  *   tsx e2e/support/delivery-fixtures.ts messages <order number>  what the order's deliveries told the customer, as kind:state
  *   tsx e2e/support/delivery-fixtures.ts courier-order <tag>  a paid order for one salt, to be sent by courier from the fixture's branch
+ *   tsx e2e/support/delivery-fixtures.ts slot <tag>   a daily delivery time for that branch, "Morning <tag>", room for five a day and no cut-off
+ *   tsx e2e/support/delivery-fixtures.ts slot-request <order number>  the delivery time the shopper chose on an order and what became of it
  *   tsx e2e/support/delivery-fixtures.ts close <tag>   takes all of that out of play again, so the shop's other tests are not asked about delivery
  */
 import { execFileSync } from 'node:child_process';
@@ -39,15 +41,39 @@ async function open(tag: string): Promise<Record<string, string>> {
   return { branchId: branch.id, branchName: name, policy: draft.code };
 }
 
+async function slot(tag: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { branches } = await import('@/server/db/drizzle/schema');
+  const c = getContainer();
+  const company = await c.companySettings.ensureSeeded();
+  const [branch] = await db.select().from(branches).where(eq(branches.code, `E${tag}`.slice(0, 20)));
+  if (branch === undefined) throw new Error(`e2e fixture: no branch for ${tag}`);
+  const made = await c.deliverySlots.create({ companyId: company.id, userId: 'e2e' }, { branchId: branch.id, name: `Morning ${tag}`, weekdays: [1, 2, 3, 4, 5, 6, 7], startsAt: '09:00', endsAt: '12:00', capacity: 5, cutoffMinutes: 0 });
+  if (!made.ok) throw new Error(`e2e fixture: ${made.message}`);
+  return { slotId: made.data.id, name: `Morning ${tag}` };
+}
+
+/** The delivery time a shopper chose on an order, and what became of it. */
+async function slotRequest(orderNumber: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const [row] = await db.execute<Record<string, string | null>>(sql`
+    SELECT r.outcome, r.day::text AS day, s.name AS slot, r.outcome_note AS note, d.slot_day::text AS booked_day, d.window_start::text AS window_start
+    FROM orders o JOIN order_slot_requests r ON r.order_id = o.id JOIN delivery_slots s ON s.id = r.slot_id LEFT JOIN deliveries d ON d.id = r.delivery_id
+    WHERE o.order_number = ${orderNumber}`);
+  return row === undefined ? { outcome: 'none' } : Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v ?? '']));
+}
+
 async function close(tag: string): Promise<Record<string, string>> {
   const { getContainer } = await import('@/server/di/container');
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
-  const { branches, deliveryMethods, chargePolicies } = await import('@/server/db/drizzle/schema');
+  const { branches, deliveryMethods, deliverySlots, chargePolicies } = await import('@/server/db/drizzle/schema');
   const c = getContainer();
   const company = await c.companySettings.ensureSeeded();
   const [branch] = await db.select().from(branches).where(eq(branches.code, `E${tag}`.slice(0, 20)));
   if (branch !== undefined) {
     await db.update(deliveryMethods).set({ isActive: false }).where(eq(deliveryMethods.branchId, branch.id));
+    await db.update(deliverySlots).set({ isActive: false }).where(eq(deliverySlots.branchId, branch.id));
     await db.update(branches).set({ isActive: false }).where(eq(branches.id, branch.id));
   }
   const live = await db.select().from(chargePolicies).where(like(chargePolicies.code, `E2E${tag}`));
@@ -220,6 +246,41 @@ async function messages(orderNumber: string): Promise<Record<string, string>> {
   return { list: rows.map((r) => `${r.kind}:${r.status}`).join(',') };
 }
 
+/** A ready delivery promised a window that ends an hour from now (`ontime`) or ended an hour ago (`late`), then sent out and delivered now. */
+async function deliverPromised(number: string, mode: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { deliveries, deliverySlots } = await import('@/server/db/drizzle/schema');
+  const c = getContainer();
+  const company = await c.companySettings.ensureSeeded();
+  const [d] = await db.select({ id: deliveries.id, branchId: deliveries.branchId }).from(deliveries).where(eq(deliveries.number, number));
+  if (d === undefined) throw new Error(`e2e fixture: no delivery ${number}`);
+  const [slot] = await db.insert(deliverySlots).values({ companyId: company.id, branchId: d.branchId, name: `Performance ${number}`, weekdays: [1, 2, 3, 4, 5, 6, 7], startsAt: '09:00', endsAt: '12:00', capacity: 5, createdBy: 'e2e' }).returning({ id: deliverySlots.id });
+  const now = Date.now();
+  const end = new Date(now + (mode === 'late' ? -1 : 1) * 3_600_000);
+  await db.update(deliveries).set({ slotId: slot?.id ?? null, slotDay: new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(new Date(now)), windowStart: new Date(end.getTime() - 3 * 3_600_000), windowEnd: end, slotBookedAt: new Date(now), slotBookedBy: 'e2e' }).where(eq(deliveries.id, d.id));
+  const actor = { companyId: company.id, userId: 'e2e' };
+  for (const step of [() => c.deliveryDocuments.dispatch(actor, d.id, {}), () => c.deliveryDocuments.deliver(actor, d.id, { receivedBy: 'Mama' })]) {
+    const r = await step();
+    if (!r.ok) throw new Error(`e2e fixture: ${r.message}`);
+  }
+  return { delivered: number };
+}
+
+/** A courier delivery made ready, sent out with the named courier, and a charge of `amount` typed in for it (what the office does on the delivery screen). */
+async function courierCharge(tag: string, courier: string, amount: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const c = getContainer();
+  const company = await c.companySettings.ensureSeeded();
+  const actor = { companyId: company.id, userId: 'e2e' };
+  const made = await ready((await courierOrder(tag)).orderNumber ?? '');
+  const sent = await c.deliveryDocuments.dispatch(actor, made.id ?? '', { courierName: courier });
+  if (!sent.ok) throw new Error(`e2e fixture: ${sent.message}`);
+  const charged = await c.deliveryCosts.recordCourier(actor, made.id ?? '', { amount: Number(amount), note: 'E2E waybill' });
+  if (!charged.ok) throw new Error(`e2e fixture: ${charged.message}`);
+  return { number: made.number ?? '', costId: charged.data.id };
+}
+
 async function main(): Promise<void> {
   const [command, tag, extra] = process.argv.slice(2);
   if (tag === undefined) throw new Error('usage: delivery-fixtures open|close|order|billing|service|pay|collection <tag>');
@@ -227,6 +288,8 @@ async function main(): Promise<void> {
   if (command === 'open') result = await open(tag);
   if (command === 'close') result = await close(tag);
   if (command === 'order') result = await order(tag);
+  if (command === 'slot') result = await slot(tag);
+  if (command === 'slot-request') result = await slotRequest(tag);
   if (command === 'billing') result = await billing(tag);
   if (command === 'pay') result = await pay(tag);
   if (command === 'collection') result = await collection(tag);
@@ -234,7 +297,9 @@ async function main(): Promise<void> {
   if (command === 'advance' && extra !== undefined) result = await advance(tag, extra);
   if (command === 'set-email' && extra !== undefined) result = await setEmail(tag, extra);
   if (command === 'messages') result = await messages(tag);
+  if (command === 'deliver-promised' && extra !== undefined) result = await deliverPromised(tag, extra);
   if (command === 'courier-order') result = await courierOrder(tag);
+  if (command === 'courier-charge' && extra !== undefined) result = await courierCharge(tag, extra.split('|')[0] ?? '', extra.split('|')[1] ?? '0');
   if (command === 'service') result = { id: await serviceItem(), name: SERVICE_NAME };
   if (result === null) throw new Error('usage: delivery-fixtures open|close|order|billing|service|pay|collection <tag>');
   process.stdout.write(`FIXTURE ${JSON.stringify(result)}\n`);

@@ -6,6 +6,7 @@ import { deliveryAction, deliveryStepAction, proofPhotoLinkAction } from '@/serv
 import { deliveryCostsAction, recordCourierChargeAction } from '@/server/domains/delivery/cost-actions';
 import type { CostView } from '@/server/domains/delivery/costs';
 import { markDoorPaymentAction, unmarkDoorPaymentAction } from '@/server/domains/delivery/door-payment-actions';
+import { refreshCourierAction, retryCourierAction } from '@/server/domains/delivery/courier-actions';
 import { courierNewsAction, deliveryExtrasAction } from '@/server/domains/delivery/run-actions';
 import type { DeliveryView } from '@/server/domains/delivery/documents';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
@@ -89,6 +90,7 @@ function DeliveryScreen({ initial, canFulfil, initialExtras }: { initial: Delive
   const [retryDay, setRetryDay] = useState('');
   const [courierName, setCourierName] = useState(initial.courierName ?? '');
   const [tracking, setTracking] = useState(initial.trackingNumber ?? '');
+  const [courierAccount, setCourierAccount] = useState<Choice | null>(null);
   const [failure, setFailure] = useState<Choice | null>(null);
   const [recipientName, setRecipientName] = useState(initial.recipientName ?? '');
   const [recipientPhone, setRecipientPhone] = useState(initial.recipientPhone ?? '');
@@ -96,6 +98,18 @@ function DeliveryScreen({ initial, canFulfil, initialExtras }: { initial: Delive
   const [back, setBack] = useState<Record<string, { quantity: string; disposition: Choice | null }>>({});
   const [fix, setFix] = useState<Record<string, { quantity: string; disposition: Choice | null; reason: string }>>({});
 
+  const courierCall = async (call: Promise<{ ok: true } | { ok: false; error: string }>, done: string) => {
+    setBusy(true);
+    setNotice(null);
+    const r = await attempt(call);
+    setBusy(false);
+    if (!r.ok) setNotice({ kind: 'error', text: r.error });
+    else setNotice({ kind: 'ok', text: done });
+    const again = await deliveryExtrasAction(view.id);
+    if (again.ok) setExtra(again.data);
+    const fresh = await deliveryAction(view.id);
+    if (fresh.ok) setView(fresh.data);
+  };
   const run = async (step: DeliveryAction | 'amend' | 'receive_return' | 'correct_return', extra: Record<string, unknown>, done: string, after?: () => void) => {
     setBusy(true);
     setNotice(null);
@@ -207,6 +221,48 @@ function DeliveryScreen({ initial, canFulfil, initialExtras }: { initial: Delive
             {extra.shipment.trackingNumber === null ? '' : ` · tracking number ${extra.shipment.trackingNumber}`} · <Chip tone={extra.shipment.status === 'exception' ? 'red' : 'sky'}>{extra.shipment.statusWords}</Chip>
           </p>
           {extra.shipment.lastNote === null ? null : <p className="text-xs text-fg-muted">{extra.shipment.lastNote}</p>}
+          {extra.shipment.syncWords === null ? null : (
+            <p role="status" className="flex flex-wrap items-center gap-2 text-sm">
+              <Chip tone={extra.shipment.canRetry ? 'red' : 'amber'}>{extra.shipment.syncWords}</Chip>
+              {extra.shipment.syncError === null ? null : <span className="text-fg-muted">{extra.shipment.syncError}</span>}
+            </p>
+          )}
+          {extra.shipment.syncWords === null && extra.shipment.syncError !== null ? (
+            <p role="status" className="text-xs text-amber-700">
+              The courier could not be asked just now ({extra.shipment.syncError}). It is tried again later.
+            </p>
+          ) : null}
+          <p className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+            {extra.shipment.labelUrl === null ? null : (
+              <a href={extra.shipment.labelUrl} target="_blank" rel="noopener noreferrer" className="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">
+                Open the courier&apos;s label
+              </a>
+            )}
+            {extra.shipment.trackingUrl === null ? null : (
+              <a href={extra.shipment.trackingUrl} target="_blank" rel="noopener noreferrer" className="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">
+                Follow it on the courier&apos;s page
+              </a>
+            )}
+            {extra.shipment.podUrl === null ? null : (
+              <a href={extra.shipment.podUrl} target="_blank" rel="noopener noreferrer" className="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">
+                Proof of delivery{extra.shipment.podName === null ? '' : ` (${extra.shipment.podName})`}
+              </a>
+            )}
+          </p>
+          {extra.canDispatch && extra.shipment.connected ? (
+            <div className="flex flex-wrap gap-2">
+              {extra.shipment.canRetry ? (
+                <button type="button" className={buttonClass} disabled={busy} onClick={() => void courierCall(retryCourierAction({ deliveryId: view.id }), 'We will try the courier again now.')}>
+                  Try the courier again
+                </button>
+              ) : null}
+              {view.status === 'out_for_delivery' && extra.shipment.trackingNumber !== null ? (
+                <button type="button" className={buttonClass} disabled={busy} onClick={() => void courierCall(refreshCourierAction({ deliveryId: view.id }), 'The courier was asked.')}>
+                  Ask the courier now
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           {extra.canDispatch && view.status === 'out_for_delivery' ? (
             <details className="text-sm">
               <summary className="min-h-10 cursor-pointer py-2 font-semibold text-indigo-500">Record what the courier reported</summary>
@@ -335,15 +391,16 @@ function DeliveryScreen({ initial, canFulfil, initialExtras }: { initial: Delive
             <div className="space-y-3 rounded-lg border border-line bg-surface p-3">
               {view.method === 'courier' ? (
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <Field id={`${uid}-cn`} label="Which courier has it">
-                    <input id={`${uid}-cn`} value={courierName} onChange={(e) => setCourierName(e.target.value)} maxLength={120} className={fieldClass} autoComplete="off" />
+                  <ChoicePicker label="Courier from your list" source="delivery-couriers" choice={courierAccount} onChoice={setCourierAccount} placeholder="Choose a courier you have connected" clearable />
+                  <Field id={`${uid}-cn`} label={courierAccount === null ? 'Which courier has it' : 'Courier'}>
+                    <input id={`${uid}-cn`} value={courierAccount === null ? courierName : courierAccount.label} onChange={(e) => setCourierName(e.target.value)} disabled={courierAccount !== null} maxLength={120} className={fieldClass} autoComplete="off" />
                   </Field>
                   <Field id={`${uid}-tn`} label="Courier’s tracking number (if given)">
                     <input id={`${uid}-tn`} value={tracking} onChange={(e) => setTracking(e.target.value)} maxLength={120} className={`${fieldClass} font-mono`} autoComplete="off" />
                   </Field>
                 </div>
               ) : null}
-              <button type="button" className={primaryClass} disabled={busy} onClick={() => void run('dispatch', { courierName, trackingNumber: tracking }, DONE.dispatch)}>
+              <button type="button" className={primaryClass} disabled={busy} onClick={() => void run('dispatch', { courierName, trackingNumber: tracking, courierAccountId: courierAccount?.id }, DONE.dispatch)}>
                 Send out
               </button>
             </div>

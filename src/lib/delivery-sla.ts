@@ -61,6 +61,29 @@ export function lateWords(minutes: number): string {
   return [days > 0 ? `${String(days)} ${days === 1 ? 'day' : 'days'}` : '', hours > 0 ? `${String(hours)} ${hours === 1 ? 'hour' : 'hours'}` : '', rest > 0 && days === 0 ? `${String(rest)} min` : ''].filter((p) => p !== '').join(' ');
 }
 
+export const MAX_NOTIFY_ADDRESSES = 10;
+const EMAIL = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
+
+/** Mail addresses as typed (commas, semicolons, spaces or new lines between them): lower case, none twice, at most ten, each a real-looking address. */
+export function readAddressList(raw: unknown): { ok: true; addresses: string[] } | { ok: false; error: string } {
+  if (raw === undefined || raw === null || raw === '') return { ok: true, addresses: [] };
+  const parts: unknown = typeof raw === 'string' ? raw.split(/[\s,;]+/) : raw;
+  if (!Array.isArray(parts)) return { ok: false, error: 'Type the mail addresses separated by commas.' };
+  const out: string[] = [];
+  for (const part of parts) {
+    if (typeof part !== 'string') return { ok: false, error: 'Type the mail addresses separated by commas.' };
+    const a = part.trim().toLowerCase();
+    if (a === '') continue;
+    if (a.length > 200 || !EMAIL.test(a)) return { ok: false, error: `"${a.slice(0, 60)}" is not a mail address.` };
+    if (!out.includes(a)) out.push(a);
+  }
+  if (out.length > MAX_NOTIFY_ADDRESSES) return { ok: false, error: `At most ${String(MAX_NOTIFY_ADDRESSES)} addresses for each.` };
+  return { ok: true, addresses: out };
+}
+
+/** Who a level is mailed to: the dispatchers for at risk and late, the supervisors when it has gone on too long. */
+export const audienceFor = (level: EscalationLevel): 'dispatch' | 'supervisor' => (level === 'escalated' ? 'supervisor' : 'dispatch');
+
 export type SlaSettingsInput = { ok: true; atRiskMinutes: number; escalateAfterMinutes: number } | { ok: false; error: string };
 
 export function checkSlaSettings(raw: { atRiskMinutes?: unknown; escalateAfterMinutes?: unknown }): SlaSettingsInput {

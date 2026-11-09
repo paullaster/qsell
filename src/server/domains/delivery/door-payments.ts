@@ -263,6 +263,11 @@ export class DoorPayments {
     try {
       await InventoryReservationService.fulfilOrder(orderId);
       await this.customers.applyOrderPayment(orderId);
+      // Paid at the door is paid: the shopper is told, and the tax invoice is issued (both are retried or repeated safely).
+      const { getContainer } = await import('@/server/di/container');
+      void getContainer().invoices.generatePdf(orderId, 'tax_invoice').catch((error: unknown) => console.error('[door-payments] tax invoice not issued', orderId, error));
+      const { enqueueOrderEmail } = await import('@/server/queue/worker');
+      await enqueueOrderEmail(orderId, 'paid').catch((error: unknown) => console.error('[door-payments] could not queue the payment mail', orderId, error));
       return true;
     } catch (error) {
       console.error('[door-payments] paid at the door but follow-up failed', orderId, error);

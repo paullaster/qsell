@@ -28,12 +28,14 @@ export async function startWorker(): Promise<void> {
       '* * * * * stock-backfill',
       '7 5 * * * stock-shadow-check',
       '* * * * * stock-reservation-expiry',
+      '*/15 * * * * shop-cart-reminder-sweep',
       '47 3 * * * expire-loyalty-points',
       // Sales reach the ledger within a minute; failures retry with a growing delay.
       '* * * * * finance-post-sales',
       '* * * * * delivery-cost-post',
       // Deliveries promised a window that is at risk or late are raised once each, for the dispatcher and then the supervisor.
       '* * * * * delivery-sla-scan',
+      '* * * * * courier-sync',
       '* * * * * finance-post-inventory',
       '7 3 * * * finance-ensure-partitions',
       '12 4 * * * wallet-expiry',

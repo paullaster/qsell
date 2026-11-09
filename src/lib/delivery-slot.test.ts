@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addDays, checkLead, checkSlot, earliestReady, leadWords, daysFrom, instantOf, isDay, nairobiDay, unavailable, weekdayOf, weekdaysWords, windowOf, type SlotRule } from './delivery-slot';
+import { addDays, checkLead, checkSlot, earliestReady, leadWords, dayWords, daysFrom, instantOf, isDay, nairobiDay, shopOffer, unavailable, weekdayOf, weekdaysWords, windowOf, type SlotRule } from './delivery-slot';
 
 const rule: SlotRule = { weekdays: [1, 2, 3, 4, 5], startsAt: '09:00', endsAt: '12:00', capacity: 2, cutoffMinutes: 120, maxWeightKg: null, isActive: true };
 // Thursday 2026-11-05, 06:00 in Nairobi.
@@ -100,5 +100,28 @@ describe('weight and lead times', () => {
     expect(checkLead(60, '')).toEqual({ ok: true, minutes: 60, note: null });
     for (const bad of [0, -5, 1.5, 'two hours', 50_000, null]) expect(checkLead(bad, null)).toMatchObject({ ok: false });
     expect(checkLead(60, 'x'.repeat(201))).toMatchObject({ ok: false });
+  });
+});
+
+describe('what a shopper is offered', () => {
+  const slot = (id: string, available: boolean, why: string | null = null) => ({ slotId: id, name: 'Morning', startsAt: '09:00', endsAt: '12:00', available, why });
+  it('reads a day the way a shopper does', () => {
+    expect(dayWords('2026-11-06')).toBe('Fri 6 Nov');
+  });
+  it('leaves out days with no deliveries and names the first time that is free', () => {
+    const offer = shopOffer([
+      { day: '2026-11-06', closedReason: 'Public holiday', slots: [slot('a', true)] },
+      { day: '2026-11-07', closedReason: null, slots: [slot('b', false, 'This slot is full.')] },
+      { day: '2026-11-08', closedReason: null, slots: [] },
+      { day: '2026-11-09', closedReason: null, slots: [slot('b', false, 'This slot is full.'), slot('c', true)] },
+    ]);
+    expect(offer.days.map((d) => d.day)).toEqual(['2026-11-07', '2026-11-09']);
+    expect(offer.earliest).toEqual({ day: '2026-11-09', slotId: 'c', words: 'Mon 9 Nov, Morning, 09:00 to 12:00' });
+    expect(offer.days[0]?.slots[0]).toMatchObject({ available: false, note: 'This slot is full.' });
+    expect(offer.days[1]?.slots[1]).toMatchObject({ available: true, note: null });
+  });
+  it('has no earliest time when nothing is free', () => {
+    expect(shopOffer([{ day: '2026-11-07', closedReason: null, slots: [slot('b', false, 'Full')] }]).earliest).toBeNull();
+    expect(shopOffer([]).earliest).toBeNull();
   });
 });

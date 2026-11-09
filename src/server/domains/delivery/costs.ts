@@ -1,7 +1,7 @@
 import { and, desc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { deliveries, deliveryCosts, deliveryPaySettings, deliveryRiders, deliveryShipments, financeSettings } from '@/server/db/drizzle/schema';
-import { COST_WORDS, courierChargeProblem, dayPayKey, deliveryPayKey, isCostKind, money, readPayRules, reversalKey, type CostKind } from '@/lib/delivery-cost';
+import { deliveries, deliveryCosts, deliveryPaySettings, deliveryRiders, deliveryRuns, deliveryShipments, financeSettings } from '@/server/db/drizzle/schema';
+import { COST_WORDS, courierChargeProblem, runningCostProblem, dayPayKey, deliveryPayKey, isCostKind, money, readPayRules, reversalKey, type CostKind } from '@/lib/delivery-cost';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { decodeCursor, encodeCursor } from '@/server/domains/lookups/request';
 import type { DocActor, DocRefusal, DocResult } from './documents';
@@ -26,6 +26,7 @@ export interface CostView {
   amount: string;
   currency: string;
   deliveryNumber: string | null;
+  runNumber: string | null;
   riderName: string | null;
   courierName: string | null;
   note: string | null;
@@ -126,6 +127,37 @@ export class DeliveryCosts {
     });
   }
 
+  /**
+   * Fuel, a vehicle cost or another cost of running the fleet, typed in with what it was for and, if the office wishes, the run it belongs to.
+   * The form's own key makes a double click or a retry save it once. It is a cost of delivery for the report and the margin; it is not posted
+   * to the books here (the company books the receipt as an expense claim or a supplier invoice, so posting it again would count it twice).
+   */
+  async recordRunning(actor: DocActor, input: { kind?: unknown; amount?: unknown; note?: unknown; runId?: unknown; clientKey?: unknown }): Promise<DocResult<{ id: string; replayed: boolean }>> {
+    const cost = runningCostProblem(input.kind, input.amount, input.note);
+    if ('error' in cost) return fail('bad_input', cost.error);
+    const clientKey = typeof input.clientKey === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(input.clientKey) ? input.clientKey : null;
+    if (clientKey === null) return fail('bad_input', 'This form could not be read. Reload the page and try again.');
+    const runId = typeof input.runId === 'string' && input.runId !== '' ? input.runId : null;
+    return await this.db.transaction(async (tx): Promise<DocResult<{ id: string; replayed: boolean }>> => {
+      const key = `running:${clientKey}`;
+      const [same] = await tx.select({ id: deliveryCosts.id }).from(deliveryCosts).where(and(eq(deliveryCosts.companyId, actor.companyId), eq(deliveryCosts.key, key)));
+      if (same !== undefined) return { ok: true, data: { id: same.id, replayed: true } };
+      let riderId: string | null = null;
+      if (runId !== null) {
+        const [run] = await tx.select({ riderId: deliveryRuns.riderId }).from(deliveryRuns).where(and(eq(deliveryRuns.id, runId), eq(deliveryRuns.companyId, actor.companyId)));
+        if (run === undefined) return fail('bad_input', 'That run could not be found.');
+        riderId = run.riderId;
+      }
+      const [row] = await tx
+        .insert(deliveryCosts)
+        .values({ companyId: actor.companyId, kind: cost.kind, amount: money(cost.cents), currency: await this.currencyIn(tx, actor.companyId), runId, riderId, note: cost.note, key, actorId: actor.userId })
+        .returning({ id: deliveryCosts.id });
+      if (row === undefined) throw new Error('The cost could not be saved.');
+      await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_cost', id: row.id }, action: 'delivery_cost.running', actor: { type: 'user', id: actor.userId }, reason: { text: cost.note }, outcome: { kind: cost.kind, amount: money(cost.cents), runId } }, tx);
+      return { ok: true, data: { id: row.id, replayed: false } };
+    });
+  }
+
   /** Takes a cost back, once, with the reason: a reversing entry for the same amount the other way. */
   async reverse(actor: DocActor, costId: string, input: { reason?: unknown }): Promise<DocResult<{ id: string }>> {
     const reason = text(input.reason, 300);
@@ -148,21 +180,22 @@ export class DeliveryCosts {
 
   // ── Reading ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
-  private view(r: typeof deliveryCosts.$inferSelect, deliveryNumber: string | null, riderName: string | null, reversed: boolean): CostView {
-    return { id: r.id, kind: r.kind, kindWords: COST_WORDS[r.kind], amount: r.amount, currency: r.currency, deliveryNumber, riderName, courierName: r.courierName, note: r.note, reverses: r.reversesId, reversed, createdAt: r.createdAt.toISOString() };
+  private view(r: typeof deliveryCosts.$inferSelect, deliveryNumber: string | null, riderName: string | null, reversed: boolean, runNumber: string | null): CostView {
+    return { id: r.id, kind: r.kind, kindWords: COST_WORDS[r.kind], amount: r.amount, currency: r.currency, deliveryNumber, runNumber, riderName, courierName: r.courierName, note: r.note, reverses: r.reversesId, reversed, createdAt: r.createdAt.toISOString() };
   }
 
   /** The costs of one delivery, oldest first, with those that have been taken back marked. */
   async forDelivery(companyId: string, deliveryId: string): Promise<CostView[]> {
     const rows = await this.db
-      .select({ c: deliveryCosts, number: deliveries.number, rider: deliveryRiders.name })
+      .select({ c: deliveryCosts, number: deliveries.number, rider: deliveryRiders.name, run: deliveryRuns.number })
       .from(deliveryCosts)
       .leftJoin(deliveries, eq(deliveries.id, deliveryCosts.deliveryId))
       .leftJoin(deliveryRiders, eq(deliveryRiders.id, deliveryCosts.riderId))
+      .leftJoin(deliveryRuns, eq(deliveryRuns.id, deliveryCosts.runId))
       .where(and(eq(deliveryCosts.companyId, companyId), eq(deliveryCosts.deliveryId, deliveryId)))
       .orderBy(deliveryCosts.createdAt, deliveryCosts.id);
     const taken = new Set(rows.flatMap((r) => (r.c.reversesId === null ? [] : [r.c.reversesId])));
-    return rows.map((r) => this.view(r.c, r.number, r.rider, taken.has(r.c.id)));
+    return rows.map((r) => this.view(r.c, r.number, r.rider, taken.has(r.c.id), r.run));
   }
 
   /** Costs, newest first, one page at a time, by kind, rider and day range. */
@@ -173,10 +206,11 @@ export class DeliveryCosts {
     const to = typeof input.to === 'string' && DATE.test(input.to) ? input.to : null;
     const after = typeof input.cursor === 'string' && input.cursor !== '' ? decodeCursor(input.cursor) : null;
     const rows = await this.db
-      .select({ c: deliveryCosts, cursorKey: sql<string>`${deliveryCosts.createdAt}::text`, number: deliveries.number, rider: deliveryRiders.name })
+      .select({ c: deliveryCosts, cursorKey: sql<string>`${deliveryCosts.createdAt}::text`, number: deliveries.number, rider: deliveryRiders.name, run: deliveryRuns.number })
       .from(deliveryCosts)
       .leftJoin(deliveries, eq(deliveries.id, deliveryCosts.deliveryId))
       .leftJoin(deliveryRiders, eq(deliveryRiders.id, deliveryCosts.riderId))
+      .leftJoin(deliveryRuns, eq(deliveryRuns.id, deliveryCosts.runId))
       .where(
         and(
           eq(deliveryCosts.companyId, companyId),
@@ -193,6 +227,6 @@ export class DeliveryCosts {
     // Which of these have been taken back: one read of the reversals that name them, not of every reversal there is.
     const reversedIds = page.length === 0 ? new Set<string>() : new Set((await this.db.select({ r: deliveryCosts.reversesId }).from(deliveryCosts).where(and(eq(deliveryCosts.companyId, companyId), inArray(deliveryCosts.reversesId, page.map((p) => p.c.id))))).map((x) => x.r ?? ''));
     const last = page[page.length - 1];
-    return { rows: page.map((r) => this.view(r.c, r.number, r.rider, reversedIds.has(r.c.id))), nextCursor: rows.length > PAGE && last !== undefined ? encodeCursor({ k: last.cursorKey, id: last.c.id }) : null };
+    return { rows: page.map((r) => this.view(r.c, r.number, r.rider, reversedIds.has(r.c.id), r.run)), nextCursor: rows.length > PAGE && last !== undefined ? encodeCursor({ k: last.cursorKey, id: last.c.id }) : null };
   }
 }

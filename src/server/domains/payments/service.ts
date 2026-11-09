@@ -334,7 +334,27 @@ export class PaymentService implements AttemptSettler {
       detail: { provider: attempt.providerCode, verifiedBy: input.verifiedBy, amount: Number(attempt.amount), currency: attempt.currency },
       ...(attempt.paidAt === null ? {} : { providerTime: attempt.paidAt }),
     });
-    await InventoryReservationService.fulfilOrder(attempt.orderId);
+    // A payment that comes after its hold was given back (a failure was reported, then the customer paid again) must hold the stock
+    // again before it is issued; if it cannot, the order is paid but nothing leaves the shelf, which a person must see.
+    const held = await InventoryReservationService.reholdOrder(attempt.orderId).catch((error: unknown) => {
+      console.error('[payments] could not check the stock hold', attempt.orderId, error);
+      return { ok: false as const, error: 'The stock hold could not be checked.' };
+    });
+    if (held.ok) {
+      await InventoryReservationService.fulfilOrder(attempt.orderId);
+    } else {
+      await OrderStages.move(this.db, attempt.orderId, 'payment_discrepancy', 'failed', {
+        ref: { type: 'payment_attempt', id: attemptId },
+        reasonCode: 'paid_after_release',
+        message: 'The payment arrived after the stock held for this order was given back, and the stock could not be held again. Check the stock before sending it.',
+        detail: { provider: attempt.providerCode, reason: held.error },
+      });
+    }
+    // The shopper is told the payment was received (for the shop's own orders; the job is idempotent and retried by the worker).
+    void import('@/server/queue/worker').then(({ enqueueOrderEmail }) => enqueueOrderEmail(attempt.orderId, 'paid')).catch((error: unknown) => console.error('[payments] could not queue the payment mail', attempt.orderId, error));
+    // The tax invoice is issued as the sale is paid, not when someone first asks for the PDF. Numbering is once per order and the
+    // KRA signing follows the company's rules; neither may hold up the payment.
+    void getContainer().invoices.generatePdf(attempt.orderId, 'tax_invoice').catch((error: unknown) => console.error('[payments] tax invoice not issued at payment', attempt.orderId, error));
     // The ledger credit needs the reference; without one it waits instead of failing the payment.
     if (has(real)) {
       await getContainer().customers.applyOrderPayment(attempt.orderId);

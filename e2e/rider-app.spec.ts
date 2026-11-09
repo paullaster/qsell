@@ -733,6 +733,7 @@ test.describe('the rider app', () => {
       await startRun(page, run);
       const phone = await otherBrowserPage(browser, page);
       await signInAndChoosePassword(phone, staff.email ?? '', staff.password ?? '', 'E2eStaffPay-Pass1', /\/rider$/);
+      await expect(phone.getByRole('link', { name: /^My pay/ })).toBeVisible({ timeout: 30_000 });
       await openRun(phone, run);
       const stops = phone.getByRole('list', { name: 'Stops' });
       await clickUntilVisible(stops.getByRole('button', { name: 'Delivered' }), phone.getByRole('form', { name: 'Mark delivered' }));
@@ -742,13 +743,26 @@ test.describe('the rider app', () => {
       await finish.getByRole('button', { name: 'Finish this run' }).click();
       await phone.getByRole('button', { name: 'Confirm: Finish this run' }).click();
       await expect(phone.getByText('Completed')).toBeVisible({ timeout: 30_000 });
+
+      // The rider sees their own pay on the phone: what is owed, and the two entries, not yet paid.
+      await phone.goto('/rider/pay');
+      await expect(phone.getByRole('heading', { name: 'My pay' })).toBeVisible({ timeout: 60_000 });
+      await expect(phone.getByText('Owed to me now')).toBeVisible();
+      const pays = phone.getByRole('list', { name: 'Pay list' });
+      await expect(pays).toContainText('Rider pay for a delivery', { timeout: 30_000 });
+      await expect(pays).toContainText('Rider pay for a day on a run');
+      await expect(pays).toContainText('Not paid yet');
+      await expect(phone.getByRole('region', { name: 'What was paid to me' })).toContainText('Nothing has been paid to you yet.');
+      await noHorizontalScroll(phone);
+      await noInnerHorizontalScroll(phone);
       await phone.context().close();
 
       // The pay is counted: for the delivery, and for the day.
       await open(page, '/admin/delivery/costs', 'Delivery costs');
       const list = page.getByRole('list', { name: 'Cost list' });
       await expect(list).toContainText('Rider pay for a delivery', { timeout: 30_000 });
-      await expect(list).toContainText(`${delivery} · ${name}`);
+      await expect(list).toContainText(`${delivery} · run `);
+      await expect(list).toContainText(` · ${name}`);
       await expect(list).toContainText('KES 50.00');
       await expect(list).toContainText('Rider pay for a day on a run');
       await expect(list).toContainText('KES 200.00');

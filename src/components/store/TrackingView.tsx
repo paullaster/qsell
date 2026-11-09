@@ -69,6 +69,14 @@ export function TrackingView({ order, heading, token }: { order: TrackedOrder; h
               <p className="text-xs text-fg-muted">
                 With {d.courier.name}
                 {d.courier.trackingNumber === null ? '' : `, their tracking number is ${d.courier.trackingNumber}`}.
+                {d.courier.trackingUrl === null ? null : (
+                  <>
+                    {' '}
+                    <a href={d.courier.trackingUrl} target="_blank" rel="noopener noreferrer" className="font-semibold underline">
+                      Follow it on their page
+                    </a>
+                  </>
+                )}
               </p>
             )}
             {d.window == null || d.status === 'delivered' ? null : (

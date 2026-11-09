@@ -3,10 +3,10 @@
 import { requirePermission } from '@/server/domains/access-control/guard';
 
 import { revalidatePath } from 'next/cache';
-import { OrdersService } from './service';
+import { proveOrder } from './order-proof';
 import { resubmitOrderForApproval } from './approval';
 import { getContainer } from '@/server/di/container';
-import type { Order, OrderStatus, PaymentProvider } from '@/types/index';
+import type { Order, OrderStatus } from '@/types/index';
 import { ORDER_STATUSES } from '@/lib/order-admin';
 
 export async function listOrdersAction(): Promise<Order[]> {
@@ -40,41 +40,11 @@ export async function getOrderAction(id: string): Promise<Order | null> {
 export async function lookupOrderAction(
   orderNumber: string,
   contact: string,
-): Promise<Order | null> {
-  return getContainer().orders.findByNumberAndContact(orderNumber, contact);
+): Promise<{ ok: true; data: Order | null } | { ok: false; error: string }> {
+  if (typeof orderNumber !== 'string' || typeof contact !== 'string' || orderNumber.length > 60 || contact.length > 254) return { ok: true, data: null };
+  const proof = await proveOrder(orderNumber, contact);
+  return proof.ok ? { ok: true, data: proof.order } : proof;
 }
-
-export async function createOrderAction(orderPayload: {
-  customerName: string;
-  customerEmail: string;
-  customerPhone: string;
-  buyerKraPin?: string | null;
-  shippingAddress: {
-    street: string;
-    city: string;
-    countyOrState: string;
-    postalCode?: string;
-    country: string;
-  };
-  items: { productId: string; quantity: number }[];
-  paymentMethod: PaymentProvider;
-  currency?: 'KES' | 'USD';
-  dimensionFields?:
-    | Record<string, string | null | undefined>
-    | {
-        global: Record<string, string>;
-        shortcut: Record<string, string>;
-      };
-}): Promise<Order> {
-  const order = await OrdersService.createCheckout(orderPayload);
-  revalidatePath('/admin/orders');
-  revalidatePath('/admin/customers');
-  revalidatePath('/admin/inventory');
-  revalidatePath('/');
-  return order;
-}
-
-export const createCheckoutOrderAction = createOrderAction;
 
 /** Sends a reopened order back for approval. */
 export async function resubmitOrderApprovalAction(

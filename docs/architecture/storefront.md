@@ -1,6 +1,6 @@
 # The storefront
 
-Search engines and shared links: see [seo.md](seo.md).
+Search engines and shared links: see [seo.md](seo.md). The whole journey from the front page to a delivered order, with every edge case found, is in [web-shop-workflow.md](web-shop-workflow.md).
 
 What a shopper sees, how it is built, and the rules it keeps.
 
@@ -72,7 +72,7 @@ Pictures are always shown whole: `object-contain` on a plain background, never c
 
 ## Saved products
 
-Signed-in shoppers: table `wishlist_items` (capped at 200, live products only). Guests: the browser (`qsell_wishlist_v1`). A guest list joins the account's list once at sign-in.
+Signed-in shoppers: table `wishlist_items` (capped at 200, live products only). Guests: the browser (`qsell_wishlist_v1`). A guest list joins the account's list once at sign-in. A list can be shared by a link (`/wishlist/shared/<token>`).
 
 ## Newsletter
 
@@ -90,7 +90,6 @@ Name, SKU, brand and category are matched as substrings (trigram indexes). Descr
 
 * **Sending the newsletter.** Only the list and its opt-in/opt-out exist.
 * **Review photos, "helpful" votes, replies from the company.**
-* **A wishlist share link.**
 
 ## Status codes
 
