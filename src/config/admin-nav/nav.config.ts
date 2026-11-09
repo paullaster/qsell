@@ -513,6 +513,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'delivery_costs:manage',
       },
       {
+        id: 'delivery-courier-invoices',
+        title: 'Courier invoices',
+        name: 'delivery-courier-invoices',
+        href: '/admin/delivery/courier-invoices',
+        description: 'Type in the invoices couriers send and match them to the charges kept for their parcels, to see what agrees and what does not',
+        icon: 'FileCheck',
+        permission: 'delivery_costs:manage',
+      },
+      {
         id: 'delivery-performance',
         title: 'Delivery performance',
         name: 'delivery-performance',

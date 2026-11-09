@@ -131,6 +131,9 @@ import type { CourierAccounts } from '@/server/domains/delivery/courier-accounts
 import type { CourierSync } from '@/server/domains/delivery/courier-sync';
 import { DeliverySla } from '@/server/domains/delivery/sla';
 import { DeliveryReports } from '@/server/domains/delivery/reports';
+import { CourierInvoices } from '@/server/domains/delivery/courier-invoices';
+import { DeliverySlaNotices } from '@/server/domains/delivery/sla-notices';
+import { RiderPay } from '@/server/domains/delivery/rider-pay';
 import { DeliveryPerformanceReports } from '@/server/domains/delivery/performance';
 import type { DeliveryCosts } from '@/server/domains/delivery/costs';
 import { DoorHandIns } from '@/server/domains/delivery/door-hand-ins';
@@ -310,9 +313,12 @@ export interface AppContainer {
   deliveryCostBooks: DeliveryCostBooks;
   deliveryReports: DeliveryReports;
   deliveryPerformance: DeliveryPerformanceReports;
+  riderPay: RiderPay;
   orderVisits: OrderVisits;
   deliverySlots: DeliverySlots;
   deliverySla: DeliverySla;
+  deliverySlaNotices: DeliverySlaNotices;
+  courierInvoices: CourierInvoices;
   doorHandIns: DoorHandIns;
   doorMpesa: DoorMpesa;
   courierShipments: CourierShipments;
@@ -671,9 +677,12 @@ export function getContainer(): AppContainer {
     deliveryCostBooks: new DeliveryCostBooks(drizzleDb, decisionLog, finance.engine, numbering),
     deliveryReports: new DeliveryReports(drizzleDb),
     deliveryPerformance: new DeliveryPerformanceReports(drizzleDb),
+    riderPay: new RiderPay(drizzleDb),
     orderVisits: new OrderVisits(drizzleDb, decisionLog, stockLedger),
     deliverySlots: deliveryServices.deliverySlots,
     deliverySla: new DeliverySla(drizzleDb, decisionLog),
+    deliverySlaNotices: new DeliverySlaNotices(drizzleDb, email, companySettings),
+    courierInvoices: new CourierInvoices(drizzleDb, decisionLog),
     doorHandIns: new DoorHandIns(drizzleDb, decisionLog, finance.engine, numbering),
     doorMpesa: new DoorMpesa(drizzleDb, {
       // Loaded when used: starting a payment reads the container, so it is not imported while the container is being made.

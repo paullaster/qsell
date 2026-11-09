@@ -1,8 +1,9 @@
 import { DISPOSITION_WORDS, ISSUE_MOMENTS, ISSUE_MOMENT_WORDS, RETURN_DISPOSITIONS } from '@/lib/stock-issue';
-import { and, eq, isNull, sql } from 'drizzle-orm';
-import { courierAccounts, stockLocations, orders, orderVisits, branches, customerGroups, deliveryRiderSettings, deliveryRiders, bankAccounts, deliveryRuns, deliveryZones, glAccounts, paymentMethods, products, users } from '@/server/db/drizzle/schema';
+import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm';
+import { drizzleDb } from '@/server/db/drizzle/client';
+import { courierAccounts, deliveryCosts, stockLocations, orders, orderVisits, branches, customerGroups, deliveryRiderSettings, deliveryRiders, bankAccounts, deliveryRuns, deliveryZones, glAccounts, paymentMethods, products, users } from '@/server/db/drizzle/schema';
 import { ADAPTER_WORDS, COURIER_ADAPTER_IDS } from '@/server/adapters/courier/registry';
-import { COST_KINDS, COST_WORDS } from '@/lib/delivery-cost';
+import { COST_KINDS, COST_WORDS, RUNNING_KINDS } from '@/lib/delivery-cost';
 import { RIDER_KINDS, RIDER_KIND_WORDS, RIDER_STATUSES, RIDER_STATUS_WORDS } from '@/lib/delivery-rider';
 import { RUN_STATUSES, RUN_STATUS_WORDS } from '@/lib/dispatch-run';
 import { DELIVERY_STATUSES, FAILURE_REASONS, STATUS_WORDS } from '@/lib/delivery-document';
@@ -145,6 +146,22 @@ const openRuns = tableSource({
   scope: ({ filters, companyId }) => {
     acceptFilters(filters, {});
     return [and(eq(deliveryRuns.companyId, companyId), eq(deliveryRuns.status, 'planned')) ?? sql`false`];
+  },
+  toOption: (row) => ({ id: text(row.id), label: `${text(row.label)} · ${text(row.rider)} · ${text(row.day)}`, description: null, badge: null }),
+});
+
+/** Any run of the company, newest first, for tying a cost to the run it was for. */
+const anyRuns = tableSource({
+  key: 'delivery-runs-any',
+  permission: 'delivery_costs:manage',
+  table: deliveryRuns,
+  id: deliveryRuns.id,
+  label: deliveryRuns.number,
+  searchColumns: [deliveryRuns.number, deliveryRuns.riderName],
+  select: { rider: deliveryRuns.riderName, day: deliveryRuns.runDate },
+  scope: ({ filters, companyId }) => {
+    acceptFilters(filters, {});
+    return [eq(deliveryRuns.companyId, companyId)];
   },
   toOption: (row) => ({ id: text(row.id), label: `${text(row.label)} · ${text(row.rider)} · ${text(row.day)}`, description: null, badge: null }),
 });
@@ -466,4 +483,26 @@ const costKinds = staticSource({
   },
 });
 
-export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts, deliveryStatuses, deliveryFailureReasons, stockIssueMoments, returnDispositions, openRuns, runStatuses, courierNews, riders, staffToRide, riderKinds, riderStatuses, doorCashMethods, handInAccounts, handInWitnesses, varianceAccounts, costKinds, payoutMethods, costAccounts, visitCrew, visitOrders, visitProducts, visitLocations, leadProducts, leadZones, activeCouriers, courierKinds];
+/** The couriers that have charged the company (by the name kept with the charge), for choosing whose invoice is being typed. */
+const chargedCouriers = staticSource({
+  key: 'delivery-charged-couriers',
+  permission: 'delivery_costs:manage',
+  items: async ({ filters, companyId }) => {
+    acceptFilters(filters, {});
+    const rows = await drizzleDb.selectDistinct({ name: deliveryCosts.courierName }).from(deliveryCosts).where(and(eq(deliveryCosts.companyId, companyId), eq(deliveryCosts.kind, 'courier'), isNotNull(deliveryCosts.courierName))).limit(200);
+    const connected = await drizzleDb.select({ name: courierAccounts.name }).from(courierAccounts).where(eq(courierAccounts.companyId, companyId)).limit(200);
+    const names = [...new Set([...rows.map((r) => r.name), ...connected.map((r) => r.name)].flatMap((n) => (n === null ? [] : [n])))];
+    return names.map((name) => ({ id: name, label: name, description: null, badge: null }));
+  },
+});
+
+const runningCostKinds = staticSource({
+  key: 'delivery-running-cost-kinds',
+  permission: 'delivery_costs:manage',
+  items: ({ filters }) => {
+    acceptFilters(filters, {});
+    return RUNNING_KINDS.map((id) => ({ id, label: COST_WORDS[id], description: null, badge: null }));
+  },
+});
+
+export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts, deliveryStatuses, deliveryFailureReasons, stockIssueMoments, returnDispositions, openRuns, anyRuns, runStatuses, courierNews, riders, staffToRide, riderKinds, riderStatuses, doorCashMethods, handInAccounts, handInWitnesses, varianceAccounts, costKinds, runningCostKinds, chargedCouriers, payoutMethods, costAccounts, visitCrew, visitOrders, visitProducts, visitLocations, leadProducts, leadZones, activeCouriers, courierKinds];

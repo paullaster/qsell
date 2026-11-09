@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, inArray, isNotNull, notInArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, deliveries, deliverySlaAcks, deliverySlaEvents, deliverySlaSettings, orders } from '@/server/db/drizzle/schema';
-import { DEFAULT_AT_RISK_MINUTES, DEFAULT_ESCALATE_MINUTES, LEVEL_WORDS, SLA_WORDS, checkSlaSettings, levelsReached, slaState, type EscalationLevel, type SlaState } from '@/lib/delivery-sla';
+import { branches, deliveries, deliverySlaAcks, deliverySlaEvents, deliverySlaNotices, deliverySlaSettings, orders } from '@/server/db/drizzle/schema';
+import { DEFAULT_AT_RISK_MINUTES, DEFAULT_ESCALATE_MINUTES, LEVEL_WORDS, SLA_WORDS, audienceFor, checkSlaSettings, readAddressList, levelsReached, slaState, type EscalationLevel, type SlaState } from '@/lib/delivery-sla';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { DocActor, DocRefusal, DocResult } from './documents';
 
@@ -10,6 +10,10 @@ type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 export interface SlaSettingsView {
   atRiskMinutes: number;
   escalateAfterMinutes: number;
+  /** Mailed when a delivery is at risk or late. */
+  notifyDispatch: string[];
+  /** Mailed when a delivery has been late for the set time. */
+  notifySupervisor: string[];
   version: number;
 }
 
@@ -31,11 +35,20 @@ export interface LateDelivery {
   levelWords: string | null;
   raisedAt: string | null;
   acknowledged: { by: string; at: string; note: string | null } | null;
+  /** The mails the levels reached for this window caused. */
+  mails: { sent: number; waiting: number; failed: number };
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const fail = (reason: DocRefusal, message: string): { ok: false; reason: DocRefusal; message: string } => ({ ok: false, reason, message });
 const ORDER_OF: Record<EscalationLevel, number> = { at_risk: 1, late: 2, escalated: 3 };
+/** Sent, waiting and failed for good (tried the most it will be). */
+const MAX_NOTICE_TRIES = 5;
+function mailsOf(rows: { status: 'queued' | 'sent' | 'failed'; attempts: number }[]): { sent: number; waiting: number; failed: number } {
+  const sent = rows.filter((n) => n.status === 'sent').length;
+  const failed = rows.filter((n) => n.status === 'failed' && n.attempts >= MAX_NOTICE_TRIES).length;
+  return { sent, failed, waiting: rows.length - sent - failed };
+}
 /** A delivery that is finished or cancelled is no longer expected, so it is not watched. */
 const CLOSED = ['cancelled', 'returned', 'delivered'] as const;
 
@@ -53,28 +66,32 @@ export class DeliverySla {
 
   async settings(companyId: string): Promise<SlaSettingsView> {
     const [row] = await this.db.select().from(deliverySlaSettings).where(eq(deliverySlaSettings.companyId, companyId));
-    return { atRiskMinutes: row?.atRiskMinutes ?? DEFAULT_AT_RISK_MINUTES, escalateAfterMinutes: row?.escalateAfterMinutes ?? DEFAULT_ESCALATE_MINUTES, version: row?.version ?? 1 };
+    return { atRiskMinutes: row?.atRiskMinutes ?? DEFAULT_AT_RISK_MINUTES, escalateAfterMinutes: row?.escalateAfterMinutes ?? DEFAULT_ESCALATE_MINUTES, notifyDispatch: row?.notifyDispatch ?? [], notifySupervisor: row?.notifySupervisor ?? [], version: row?.version ?? 1 };
   }
 
-  async setSettings(actor: DocActor, input: { atRiskMinutes: unknown; escalateAfterMinutes: unknown; expectedVersion: unknown }): Promise<DocResult<SlaSettingsView>> {
+  async setSettings(actor: DocActor, input: { atRiskMinutes: unknown; escalateAfterMinutes: unknown; notifyDispatch?: unknown; notifySupervisor?: unknown; expectedVersion: unknown }): Promise<DocResult<SlaSettingsView>> {
     const checked = checkSlaSettings(input);
     if (!checked.ok) return fail('bad_input', checked.error);
+    const dispatch = readAddressList(input.notifyDispatch);
+    if (!dispatch.ok) return fail('bad_input', `Dispatchers: ${dispatch.error}`);
+    const supervisor = readAddressList(input.notifySupervisor);
+    if (!supervisor.ok) return fail('bad_input', `Supervisors: ${supervisor.error}`);
     return await this.db.transaction(async (tx): Promise<DocResult<SlaSettingsView>> => {
       await tx.insert(deliverySlaSettings).values({ companyId: actor.companyId }).onConflictDoNothing();
       const [row] = await tx.select().from(deliverySlaSettings).where(eq(deliverySlaSettings.companyId, actor.companyId)).for('update');
       if (row === undefined) throw new Error('The settings could not be read.');
       if (input.expectedVersion !== row.version) return fail('conflict', 'Someone else changed these settings. Reload to see the latest.');
-      const [saved] = await tx.update(deliverySlaSettings).set({ atRiskMinutes: checked.atRiskMinutes, escalateAfterMinutes: checked.escalateAfterMinutes, version: row.version + 1, updatedBy: actor.userId, updatedAt: this.clock() }).where(eq(deliverySlaSettings.companyId, actor.companyId)).returning();
+      const [saved] = await tx.update(deliverySlaSettings).set({ atRiskMinutes: checked.atRiskMinutes, escalateAfterMinutes: checked.escalateAfterMinutes, notifyDispatch: dispatch.addresses, notifySupervisor: supervisor.addresses, version: row.version + 1, updatedBy: actor.userId, updatedAt: this.clock() }).where(eq(deliverySlaSettings.companyId, actor.companyId)).returning();
       if (saved === undefined) throw new Error('The settings were not saved.');
       await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_sla_settings', id: actor.companyId }, action: 'delivery.sla_settings_changed', actor: { type: 'user', id: actor.userId }, inputs: { before: { atRiskMinutes: row.atRiskMinutes, escalateAfterMinutes: row.escalateAfterMinutes }, after: { atRiskMinutes: checked.atRiskMinutes, escalateAfterMinutes: checked.escalateAfterMinutes } } }, tx);
-      return { ok: true, data: { atRiskMinutes: saved.atRiskMinutes, escalateAfterMinutes: saved.escalateAfterMinutes, version: saved.version } };
+      return { ok: true, data: { atRiskMinutes: saved.atRiskMinutes, escalateAfterMinutes: saved.escalateAfterMinutes, notifyDispatch: saved.notifyDispatch, notifySupervisor: saved.notifySupervisor, version: saved.version } };
     });
   }
 
   /** Raises the events deliveries have reached by now. Cheap when nothing is late: only deliveries with a window not yet over are read. */
   async scan(now: Date = this.clock(), limit = 500): Promise<{ checked: number; raised: number }> {
     const rows = await this.db
-      .select({ id: deliveries.id, companyId: deliveries.companyId, status: deliveries.status, windowStart: deliveries.windowStart, windowEnd: deliveries.windowEnd, deliveredAt: deliveries.deliveredAt, atRisk: sql<number>`coalesce(${deliverySlaSettings.atRiskMinutes}, ${DEFAULT_AT_RISK_MINUTES})`, escalate: sql<number>`coalesce(${deliverySlaSettings.escalateAfterMinutes}, ${DEFAULT_ESCALATE_MINUTES})` })
+      .select({ id: deliveries.id, companyId: deliveries.companyId, status: deliveries.status, windowStart: deliveries.windowStart, windowEnd: deliveries.windowEnd, deliveredAt: deliveries.deliveredAt, atRisk: sql<number>`coalesce(${deliverySlaSettings.atRiskMinutes}, ${DEFAULT_AT_RISK_MINUTES})`, escalate: sql<number>`coalesce(${deliverySlaSettings.escalateAfterMinutes}, ${DEFAULT_ESCALATE_MINUTES})`, notifyDispatch: sql<string[]>`coalesce(${deliverySlaSettings.notifyDispatch}, '{}'::text[])`, notifySupervisor: sql<string[]>`coalesce(${deliverySlaSettings.notifySupervisor}, '{}'::text[])` })
       .from(deliveries)
       .leftJoin(deliverySlaSettings, eq(deliverySlaSettings.companyId, deliveries.companyId))
       .where(and(isNotNull(deliveries.windowEnd), notInArray(deliveries.status, [...CLOSED]), sql`${deliveries.windowStart} - make_interval(mins => coalesce(${deliverySlaSettings.atRiskMinutes}, ${DEFAULT_AT_RISK_MINUTES})) <= ${now.toISOString()}::timestamptz`))
@@ -88,15 +105,19 @@ export class DeliverySla {
       const levels = levelsReached({ state, windowEnd: end, now, escalateAfterMinutes: r.escalate });
       if (levels.length === 0) continue;
       const minutesLate = Math.max(0, Math.floor((now.getTime() - end.getTime()) / 60_000));
-      const made = await this.db
-        .insert(deliverySlaEvents)
-        .values(levels.map((level) => ({ companyId: r.companyId, deliveryId: r.id, level, windowEnd: end, minutesLate: level === 'at_risk' ? 0 : minutesLate })))
-        .onConflictDoNothing()
-        .returning({ id: deliverySlaEvents.id, level: deliverySlaEvents.level });
-      for (const e of made) {
-        raised += 1;
-        await this.decisions.record({ companyId: r.companyId, subject: { type: 'delivery', id: r.id }, action: `delivery.sla_${e.level}`, actor: { type: 'system', id: 'delivery-sla-scan' }, inputs: { windowEnd: end.toISOString(), minutesLate } });
-      }
+      // The events, the mails they cause and the log lines are one step: a scan that stops half way leaves nothing half done.
+      const made = await this.db.transaction(async (tx) => {
+        const events = await tx
+          .insert(deliverySlaEvents)
+          .values(levels.map((level) => ({ companyId: r.companyId, deliveryId: r.id, level, windowEnd: end, minutesLate: level === 'at_risk' ? 0 : minutesLate })))
+          .onConflictDoNothing()
+          .returning({ id: deliverySlaEvents.id, level: deliverySlaEvents.level });
+        const notices = events.flatMap((e) => (audienceFor(e.level) === 'supervisor' ? r.notifySupervisor : r.notifyDispatch).map((recipient) => ({ companyId: r.companyId, eventId: e.id, recipient })));
+        if (notices.length > 0) await tx.insert(deliverySlaNotices).values(notices).onConflictDoNothing();
+        for (const e of events) await this.decisions.record({ companyId: r.companyId, subject: { type: 'delivery', id: r.id }, action: `delivery.sla_${e.level}`, actor: { type: 'system', id: 'delivery-sla-scan' }, inputs: { windowEnd: end.toISOString(), minutesLate } }, tx);
+        return events;
+      });
+      raised += made.length;
     }
     return { checked: rows.length, raised };
   }
@@ -119,6 +140,7 @@ export class DeliverySla {
       .leftJoin(deliverySlaAcks, eq(deliverySlaAcks.eventId, deliverySlaEvents.id))
       .where(inArray(deliverySlaEvents.deliveryId, rows.map((r) => r.d.id)))
       .orderBy(desc(deliverySlaEvents.raisedAt));
+    const notices = events.length === 0 ? [] : await this.db.select({ eventId: deliverySlaNotices.eventId, status: deliverySlaNotices.status, attempts: deliverySlaNotices.attempts }).from(deliverySlaNotices).where(inArray(deliverySlaNotices.eventId, events.map((x) => x.e.id)));
     const out: LateDelivery[] = [];
     for (const r of rows) {
       const ws = r.d.windowStart;
@@ -144,6 +166,7 @@ export class DeliverySla {
         level: top?.e.level ?? null,
         levelWords: top === undefined ? null : LEVEL_WORDS[top.e.level],
         raisedAt: top?.e.raisedAt.toISOString() ?? null,
+        mails: mailsOf(notices.filter((n) => mine.some((x) => x.e.id === n.eventId))),
         acknowledged: acked?.ackBy == null || acked.ackAt === null ? null : { by: acked.ackBy, at: acked.ackAt.toISOString(), note: acked.ackNote },
       });
     }

@@ -258,13 +258,27 @@ async function deliverPromised(number: string, mode: string): Promise<Record<str
   const [slot] = await db.insert(deliverySlots).values({ companyId: company.id, branchId: d.branchId, name: `Performance ${number}`, weekdays: [1, 2, 3, 4, 5, 6, 7], startsAt: '09:00', endsAt: '12:00', capacity: 5, createdBy: 'e2e' }).returning({ id: deliverySlots.id });
   const now = Date.now();
   const end = new Date(now + (mode === 'late' ? -1 : 1) * 3_600_000);
-  await db.update(deliveries).set({ slotId: slot?.id ?? null, slotDay: new Date(now).toISOString().slice(0, 10), windowStart: new Date(end.getTime() - 3 * 3_600_000), windowEnd: end, slotBookedAt: new Date(now), slotBookedBy: 'e2e' }).where(eq(deliveries.id, d.id));
+  await db.update(deliveries).set({ slotId: slot?.id ?? null, slotDay: new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(new Date(now)), windowStart: new Date(end.getTime() - 3 * 3_600_000), windowEnd: end, slotBookedAt: new Date(now), slotBookedBy: 'e2e' }).where(eq(deliveries.id, d.id));
   const actor = { companyId: company.id, userId: 'e2e' };
   for (const step of [() => c.deliveryDocuments.dispatch(actor, d.id, {}), () => c.deliveryDocuments.deliver(actor, d.id, { receivedBy: 'Mama' })]) {
     const r = await step();
     if (!r.ok) throw new Error(`e2e fixture: ${r.message}`);
   }
   return { delivered: number };
+}
+
+/** A courier delivery made ready, sent out with the named courier, and a charge of `amount` typed in for it (what the office does on the delivery screen). */
+async function courierCharge(tag: string, courier: string, amount: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const c = getContainer();
+  const company = await c.companySettings.ensureSeeded();
+  const actor = { companyId: company.id, userId: 'e2e' };
+  const made = await ready((await courierOrder(tag)).orderNumber ?? '');
+  const sent = await c.deliveryDocuments.dispatch(actor, made.id ?? '', { courierName: courier });
+  if (!sent.ok) throw new Error(`e2e fixture: ${sent.message}`);
+  const charged = await c.deliveryCosts.recordCourier(actor, made.id ?? '', { amount: Number(amount), note: 'E2E waybill' });
+  if (!charged.ok) throw new Error(`e2e fixture: ${charged.message}`);
+  return { number: made.number ?? '', costId: charged.data.id };
 }
 
 async function main(): Promise<void> {
@@ -285,6 +299,7 @@ async function main(): Promise<void> {
   if (command === 'messages') result = await messages(tag);
   if (command === 'deliver-promised' && extra !== undefined) result = await deliverPromised(tag, extra);
   if (command === 'courier-order') result = await courierOrder(tag);
+  if (command === 'courier-charge' && extra !== undefined) result = await courierCharge(tag, extra.split('|')[0] ?? '', extra.split('|')[1] ?? '0');
   if (command === 'service') result = { id: await serviceItem(), name: SERVICE_NAME };
   if (result === null) throw new Error('usage: delivery-fixtures open|close|order|billing|service|pay|collection <tag>');
   process.stdout.write(`FIXTURE ${JSON.stringify(result)}\n`);

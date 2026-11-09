@@ -50,7 +50,13 @@ test.describe('late deliveries', () => {
     await form.getByLabel('Tell the supervisor after this many minutes late').fill('0');
     await form.getByRole('button', { name: 'Save' }).click();
     await expect(page.getByRole('alert').filter({ hasText: 'Tell the supervisor after this many minutes late' })).toBeVisible({ timeout: 30_000 });
+    // The addresses mailed about lateness are checked, and kept.
     await form.getByLabel('Tell the supervisor after this many minutes late').fill('45');
+    await form.getByLabel('Mail the dispatchers when a delivery is at risk or late').fill('dispatch@e2e.test, nobody');
+    await form.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByRole('alert').filter({ hasText: '"nobody" is not a mail address' })).toBeVisible({ timeout: 30_000 });
+    await form.getByLabel('Mail the dispatchers when a delivery is at risk or late').fill('dispatch@e2e.test, Ops@e2e.test');
+    await form.getByLabel('Mail the supervisors when it has been late too long').fill('boss@e2e.test');
     await form.getByLabel('At risk this many minutes before the window ends').fill('30');
     await form.getByRole('button', { name: 'Save' }).click();
     await expect(page.getByText('Saved. The Late deliveries screen uses these from now on.')).toBeVisible({ timeout: 30_000 });
@@ -58,6 +64,10 @@ test.describe('late deliveries', () => {
     const again = page.getByRole('form', { name: 'Lateness' });
     await again.getByLabel('Tell the supervisor after this many minutes late').fill('60');
     await again.getByLabel('At risk this many minutes before the window ends').fill('60');
+    await expect(again.getByLabel('Mail the dispatchers when a delivery is at risk or late')).toHaveValue('dispatch@e2e.test, ops@e2e.test');
+    await expect(again.getByLabel('Mail the supervisors when it has been late too long')).toHaveValue('boss@e2e.test');
+    await again.getByLabel('Mail the dispatchers when a delivery is at risk or late').fill('');
+    await again.getByLabel('Mail the supervisors when it has been late too long').fill('');
     await again.getByRole('button', { name: 'Save' }).click();
     await expect(page.getByText('Saved. The Late deliveries screen uses these from now on.').first()).toBeVisible({ timeout: 30_000 });
   });

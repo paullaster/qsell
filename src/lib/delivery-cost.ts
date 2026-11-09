@@ -3,7 +3,7 @@
  * the key that makes each cost happen once, and how a cost is taken back. The database and screens follow them.
  */
 
-export const COST_KINDS = ['rider_delivery', 'rider_day', 'courier', 'other'] as const;
+export const COST_KINDS = ['rider_delivery', 'rider_day', 'courier', 'fuel', 'vehicle', 'other'] as const;
 export type CostKind = (typeof COST_KINDS)[number];
 export const isCostKind = (value: unknown): value is CostKind => typeof value === 'string' && (COST_KINDS as readonly string[]).includes(value);
 
@@ -11,6 +11,8 @@ export const COST_WORDS: Record<CostKind, string> = {
   rider_delivery: 'Rider pay for a delivery',
   rider_day: 'Rider pay for a day on a run',
   courier: 'Courier charge',
+  fuel: 'Fuel',
+  vehicle: 'Vehicle cost (repairs, service, parking, tolls)',
   other: 'Other cost',
 };
 
@@ -35,6 +37,20 @@ export const deliveryPayKey = (deliveryId: string): string => `rider_delivery:${
 export const dayPayKey = (riderId: string, runDate: string): string => `rider_day:${riderId}:${runDate}`;
 export const reversalKey = (costId: string): string => `reverse:${costId}`;
 
+/** The costs of running the fleet that are typed in, each tied to nothing but a day and, if the office wishes, a run. */
+export const RUNNING_KINDS = ['fuel', 'vehicle', 'other'] as const;
+export type RunningKind = (typeof RUNNING_KINDS)[number];
+export const isRunningKind = (value: unknown): value is RunningKind => typeof value === 'string' && (RUNNING_KINDS as readonly string[]).includes(value);
+
+/** A fuel, vehicle or other cost as typed: which kind, how much (more than nothing, to the cent) and what for (the words are kept with it). */
+export function runningCostProblem(kind: unknown, amount: unknown, note: unknown): { error: string } | { kind: RunningKind; cents: number; note: string } {
+  if (!isRunningKind(kind)) return { error: 'Choose fuel, a vehicle cost or another cost.' };
+  if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0 || amount > 10_000_000) return { error: 'Say how much it cost, in shillings.' };
+  const words = typeof note === 'string' ? note.trim() : '';
+  if (words.length < 3) return { error: 'Say what it was for (for example the vehicle and the trip), in a few words.' };
+  return { kind, cents: cents(amount), note: words.slice(0, 300) };
+}
+
 /** What a courier charged, as typed: more than nothing, to the cent. */
 export function courierChargeProblem(amount: unknown): { error: string } | { cents: number } {
   if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0 || amount > 10_000_000) return { error: 'Say what the courier charged, in shillings.' };
@@ -51,7 +67,7 @@ export const totalCents = (lines: readonly { cents: number }[]): number => lines
 
 /** Costs added up by kind. */
 export function byKind(lines: readonly CostLine[]): Record<CostKind, number> {
-  const out: Record<CostKind, number> = { rider_delivery: 0, rider_day: 0, courier: 0, other: 0 };
+  const out: Record<CostKind, number> = { rider_delivery: 0, rider_day: 0, courier: 0, fuel: 0, vehicle: 0, other: 0 };
   for (const l of lines) out[l.kind] += l.cents;
   return out;
 }

@@ -107,7 +107,7 @@ export async function slaSettingsAction() {
 export async function setSlaSettingsAction(raw: unknown) {
   return await runDelivery('delivery_slots:manage', async (ctx) => {
     const i = objectOf(raw);
-    return dataOf(await getContainer().deliverySla.setSettings({ companyId: ctx.companyId, userId: ctx.userId }, { atRiskMinutes: i.atRiskMinutes, escalateAfterMinutes: i.escalateAfterMinutes, expectedVersion: i.expectedVersion }));
+    return dataOf(await getContainer().deliverySla.setSettings({ companyId: ctx.companyId, userId: ctx.userId }, { atRiskMinutes: i.atRiskMinutes, escalateAfterMinutes: i.escalateAfterMinutes, notifyDispatch: i.notifyDispatch, notifySupervisor: i.notifySupervisor, expectedVersion: i.expectedVersion }));
   }, PATHS);
 }
 

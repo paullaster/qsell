@@ -1,0 +1,2 @@
+ALTER TABLE "delivery_costs" DROP CONSTRAINT "delivery_costs_kind_chk";--> statement-breakpoint
+ALTER TABLE "delivery_costs" ADD CONSTRAINT "delivery_costs_kind_chk" CHECK ("delivery_costs"."kind" IN ('rider_delivery','rider_day','courier','fuel','vehicle','other'));

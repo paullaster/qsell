@@ -1060,10 +1060,31 @@
       "breakpoints": true
     },
     {
+      "idx": 151,
+      "version": "7",
+      "when": 1794171409214,
+      "tag": "0151_delivery_running_costs",
+      "breakpoints": true
+    },
+    {
       "idx": 152,
       "version": "7",
       "when": 1794172454962,
       "tag": "0152_shop_carts",
+      "breakpoints": true
+    },
+    {
+      "idx": 153,
+      "version": "7",
+      "when": 1794173100061,
+      "tag": "0153_delivery_sla_notices",
+      "breakpoints": true
+    },
+    {
+      "idx": 154,
+      "version": "7",
+      "when": 1794173835047,
+      "tag": "0154_courier_invoices",
       "breakpoints": true
     }
   ]

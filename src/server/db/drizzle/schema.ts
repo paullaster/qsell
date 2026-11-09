@@ -709,11 +709,14 @@ export const deliverySlaSettings = pgTable(
       .references(() => companySettings.id, { onDelete: 'cascade' }),
     atRiskMinutes: integer('at_risk_minutes').notNull().default(60),
     escalateAfterMinutes: integer('escalate_after_minutes').notNull().default(60),
+    /** Who is mailed when a delivery is at risk or late (the dispatchers) and when it has been late too long (the supervisors). */
+    notifyDispatch: text('notify_dispatch').array().notNull().default(sql`'{}'::text[]`),
+    notifySupervisor: text('notify_supervisor').array().notNull().default(sql`'{}'::text[]`),
     version: integer('version').notNull().default(1),
     updatedBy: text('updated_by'),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [check('delivery_sla_settings_chk', sql`${t.atRiskMinutes} BETWEEN 0 AND 1440 AND ${t.escalateAfterMinutes} BETWEEN 1 AND 1440`)],
+  (t) => [check('delivery_sla_settings_chk', sql`${t.atRiskMinutes} BETWEEN 0 AND 1440 AND ${t.escalateAfterMinutes} BETWEEN 1 AND 1440 AND cardinality(${t.notifyDispatch}) <= 10 AND cardinality(${t.notifySupervisor}) <= 10`)],
 );
 
 /**
@@ -742,6 +745,38 @@ export const deliverySlaEvents = pgTable(
     check('delivery_sla_events_level_chk', sql`${t.level} IN ('at_risk','late','escalated')`),
   ],
 );
+
+/**
+ * A mail about a lateness level, one for each event and address: queued in the same transaction that raises the event, sent afterwards
+ * by the worker (leased, retried with a growing wait, and in the end left visible as failed). The address is kept as it was when the event
+ * was raised, so changing the settings later does not change who was told.
+ */
+export const deliverySlaNotices = pgTable(
+  'delivery_sla_notices',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    eventId: uuid('event_id')
+      .notNull()
+      .references(() => deliverySlaEvents.id, { onDelete: 'restrict' }),
+    recipient: text('recipient').notNull(),
+    status: text('status').$type<'queued' | 'sent' | 'failed'>().notNull().default('queued'),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+    nextTryAt: timestamp('next_try_at', { withTimezone: true }).notNull().defaultNow(),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_sla_notices_once_uidx').on(t.eventId, t.recipient),
+    index('delivery_sla_notices_due_idx').on(t.status, t.nextTryAt),
+    check('delivery_sla_notices_status_chk', sql`${t.status} IN ('queued','sent','failed')`),
+    check('delivery_sla_notices_attempts_chk', sql`${t.attempts} >= 0`),
+  ],
+);
+export type DeliverySlaNoticeRow = typeof deliverySlaNotices.$inferSelect;
 
 /** Someone saying they have seen it and what is being done. */
 export const deliverySlaAcks = pgTable('delivery_sla_acks', {
@@ -1028,7 +1063,7 @@ export const deliveryCosts = pgTable(
     companyId: uuid('company_id')
       .notNull()
       .references(() => companySettings.id, { onDelete: 'cascade' }),
-    kind: text('kind').$type<'rider_delivery' | 'rider_day' | 'courier' | 'other'>().notNull(),
+    kind: text('kind').$type<'rider_delivery' | 'rider_day' | 'courier' | 'fuel' | 'vehicle' | 'other'>().notNull(),
     /** Positive is a cost; a reversal carries the opposite sign. */
     amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
     currency: text('currency').notNull(),
@@ -1048,7 +1083,7 @@ export const deliveryCosts = pgTable(
     index('delivery_costs_delivery_idx').on(t.deliveryId),
     index('delivery_costs_rider_idx').on(t.riderId, t.createdAt),
     index('delivery_costs_company_time_idx').on(t.companyId, t.createdAt),
-    check('delivery_costs_kind_chk', sql`${t.kind} IN ('rider_delivery','rider_day','courier','other')`),
+    check('delivery_costs_kind_chk', sql`${t.kind} IN ('rider_delivery','rider_day','courier','fuel','vehicle','other')`),
     check('delivery_costs_amount_chk', sql`${t.amount} <> 0`),
     check('delivery_costs_rider_chk', sql`${t.kind} NOT IN ('rider_delivery','rider_day') OR ${t.riderId} IS NOT NULL`),
     check('delivery_costs_delivery_chk', sql`${t.kind} NOT IN ('rider_delivery','courier') OR ${t.deliveryId} IS NOT NULL`),
@@ -1058,6 +1093,62 @@ export const deliveryCosts = pgTable(
   ],
 );
 export type DeliveryCostRow = typeof deliveryCosts.$inferSelect;
+
+/**
+ * An invoice a courier sent us, typed in as it reads, to be matched to the charges we have kept for its parcels. Its words never change; a
+ * wrong one is voided with a reason (which lets its charges be matched to another). It is not a supplier invoice (those belong to a purchase
+ * order); paying it is done in the usual way.
+ */
+export const courierInvoices = pgTable(
+  'courier_invoices',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    courierName: text('courier_name').notNull(),
+    invoiceNo: text('invoice_no').notNull(),
+    invoiceDate: date('invoice_date', { mode: 'string' }).notNull(),
+    total: numeric('total', { precision: 14, scale: 2 }).notNull(),
+    currency: text('currency').notNull(),
+    note: text('note'),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    voidedAt: timestamp('voided_at', { withTimezone: true }),
+    voidedBy: text('voided_by'),
+    voidReason: text('void_reason'),
+  },
+  (t) => [
+    // One live invoice for a courier and a number, whatever the case; a voided one frees the number.
+    uniqueIndex('courier_invoices_live_uidx')
+      .on(t.companyId, sql`lower(${t.courierName})`, sql`lower(${t.invoiceNo})`)
+      .where(sql`${t.voidedAt} IS NULL`),
+    index('courier_invoices_company_idx').on(t.companyId, t.createdAt.desc()),
+    check('courier_invoices_total_chk', sql`${t.total} > 0`),
+    check('courier_invoices_void_chk', sql`(${t.voidedAt} IS NULL) = (${t.voidedBy} IS NULL) AND (${t.voidedAt} IS NULL) = (${t.voidReason} IS NULL)`),
+  ],
+);
+export type CourierInvoiceRow = typeof courierInvoices.$inferSelect;
+
+/** A courier charge counted on an invoice. A charge is on at most one invoice. */
+export const courierInvoiceCharges = pgTable(
+  'courier_invoice_charges',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    invoiceId: uuid('invoice_id')
+      .notNull()
+      .references(() => courierInvoices.id, { onDelete: 'restrict' }),
+    costId: uuid('cost_id')
+      .notNull()
+      .references(() => deliveryCosts.id, { onDelete: 'restrict' }),
+    matchedBy: text('matched_by').notNull(),
+    matchedAt: timestamp('matched_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('courier_invoice_charges_cost_uidx').on(t.costId), index('courier_invoice_charges_invoice_idx').on(t.invoiceId)],
+);
 
 /**
  * Whether a rider-pay cost has reached the books. A queue: the cost is saved first and posted afterwards, retrying with a growing

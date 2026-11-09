@@ -2,7 +2,7 @@ import type { DeliveryCosts } from './costs';
 import { DEFAULT_AT_RISK_MINUTES, slaState, type SlaState } from '@/lib/delivery-sla';
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, deliveries, deliveryLines, deliveryRunStops, deliveryRuns, deliveryShipments, orderItems, orders, products } from '@/server/db/drizzle/schema';
+import { branches, deliveries, deliveryLines, deliveryRunStops, deliveryRuns, deliverySlaSettings, deliveryShipments, orderItems, orders, products } from '@/server/db/drizzle/schema';
 import { RUN_ACTION_WORDS, RUN_STATUS_WORDS, canJoinRun, isReordering, isRunEditable, nearestNext, nextRunStatus, runActionsFrom, runCloseProblem, runTotals, waitingSince, type RunAction, type RunStatus, type RunTotals } from '@/lib/dispatch-run';
 import { STATUS_WORDS, type DeliveryStatus } from '@/lib/delivery-document';
 import { readGeoPoint, type GeoPoint } from '@/lib/geo';
@@ -106,9 +106,9 @@ export interface DispatchBoard {
   withCouriers: WithCourier[];
 }
 
-/** The window a delivery was promised and where it stands against it now (at the default warning time: the board does not read the company's setting for every row). */
-const promisedOf = (d: { windowStart: Date | null; windowEnd: Date | null; status: string; deliveredAt: Date | null }, now: Date): ReadyDelivery['promised'] => {
-  const state = slaState({ windowStart: d.windowStart, windowEnd: d.windowEnd, status: d.status, deliveredAt: d.deliveredAt, now, atRiskMinutes: DEFAULT_AT_RISK_MINUTES });
+/** The window a delivery was promised and where it stands against it now, at the company's own warning time (read once for the whole board). */
+const promisedOf = (d: { windowStart: Date | null; windowEnd: Date | null; status: string; deliveredAt: Date | null }, now: Date, atRiskMinutes: number): ReadyDelivery['promised'] => {
+  const state = slaState({ windowStart: d.windowStart, windowEnd: d.windowEnd, status: d.status, deliveredAt: d.deliveredAt, now, atRiskMinutes });
   return d.windowStart === null || d.windowEnd === null || state === null ? null : { start: d.windowStart.toISOString(), end: d.windowEnd.toISOString(), state };
 };
 
@@ -463,7 +463,7 @@ export class DeliveryRuns {
   /** The dispatch board: what is ready and on no run, the runs still to do, and what is out with couriers. Three reads, however much there is. */
   async board(companyId: string, input: { branchId?: unknown }, now: Date): Promise<DispatchBoard> {
     const branchId = typeof input.branchId === 'string' && input.branchId !== '' ? input.branchId : null;
-    const [ready, open, couriers] = await Promise.all([
+    const [ready, open, couriers, sla] = await Promise.all([
       this.db
         .select({ d: deliveries, branchName: branches.name, orderNumber: orders.orderNumber, customerName: orders.customerName })
         .from(deliveries)
@@ -487,10 +487,12 @@ export class DeliveryRuns {
         .where(and(eq(deliveryShipments.companyId, companyId), eq(deliveries.status, 'out_for_delivery'), branchId === null ? undefined : eq(deliveries.branchId, branchId)))
         .orderBy(asc(deliveryShipments.lastUpdateAt))
         .limit(100),
+      this.db.select({ atRisk: deliverySlaSettings.atRiskMinutes }).from(deliverySlaSettings).where(eq(deliverySlaSettings.companyId, companyId)),
     ]);
+    const atRiskMinutes = sla[0]?.atRisk ?? DEFAULT_AT_RISK_MINUTES;
     const [facts, counts] = await Promise.all([this.loadFacts(this.db, ready.map((r) => ({ deliveryId: r.d.id, orderId: r.d.orderId }))), this.stopCounts(open.map((o) => o.r.id))]);
     return {
-      ready: ready.map((r) => ({ deliveryId: r.d.id, number: r.d.number, orderNumber: r.orderNumber, customerName: r.customerName, area: areaOf(r.d.destination), branchId: r.d.branchId, branchName: r.branchName, units: facts.get(r.d.id)?.units ?? 0, value: facts.get(r.d.id)?.value ?? 0, waiting: waitingSince(r.d.readyAt, now), scheduledFor: r.d.scheduledFor, promised: promisedOf(r.d, now) })),
+      ready: ready.map((r) => ({ deliveryId: r.d.id, number: r.d.number, orderNumber: r.orderNumber, customerName: r.customerName, area: areaOf(r.d.destination), branchId: r.d.branchId, branchName: r.branchName, units: facts.get(r.d.id)?.units ?? 0, value: facts.get(r.d.id)?.value ?? 0, waiting: waitingSince(r.d.readyAt, now), scheduledFor: r.d.scheduledFor, promised: promisedOf(r.d, now, atRiskMinutes) })),
       runs: open.map((o) => ({ id: o.r.id, number: o.r.number, runDate: o.r.runDate, riderName: o.r.riderName, branchName: o.branchName, status: o.r.status, statusWords: RUN_STATUS_WORDS[o.r.status], stops: counts.get(o.r.id) ?? 0 })),
       withCouriers: couriers.map((c) => ({ deliveryId: c.d.id, number: c.d.number, orderNumber: c.orderNumber, customerName: c.customerName, courierName: c.s.courierName, trackingNumber: c.s.trackingNumber, status: c.s.status, lastNote: c.s.lastNote, lastUpdateAt: c.s.lastUpdateAt.toISOString(), problem: c.s.syncState === 'book_failed' || c.s.syncState === 'cancel_failed' ? (c.s.syncError ?? 'The courier could not be reached.') : null })),
     };

@@ -780,3 +780,49 @@ All counts are company-scoped, read in parallel, and the rates come from small p
 **Verified.** Rules tests (`delivery-performance.test.ts`); 5 database tests added to `reports.integration.test.ts` (in time, late and promised nothing counted apart, with the rider's first try; a delivery sent again not counted as first try; a courier's row with a parcel that could not be booked; a slot's places, a full day, a closed day taking the room away, a cancelled delivery freeing a place, and a time chosen that was not kept; empty and impossible days); a browser test (`e2e/delivery-performance.spec.ts`, desktop and phone).
 
 **Not built.** Trends over time (a day-by-day line) and comparing two periods; on-time rate by zone; a rider's own view of their figures in the rider app; the company's own thresholds for good and poor (they are fixed at 95% and 80%); exporting the figures.
+
+## 53. Leftovers pulled in (2026-11-09)
+
+Items the earlier sections list as not built, now built: fuel and vehicle costs (§53.1), a rider's own view of their pay (§53.2), lateness mailed to the dispatchers and supervisors (§53.3), courier invoice matching (§53.4), and the dispatch board using the company's own warning time on every row (§53.5). Still not built: a courier's cost fetched from its own system, a "send a test parcel" button on the courier screen, a specific courier's own adapter, and the ledger posting of materials used on a visit.
+
+### 53.1 Fuel and vehicle costs
+
+Two new kinds of cost, **fuel** and **vehicle** (repairs, service, parking, tolls), beside the existing *other* cost, which until now had no screen (migration 0151 only widens the allowed kinds). *Delivery › Delivery costs › Fuel and vehicle costs* takes the kind, the amount, **what it was for** (required: the vehicle and the trip, kept with the cost) and, optionally, the run it belongs to (a rider's run then carries it). The form carries its own key, so a double click or a retry saves one cost (`running:<key>`, the same unique key every cost has); after a save the form is emptied and gets a new key. A cost typed in this way appears in the list, in the delivery report (new *fuel* and *vehicles* parts of the cost and the margin) and is taken back like every other cost: by a reversing entry with its reason.
+
+**Not booked here.** Fuel and vehicle costs count against delivery in the report and the margin only. They are not posted to the ledger and not paid out to riders (only rider pay is): the company books the receipt as an expense or a supplier invoice, and posting it here as well would count it twice.
+
+**Verified.** Rules tests (`delivery-cost.test.ts`), 2 database tests added to `costs.integration.test.ts` (saved once for a form, tied to a run, in the report, not queued for the books, taken back; every refusal), and a browser test (`e2e/delivery-costs.spec.ts`, desktop and phone). The database tests for costs and the report used the UTC date as "today" and failed between midnight and 3am in Nairobi; they now use the Nairobi day, like the product.
+
+### 53.2 A rider's own view of their pay
+
+*Rider app › My pay* (`/rider/pay`, reached from the rider's home screen). The rider sees **what is owed to them now** (earned less anything taken back, not yet paid out: the same figure the office sees under *Owed to riders*), **what they earned this month**, the **latest 30 pay entries** (each with the delivery, the time and whether it is *Paid* or *Not paid yet*) and **the latest 10 payouts** (number, day, how it was paid, reference). The rider is always the signed-in account's own row, found on the server like every other rider-app action, so there is no way to ask for another rider's pay. An entry the office took back shows as "Taken back by the office"; the office's own reason is not shown to the rider. The page needs signal (it is not kept for offline use; the runs are).
+
+**Verified.** 2 database tests added to `cost-books.integration.test.ts` (only their own pay; owed, taken back without the reason, paid and listed with the payout; empty for a rider who has earned nothing) and the rider-pay browser test extended to open *My pay* on the phone after the run (the entries, not paid yet, no payout, no horizontal scroll).
+
+### 53.3 Mail about lateness (escalation is no longer only a screen)
+
+*Delivery slots › When a delivery counts as late* now also takes **who is mailed**: the dispatchers (told when a delivery is *at risk* and when it is *late*) and the supervisors (told when it has been late for the set time). Up to ten addresses for each, typed with commas; each is checked, lower-cased and kept once (migration 0153 adds the two lists to the versioned settings, with a limit of ten enforced in the database too).
+
+**How it works.** The lateness scan already raises each level once for a delivery and a window. In the same transaction it now queues one notice for each event and address (`delivery_sla_notices`, a unique key on event and address, so a second scan queues nothing). The address is kept as it was when the event was raised, so changing the list later does not change who was told. The worker task that scans then sends what is due (`DeliverySlaNotices.flush`): notices are leased while being sent so two workers never send one twice, a mail that cannot be sent is tried again after 5, 10, 20 and 40 minutes and then left visible as failed, and a mail server that is down never stops the scan. The mail names the delivery, the order, the customer's first name, the branch it leaves from, the window and how late it is, and links to the Late deliveries screen; it carries no address, phone number or payment detail. With no one on the list nothing is queued and the screen works as before.
+
+**Verified.** 3 rules tests (reading and refusing address lists, who is mailed at which level) and 5 database tests added to `slots.integration.test.ts` (one notice for each address and level and once only; nothing queued with an empty list, and a changed list not rewriting who was told; sending once with the screen to open and no personal detail; a failed mail kept, not due again at once, sent when it falls due; refused lists leave the last one). The lateness settings browser test now also refuses a bad address and keeps a good list.
+
+**Not built.** An SMS or push to the dispatcher; choosing people by role instead of typing addresses; the mails of a level are counted on the Late deliveries screen (sent, waiting, could not be sent) but not listed by address.
+
+### 53.4 Courier invoices matched to the charges
+
+*Delivery › Courier invoices* (`delivery_costs:manage`; migration 0154). The office types in an invoice a courier sent (the courier, the number printed on it, its day, its total and an optional note) and matches it to the courier charges we kept for that courier's parcels (the ones typed on each delivery, or fetched from the courier's system). The screen then says where the invoice stands: **nothing matched yet**, **agrees with our charges**, or **short** or **over** (we have fewer or more charges than the invoice) with the difference in shillings. The office decides what to do about a difference; matching changes no charge and posts nothing, and paying the invoice is done in the usual way.
+
+- **Why not a supplier invoice.** Supplier invoices in Vendor management belong to a purchase order and go through the three-way match; a courier's bill has no order. So a courier invoice is its own record, and the link to the books stays where it was.
+- **A charge is on one invoice only** (a unique key on the charge, so two people matching at once cannot count it twice), counts only if it is the courier's own charge, is not a reversal and was not taken back, and matching is all or none: one charge that does not belong refuses the whole set, with the reason.
+- **Charged to us, on no invoice yet.** The top of the screen lists, by courier, the charges not yet on any invoice (how many and how much): what the courier has charged that no invoice has covered.
+- **Mistakes.** A charge can be taken off an invoice; a wrongly typed invoice is **voided with a reason** and its charges are free for another invoice, and its number can be typed again. An invoice's words cannot be changed or deleted, even straight in the database (a trigger allows only the one void, with its reason); each step is in the decision log.
+- **The courier list** for the form is the couriers that have charged the company plus the ones connected; the invoice keeps the name as typed. Lists are paged (20 at a time, keyset); up to the latest 100 unmatched charges are offered at a time for matching.
+
+**Verified.** Rules tests (`courier-invoice.test.ts`: reading an invoice, standing, chosen charges), 6 database tests added to `costs.integration.test.ts` (an invoice once for a courier and a number; matching only the courier's own charges with short, agreed and over, all or none, never twice, taking one off; a charge taken back not counted and another company unable to reach anything; voiding, freeing charges and the number, and the log; paging; the invoice cannot be edited or deleted), and a browser test (`e2e/courier-invoices.spec.ts`, desktop and phone).
+
+**Not built.** Reading the courier's own invoice file or fetching its invoices from its system (the invoice is typed in); matching an invoice line by line to parcels by waybill number (the match is by charge); posting or paying the invoice from here.
+
+### 53.5 The dispatch board uses the company's own warning time
+
+The "at risk" and "late" chips on the dispatch board were worked out at the default warning time. The board now reads the company's setting once for the whole board (one read, not one per row) and uses it for every row, so the board and the Late deliveries screen agree. One database test added to `slots.integration.test.ts` (a window 90 minutes from its end is on track at a 60-minute warning and at risk at 120).

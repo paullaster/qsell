@@ -402,8 +402,21 @@ export const deliveryCostPost = async (_payload: unknown, helpers: JobHelpers) =
 
 /** Worker cron task: deliveries that reached at risk, late or still late against the window they were promised are raised once each. */
 export const deliverySlaScan = async (_payload: unknown, helpers: JobHelpers) => {
-  const r = await getContainer().deliverySla.scan();
+  const c = getContainer();
+  const r = await c.deliverySla.scan();
   if (r.raised > 0) helpers.logger.info(`Delivery lateness: ${r.raised} raised from ${r.checked} watched`);
+  // The mails the lateness caused go out after the scan, and a mail server that is down never stops the scan.
+  const mailed = await c.deliverySlaNotices.flush(20).catch((error: unknown) => {
+    helpers.logger.error(`Delivery lateness mails: ${String(error)}`);
+    return 0;
+  });
+  if (mailed > 0) helpers.logger.info(`Delivery lateness mails sent: ${String(mailed)}`);
+};
+
+/** Worker cron task: parcels are booked with their couriers, asked about on the road and cancelled when their delivery is; a courier that is down never stops the rest. */
+export const courierSync = async (_payload: unknown, helpers: JobHelpers) => {
+  const r = await getContainer().courierSync.run();
+  if (r.booked + r.cancelled + r.failed > 0) helpers.logger.info(`Couriers: ${r.booked} booked, ${r.polled} asked, ${r.cancelled} cancelled, ${r.failed} to try again or fix`);
 };
 
 /** Worker cron task: customer credit nobody used for as long as the policy allows lapses (once for each last use). */
@@ -443,12 +456,6 @@ export const expireGiftCards = async (_payload: unknown, helpers: JobHelpers) =>
 /** Worker cron task: documents past their date are marked expired, and vendors are reminded at the days each type asks for. */
 export const vendorDocumentExpiry = async (_payload: unknown, helpers: JobHelpers) => {
   const container = getContainer();
-/** Worker cron task: parcels are booked with their couriers, asked about on the road and cancelled when their delivery is; a courier that is down never stops the rest. */
-export const courierSync = async (_payload: unknown, helpers: JobHelpers) => {
-  const r = await getContainer().courierSync.run();
-  if (r.booked + r.cancelled + r.failed > 0) helpers.logger.info(`Couriers: ${r.booked} booked, ${r.polled} asked, ${r.cancelled} cancelled, ${r.failed} to try again or fix`);
-};
-
   const today = businessDate();
   const r = await container.vendorExpiry.run(today);
   if (r.expired > 0 || r.reminded > 0) helpers.logger.info(`Vendor documents: ${r.expired} expired, ${r.reminded} reminders sent`);
@@ -506,6 +513,7 @@ export const tasks = {
   'finance-post-sales': financePostSales,
   'delivery-cost-post': deliveryCostPost,
   'delivery-sla-scan': deliverySlaScan,
+  'courier-sync': courierSync,
   'wallet-expiry': walletExpiry,
   'finance-post-inventory': financePostInventory,
   'fx-reverse-revaluations': fxReverseRevaluations,
@@ -519,15 +527,14 @@ export const tasks = {
   'provider-send-operation': providerSendOperation,
   'provider-sweep': providerSweep,
   'delivery-messages-sweep': deliveryMessagesSweep,
-  'provider-pull-sweep': providerPullSweep,
   'shop-order-email': shopOrderEmail,
   'shop-cart-reminder-sweep': shopCartReminderSweep,
   'shop-cart-reminder': shopCartReminder,
   'newsletter-slice': newsletterSlice,
+  'provider-pull-sweep': providerPullSweep,
   'vendor-document-expiry': vendorDocumentExpiry,
   'vendor-bank-promote': vendorBankPromote,
   'rfq-deadlines': rfqDeadlines,
   'payables-check': payablesCheck,
   'payables-fx-reverse': payablesFxReverse,
 };
-  'courier-sync': courierSync,

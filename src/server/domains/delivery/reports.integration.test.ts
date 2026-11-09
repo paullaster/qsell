@@ -89,7 +89,8 @@ describe.skipIf(!has(url))('cash at the door (database)', () => {
     madeBranches.push(id);
     return id;
   };
-  const today = () => new Date().toISOString().slice(0, 10);
+  /** The business day, in Nairobi: between midnight and 3am the UTC date is still yesterday. */
+  const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(new Date());
   const runFor = async (riderId: string, branchId: string) => {
     const r = await c.deliveryRuns.create(dispatcher(), { branchId, runDate: today(), riderId });
     if (!r.ok) throw new Error(r.message);

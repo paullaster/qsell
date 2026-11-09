@@ -45,6 +45,11 @@ export async function recordCourierChargeAction(raw: unknown) {
   );
 }
 
+/** Fuel, a vehicle cost or another cost of running the fleet. */
+export async function recordRunningCostAction(raw: unknown) {
+  return await runDelivery('delivery_costs:manage', async (ctx) => dataOf(await getContainer().deliveryCosts.recordRunning({ companyId: ctx.companyId, userId: ctx.userId }, objectOf(raw))), PATHS);
+}
+
 /** Takes a cost back, with a reason. */
 export async function reverseCostAction(raw: unknown) {
   return await runDelivery(

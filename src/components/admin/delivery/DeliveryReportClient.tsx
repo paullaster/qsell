@@ -57,7 +57,7 @@ function Screen({ initial }: { initial: Report }) {
         <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Stat label="Delivered" value={String(report.delivered)} />
           <Stat label="Customers paid for delivery" value={`KSh ${report.charge}`} />
-          <Stat label="Delivery cost" value={`KSh ${report.cost}`} hint={`Rider pay ${report.riderPay} · courier ${report.courierCharges} · other ${report.otherCosts}`} />
+          <Stat label="Delivery cost" value={`KSh ${report.cost}`} hint={`Rider pay ${report.riderPay} · courier ${report.courierCharges} · fuel ${report.fuelCosts} · vehicles ${report.vehicleCosts} · other ${report.otherCosts}`} />
           <Stat label="Margin" value={`KSh ${report.margin}`} hint={report.marginPercent === null ? 'No delivery charge in these days' : `${String(report.marginPercent)}% of what customers paid`} tone={losing ? 'bad' : 'good'} />
         </dl>
         <p className="text-xs text-fg-muted">

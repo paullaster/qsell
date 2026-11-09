@@ -1,7 +1,7 @@
 'use client';
 
 import { use, useEffect, useId, useState } from 'react';
-import { costBooksAction, costsPageAction, payRiderAction, payoutsPageAction, postCostsNowAction, reverseCostAction, setCostAccountsAction, setPayRulesAction, type payRulesAction } from '@/server/domains/delivery/cost-actions';
+import { costBooksAction, costsPageAction, payRiderAction, recordRunningCostAction, payoutsPageAction, postCostsNowAction, reverseCostAction, setCostAccountsAction, setPayRulesAction, type payRulesAction } from '@/server/domains/delivery/cost-actions';
 import type { CostView } from '@/server/domains/delivery/costs';
 import type { OwedView, PayoutView } from '@/server/domains/delivery/cost-books';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
@@ -43,6 +43,13 @@ function Screen({ initial }: { initial: Rules }) {
         onSaved={(r) => {
           setRules(r);
           setNotice({ kind: 'ok', text: 'Saved. Riders earn this from now on; pay already earned does not change.' });
+        }}
+        onError={(text) => setNotice({ kind: 'error', text })}
+      />
+      <RunningCostPanel
+        onSaved={(text) => {
+          setNotice({ kind: 'ok', text });
+          list.reload();
         }}
         onError={(text) => setNotice({ kind: 'error', text })}
       />
@@ -121,6 +128,65 @@ function PayRulesPanel({ rules, onSaved, onError }: { rules: Rules; onSaved: (r:
   );
 }
 
+/** Fuel, a vehicle cost or another cost of running the fleet. The form is remounted after a save, so the next cost starts empty with a new key. */
+function RunningCostPanel({ onSaved, onError }: { onSaved: (text: string) => void; onError: (text: string) => void }) {
+  const [fresh, setFresh] = useState(0);
+  return (
+    <RunningCostForm
+      key={fresh}
+      onSaved={(text) => {
+        setFresh((n) => n + 1);
+        onSaved(text);
+      }}
+      onError={onError}
+    />
+  );
+}
+
+function RunningCostForm({ onSaved, onError }: { onSaved: (text: string) => void; onError: (text: string) => void }) {
+  const uid = useId();
+  const [clientKey] = useState(() => crypto.randomUUID());
+  const [kind, setKind] = useState<Choice | null>(null);
+  const [run, setRun] = useState<Choice | null>(null);
+  const [amount, setAmount] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    setBusy(true);
+    const r = await attempt(recordRunningCostAction({ kind: kind?.id, runId: run?.id, amount: Number(amount), note, clientKey }));
+    setBusy(false);
+    if (r.ok) onSaved(r.data.replayed ? 'That cost was already saved.' : 'Saved. It counts against delivery in the report.');
+    else onError(r.error);
+  };
+  const ready = kind !== null && amount.trim() !== '' && !Number.isNaN(Number(amount)) && note.trim().length >= 3;
+  return (
+    <form
+      aria-label="Record a running cost"
+      className={`${cardClass} space-y-3`}
+      onSubmit={(e) => {
+        e.preventDefault();
+        void save();
+      }}
+    >
+      <h3 className="text-sm font-bold text-fg-strong">Fuel and vehicle costs</h3>
+      <p className="text-xs text-fg-muted">What it cost to keep the fleet on the road. It counts against delivery in the report and the margin. It is not booked here: record the receipt as an expense or a supplier invoice as usual, so it is not counted twice in the books.</p>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <ChoicePicker label="What kind of cost" source="delivery-running-cost-kinds" choice={kind} onChoice={setKind} placeholder="Fuel, a vehicle cost or another cost" />
+        <Field id={`${uid}-a`} label="How much (KSh)">
+          <input id={`${uid}-a`} className={fieldClass} inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} autoComplete="off" />
+        </Field>
+        <ChoicePicker label="Run it was for (optional)" source="delivery-runs-any" choice={run} onChoice={setRun} placeholder="Choose a run, or leave empty" clearable />
+        <Field id={`${uid}-n`} label="What it was for">
+          <input id={`${uid}-n`} className={fieldClass} value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} autoComplete="off" placeholder="For example: KDA 123X, Thika road run" />
+        </Field>
+      </div>
+      <button type="submit" className={primaryClass} disabled={busy || !ready}>
+        {busy ? 'Saving…' : 'Save the cost'}
+      </button>
+    </form>
+  );
+}
+
 function CostRow({ cost, onDone, onError }: { cost: CostView; onDone: (text: string) => void; onError: (text: string) => void }) {
   const uid = useId();
   const [reason, setReason] = useState('');
@@ -132,6 +198,7 @@ function CostRow({ cost, onDone, onError }: { cost: CostView; onDone: (text: str
         <span className="font-semibold text-fg-strong">
           {cost.kindWords}
           {cost.deliveryNumber === null ? '' : ` · ${cost.deliveryNumber}`}
+          {cost.runNumber === null ? '' : ` · run ${cost.runNumber}`}
           {cost.riderName === null ? '' : ` · ${cost.riderName}`}
           {cost.courierName === null ? '' : ` · ${cost.courierName}`}
         </span>
