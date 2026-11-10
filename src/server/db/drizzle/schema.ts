@@ -3648,8 +3648,14 @@ export const products = pgTable(
       .$type<'inventory' | 'non_inventory' | 'service'>()
       .notNull()
       .default('inventory'),
-    /** Denormalized from the item type; drives the storefront sellable filter. */
+    /**
+     * Whether this product is sold to customers at all (web shop, quotes, orders and the invoices made from them). Kept in step with
+     * the business classification by the database itself (`item_types_cascade_trg`): the classification says whether its products may
+     * be sold, a product also needs a selling price, and nobody sets this by hand.
+     */
     isSellable: boolean('is_sellable').notNull().default(true),
+    /** Of the products that are sold: whether the web shop shows this one. Quotes and staff orders are not affected. */
+    showOnWebShop: boolean('show_on_web_shop').notNull().default(true),
     price: numeric('price', { precision: 14, scale: 2 }),
     /**
      * The price the pricing engine starts from. Empty means "the selling price"; set by someone with

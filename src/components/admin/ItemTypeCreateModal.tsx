@@ -134,8 +134,11 @@ export function ItemTypeCreateModal({ presentation }: { presentation: 'intercept
               onChange={(e) => setIsSellable(e.target.checked)}
               className="rounded border-line-strong"
             />
-            Sellable on storefront
+            Sold to customers
           </label>
+          <p className="basis-full text-[11px] text-fg-subtle">
+            Applies wherever products are sold: the web shop, quotes, orders and the invoices made from them.
+          </p>
           <label className="inline-flex items-center gap-2">
             <input
               type="checkbox"

@@ -39,6 +39,7 @@ describe('publicStoreProduct', () => {
       additionalImages: ['https://images.example.com/panel-back.jpg'],
       rating: 0,
       reviewCount: 0,
+      showOnWebShop: true,
       tags: ['solar', 'panel'],
       createdAt: '2026-10-01T00:00:00.000Z',
       updatedAt: '2026-10-02T00:00:00.000Z',

@@ -9,6 +9,7 @@ import { auth } from '@/auth';
 import { getContainer } from '@/server/di/container';
 import { buildProductTemplateCsv, MAX_IMPORT_BYTES } from '@/lib/productCsv';
 import { CatalogService } from './service';
+import type { ItemTypeChangeView } from '@/lib/item-type-impact';
 import { optionalAmount } from './commercial-rules';
 import { SettingsError } from '@/server/domains/settings/errors';
 import { runSetting } from '@/server/domains/settings/action-runner';
@@ -290,16 +291,41 @@ export async function createItemTypeAction(data: {
   return itemType;
 }
 
+export type ItemTypeUpdateResult = { ok: true; data: ItemType } | { ok: false; error: string };
+
+/**
+ * Saves a business classification. Its products' copy of the "sold to customers" answer follows in the same
+ * transaction. Returns the reason as data, since a thrown message is hidden from the screen in production.
+ */
 export async function updateItemTypeAction(
   id: string,
   updates: Partial<Pick<ItemType, 'name' | 'code' | 'isSellable' | 'defaultInventoryKind' | 'isDefault' | 'isActive'>>,
-): Promise<ItemType> {
+): Promise<ItemTypeUpdateResult> {
   await requirePermission('products:update');
-  const itemType = await CatalogService.updateItemType(id, updates);
-  revalidatePath('/admin/item-types');
-  revalidatePath('/admin/products');
-  revalidatePath('/');
-  return itemType;
+  try {
+    const itemType = await CatalogService.updateItemType(id, updates);
+    revalidatePath('/admin/item-types');
+    revalidatePath('/admin/products');
+    revalidatePath('/');
+    return { ok: true, data: itemType };
+  } catch (error) {
+    if (error instanceof SettingsError) return { ok: false, error: error.message };
+    console.error('[catalog] update item type', error);
+    return { ok: false, error: 'The business classification could not be saved. Please try again.' };
+  }
+}
+
+/** What saving with this "sold to customers" answer would do to the classification's products, to be shown before the person confirms. */
+export async function itemTypeChangeAction(id: string, nextIsSellable: boolean): Promise<{ ok: true; data: ItemTypeChangeView } | { ok: false; error: string }> {
+  await requirePermission('products:update');
+  if (typeof id !== 'string' || id === '' || typeof nextIsSellable !== 'boolean') return { ok: false, error: 'That business classification could not be checked.' };
+  try {
+    const view = await CatalogService.itemTypeChange(id, nextIsSellable);
+    return view === undefined ? { ok: false, error: 'That business classification no longer exists.' } : { ok: true, data: view };
+  } catch (error) {
+    console.error('[catalog] item type change', error);
+    return { ok: false, error: 'We could not check what this would change. Please try again.' };
+  }
 }
 
 export async function setDefaultItemTypeAction(id: string): Promise<ItemType> {

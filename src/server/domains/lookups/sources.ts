@@ -186,7 +186,7 @@ const businessItemTypes = tableSource({
   toOption: (row) => ({
     id: String(row.id),
     label: `${String(row.code)} · ${String(row.label)}`,
-    description: row.isSellable === true ? 'Sellable business classification' : 'Not sold directly',
+    description: row.isSellable === true ? 'Sold to customers' : 'Not sold to customers',
     badge: row.isDefault === true ? 'Default' : null,
   }),
 });

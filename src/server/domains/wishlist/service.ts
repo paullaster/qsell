@@ -19,7 +19,7 @@ export const WishlistService = {
       // The list is capped: a person cannot make it grow without bound.
       const [held] = await tx.select({ n: sql<number>`count(*)::int` }).from(wishlistItems).where(eq(wishlistItems.userId, userId));
       if ((held?.n ?? 0) >= WISHLIST_MAX) return;
-      const live = await tx.select({ id: products.id }).from(products).where(and(eq(products.id, productId), eq(products.isActive, true), eq(products.isSellable, true), sql`${products.deletedAt} is null`));
+      const live = await tx.select({ id: products.id }).from(products).where(and(eq(products.id, productId), eq(products.isActive, true), eq(products.isSellable, true), eq(products.showOnWebShop, true), sql`${products.deletedAt} is null`));
       if (live.length === 0) return;
       await tx.insert(wishlistItems).values({ userId, productId }).onConflictDoNothing();
     });
@@ -30,7 +30,7 @@ export const WishlistService = {
     const wanted = [...new Set(productIds)].slice(0, WISHLIST_MAX);
     if (wanted.length > 0) {
       await db.transaction(async (tx) => {
-        const live = await tx.select({ id: products.id }).from(products).where(and(inArray(products.id, wanted), eq(products.isActive, true), eq(products.isSellable, true), sql`${products.deletedAt} is null`));
+        const live = await tx.select({ id: products.id }).from(products).where(and(inArray(products.id, wanted), eq(products.isActive, true), eq(products.isSellable, true), eq(products.showOnWebShop, true), sql`${products.deletedAt} is null`));
         if (live.length > 0) await tx.insert(wishlistItems).values(live.map((row) => ({ userId, productId: row.id }))).onConflictDoNothing();
       });
     }

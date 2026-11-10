@@ -220,6 +220,21 @@ export class CatalogRepository {
     return rows.length > 0;
   }
 
+  /** What changing a classification's "sold to customers" answer would do to the products that use it (deleted products are left out). */
+  async itemTypeImpact(id: string): Promise<{ total: number; sellingNow: number; wouldSell: number; wouldNeedPrice: number; packaging: number }> {
+    const [row] = await this.db
+      .select({
+        total: count(),
+        sellingNow: sql<number>`count(*) FILTER (WHERE ${products.isSellable})::int`,
+        wouldSell: sql<number>`count(*) FILTER (WHERE NOT ${products.isSellable} AND coalesce(${products.price}, 0) > 0)::int`,
+        wouldNeedPrice: sql<number>`count(*) FILTER (WHERE NOT ${products.isSellable} AND coalesce(${products.price}, 0) <= 0)::int`,
+        packaging: sql<number>`count(*) FILTER (WHERE ${products.isCheckoutPackaging} AND ${products.isActive})::int`,
+      })
+      .from(products)
+      .where(and(eq(products.itemTypeId, id), isNull(products.deletedAt)));
+    return { total: row?.total ?? 0, sellingNow: row?.sellingNow ?? 0, wouldSell: row?.wouldSell ?? 0, wouldNeedPrice: row?.wouldNeedPrice ?? 0, packaging: row?.packaging ?? 0 };
+  }
+
   async countProductsInItemType(id: string): Promise<number> {
     const [row] = await this.db
       .select({ value: count() })
@@ -430,6 +445,7 @@ export class CatalogRepository {
         eq(products.isCheckoutPackaging, true),
         eq(products.isActive, true),
         eq(products.isSellable, true),
+        eq(products.showOnWebShop, true),
         isNull(products.deletedAt),
       ))
       .orderBy(asc(products.name), asc(packagingFits.productId));
@@ -442,6 +458,7 @@ export class CatalogRepository {
       eq(products.isCheckoutPackaging, true),
       eq(products.isActive, true),
       eq(products.isSellable, true),
+      eq(products.showOnWebShop, true),
       isNull(products.deletedAt),
     ));
   }
@@ -450,7 +467,7 @@ export class CatalogRepository {
 
   /** Products a shopper may see. Every storefront read starts from this. */
   private liveProducts(): SQL {
-    return required(and(eq(products.isActive, true), eq(products.isSellable, true), eq(products.isCheckoutPackaging, false), isNull(products.deletedAt)), 'the live-product conditions');
+    return required(and(eq(products.isActive, true), eq(products.isSellable, true), eq(products.showOnWebShop, true), eq(products.isCheckoutPackaging, false), isNull(products.deletedAt)), 'the live-product conditions');
   }
 
   /**

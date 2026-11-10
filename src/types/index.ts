@@ -56,8 +56,10 @@ export interface Product {
   itemTypeCode: number;
   /** Inventory behavior contract; separate from the seller-defined item classification above. */
   inventoryKind?: InventoryKind;
-  /** Denormalized from item type — storefront uses this to hide non-sellable items */
+  /** Sold to customers at all (web shop, quotes, orders, invoices). Follows the business classification; set by the database, not by hand. */
   isSellable: boolean;
+  /** Of the products that are sold: whether the web shop shows it. Quotes and staff orders are not affected. */
+  showOnWebShop: boolean;
   /** Required when item type is sellable; omit/null when not sellable */
   price?: number;
   /** The price the pricing engine starts from; empty means the selling price (see `effectiveStandardPrice`). */
@@ -143,8 +145,10 @@ export interface ProductMediaItem extends ProductMediaInput {
 /** A product as accepted by create: the gallery is given as asset references. */
 export type ProductWrite = Omit<
   Product,
-  'id' | 'createdAt' | 'updatedAt' | 'reservedQuantity' | 'media' | 'baseUnitId' | 'baseUnitCode' | 'baseUnitName' | 'baseUnitDecimals'
+  'id' | 'createdAt' | 'updatedAt' | 'reservedQuantity' | 'media' | 'baseUnitId' | 'baseUnitCode' | 'baseUnitName' | 'baseUnitDecimals' | 'showOnWebShop'
 > & {
+  /** Left out: shown in the web shop. */
+  showOnWebShop?: boolean;
   media?: ProductMediaInput[];
   /** Left out: the default unit of measure. */
   baseUnitId?: string;
