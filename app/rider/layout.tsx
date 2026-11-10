@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import { auth } from '@/auth';
 import { RegisterWorker } from '@/components/rider/RegisterWorker';
 import { RiderShell } from '@/components/rider/RiderShell';
 
@@ -12,9 +13,11 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = { width: 'device-width', initialScale: 1, viewportFit: 'cover' };
 
-export default function RiderLayout({ children }: { children: React.ReactNode }) {
+export default async function RiderLayout({ children }: { children: React.ReactNode }) {
+  // The sign-out button is only for someone who is signed in; the sign-in screen has none.
+  const session = await auth();
   return (
-    <RiderShell>
+    <RiderShell signedIn={session?.user !== undefined}>
       <RegisterWorker />
       {children}
     </RiderShell>

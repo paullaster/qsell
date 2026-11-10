@@ -106,3 +106,20 @@ Every stage an order goes through, from the moment a user initiates it until it 
 4. **Failures are stages.** A refusal, a declined payment, a failed delivery, a rejected approval are recorded with their time and reason, never left as an absence.
 5. **Tests cover the failure paths** as well as the happy path: each asserts the stage, the time and the reason.
 
+## 12. Implementor & Sales Enablement Documentation Standard (permanent)
+
+Every module, sub-module, screen, and workflow in the application must have comprehensive, granular, non-technical documentation maintained in [`docs/implementor-guide/`](implementor-guide/README.md) and governed by [`docs/DOCUMENTATION_STANDARDS.md`](DOCUMENTATION_STANDARDS.md). This documentation serves as the single source of truth for **system implementors** configuring customer deployments and **sales team members** communicating value propositions, commercial ROI, and operational capabilities to prospective clients.
+
+1. **Complete coverage down to the last action**: Documentation must not omit any setting, button, input field, confirmation dialog, modal, or permission. Every possible action a user can take must be documented with its prerequisites, validation rules, error states, and outcome.
+2. **Non-technical, domain-rich language**: Write in clear commercial, accounting, regulatory, and supply-chain terms (e.g. KRA eTIMS digital signing, multi-drop route optimization, 3-way accounts payable matching, margin floor enforcement). Do not expose code snippets, database schemas, or framework internals in implementor guides.
+3. **Mandatory 8-part anatomy**: Every module guide must include:
+   - Executive Overview & Commercial Value Proposition (target client profile, business problems solved, sales pitch talk track, ROI metrics).
+   - Prerequisites & Configuration Sequence (dependencies, pre-requisite records, required permissions).
+   - Module & Sub-Module Architecture (operational mental model, upstream/downstream integrations).
+   - Interface-by-Interface Walkthrough (every screen, card, drawer, and tab).
+   - Granular Field-by-Field Reference (labels, data types, format rules, default values, required/optional status).
+   - Step-by-Step User Actions (every button, modal, state change, and confirmation step).
+   - Conditions, Business Rules & Edge Cases (blocking conditions, threshold limits, automated system triggers).
+   - Implementor Checklist & Go-Live Verification (verification steps, common client pitfalls, test transactions).
+4. **Permanent definition of done**: A feature or screen change is incomplete until its corresponding implementor guide in `docs/implementor-guide/` has been updated and verified against the live navigation tree.
+

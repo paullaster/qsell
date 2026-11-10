@@ -501,7 +501,7 @@ export async function logoutAction(formData?: FormData): Promise<void> {
 
   const cookieStore = await cookies();
   const legacyToken = cookieStore.get(SESSION_COOKIE)?.value;
-  if (legacyToken) {
+  if (legacyToken !== undefined && legacyToken !== '') {
     try {
       await getContainer().userSessions.deleteByToken(legacyToken);
     } catch (error) {
@@ -511,9 +511,11 @@ export async function logoutAction(formData?: FormData): Promise<void> {
   }
   await expireSessionCookies();
 
-  const returnTo = formData?.get('returnTo');
-  const inviteReturn = typeof returnTo === 'string' && /^\/vendor\/invitations\/accept\?token=[A-Za-z0-9_-]{43}$/.test(returnTo);
-  redirect(returnTo === '/login' || inviteReturn ? String(returnTo) : '/');
+  const asked = formData?.get('returnTo');
+  const target = typeof asked === 'string' ? asked : '';
+  const inviteReturn = /^\/vendor\/invitations\/accept\?token=[A-Za-z0-9_-]{43}$/.test(target);
+  // Only these places may be asked for: a fixed list, so the form cannot be used to send someone to another site.
+  redirect(target === '/login' || target === '/rider/sign-in' || inviteReturn ? target : '/');
 }
 
 /**

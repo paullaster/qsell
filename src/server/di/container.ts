@@ -126,13 +126,14 @@ import type { DeliveryDocuments } from '@/server/domains/delivery/documents';
 import type { StockReissue } from '@/server/domains/delivery/reissue';
 import { DeliveryCostBooks } from '@/server/domains/delivery/cost-books';
 import { OrderVisits } from '@/server/domains/delivery/visits';
-import { DeliverySlots } from '@/server/domains/delivery/slots';
+import type { DeliverySlots } from '@/server/domains/delivery/slots';
 import type { CourierAccounts } from '@/server/domains/delivery/courier-accounts';
 import type { CourierSync } from '@/server/domains/delivery/courier-sync';
 import { DeliverySla } from '@/server/domains/delivery/sla';
 import { DeliveryReports } from '@/server/domains/delivery/reports';
 import { CourierInvoices } from '@/server/domains/delivery/courier-invoices';
 import { DeliverySlaNotices } from '@/server/domains/delivery/sla-notices';
+import { RiderPins } from '@/server/domains/delivery/rider-pins';
 import { RiderPay } from '@/server/domains/delivery/rider-pay';
 import { DeliveryPerformanceReports } from '@/server/domains/delivery/performance';
 import type { DeliveryCosts } from '@/server/domains/delivery/costs';
@@ -314,6 +315,7 @@ export interface AppContainer {
   deliveryReports: DeliveryReports;
   deliveryPerformance: DeliveryPerformanceReports;
   riderPay: RiderPay;
+  riderPins: RiderPins;
   orderVisits: OrderVisits;
   deliverySlots: DeliverySlots;
   deliverySla: DeliverySla;
@@ -678,6 +680,7 @@ export function getContainer(): AppContainer {
     deliveryReports: new DeliveryReports(drizzleDb),
     deliveryPerformance: new DeliveryPerformanceReports(drizzleDb),
     riderPay: new RiderPay(drizzleDb),
+    riderPins: new RiderPins(drizzleDb, decisionLog, deliveryServices.deliveryRiders),
     orderVisits: new OrderVisits(drizzleDb, decisionLog, stockLedger),
     deliverySlots: deliveryServices.deliverySlots,
     deliverySla: new DeliverySla(drizzleDb, decisionLog),
