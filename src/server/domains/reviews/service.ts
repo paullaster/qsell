@@ -112,7 +112,7 @@ export const ReviewsService = {
    */
   async submit(reviewer: Reviewer, productId: string, input: ReviewInput, db: DrizzleDb = drizzleDb): Promise<void> {
     await db.transaction(async (tx) => {
-      const [product] = await tx.select({ id: products.id }).from(products).where(and(eq(products.id, productId), eq(products.isActive, true), eq(products.isSellable, true)));
+      const [product] = await tx.select({ id: products.id }).from(products).where(and(eq(products.id, productId), eq(products.isActive, true), eq(products.isSellable, true), eq(products.showOnWebShop, true)));
       if (product === undefined) throw new SettingsError('This product is not available.');
       const orderId = await qualifyingOrder(tx, reviewer, productId);
       if (orderId === null) throw new SettingsError('You can review a product after you have received it.');

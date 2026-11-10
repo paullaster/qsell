@@ -19,6 +19,7 @@ export {
   listItemTypesAction,
   createItemTypeAction,
   updateItemTypeAction,
+  itemTypeChangeAction,
   setDefaultItemTypeAction,
   deleteItemTypeAction,
 } from '@/server/domains/catalog/actions';

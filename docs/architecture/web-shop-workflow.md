@@ -39,6 +39,8 @@ Related pages: [storefront.md](storefront.md) (pages, catalog, cart, reviews, ne
 
 ## 3. Browsing and searching
 
+**What the shop shows:** a product that is active, **sold to customers** (decided by its business classification) and **shown in the web shop** (a setting on the product). See [sold-to-customers.md](sold-to-customers.md).
+
 All of it reads through `StorefrontCatalog`, which sees **live products only** (active, sellable, not deleted) and never returns cost.
 
 * **Everything the shopper chooses is in the address** (`?q=&category=&min=&max=&stock=1&sort=&cursor=`), so a result can be shared and Back undoes it. Nonsense in the address is dropped, never rejected.
