@@ -9,6 +9,8 @@ import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
 /** What a shop visitor who has not proven who they are can and cannot do, against a real database.   TEST_DATABASE_URL=postgres://... pnpm test */
 const url = process.env.TEST_DATABASE_URL;
 if (has(url)) process.env.DATABASE_URL = url;
+// The order mail builds a tracking link, which seals its token with the data-encryption key; the test brings its own so it needs nothing from the shell.
+if (!has(process.env.DATA_ENCRYPTION_KEY) && !has(process.env.DATA_ENCRYPTION_KEY_FILE)) process.env.DATA_ENCRYPTION_KEY = 'shop-trust-test-only-data-encryption-key';
 
 describe.skipIf(!has(url))('the shop does not trust a typed email (database)', () => {
   let c: ReturnType<typeof mod_server_di_container.getContainer>;
