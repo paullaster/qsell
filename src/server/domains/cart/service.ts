@@ -94,7 +94,7 @@ export const ShopCartService = {
   /** What is for sale among these ids, with their names, in the order given. */
   async namesOf(ids: readonly string[], db: DrizzleDb = drizzleDb): Promise<Map<string, string>> {
     if (ids.length === 0) return new Map();
-    const rows = await db.select({ id: products.id, name: products.name }).from(products).where(and(inArray(products.id, [...ids]), eq(products.isActive, true), eq(products.isSellable, true), sql`${products.deletedAt} is null`));
+    const rows = await db.select({ id: products.id, name: products.name }).from(products).where(and(inArray(products.id, [...ids]), eq(products.isActive, true), eq(products.isSellable, true), eq(products.showOnWebShop, true), sql`${products.deletedAt} is null`));
     return new Map(rows.map((row) => [row.id, row.name]));
   },
 };

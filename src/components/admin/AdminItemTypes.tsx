@@ -1,16 +1,19 @@
 'use client';
 
 import React, { use, useState } from 'react';
-import { Tags, Plus, Search, Edit2, Trash2, Check, X, Package, Star } from 'lucide-react';
+import { Tags, Plus, Search, Edit2, Check, X, Package, Star } from 'lucide-react';
 import { type ItemType, type Product } from '@/types/index';
 import type { InventoryKind } from '@/lib/inventory-kind';
 import { BehavesAsField, inventoryKindLabel } from '@/components/admin/BehavesAsField';
 import {
   createItemTypeAction,
   updateItemTypeAction,
+  itemTypeChangeAction,
   deleteItemTypeAction,
   setDefaultItemTypeAction,
 } from '@/server/actions';
+import type { ItemTypeChangeView } from '@/lib/item-type-impact';
+import { InlineConfirm } from '@/components/ui/InlineConfirm';
 
 interface AdminItemTypesProps {
   itemTypesPromise: Promise<ItemType[]>;
@@ -38,6 +41,11 @@ export function AdminItemTypes({
   const [isActive, setIsActive] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  /** What saving would do to the classification's products, shown before the person confirms. */
+  const [pendingChange, setPendingChange] = useState<ItemTypeChangeView | null>(null);
+  const [pageError, setPageError] = useState<string | null>(null);
+
+  const submitLabel = editing === null ? 'Create' : 'Save changes';
 
   const filtered = itemTypes.filter((t) => {
     const q = search.toLowerCase();
@@ -53,6 +61,7 @@ export function AdminItemTypes({
     setIsDefault(itemTypes.length === 0);
     setIsActive(true);
     setFormError(null);
+    setPendingChange(null);
     setIsModalOpen(true);
   };
 
@@ -65,12 +74,13 @@ export function AdminItemTypes({
     setIsDefault(type.isDefault);
     setIsActive(type.isActive);
     setFormError(null);
+    setPendingChange(null);
     setIsModalOpen(true);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: { preventDefault: () => void }, confirmed = false) => {
     e.preventDefault();
-    if (!name.trim()) {
+    if (name.trim() === '') {
       setFormError('Item type name is required.');
       return;
     }
@@ -86,7 +96,21 @@ export function AdminItemTypes({
       setFormError(null);
 
       if (editing) {
-        await updateItemTypeAction(editing.id, {
+        // Changing whether the classification is sold changes its products too: say how many before it happens.
+        if (isSellable !== editing.isSellable && !confirmed) {
+          const check = await itemTypeChangeAction(editing.id, isSellable);
+          if (!check.ok) {
+            setFormError(check.error);
+            return;
+          }
+          if (check.data.blocked !== null) {
+            setFormError(check.data.blocked);
+            return;
+          }
+          setPendingChange(check.data);
+          return;
+        }
+        const saved = await updateItemTypeAction(editing.id, {
           name: name.trim(),
           code: parsedCode,
           isSellable,
@@ -94,6 +118,11 @@ export function AdminItemTypes({
           isDefault,
           isActive,
         });
+        if (!saved.ok) {
+          setFormError(saved.error);
+          setPendingChange(null);
+          return;
+        }
         if (isDefault && !editing.isDefault) {
           await setDefaultItemTypeAction(editing.id);
         }
@@ -118,20 +147,16 @@ export function AdminItemTypes({
   };
 
   const handleDelete = async (type: ItemType) => {
-    if (
-      !window.confirm(
-        type.isDefault
-          ? 'This is the default business classification. Set another default before deleting.'
-          : `Delete business classification "${type.name}"?`,
-      )
-    ) {
+    setPageError(null);
+    if (type.isDefault) {
+      setPageError('This is the default business classification. Make another one the default before deleting it.');
       return;
     }
     try {
       await deleteItemTypeAction(type.id);
       onRefresh();
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Delete failed');
+      setPageError(err instanceof Error ? err.message : 'The business classification could not be deleted.');
     }
   };
 
@@ -140,7 +165,7 @@ export function AdminItemTypes({
       await setDefaultItemTypeAction(type.id);
       onRefresh();
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Failed to set default');
+      setPageError(err instanceof Error ? err.message : 'The default could not be changed.');
     }
   };
 
@@ -153,7 +178,7 @@ export function AdminItemTypes({
             Business classifications
           </h2>
           <p className="mt-1 max-w-2xl text-sm text-fg-muted">
-            Describe what a product is in your business and whether it is sold directly. Each
+            Describe what a product is in your business and whether it is sold to customers. Each
             classification keeps its existing tax-authority code. It also says whether its products
             are stocked goods, goods that are not stocked, or services; a new product starts with
             that and keeps its own after.
@@ -168,6 +193,12 @@ export function AdminItemTypes({
           Add business classification
         </button>
       </div>
+
+      {pageError === null ? null : (
+        <p role="alert" className="rounded-lg border border-red-800 bg-red-50/50 px-3 py-2 text-xs text-red-800">
+          {pageError}
+        </p>
+      )}
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="relative flex-1">
@@ -188,7 +219,7 @@ export function AdminItemTypes({
               <th className="px-4 py-3">Tax code</th>
               <th className="px-4 py-3">Name</th>
               <th className="px-4 py-3">Behaves as</th>
-              <th className="px-4 py-3 text-center">Sellable</th>
+              <th className="px-4 py-3 text-center">Sold to customers</th>
               <th className="px-4 py-3 text-center">Default</th>
               <th className="px-4 py-3 text-center">Products</th>
               <th className="px-4 py-3 text-center">Status</th>
@@ -253,17 +284,17 @@ export function AdminItemTypes({
                       <button
                         type="button"
                         onClick={() => openEdit(type)}
+                        aria-label={`Edit ${type.name}`}
                         className="rounded-lg bg-surface-sunken p-1.5 text-fg hover:bg-hover hover:text-fg-strong"
                       >
                         <Edit2 className="h-3.5 w-3.5" />
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(type)}
-                        className="rounded-lg bg-surface-sunken p-1.5 text-fg hover:bg-red-100 hover:text-red-700"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      <InlineConfirm
+                        label={`Delete business classification ${type.name}`}
+                        action="Delete"
+                        confirm="Yes, delete"
+                        onConfirm={() => void handleDelete(type)}
+                      />
                     </div>
                   </td>
                 </tr>
@@ -292,7 +323,7 @@ export function AdminItemTypes({
               </button>
             </div>
 
-            {formError ? (
+            {formError !== null && formError !== '' ? (
               <div className="rounded-lg border border-red-800 bg-red-50/50 px-3 py-2 text-xs text-red-800">
                 {formError}
               </div>
@@ -334,11 +365,18 @@ export function AdminItemTypes({
                 <input
                   type="checkbox"
                   checked={isSellable}
-                  onChange={(e) => setIsSellable(e.target.checked)}
+                  onChange={(e) => {
+                    setIsSellable(e.target.checked);
+                    setPendingChange(null);
+                  }}
                   className="rounded border-line-strong"
                 />
-                Sellable on storefront
+                Sold to customers
               </label>
+              <p className="basis-full text-[11px] text-fg-subtle">
+                Applies wherever products are sold: the web shop, quotes, orders and the invoices made from them. Products of a
+                classification that is not sold cannot be added to any of them.
+              </p>
               <label className="inline-flex items-center gap-2">
                 <input
                   type="checkbox"
@@ -360,6 +398,32 @@ export function AdminItemTypes({
               </label>
             </div>
 
+            {pendingChange === null ? null : (
+              <div role="status" className="space-y-2 rounded-lg border border-amber-700/50 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                <p className="font-semibold">
+                  {pendingChange.effect === 'stop' ? 'Stop selling this classification?' : 'Start selling this classification?'}
+                </p>
+                <p>{pendingChange.message}</p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={isSubmitting}
+                    onClick={(event) => void handleSubmit(event, true)}
+                    className="min-h-10 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-500 disabled:opacity-50"
+                  >
+                    {isSubmitting ? 'Saving…' : 'Yes, save and apply'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPendingChange(null)}
+                    className="min-h-10 rounded-lg bg-surface-sunken px-4 py-2 text-xs font-medium text-fg hover:bg-hover"
+                  >
+                    Go back
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="flex justify-end gap-2 pt-2">
               <button
                 type="button"
@@ -373,7 +437,7 @@ export function AdminItemTypes({
                 disabled={isSubmitting}
                 className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-500 disabled:opacity-50"
               >
-                {isSubmitting ? 'Saving…' : editing ? 'Save changes' : 'Create'}
+                {isSubmitting ? 'Saving…' : submitLabel}
               </button>
             </div>
           </form>

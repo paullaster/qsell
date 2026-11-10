@@ -290,6 +290,10 @@ export const OrderWriteService = {
       if (!prod.isSellable && !quoted) {
         return { success: false, error: `${prod.name} is not sellable and cannot be ordered.`, code: 'not_for_sale' };
       }
+      // The web shop sells only what it shows; a staff order or a quote may still sell a product that is kept off the shop.
+      if ((params.salesModule ?? 'ecommerce') === 'ecommerce' && !prod.showOnWebShop && !quoted) {
+        return { success: false, error: `${prod.name} is not sold in the web shop.`, code: 'not_for_sale' };
+      }
       const priced = engine.get(index);
       if (priced && priced.unitPrice == null) {
         return {

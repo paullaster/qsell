@@ -205,6 +205,7 @@ function AdminProductModalForm({
   const [description, setDescription] = useState(template?.description ?? '');
   const [tagsInput, setTagsInput] = useState(template === null ? '' : template.tags.join(', '));
   const [isActive, setIsActive] = useState(template?.isActive ?? true);
+  const [showOnWebShop, setShowOnWebShop] = useState(template?.showOnWebShop ?? true);
   const [isCheckoutPackaging, setIsCheckoutPackaging] = useState(template?.isCheckoutPackaging ?? false);
   const [inventoryKindChoice, setInventoryKindChoice] = useState<Choice | null>(() => {
     const id = template?.inventoryKind ?? initialItemTypes?.find((type) => type.isDefault)?.defaultInventoryKind ?? 'inventory';
@@ -550,6 +551,7 @@ function AdminProductModalForm({
         description: description.trim(),
         tags,
         isActive,
+        showOnWebShop,
         isCheckoutPackaging,
         packagingFits: packagingFits.map(({ productId, capacity }) => ({ productId, capacity: Number(capacity) })),
       };
@@ -1215,6 +1217,15 @@ function AdminProductModalForm({
                       <option value="active">Active (Published)</option>
                       <option value="draft">Draft (Hidden)</option>
                     </select>
+                  </div>
+                  <div className="flex items-start gap-3 rounded-lg border border-line bg-surface-raised p-3">
+                    <input id="product-show-on-web-shop" type="checkbox" checked={showOnWebShop} onChange={(event) => setShowOnWebShop(event.target.checked)} className="mt-0.5 h-4 w-4 accent-indigo-600" />
+                    <label htmlFor="product-show-on-web-shop" className="text-sm font-medium text-fg-strong">
+                      Show in the web shop
+                      <span className="mt-0.5 block text-[11px] font-normal text-fg-subtle">
+                        Turn off to sell this product only through quotes and staff orders. Whether it is sold at all is decided by its business classification.
+                      </span>
+                    </label>
                   </div>
                 </div>
               </div>

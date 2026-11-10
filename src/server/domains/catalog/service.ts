@@ -17,6 +17,7 @@ import { SettingsError } from '@/server/domains/settings/errors';
 import { quantityProblem } from '@/lib/unit-rules';
 import { inventoryKindQuantityProblem, isInventoryKind, type InventoryKind } from '@/lib/inventory-kind';
 import { productSellability } from '@/lib/product-sellability';
+import { itemTypeChangeView, type ItemTypeChangeView } from '@/lib/item-type-impact';
 import { limitsProblem } from '@/lib/quantity-limits';
 import { productSpecificationsProblem, visibleSpecifications } from '@/lib/product-specifications';
 import { optionalAmount, standardPriceProblem } from './commercial-rules';
@@ -53,6 +54,16 @@ async function resolveUniqueSlug(base: string, excludeProductId?: string): Promi
   throw new Error('Could not generate a unique URL slug for this product.');
 }
 
+/** A write to a business classification that the database refused, in words the person can act on; null when it is something else. */
+function classificationWriteProblem(error: unknown): SettingsError | null {
+  const cause = typeof error === 'object' && error !== null && 'cause' in error ? (error as { cause?: unknown }).cause : error;
+  const info = (typeof cause === 'object' && cause !== null ? cause : {}) as { code?: unknown; constraint_name?: unknown; message?: unknown };
+  if (info.code === '23505' && info.constraint_name === 'item_types_name_uidx') return new SettingsError('Another business classification already has that name.');
+  if (info.code === '23505' && info.constraint_name === 'item_types_code_uidx') return new SettingsError('Another business classification already has that tax authority code.');
+  if (typeof info.message === 'string' && info.message.startsWith('item_type_in_use_as_packaging')) return new SettingsError('Some products of this classification are offered as checkout packaging, which must be sold. Stop offering them as packaging first.');
+  return null;
+}
+
 export class CatalogService {
   // ── Products ──────────────────────────────────────────────────────────────
 
@@ -74,14 +85,14 @@ export class CatalogService {
   /** A single product as the storefront may see it: published and sellable only. */
   static async getPublicProduct(id: string): Promise<PublicProduct | undefined> {
     const row = await repo().getProductById(id);
-    if (!row || !row.isActive || !row.isSellable || row.isCheckoutPackaging) return undefined;
+    if (!row || !row.isActive || !row.isSellable || !row.showOnWebShop || row.isCheckoutPackaging) return undefined;
     return toPublicProduct(toProduct(row));
   }
 
   /** A product for sale by its readable address (slug) or, for older links, its id. */
   static async getPublicProductByKey(key: string): Promise<PublicProduct | undefined> {
     const row = (await repo().getProductBySlug(key)) ?? (await repo().getProductById(key));
-    if (!row || !row.isActive || !row.isSellable || row.isCheckoutPackaging) return undefined;
+    if (!row || !row.isActive || !row.isSellable || !row.showOnWebShop || row.isCheckoutPackaging) return undefined;
     return toPublicProduct(toProduct(row));
   }
 
@@ -221,6 +232,7 @@ export class CatalogService {
       itemTypeName: itemType.name,
       itemTypeCode: itemType.code,
       isSellable,
+      showOnWebShop: productData.showOnWebShop ?? true,
       inventoryKind,
       isCheckoutPackaging,
       baseUnitId: unit.id,
@@ -301,6 +313,8 @@ export class CatalogService {
   static async updateProduct(id: string, patchInput: ProductPatch): Promise<Product> {
     const catalog = repo();
     const { media: galleryUpdate, packagings: packagingUpdate, packagingFits: packagingFitsUpdate, ...updates } = patchInput;
+    // Whether a product is sold follows its classification and its price; what the browser sends for it is never used.
+    delete updates.isSellable;
     if (updates.specifications !== undefined) {
       const specificationsProblem = productSpecificationsProblem(updates.specifications);
       if (specificationsProblem !== null) throw new SettingsError(specificationsProblem);
@@ -365,24 +379,24 @@ export class CatalogService {
       ? undefined
       : await this.validatePackagingFits(id, nextIsPackaging, packagingFitsUpdate, plan.unit.decimals, plan.unit.name);
 
+    // The classification as it is now, not the copy the product holds: the classification is what says whether its products are sold.
+    let classificationSellable = existing.isSellable;
     if (updates.itemTypeId !== undefined && updates.itemTypeId !== '') {
       const itemType = await catalog.getItemTypeById(updates.itemTypeId);
       if (!itemType) throw new SettingsError('Selected item type was not found');
       updates.itemTypeName = itemType.name;
       updates.itemTypeCode = itemType.code;
-      updates.isSellable = itemType.isSellable;
-    }
-
-    if (nextIsPackaging && !(updates.isSellable ?? existing.isSellable)) {
-      throw new SettingsError('Packaging offered at checkout must use a sellable item type.');
-    }
-
-    // A service with no price is kept out of sale; the classification, not the stored flag, says whether it could be sold with one.
-    let classificationSellable = updates.isSellable ?? existing.isSellable;
-    if (nextInventoryKind === 'service' && updates.isSellable === undefined) {
+      classificationSellable = itemType.isSellable;
+    } else {
       const type = await catalog.getItemTypeById(existing.itemTypeId);
       if (type) classificationSellable = type.isSellable;
     }
+
+    if (nextIsPackaging && !classificationSellable) {
+      throw new SettingsError('Packaging offered at checkout must use a sellable item type.');
+    }
+
+    // A service with no price is kept out of sale; goods need a classification that sells and (below) a price.
     const nextPrice = updates.price ?? existing.price;
     const nextSellable = productSellability({ classificationSellable, kind: nextInventoryKind, price: nextPrice });
     if (nextSellable !== existing.isSellable) updates.isSellable = nextSellable;
@@ -714,6 +728,14 @@ export class CatalogService {
     return rows.map((row) => toItemType(row, row.productCount));
   }
 
+  /** What saving the classification with this "sold to customers" answer would do to its products, for the person to confirm. */
+  static async itemTypeChange(id: string, nextIsSellable: boolean): Promise<ItemTypeChangeView | undefined> {
+    const catalog = repo();
+    const current = await catalog.getItemTypeById(id);
+    if (!current) return undefined;
+    return itemTypeChangeView(await catalog.itemTypeImpact(id), current.isSellable, nextIsSellable);
+  }
+
   static async getItemTypeById(id: string): Promise<ItemType | undefined> {
     const row = await repo().getItemTypeById(id);
     return row ? toItemType(row) : undefined;
@@ -739,6 +761,8 @@ export class CatalogService {
       defaultInventoryKind,
       isDefault: data.isDefault ?? false,
       isActive: data.isActive ?? true,
+    }).catch((error: unknown) => {
+      throw classificationWriteProblem(error) ?? error;
     });
     void broadcastRealtime('item_type_update', { type: 'created', itemType: toItemType(row) });
     return toItemType(row);
@@ -752,9 +776,22 @@ export class CatalogService {
     if (updates.defaultInventoryKind !== undefined && !isInventoryKind(updates.defaultInventoryKind)) {
       throw new SettingsError('Choose how products of this classification are managed.');
     }
+    const current = await catalog.getItemTypeById(id);
+    if (!current) throw new SettingsError('That business classification no longer exists.');
+    if (updates.name?.trim() === '') throw new SettingsError('Give the business classification a name.');
+    if (updates.code !== undefined && (!Number.isInteger(updates.code) || updates.code < 0)) throw new SettingsError('Enter the whole-number code assigned by the tax authority.');
+    if (updates.name !== undefined) updates.name = updates.name.trim();
+    // Stopping the sale of a classification must not strand the products that are offered as checkout packaging, which have to be sold.
+    if (updates.isSellable === false && current.isSellable) {
+      const blocked = itemTypeChangeView(await catalog.itemTypeImpact(id), true, false).blocked;
+      if (blocked !== null) throw new SettingsError(blocked);
+    }
     if (updates.isDefault === true) await catalog.clearDefaultItemType(id);
-    const row = await catalog.updateItemType(id, updates);
-    if (!row) throw new Error(`Item type ${id} not found`);
+    // The products' copy of the "sold to customers" answer follows in the same transaction (the database's own trigger).
+    const row = await catalog.updateItemType(id, updates).catch((error: unknown) => {
+      throw classificationWriteProblem(error) ?? error;
+    });
+    if (!row) throw new SettingsError('That business classification no longer exists.');
     void broadcastRealtime('item_type_update', { type: 'updated', itemType: toItemType(row) });
     return toItemType(row);
   }
