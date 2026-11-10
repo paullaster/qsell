@@ -31,13 +31,13 @@ While administrative staff manage operations via `/admin`, QSell delivers three 
 ```mermaid
 graph TD
     COMP[1. Company Profile, Logo & Brand Colors Configured] --> STORE[2. Storefront Catalog & Payment Providers Live]
-    STORE --> RIDER[3. Delivery Riders Created with Mobile PIN Logins]
+    STORE --> RIDER[3. Riders Added; Riders with Their Own Account Given a Phone Number and PIN]
     RIDER --> VEND[4. Vendors Invited to Register on Vendor Portal]
 ```
 
 1. **Branding & Gateways**: Storefront appearance, payment providers, and delivery zones must be configured in `/admin`.
 2. **Sellable Products**: Catalog items must have `Show on Web Shop = True` and active selling prices.
-3. **Rider Logins**: Delivery riders must have active driver profiles created under `/admin/delivery/riders`.
+3. **Rider Logins**: Riders are added under `/admin/delivery/riders`. A rider with an account of their own needs a Kenyan mobile number, and the office gives them a PIN there (see [Guide 06](06-delivery-logistics-and-field-dispatch.md), Action 4). A member of staff who rides signs in with their own email and password.
 4. **Vendor Portal Access**: Vendors must receive an invitation link or register at `/vendor/register`.
 
 ---
@@ -54,9 +54,9 @@ graph LR
     end
 
     subgraph RiderApp["Rider Mobile App (/rider)"]
-        AUTH[Rider PIN Authentication]
+        AUTH[Rider Phone Number and PIN Sign-In]
         RUNS[Active Run Sheets & Multi-Drop Stops]
-        POD[Customer Verification PIN & POD]
+        POD[Customer Delivery Code & Proof of Delivery]
         COD[Door Cash & M-Pesa Collection]
     end
 
@@ -97,7 +97,7 @@ graph LR
 
 #### 4. Order Tracking (`/track/[id]`)
 - Customer self-service portal: Displays real-time progress bar through the order stage timeline (*Order Confirmed $\rightarrow$ Preparing in Warehouse $\rightarrow$ Out with Rider $\rightarrow$ Delivered*).
-- Displays the **Customer Verification PIN** to give to the rider upon arrival.
+- Displays the **delivery code** (6 digits) to give to the rider upon arrival, the promised delivery window until it is delivered, and a link to the courier's own page when a courier handles the parcel.
 
 ---
 
@@ -105,20 +105,26 @@ graph LR
 
 #### 1. Rider Sign-In (`/rider/sign-in`, `/rider/pin`)
 - Clean, high-contrast mobile interface designed for one-handed operation on low-end smartphones.
-- Fast 4-digit PIN authentication (no cumbersome passwords while wearing motorcycle gloves).
+- **Sign in** (`/rider/sign-in`) with the rider's **Kenyan mobile number and a 6-digit PIN** (no password to type with gloves on). Opening `/rider` while signed out leads here. A link underneath offers email and password sign-in for staff who ride.
+- **Choose your own PIN** (`/rider/pin`): the PIN the office gives is temporary, and the rider must replace it with their own before anything else in the app opens. The same screen (*Change my PIN*) is used later.
+- Five wrong tries in a row shut the rider out for a while (15 minutes, growing to 4 hours); the office can let them try again at once. A PIN opens the rider app only, and only for riders with an account of their own.
+- **Sign out** is at the top of every screen.
 
-#### 2. Active Run Sheet (`/rider/runs`)
+#### 2. Active Run Sheet (`/rider` and a run's own page)
 - Displays the assigned multi-drop run for the day:
   - Header: Run Number, Total Stops (e.g. *"Stop 2 of 5"*), Total Cash Float, Total Run Weight.
   - Ordered stop cards: Customer Name, Phone, Delivery Address, Estimated Arrival Time, Payment Method (`Paid Online` vs `Collect KES 3,500 at Door`).
   - Action: **Open Google Maps / Waze Directions**, **Call Customer**.
 
-#### 3. Delivery Confirmation & Door Payment (`/rider/pay`)
+#### 3. Delivery Confirmation & Door Payment (on a stop of the run)
 - Execution of the handover:
-  - Input field for customer's **4-digit Delivery PIN**.
+  - Input field for the customer's **6-digit delivery code** (when the company's rule at the door asks for it).
   - Door Payment collection confirmation (Cash received or M-Pesa Paybill confirmation code).
   - Digital signature capture or photo upload of delivered parcel.
   - Action: **Confirm Delivery** or **Report Failed Attempt** (with mandatory reason selection).
+
+#### 4. My Pay (`/rider/pay`)
+- The rider's own pay: **Owed to me now**, **Earned this month**, the latest 30 pay entries (each *Paid* or *Not paid yet*; pay the office took back shows as *Taken back by the office*) and the latest 10 payouts. A rider sees only their own pay. See [Guide 06](06-delivery-logistics-and-field-dispatch.md).
 
 ---
 
@@ -164,11 +170,11 @@ graph LR
 | **Payment Method** | Ingress payment choice. | Radio Selector | **Required** | `M-Pesa STK Push`, `Credit Card`, `Cash on Delivery`. |
 | **Customer Order Notes**| Special delivery instructions. | Text (Max 300 chars) | Optional | e.g. *"Call upon arrival at the security gate"*. |
 
-### Rider Proof of Delivery Fields (`/rider/pay`)
+### Rider Proof of Delivery Fields (on a stop of a run)
 
 | Field Label | Purpose | Type & Format | Required? | Validation Rules & Hints |
 |---|---|---|---|---|
-| **Delivery PIN** | 4-digit customer security code. | Numeric (4 digits) | **Required** | Matches PIN generated at order dispatch. |
+| **Delivery code** | 6-digit customer security code. | Numeric (6 digits) | Required when the company's rule at the door asks for the code | Matches the code sent to the customer when the delivery left. |
 | **Cash Collected** | Monetary sum taken at door. | Currency (KES) | Required if COD | Verified against order balance. Added to rider custody. |
 | **M-Pesa Trans ID** | Doorstep M-Pesa receipt code. | Text (10 chars, uppercase) | Required if Door M-Pesa | Valid Safaricom receipt e.g. `QA81273918`. |
 | **Recipient Name** | Person accepting parcel. | Text (Max 80 chars) | **Required** | Customer or authorized agent at premises. |
@@ -186,15 +192,15 @@ graph LR
 6. The screen displays a loading spinner: *"Prompt sent to your phone. Please enter your M-Pesa PIN."*
 7. Within 3 seconds, the customer's phone vibrates with the Safaricom STK prompt: *"Do you want to pay KES 4,750.00 to [Company Trading Name]?"*
 8. The customer enters their PIN.
-9. The checkout screen automatically detects payment confirmation, displays a green success checkmark, and redirects to `/track/[orderId]` displaying the 4-digit Delivery PIN.
+9. The checkout screen automatically detects payment confirmation, displays a green success checkmark, and redirects to `/track/[orderId]` displaying the 6-digit delivery code.
 
 ### Action 2: Rider Executing a Delivery Stop on Mobile
-1. The delivery rider opens `/rider` on their mobile phone and types their 4-digit login PIN.
+1. The delivery rider opens `/rider` on their mobile phone and signs in with their phone number and 6-digit PIN (on the first time after the office gives a PIN, they choose their own).
 2. The active run sheet displays: *"Stop 1: Jane Wanjiku - Westlands"*.
 3. Clicks **Navigate** to open Google Maps turn-by-turn directions.
 4. Upon arrival, clicks **I Have Arrived**.
-5. Hands the parcel to Jane Wanjiku and requests her verification PIN.
-6. Types PIN `9182` into the app.
+5. Hands the parcel to Jane Wanjiku and asks for her 6-digit delivery code.
+6. Types the code (for example `048213`) into the app.
 7. Clicks **Complete Delivery**.
 8. The app vibrates with a success chime, marks Stop 1 completed, and automatically queues Stop 2.
 
