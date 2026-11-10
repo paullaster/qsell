@@ -42,7 +42,8 @@ test.describe('stopping cart reminders', () => {
     // The page alone changes nothing: the person presses the button.
     await expect.poll(() => page.getByRole('button', { name: 'Stop reminders' }).evaluate((el) => Object.keys(el).some((k) => k.startsWith('__reactProps'))).catch(() => false), { timeout: 60_000 }).toBe(true);
     await page.getByRole('button', { name: 'Stop reminders' }).click();
-    await expect(page.getByRole('alert')).toHaveText('This link is not valid.', { timeout: 30_000 });
+    // The page's own message (the framework's route announcer is also an alert).
+    await expect(page.getByRole('alert').filter({ hasText: 'This link is not valid.' })).toHaveText('This link is not valid.', { timeout: 30_000 });
     await noHorizontalScroll(page);
   });
 });

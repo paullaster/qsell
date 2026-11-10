@@ -24,7 +24,7 @@ test.describe('stock timing', () => {
     const picker = page.getByRole('combobox', { name: 'The stock of a delivered order leaves the shelf' });
     await pick(page, picker, 'goes out', /When a delivery goes out/);
     await expect(page.getByText('Only what that delivery carries leaves the shelf.')).toBeVisible();
-    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await page.getByRole('region', { name: 'When stock leaves' }).getByRole('button', { name: 'Save', exact: true }).click();
     await expect(page.getByRole('alert').filter({ hasText: 'kept by location' })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText('In use now:')).toContainText('When the order is paid');
     await noHorizontalScroll(page);
@@ -49,7 +49,7 @@ test.describe('stock timing', () => {
 
       await open(page, '/admin/delivery/stock', 'Stock timing');
       await pick(page, page.getByRole('combobox', { name: 'The stock of a delivered order leaves the shelf' }), 'goes out', /When a delivery goes out/);
-      await page.getByRole('button', { name: 'Save', exact: true }).click();
+      await page.getByRole('region', { name: 'When stock leaves' }).getByRole('button', { name: 'Save', exact: true }).click();
       await expect(page.getByText(/^Saved\./)).toBeVisible({ timeout: 30_000 });
       await expect(page.getByText('In use now:')).toContainText('When a delivery goes out');
 
