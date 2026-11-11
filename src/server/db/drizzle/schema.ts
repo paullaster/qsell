@@ -4582,7 +4582,7 @@ export const salesQuoteTemplates = pgTable(
     currency: text('currency').notNull().default('KES'),
     paymentMethod: text('payment_method').notNull().default('mpesa_daraja'),
     paymentTerms: text('payment_terms'),
-    showBillingAddress: boolean('show_billing_address').notNull().default(false),
+    showBillingAddress: boolean('show_billing_address').notNull().default(true),
     paymentDetails: text('payment_details'),
     termsAndConditions: text('terms_and_conditions'),
     validityDays: integer('validity_days').notNull().default(30),
@@ -4757,7 +4757,7 @@ export const salesQuotes = pgTable(
       .notNull()
       .default({}),
     paymentTerms: text('payment_terms'),
-    showBillingAddress: boolean('show_billing_address').notNull().default(false),
+    showBillingAddress: boolean('show_billing_address').notNull().default(true),
     paymentDetails: text('payment_details'),
     termsAndConditions: text('terms_and_conditions'),
     currency: text('currency').notNull().default('KES'),
@@ -4793,6 +4793,8 @@ export const salesQuotes = pgTable(
     approvedBy: text('approved_by'),
     approvedAt: timestamp('approved_at', { withTimezone: true }),
     sentAt: timestamp('sent_at', { withTimezone: true }),
+    /** The staff member who emailed the quote to the customer (the latest send). */
+    sentBy: text('sent_by'),
     acceptedAt: timestamp('accepted_at', { withTimezone: true }),
     rejectedAt: timestamp('rejected_at', { withTimezone: true }),
     convertedOrderId: text('converted_order_id').references(() => orders.id, {

@@ -3,6 +3,11 @@
 import { X } from 'lucide-react';
 import { useModalKeys } from './useModalKeys';
 
+function widthClass(wide: boolean, extraWide: boolean): string {
+  if (extraWide) return 'max-w-[min(96rem,100%)]';
+  return wide ? 'max-w-6xl' : 'max-w-3xl';
+}
+
 /**
  * A dialog over the page: Escape and the close button dismiss it, Tab stays inside it, focus goes
  * back to what opened it, and a click on the backdrop closes it.
@@ -12,11 +17,14 @@ export function Modal({
   title,
   onClose,
   wide = false,
+  extraWide = false,
 }: {
   children: React.ReactNode;
   title: string;
   onClose: () => void;
   wide?: boolean;
+  /** For screens with a lot side by side, such as a quote with its lines. */
+  extraWide?: boolean;
 }) {
   const dialogRef = useModalKeys<HTMLElement>(onClose);
   return (
@@ -31,7 +39,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={`max-h-[94dvh] w-full overflow-y-auto rounded-2xl border border-line bg-surface-raised p-4 shadow-2xl sm:p-6 ${wide ? 'max-w-6xl' : 'max-w-3xl'}`}
+        className={`max-h-[94dvh] w-full overflow-y-auto rounded-2xl border border-line bg-surface-raised p-4 shadow-2xl sm:p-6 ${widthClass(wide, extraWide)}`}
       >
         <header className="mb-4 flex items-center justify-between gap-3">
           <h2 className="text-lg font-bold text-fg-strong">{title}</h2>

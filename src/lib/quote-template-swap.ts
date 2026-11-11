@@ -89,7 +89,7 @@ const quoteHeader = (q: QuoteInput): Header => ({
   paymentTerms: q.paymentTerms ?? '',
   paymentDetails: q.paymentDetails ?? '',
   termsAndConditions: q.termsAndConditions ?? '',
-  showBillingAddress: q.showBillingAddress ?? false,
+  showBillingAddress: q.showBillingAddress ?? true,
   publicNotes: q.publicNotes ?? '',
   internalNotes: q.internalNotes ?? '',
   discountPercent: q.discountPercent,

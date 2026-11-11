@@ -101,6 +101,26 @@ async function show(
 }
 
 describe('the quotes table', () => {
+  it('shows who made each quote and who emailed it to the customer', async () => {
+    await show(
+      ready([
+        row(1, { createdByName: 'Wanjiru Kamau', sentAt: null, sentByName: null }),
+        row(2, {
+          createdByName: 'Wanjiru Kamau',
+          sentAt: new Date('2026-10-02'),
+          sentByName: 'Otieno Ouma',
+        }),
+        row(3, { createdByName: null, sentAt: new Date('2026-10-02'), sentByName: null }),
+      ]),
+    );
+    const table = screen.getByRole('table');
+    expect(within(table).getByRole('columnheader', { name: 'Staff' })).toBeInTheDocument();
+    expect(within(table).getAllByText('Wanjiru Kamau')).toHaveLength(2);
+    expect(within(table).getByText('Otieno Ouma')).toBeInTheDocument();
+    expect(within(table).getByText('Not emailed yet')).toBeInTheDocument();
+    expect(within(table).getByText('Unknown')).toBeInTheDocument();
+  });
+
   it('shows the rows of the first page with their figures and status', async () => {
     await show(ready([row(1), row(2, { status: 'accepted' })]));
     const table = screen.getByRole('table');

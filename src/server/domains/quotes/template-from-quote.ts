@@ -107,8 +107,6 @@ export function templateDraftFromQuote(
   const days = quote.validUntil
     ? Math.floor((quote.validUntil.getTime() - quote.createdAt.getTime()) / DAY)
     : 30;
-  const hasAddress = (a: Record<string, string>) =>
-    Object.values(a).some((v) => v.trim().length > 0);
 
   return {
     quoteNumber: quote.quoteNumber,
@@ -124,7 +122,7 @@ export function templateDraftFromQuote(
       paymentTerms: quote.paymentTerms,
       paymentDetails: quote.paymentDetails,
       termsAndConditions: quote.termsAndConditions,
-      showBillingAddress: keep && quote.showBillingAddress && hasAddress(quote.billingAddress),
+      showBillingAddress: quote.showBillingAddress,
       validityDays: Math.min(3650, Math.max(1, days)),
       quoteDiscountPercent: Number(quote.quoteDiscountPercent),
       shippingFee: Number(quote.shippingFee),

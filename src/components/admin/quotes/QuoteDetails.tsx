@@ -52,7 +52,7 @@ export function QuoteDetails({
 }) {
   const floorMiss = Number(quote.grossMarginPercent) < Number(quote.minimumMarginPercent);
   return (
-    <Modal title={`${quote.quoteNumber} · ${statusText(quote.status)}`} onClose={onClose} wide>
+    <Modal title={`${quote.quoteNumber} · ${statusText(quote.status)}`} onClose={onClose} extraWide>
       <div className="space-y-5">
         {error !== null && (
           <p
@@ -62,7 +62,17 @@ export function QuoteDetails({
             {error}
           </p>
         )}
-        <section className="grid gap-3 sm:grid-cols-3">
+        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <Summary
+            label="Created by"
+            value={quote.createdByName ?? '—'}
+            detail={new Date(quote.createdAt).toLocaleString()}
+          />
+          <Summary
+            label="Emailed to customer by"
+            value={quote.sentAt === null ? 'Not emailed yet' : (quote.sentByName ?? 'Unknown')}
+            detail={quote.sentAt === null ? undefined : new Date(quote.sentAt).toLocaleString()}
+          />
           <Summary
             label="Customer"
             value={quote.customerName}
@@ -80,8 +90,7 @@ export function QuoteDetails({
             danger={floorMiss}
           />
         </section>
-        {quote.showBillingAddress &&
-          Object.values(quote.billingAddress).some((value) => value.trim().length > 0) && (
+        {quote.showBillingAddress && (
             <Summary
               label="Bill to"
               value={quote.customerName}

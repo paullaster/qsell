@@ -135,4 +135,29 @@ describe.skipIf(!has(url))('sending a quote by email (database)', () => {
     const [row] = await db.select({ status: schema.salesQuotes.status }).from(schema.salesQuotes).where(eq(schema.salesQuotes.id, made.id));
     expect(row?.status).toBe('draft');
   });
+  it('records who made the quote and who emailed it, by name, in the list and on the quote', async () => {
+    await company('sales@acme-trading.test');
+    sender = { mailbox: 'mailer@mail.test', fromName: null, policy: 'mailbox' };
+    const { made } = await quote();
+    const other = nth(await db.insert(schema.users).values({ email: `s-${randomUUID()}@t.test`, passwordHash: 'x', name: 'Second Sender', role: 'manager' }).returning(), 0);
+
+    const before = await svc.get(made.id);
+    expect(before).toMatchObject({ createdByName: 'Sender', sentBy: null, sentByName: null });
+
+    await svc.send(other.id, made.id);
+    const after = await svc.get(made.id);
+    expect(after).toMatchObject({ createdByName: 'Sender', sentBy: other.id, sentByName: 'Second Sender' });
+
+    const page = await svc.listPage({ query: made.quoteNumber, status: 'all', limit: 5, after: null });
+    expect(page.rows.at(0)).toMatchObject({ createdByName: 'Sender', sentByName: 'Second Sender' });
+  });
+
+  it('shows the customer details unless someone hides them', async () => {
+    const { made } = await quote();
+    expect(made.showBillingAddress).toBe(true);
+    const hiddenInput = { customerName: 'Hidden Buyer', customerEmail: 'h@customer.test', currency: 'KES', paymentMethod: 'mpesa_daraja', discountPercent: 0, shippingFee: 0, deliveryAddress: { street: '1', city: 'N', countyOrState: 'N', country: 'KE' }, showBillingAddress: false, sections: [], lines: [] };
+    const productId = (await svc.get(made.id))?.lines.at(0)?.productId;
+    const hidden = await svc.create(userId, { ...hiddenInput, lines: [{ productId, quantity: 1, unitPrice: 100, discountPercent: 0 }] } as never);
+    expect(hidden.showBillingAddress).toBe(false);
+  });
 });
