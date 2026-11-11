@@ -3,8 +3,18 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Menu, RefreshCw, Store, LogOut, User, ChevronDown, Settings } from 'lucide-react';
+import {
+  Menu,
+  RefreshCw,
+  Store,
+  LogOut,
+  User,
+  ChevronDown,
+  Settings,
+  HelpCircle,
+} from 'lucide-react';
 import { AdminSidebar } from './AdminSidebar';
+import { resolveContextualDoc } from '@/lib/docs/contextual-map';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { useRealtimeEvents } from '@/lib/realtime';
 import { getCompanySettingsAction } from '@/server/domains/company/actions';
@@ -38,6 +48,8 @@ export function AdminShell({
     [pathname, moduleLabels],
   );
 
+  const contextualDoc = useMemo(() => resolveContextualDoc(pathname), [pathname]);
+
   // The company's name and logo load alongside the page; nothing waits for them.
   useEffect(() => {
     let cancelled = false;
@@ -53,7 +65,7 @@ export function AdminShell({
           setModuleLabels(resolveCompanyUiConfig(row.uiConfig).moduleLabels);
         }
       })
-      .catch(() => {});
+      .catch(() => undefined);
     return () => {
       cancelled = true;
     };
@@ -121,6 +133,16 @@ export function AdminShell({
               >
                 <RefreshCw className="h-4 w-4" />
               </button>
+
+              {/* Contextual help: deep-links to the manual chapter for the current route */}
+              <Link
+                href={contextualDoc.href}
+                className="rounded-lg p-2 text-fg-muted hover:bg-hover hover:text-fg-strong"
+                title={`Implementation Guide & Value Proposition — ${contextualDoc.chapterTitle}`}
+                aria-label={`Open implementation guide: ${contextualDoc.chapterTitle}`}
+              >
+                <HelpCircle className="h-4 w-4" />
+              </Link>
 
               <Link
                 href="/"

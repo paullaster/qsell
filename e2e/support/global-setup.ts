@@ -40,7 +40,15 @@ async function warmUp(): Promise<void> {
   const browser = await chromium.launch({ channel: 'chrome' });
   const context = await browser.newContext({ storageState: AUTH_FILE, baseURL: E2E_URL });
   const page = await context.newPage();
-  const routes = ['/admin/quotes', '/admin/quotes/templates', '/admin/quotes/section-templates'];
+  const routes = [
+    '/admin/quotes',
+    '/admin/quotes/templates',
+    '/admin/quotes/section-templates',
+    // The implementor-guide portal and the two manuals its end-to-end tests walk through.
+    '/admin/docs',
+    '/admin/docs/04-pricing-engine-promotions-and-margins',
+    '/admin/docs/05-products-catalog-and-inventory-control',
+  ];
   for (const route of routes) {
     // A warm-up that is cut short (the machine's network changed while the page loaded) is tried again, not fatal.
     for (let attempt = 1; attempt <= 4; attempt += 1) {
