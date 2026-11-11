@@ -135,7 +135,8 @@ test.describe('browsing', () => {
     await expect(page.getByRole('list', { name: 'Active filters' })).toContainText('In stock only');
 
     await page.goto('/?q=rice&min=700');
-    expect(await productNames(page)).toEqual(['Rice 10kg']);
+    // The page is read once it has drawn its results (a cold server can answer before the list is there).
+    await expect.poll(() => productNames(page), { timeout: 30_000 }).toEqual(['Rice 10kg']);
     await expect(page.getByRole('heading', { name: 'Results for “rice”', level: 1 })).toBeVisible();
 
     await page.goto('/?q=zz-nothing-like-this');
