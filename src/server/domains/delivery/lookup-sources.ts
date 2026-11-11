@@ -211,6 +211,12 @@ const riders = tableSource({
   toOption: (row) => ({ id: text(row.id), label: text(row.label), description: `${RIDER_KIND_WORDS[row.kind === 'separate' ? 'separate' : 'staff']}${typeof row.phone === 'string' && row.phone !== '' ? ` · ${row.phone}` : ''}`, badge: null }),
 });
 
+/** What a vehicle's limits say beside its name in a list. */
+const limitsLine = (maxWeightKg: unknown, maxStops: unknown): string => {
+  const parts = [typeof maxWeightKg === 'number' || typeof maxWeightKg === 'string' ? `up to ${kilos(Number(maxWeightKg))}` : null, typeof maxStops === 'number' ? `${String(maxStops)} stops` : null].filter((p): p is string => p !== null);
+  return parts.length === 0 ? 'No limit set' : parts.join(' · ');
+};
+
 /** The fleet's vehicles that are in use, for giving a run its vehicle; what each may carry is shown beside its name. */
 const vehicles = tableSource({
   key: 'delivery-vehicles',
@@ -224,10 +230,23 @@ const vehicles = tableSource({
     acceptFilters(filters, {});
     return [and(eq(deliveryVehicles.companyId, companyId), eq(deliveryVehicles.isActive, true)) ?? sql`false`];
   },
-  toOption: (row) => {
-    const parts = [typeof row.maxWeightKg === 'number' || typeof row.maxWeightKg === 'string' ? `up to ${kilos(Number(row.maxWeightKg))}` : null, typeof row.maxStops === 'number' ? `${String(row.maxStops)} stops` : null].filter((p): p is string => p !== null);
-    return { id: text(row.id), label: text(row.label), description: parts.length === 0 ? 'No limit set' : parts.join(' · '), badge: null };
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: limitsLine(row.maxWeightKg, row.maxStops), badge: null }),
+});
+
+/** Every vehicle, stopped ones too, for the costs screen: a late repair bill still belongs to a vehicle that is no longer used. */
+const allVehicles = tableSource({
+  key: 'delivery-vehicles-all',
+  permission: 'delivery_costs:manage',
+  table: deliveryVehicles,
+  id: deliveryVehicles.id,
+  label: deliveryVehicles.name,
+  searchColumns: [deliveryVehicles.name],
+  select: { isActive: deliveryVehicles.isActive },
+  scope: ({ filters, companyId }) => {
+    acceptFilters(filters, {});
+    return [eq(deliveryVehicles.companyId, companyId)];
   },
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: null, badge: row.isActive === false ? 'Stopped' : null }),
 });
 
 /** Members of staff who are not riders yet, for making one a rider. */
@@ -525,4 +544,4 @@ const runningCostKinds = staticSource({
   },
 });
 
-export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts, deliveryStatuses, deliveryFailureReasons, stockIssueMoments, returnDispositions, openRuns, anyRuns, runStatuses, courierNews, riders, vehicles, staffToRide, riderKinds, riderStatuses, doorCashMethods, handInAccounts, handInWitnesses, varianceAccounts, costKinds, runningCostKinds, chargedCouriers, payoutMethods, costAccounts, visitCrew, visitOrders, visitProducts, visitLocations, leadProducts, leadZones, activeCouriers, courierKinds];
+export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts, deliveryStatuses, deliveryFailureReasons, stockIssueMoments, returnDispositions, openRuns, anyRuns, runStatuses, courierNews, riders, vehicles, allVehicles, staffToRide, riderKinds, riderStatuses, doorCashMethods, handInAccounts, handInWitnesses, varianceAccounts, costKinds, runningCostKinds, chargedCouriers, payoutMethods, costAccounts, visitCrew, visitOrders, visitProducts, visitLocations, leadProducts, leadZones, activeCouriers, courierKinds];
