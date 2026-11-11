@@ -48,7 +48,7 @@ test.describe('implementor guide', () => {
     await noHorizontalScroll(page);
 
     await expect(
-      page.getByRole('heading', { name: 'Implementor Blueprint & Commercial Sales Manual' }),
+      page.getByRole('heading', { name: 'QSell Manual', level: 1 }),
     ).toBeVisible();
 
     // The stamp of the build that is running: a semantic version pinned to a git commit.
