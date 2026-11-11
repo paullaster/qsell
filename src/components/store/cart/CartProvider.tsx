@@ -117,27 +117,31 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
+    const isCancelled = (): boolean => cancelled;
     accountBacked.current = false;
     const start = async () => {
-      const local = readSaved();
-      if (!signedIn) {
-        await load(local, { keepAdded: true });
-        return;
-      }
+      // The browser's cart is shown at once, whoever is signed in: nothing waits for the account, so whatever the shopper does in the
+      // first moments is added to a cart that is already there (adding to a cart still being read would overwrite what was saved).
+      await load(readSaved(), { keepAdded: true });
+      if (!signedIn || isCancelled()) return;
       // Signed in: the browser's cart joins the account's, and from then on the account keeps it.
-      let joined = local;
       try {
-        const merged = await mergeServerCartAction(local.map((line) => ({ productId: line.productId, quantity: line.quantity })));
-        if (merged.ok) {
-          const priceSeen = new Map(local.map((line) => [line.productId, line.price]));
-          joined = merged.data.map((line) => ({ productId: line.productId, quantity: line.quantity, price: priceSeen.get(line.productId) ?? null }));
-          accountBacked.current = true;
+        const browser = readSaved();
+        const merged = await mergeServerCartAction(browser.map((line) => ({ productId: line.productId, quantity: line.quantity })));
+        if (!merged.ok || isCancelled()) return;
+        accountBacked.current = true;
+        const priceSeen = new Map(browser.map((line) => [line.productId, line.price]));
+        const joined = merged.data.map((line) => ({ productId: line.productId, quantity: line.quantity, price: priceSeen.get(line.productId) ?? null }));
+        const here = savedLines(linesRef.current).map((line) => ({ productId: line.productId, quantity: line.quantity }));
+        if (sameCartLines(here, merged.data)) {
+          // Nothing more from the account; what is here is what the account now keeps.
+          saveToAccount(linesRef.current);
+        } else {
+          await load(joined, { keepAdded: true });
         }
       } catch {
         /* the account could not be reached: this visit works from the browser's cart */
       }
-      if (cancelled) return;
-      await load(joined, { keepAdded: true });
     };
     // The saved cart exists only in the browser, so it can only be read here, after the page is drawn.
     void start();
@@ -162,7 +166,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('storage', onStorage);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [load, signedIn]);
+  }, [load, saveToAccount, signedIn]);
 
   // A price can depend on the quantity (price lists have quantity breaks), so after the shopper changes a quantity the prices are
   // read again, quietly, a moment later: the shopper changed it themselves, so there is nothing to be told.

@@ -59,6 +59,21 @@ describe('CartProvider with an account', () => {
     expect(mergeServerCartAction).toHaveBeenCalledWith([{ productId: 'p1', quantity: 2 }]);
   });
 
+  it('shows the browser’s cart at once and never overwrites it with an add made while the account is still being asked', async () => {
+    window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify([{ productId: 'p1', quantity: 2, price: 100 }]));
+    let answer: (value: unknown) => void = () => undefined;
+    mergeServerCartAction.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    render(<CartProvider><Probe /></CartProvider>);
+    await waitFor(() => expect(shown()).toBe('p1x2'));
+    act(() => screen.getByRole('button', { name: 'add tea' }).click());
+    const stored = () => (JSON.parse(window.localStorage.getItem(CART_STORAGE_KEY) ?? '[]') as { productId: string }[]).map((l) => l.productId).sort();
+    expect(stored()).toEqual(['p1', 'p2']);
+    answer({ ok: true, data: [{ productId: 'p1', quantity: 2 }] });
+    await waitFor(() => expect(saveServerCartAction).toHaveBeenCalled());
+    expect(stored()).toEqual(['p1', 'p2']);
+    expect(saveServerCartAction.mock.calls.at(-1)?.[0]).toEqual([{ productId: 'p1', quantity: 2 }, { productId: 'p2', quantity: 1 }]);
+  });
+
   it('keeps the account’s cart up to date after a change, and not before the cart was joined', async () => {
     render(<CartProvider><Probe /></CartProvider>);
     await waitFor(() => expect(shown()).toBe('empty'));
