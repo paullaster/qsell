@@ -20,13 +20,13 @@ test.describe('stock timing', () => {
     await noInnerHorizontalScroll(page);
     // The test shop keeps stock the old way, so it can only leave when the order is paid, and the page says so.
     await expect(page.getByRole('status').filter({ hasText: 'not yet kept by location' })).toBeVisible();
-    await expect(page.getByText('In use now:')).toContainText('When the order is paid');
+    await expect(page.getByRole('region', { name: 'When stock leaves' }).getByText('In use now:')).toContainText('When the order is paid');
     const picker = page.getByRole('combobox', { name: 'The stock of a delivered order leaves the shelf' });
     await pick(page, picker, 'goes out', /When a delivery goes out/);
     await expect(page.getByText('Only what that delivery carries leaves the shelf.')).toBeVisible();
     await page.getByRole('region', { name: 'When stock leaves' }).getByRole('button', { name: 'Save', exact: true }).click();
     await expect(page.getByRole('alert').filter({ hasText: 'kept by location' })).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText('In use now:')).toContainText('When the order is paid');
+    await expect(page.getByRole('region', { name: 'When stock leaves' }).getByText('In use now:')).toContainText('When the order is paid');
     await noHorizontalScroll(page);
   });
 
@@ -51,7 +51,7 @@ test.describe('stock timing', () => {
       await pick(page, page.getByRole('combobox', { name: 'The stock of a delivered order leaves the shelf' }), 'goes out', /When a delivery goes out/);
       await page.getByRole('region', { name: 'When stock leaves' }).getByRole('button', { name: 'Save', exact: true }).click();
       await expect(page.getByText(/^Saved\./)).toBeVisible({ timeout: 30_000 });
-      await expect(page.getByText('In use now:')).toContainText('When a delivery goes out');
+      await expect(page.getByRole('region', { name: 'When stock leaves' }).getByText('In use now:')).toContainText('When a delivery goes out');
 
       // Applying the choice to orders already paid: the stock of goods that have not left is counted back and held for the order.
       const paid = page.getByRole('region', { name: 'Orders already paid' });
