@@ -661,4 +661,35 @@ describe.skipIf(!has(url))('delivery slots (database)', () => {
     expect(await c.deliverySlots.heldBy(companyId, lateDoc.data.id)).toBeNull();
     expect(await c.deliverySlots.requestFor(companyId, lateId)).toMatchObject({ outcome: 'unavailable', note: 'That slot has already passed.' });
   });
+
+  it('lets a company turn the shopper\'s choice of delivery time off: a time sent anyway is refused and nothing is saved, and turning it back on restores it', async () => {
+    // With nothing set the shop behaves as it always did: shoppers choose.
+    const first = await c.deliverySlots.shopperChoice(companyId);
+    expect(first.enabled).toBe(true);
+    const s = await slot({ name: `Choice ${code()}`, capacity: 5 });
+    const productId = lastProduct;
+    const place = async (number: string) =>
+      await createOrder({ orderNumber: number, customerName: 'Wanjiru Buyer', customerEmail: `sl-${randomUUID()}@slots.test`, customerPhone: '0700123456', shippingAddress: { street: '1 Test Rd', city: 'Nairobi', countyOrState: 'Nairobi', country: 'KE' }, items: [{ productId, quantity: 1 }], currency: 'KES', paymentMethod: 'mpesa_daraja', delivery: { method: 'own_fleet', pin: PIN, slot: { slotId: s.id, day: ahead(12) } } });
+    // Bad input and a stale version change nothing.
+    expect(await c.deliverySlots.setShopperChoice(actor(), { enabled: 'no', expectedVersion: first.version })).toMatchObject({ ok: false, reason: 'bad_input' });
+    expect(await c.deliverySlots.setShopperChoice(actor(), { enabled: false, expectedVersion: first.version + 5 })).toMatchObject({ ok: false, reason: 'conflict' });
+    expect((await c.deliverySlots.shopperChoice(companyId)).enabled).toBe(true);
+    const off = await must(c.deliverySlots.setShopperChoice(actor(), { enabled: false, expectedVersion: first.version }));
+    expect(off).toMatchObject({ enabled: false, version: first.version + 1 });
+    // The old version cannot flip it again.
+    expect(await c.deliverySlots.setShopperChoice(actor(), { enabled: true, expectedVersion: first.version })).toMatchObject({ ok: false, reason: 'conflict' });
+    const number = `SL-${randomUUID()}`;
+    const refused = await place(number);
+    expect(refused).toMatchObject({ success: false, code: 'slot_unavailable' });
+    expect(refused.error).toContain('without a time');
+    expect(await db.select({ id: schema.orders.id }).from(schema.orders).where(eq(schema.orders.orderNumber, number))).toHaveLength(0);
+    // An order with no time is unaffected, and staff can still book a slot for a delivery.
+    const holder = await delivery();
+    await must(c.deliverySlots.book(actor(), holder, { slotId: s.id, day: ahead(12) }));
+    const [log] = await db.select().from(schema.decisionLog).where(and(eq(schema.decisionLog.subjectId, companyId), eq(schema.decisionLog.action, 'delivery.shopper_choice_changed')));
+    expect(log?.inputs).toMatchObject({ before: true, after: false });
+    const on = await must(c.deliverySlots.setShopperChoice(actor(), { enabled: true, expectedVersion: off.version }));
+    expect(on.enabled).toBe(true);
+    expect(await place(`SL-${randomUUID()}`)).toMatchObject({ success: true });
+  });
 });

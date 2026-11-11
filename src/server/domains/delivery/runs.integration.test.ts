@@ -451,4 +451,104 @@ describe.skipIf(!has(url))('runs and courier shipments (database)', () => {
       expect(await runActions.deliveryExtrasAction(id)).toMatchObject({ ok: true, data: { shipment: { courierName: 'Swift Couriers' }, run: null } });
     });
   });
+  describe('vehicles and what a run may carry', () => {
+    const vehicle = async (name: string, limits: Record<string, unknown> = {}) => {
+      const r = await c.deliveryVehicles.create(runStaff(), { name: `${name} ${code()}`, ...limits });
+      if (!r.ok) throw new Error(r.message);
+      return r.data;
+    };
+    /** An order split into two ready deliveries (5 of the first product and 2 of the second) from one branch, with weights of 2 kg and 3 kg a unit. */
+    const twoParcels = async (weights: [number | null, number | null] = [2, 3]) => {
+      const o = await order();
+      for (const [p, w] of [[o.a, weights[0]], [o.b, weights[1]]] as const) await db.update(schema.products).set({ weight: w === null ? null : String(w) }).where(eq(schema.products.id, p));
+      const first = await readyDelivery(o, [{ productId: o.a, quantity: 5 }]);
+      const second = await readyDelivery(o, [{ productId: o.b, quantity: 2 }]);
+      return { o, first, second };
+    };
+
+    it('keeps a register: names are unique whatever their case, limits make sense, edits use a version, and a vehicle is stopped, never removed', async () => {
+      const v = await vehicle('Isuzu');
+      expect(await c.deliveryVehicles.create(runStaff(), { name: v.name.toLowerCase() })).toMatchObject({ ok: false, reason: 'conflict' });
+      for (const bad of [{ name: '' }, { name: 'X', maxWeightKg: 0 }, { name: 'X', maxStops: 1.5 }]) expect(await c.deliveryVehicles.create(runStaff(), bad)).toMatchObject({ ok: false, reason: 'bad_input' });
+      const changed = await c.deliveryVehicles.update(runStaff(), v.id, { name: v.name, maxWeightKg: '150', maxStops: 6, expectedVersion: v.version });
+      expect(changed).toMatchObject({ ok: true, data: { maxWeightKg: 150, maxStops: 6, version: v.version + 1 } });
+      expect(await c.deliveryVehicles.update(runStaff(), v.id, { name: v.name, expectedVersion: v.version })).toMatchObject({ ok: false, reason: 'conflict' });
+      const stopped = await c.deliveryVehicles.setActive(runStaff(), v.id, { isActive: false, expectedVersion: v.version + 1 });
+      expect(stopped).toMatchObject({ ok: true, data: { isActive: false } });
+      expect((await c.deliveryVehicles.list(companyId)).find((x) => x.id === v.id)).toMatchObject({ isActive: false, runsInUse: 0 });
+      // Another company sees and changes nothing of it.
+      const stranger = { companyId: randomUUID(), userId: 'x' };
+      expect(await c.deliveryVehicles.setActive(stranger, v.id, { isActive: true, expectedVersion: v.version + 2 })).toMatchObject({ ok: false, reason: 'not_found' });
+      const log = await db.select().from(schema.decisionLog).where(and(eq(schema.decisionLog.subjectId, v.id), eq(schema.decisionLog.subjectType, 'delivery_vehicle')));
+      expect(log.map((l) => l.action).sort()).toEqual(['vehicle.changed', 'vehicle.created', 'vehicle.stopped']);
+    });
+
+    it('gives a run a vehicle from the register, keeping its name; a stopped or unknown one is refused and a typed-in name still works', async () => {
+      const o = await order();
+      const v = await vehicle('Van');
+      const run = await newRun(o.branchId, { vehicleId: v.id, vehicle: 'ignored' });
+      expect(await runView(run.id)).toMatchObject({ vehicleId: v.id, vehicle: v.name, limits: { maxWeightKg: null, maxStops: null } });
+      expect(await c.deliveryRuns.create(runStaff(), { branchId: o.branchId, runDate: today(), riderName: 'A', vehicleId: randomUUID() })).toMatchObject({ ok: false, reason: 'not_allowed' });
+      await c.deliveryVehicles.setActive(runStaff(), v.id, { isActive: false, expectedVersion: v.version });
+      expect(await c.deliveryRuns.create(runStaff(), { branchId: o.branchId, runDate: today(), riderName: 'A', vehicleId: v.id })).toMatchObject({ ok: false, reason: 'not_allowed', message: expect.stringContaining('stopped') as string });
+      const typed = await newRun(o.branchId, { vehicle: 'Borrowed pickup' });
+      expect(await runView(typed.id)).toMatchObject({ vehicleId: null, vehicle: 'Borrowed pickup', limits: null });
+      // The run in a stopped vehicle carries on, and the register counts it.
+      expect((await c.deliveryVehicles.list(companyId)).find((x) => x.id === v.id)?.runsInUse).toBe(1);
+    });
+
+    it('refuses a delivery that would take a run over its vehicle\'s weight, says by how much, leaves the run as it was, and lets it go on another run', async () => {
+      const { o, first, second } = await twoParcels();
+      // 5 x 2 kg = 10 kg and 2 x 3 kg = 6 kg; this vehicle carries 12.
+      const v = await vehicle('Small van', { maxWeightKg: 12 });
+      const run = await newRun(o.branchId, { vehicleId: v.id });
+      expect(await c.deliveryRuns.addStop(runStaff(), run.id, first)).toMatchObject({ ok: true });
+      const refused = await c.deliveryRuns.addStop(runStaff(), run.id, second);
+      expect(refused).toMatchObject({ ok: false, reason: 'not_allowed', message: expect.stringContaining('carries at most 12 kg; this run would carry 16 kg') as string });
+      const after = await runView(run.id);
+      expect(after.totals).toMatchObject({ stops: 1, weightKg: 10 });
+      expect(after.limits).toEqual({ maxWeightKg: 12, maxStops: null });
+      const roomy = await vehicle('Big lorry', { maxWeightKg: 500 });
+      const other = await newRun(o.branchId, { vehicleId: roomy.id });
+      expect(await c.deliveryRuns.addStop(runStaff(), other.id, second)).toMatchObject({ ok: true });
+    });
+
+    it('refuses a stop beyond the most stops, counts goods without a weight as nothing, and puts no limit on a run with no vehicle from the list', async () => {
+      const { o, first, second } = await twoParcels([null, null]);
+      const one = await vehicle('Motorbike', { maxStops: 1, maxWeightKg: 5 });
+      const run = await newRun(o.branchId, { vehicleId: one.id });
+      // No weights are known, so only the stops can be over.
+      expect(await c.deliveryRuns.addStop(runStaff(), run.id, first)).toMatchObject({ ok: true });
+      expect(await c.deliveryRuns.addStop(runStaff(), run.id, second)).toMatchObject({ ok: false, message: expect.stringContaining('takes at most 1 stop on a run; this would be 2') as string });
+      const free = await newRun(o.branchId, { vehicle: 'Typed in' });
+      expect(await c.deliveryRuns.addStop(runStaff(), free.id, second)).toMatchObject({ ok: true });
+    });
+
+    it('lets only one of two people adding a stop at the same moment take the last place', async () => {
+      const { o, first, second } = await twoParcels([null, null]);
+      const one = await vehicle('Single seat', { maxStops: 1 });
+      const run = await newRun(o.branchId, { vehicleId: one.id });
+      const results = await Promise.all([c.deliveryRuns.addStop(runStaff(), run.id, first), c.deliveryRuns.addStop(runStaff(), run.id, second)]);
+      expect(results.filter((r) => r.ok)).toHaveLength(1);
+      expect((await runView(run.id)).totals.stops).toBe(1);
+    });
+
+    it('changes the vehicle of a planned run only to one that fits what is on it, can clear it, and refuses a run that has gone out', async () => {
+      const { o, first, second } = await twoParcels();
+      const roomy = await vehicle('Pickup', { maxWeightKg: 100 });
+      const run = await newRun(o.branchId, { vehicleId: roomy.id });
+      for (const d of [first, second]) expect(await c.deliveryRuns.addStop(runStaff(), run.id, d)).toMatchObject({ ok: true });
+      // 16 kg on the run: a 12 kg vehicle is too small.
+      const small = await vehicle('Tuk-tuk', { maxWeightKg: 12 });
+      const tooSmall = await c.deliveryRuns.assignVehicle(runStaff(), run.id, { vehicleId: small.id });
+      expect(tooSmall).toMatchObject({ ok: false, reason: 'not_allowed', message: expect.stringContaining('choose a bigger vehicle') as string });
+      expect(await runView(run.id)).toMatchObject({ vehicleId: roomy.id });
+      const fits = await vehicle('Truck', { maxWeightKg: 16 });
+      expect(await c.deliveryRuns.assignVehicle(runStaff(), run.id, { vehicleId: fits.id })).toMatchObject({ ok: true, data: { vehicleId: fits.id, vehicle: fits.name } });
+      expect(await c.deliveryRuns.assignVehicle(runStaff(), run.id, { vehicleId: '', vehicle: 'Hired' })).toMatchObject({ ok: true, data: { vehicleId: null, vehicle: 'Hired', limits: null } });
+      const started = await c.deliveryRuns.start(runStaff(), run.id);
+      expect(started.ok).toBe(true);
+      expect(await c.deliveryRuns.assignVehicle(runStaff(), run.id, { vehicleId: roomy.id })).toMatchObject({ ok: false, reason: 'not_allowed' });
+    });
+  });
 });

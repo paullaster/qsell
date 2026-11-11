@@ -718,7 +718,7 @@ D-5 is built in slices: **D-5a slots** (this section), D-5b promised windows, la
 
 **Finished (same day): weight and lead times** (migration 0147). A slot can have **a weight limit** for a day (kg): the weight of a delivery is what its lines weigh (quantity times the product's shipping weight; goods with no weight count as nothing), the slot adds up what its deliveries already carry, and a delivery that would take it over is refused ("cannot carry that much more that day"), as is one heavier than the limit alone; the panel shows the weight left. **Lead times** say how long the goods need before they can go, for **a delivery zone** and for **an item** (fresh fish, made to order, large goods), kept in one small table (`delivery_lead_times`) set on *Delivery slots › How long the goods need*, removable with confirmation. A delivery cannot be promised a slot that **starts before the order's time plus the longest** of its item's, its zone's (the zone on its charge) and the branch's own handling time (the existing per-branch method lead time); the refusal names the time and what held the goods up ("will not be ready until Thu 5 Nov, 14:30 (Frozen fish)"). Verified: 11 rules tests, 9 database tests, the browser test (desktop and phone) extended with a bad weight, a bad lead time and a lead time set and removed; whole run 188 files and 1,899 tests.
 
-**Not built.** Capacity by vehicle (a rider's vehicle is only text today); the shop customer choosing a slot at checkout and seeing the earliest one; the window on the dispatch board and tracking page; lateness and escalation (D-5b).
+**Not built.** Capacity by vehicle (a rider's vehicle is only text today); (the shop customer choosing a slot at checkout, the window on the dispatch board and tracking page, and lateness were built in §49 and §50; the company can switch the checkout choice off, §55).
 
 ## 49. D-5b (part 1): the promised window, lateness and escalation (2026-11-08)
 
@@ -732,7 +732,7 @@ D-5 is built in slices: **D-5a slots** (this section), D-5b promised windows, la
 
 **Verified.** 8 rules tests; 4 database tests added to the slots file (each level raised once and again changing nothing, the decision log, the append-only guards; far, delivered, cancelled and unwindowed deliveries not watched; the list's order, levels and minutes, acknowledgement with a note and its refusals, a new window starting afresh; settings with versions); a browser test on desktop and phone (a late delivery raised, "Promised ... Late" on the board, the late screen, acknowledgement refused without words and then recorded; the settings refused and saved). Whole run: 193 files, 1,934 tests.
 
-**Not built (D-5b part 2 and later).** The shop customer choosing a slot at checkout and seeing the earliest one; telling the dispatcher and supervisor by message (the escalation is a screen, not yet an email or a push); the board using the company's own warning time on every row (it uses the default); on-time rates and the report (D-5d).
+**Not built (D-5b part 2 and later).** Telling the dispatcher and supervisor by message (the escalation is a screen, not yet an email or a push); the board using the company's own warning time on every row (it uses the default); on-time rates and the report (D-5d).
 
 ## 50. D-5b (part 2): the shopper chooses a delivery time at checkout (2026-11-08)
 
@@ -844,3 +844,27 @@ The "at risk" and "late" chips on the dispatch board were worked out at the defa
 **Verified.** 8 rules tests (`rider-pin.test.ts`: the number in any written form, what a PIN may be, the lock times), 11 database tests (`rider-pins.integration.test.ts`: the PIN kept only as a hash and not in the log; the number written any way; wrong answers all alike; the lock, the unlock and the lock running out; **a burst of 14 guesses**; choosing one's own with every refusal and the old PIN stopping; sessions ending on a new PIN or removal; staff, foreign numbers, a number already taken, another company; paused, left and switched-off riders; the phone number changing; leaving freeing the number; what the office sees), and a browser test on desktop and phone (`e2e/rider-pin.spec.ts`: the office gives a PIN shown once; a wrong PIN refused; the temporary PIN leads to choosing one's own and the app stays closed until then; weak PINs refused with words; signing out and in; five wrong tries shutting the rider out and the office letting them back in; the PIN turned off).
 
 **Not built.** A rider asking for a new PIN by text message (they ask the office); signing in with a PIN for staff riders (by design); a limit on how many riders may share a phone (a number belongs to one rider at a time); the sign-in page working without signal (it needs the network, like any sign-in; the runs already kept on the phone still open).
+
+## 55. The company decides whether shoppers choose a delivery time (2026-11-11)
+
+**Why.** The checkout choice of §50 was always on. A company that plans every delivery itself, or does not want customers holding it to a window, needs to turn it off.
+
+**The setting** (`delivery_slot_settings`, migration 0157): one row for a company, made when it is first changed, with `shoppers_choose`, a version, who and when. **With no row the answer is yes**, so existing companies see no change. Read and changed through `DeliverySlots.shopperChoice` and `setShopperChoice` (versioned, a stale version is a conflict, changes are written to the decision log with before and after); screen: *Delivery slots › Delivery time at checkout* (`delivery_slots:manage`).
+
+**What it changes.** Off: `shopDeliverySlotsAction` returns no days, so the checkout hides the whole section; `checkRequest` refuses a time sent anyway with the checkout refusal `slot_unavailable` and a plain message, so a page left open from before cannot promise a time and nothing is saved. What it does not change: staff booking a slot for a delivery, slots themselves, and orders whose shopper already chose a time (`honourRequest` still books them: the shopper was promised).
+
+**Verified.** A database test (default on, bad input and stale version change nothing, off refuses a time and saves no order, staff booking still works, the decision log, on again accepts), a browser test on desktop and phone of the setting being saved and kept across a reload, and one of the checkout pricing the delivery with no times offered.
+
+**Not built.** Setting it for one branch or one delivery method; showing "we will contact you about the time" text at checkout when it is off.
+
+## 56. Vehicles and what a run may carry (2026-11-11)
+
+**Why.** A rider's vehicle was only text, so nothing stopped a run being loaded with more than the vehicle could take.
+
+**The register** (`delivery_vehicles`, migration 0158; screen *Delivery › Vehicles*, `riders:manage`): a name (unique per company whatever its letter case, by an index on `lower(name)`), an optional weight limit in kg and an optional limit on stops (a check keeps them sensible), in use or stopped, a version, and the decision log (`vehicle.created`, `vehicle.changed`, `vehicle.stopped`, `vehicle.resumed`). A vehicle is stopped, never deleted. Pure rules: `src/lib/delivery-vehicle.ts` (`checkVehicle`, `loadProblem`, `loadWords`).
+
+**On a run.** `delivery_runs.vehicle_id` (nullable, restrict) points at the vehicle chosen from the register; the run keeps the vehicle's name in `vehicle` as it was. A typed-in vehicle still works and limits nothing. `DeliveryRuns.addStop` and the new `assignVehicle` compute the load (the same units, value and weight as the run screen, with goods of no weight counting as nothing) **under the run's row lock** and refuse a stop or a vehicle that would put it over, in words with the numbers. The run view carries `vehicleId` and `limits`; the run screen shows the load against them; the dispatch board's *Plan a run* picks the vehicle through the `delivery-vehicles` lookup (in-use vehicles only, limits shown beside the name).
+
+**Verified.** 8 rules tests; 6 database tests in the runs file (register rules and versions, a run keeping the vehicle's name and refusing a stopped or unknown one, the weight limit with the run left unchanged and the delivery fitting another run, the stop limit with goods of no weight, the race for the last place, changing the vehicle to one that fits); a browser test on desktop and phone (adding, a bad limit and a duplicate refused, a run in the vehicle refusing a second stop, the run screen showing the load, stopping the vehicle).
+
+**Not built.** A default vehicle for a rider; a vehicle's capacity in volume or parcels; refusing to start a run whose vehicle was changed after stops were added (changing the vehicle is checked, so this cannot happen); vehicle costs by vehicle in the report.

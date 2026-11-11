@@ -180,6 +180,7 @@ export function QuotesTable({
             <tr role="row">
               <th role="columnheader" className="px-4 py-3">Quote</th>
               <th role="columnheader" className="px-4 py-3">Customer</th>
+              <th role="columnheader" className="px-4 py-3">Staff</th>
               <th role="columnheader" className="px-4 py-3 text-right">Total</th>
               <th role="columnheader" className="px-4 py-3 text-right">Gross margin</th>
               <th role="columnheader" className="px-4 py-3">Status</th>
@@ -190,7 +191,7 @@ export function QuotesTable({
           <tbody role="rowgroup" className="block divide-y divide-line md:table-row-group">
             {rows.length === 0 ? (
               <tr role="row" className="block md:table-row">
-                <td role="cell" colSpan={7} className="block px-4 py-12 text-center text-fg-muted md:table-cell">
+                <td role="cell" colSpan={8} className="block px-4 py-12 text-center text-fg-muted md:table-cell">
                   {filtered
                     ? 'No quotes match those filters.'
                     : 'No quotes yet. Create a quote to start the sales workflow.'}
@@ -278,6 +279,16 @@ function QuoteRow({
             No email: edit the quote to add one
           </span>
         )}
+      </td>
+      <td role="cell" className="block px-4 py-1.5 text-xs md:table-cell md:py-3">
+        <div className="text-fg-muted">
+          <span className="mr-1 font-medium text-fg">Created by</span>
+          {quote.createdByName ?? '—'}
+        </div>
+        <div className="mt-0.5 text-fg-muted">
+          <span className="mr-1 font-medium text-fg">Emailed by</span>
+          {quote.sentAt === null ? 'Not emailed yet' : (quote.sentByName ?? 'Unknown')}
+        </div>
       </td>
       <td role="cell" className="block px-4 py-1.5 md:table-cell md:py-3 md:text-right font-mono font-semibold text-fg-strong">
         <span className="mr-2 font-sans text-xs font-normal text-fg-muted md:hidden">Total</span>

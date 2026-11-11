@@ -13,7 +13,7 @@ export function blankQuoteForm(now: Date): QuoteInput {
     paymentMethod: 'mpesa_daraja',
     paymentTerms: '',
     templateId: null,
-    showBillingAddress: false,
+    showBillingAddress: true,
     paymentDetails: '',
     termsAndConditions: '',
     sections: [],

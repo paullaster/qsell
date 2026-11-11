@@ -1100,6 +1100,27 @@
       "when": 1794280563368,
       "tag": "0156_rider_pins",
       "breakpoints": true
+    },
+    {
+      "idx": 157,
+      "version": "7",
+      "when": 1794388247470,
+      "tag": "0157_delivery_slot_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 158,
+      "version": "7",
+      "when": 1794392568928,
+      "tag": "0158_delivery_vehicles",
+      "breakpoints": true
+    },
+    {
+      "idx": 159,
+      "version": "7",
+      "when": 1794396764350,
+      "tag": "0159_quote_sender_and_customer_details",
+      "breakpoints": true
     }
   ]
 }

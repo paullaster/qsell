@@ -29,7 +29,7 @@ test.describe('the dispatch board', () => {
       await pick(page, plan.getByRole('combobox', { name: 'Leaves from' }), `Delivery ${tag}`, new RegExp(`Delivery ${tag}`));
       await plan.getByLabel('Day').fill(today());
       await plan.getByLabel('Or a name, for someone not using the app').fill('Otieno');
-      await plan.getByLabel('Vehicle (optional)').fill('KMFA 123A');
+      await plan.getByLabel('Or a vehicle typed in').fill('KMFA 123A');
       await plan.getByRole('button', { name: 'Plan the run' }).click();
       const planned = page.getByText(/^Run RUN-.* is planned/);
       await expect(planned).toBeVisible({ timeout: 30_000 });

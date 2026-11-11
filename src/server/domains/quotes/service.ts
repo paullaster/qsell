@@ -23,6 +23,7 @@ import {
   salesQuoteSections,
   salesSectionTemplateEvents,
   salesSectionTemplates,
+  users,
   type SalesQuoteTemplateRow,
   type SalesQuoteRow,
 } from '@/server/db/drizzle/schema';
@@ -176,6 +177,9 @@ export interface QuoteSearchHit {
 /** A quote as the list shows it, with whether it is past its valid-until date while still open. */
 export interface QuoteListRow extends SalesQuoteRow {
   expired: boolean;
+  /** Who made the quote, and who emailed it to the customer; null when nobody did or the account is gone. */
+  createdByName: string | null;
+  sentByName: string | null;
 }
 
 export interface QuoteListPage {
@@ -187,6 +191,8 @@ export interface QuoteListPage {
 export interface SalesQuote extends SalesQuoteRow {
   /** Past its valid-until date while still open. */
   expired: boolean;
+  createdByName: string | null;
+  sentByName: string | null;
   lines: (typeof salesQuoteLines.$inferSelect)[];
   sections: (typeof salesQuoteSections.$inferSelect)[];
   events: (typeof salesQuoteEvents.$inferSelect)[];
@@ -251,6 +257,23 @@ export interface SalesQuoteTemplate extends SalesQuoteTemplateRow {
   lines: (typeof salesQuoteTemplateLines.$inferSelect)[];
   sections: (typeof salesQuoteTemplateSections.$inferSelect)[];
   events: (typeof salesQuoteTemplateEvents.$inferSelect)[];
+}
+
+const UUID_TEXT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The names of the staff behind some ids, in one query; ids that are not accounts are skipped. */
+async function staffNames(ids: (string | null)[]): Promise<Map<string, string>> {
+  const wanted = [...new Set(ids.filter((id): id is string => id !== null && UUID_TEXT.test(id)))];
+  if (wanted.length === 0) return new Map();
+  const rows = await drizzleDb
+    .select({ id: users.id, name: users.name })
+    .from(users)
+    .where(inArray(users.id, wanted));
+  return new Map(rows.map((r) => [r.id, r.name]));
+}
+
+function nameOf(names: Map<string, string>, id: string | null): string | null {
+  return id === null ? null : (names.get(id) ?? null);
 }
 
 export class SalesQuoteService {
@@ -491,9 +514,7 @@ export class SalesQuoteService {
         paymentTerms: input.paymentTerms?.trim() || null,
         paymentDetails: input.paymentDetails?.trim() || null,
         termsAndConditions: input.termsAndConditions?.trim() || null,
-        showBillingAddress:
-          input.showBillingAddress === true &&
-          Object.values(input.billingAddress ?? {}).some((value) => value.trim().length > 0),
+        showBillingAddress: input.showBillingAddress,
         validityDays: input.validityDays,
         quoteDiscountPercent: input.quoteDiscountPercent.toFixed(3),
         shippingFee: input.shippingFee.toFixed(2),
@@ -677,10 +698,13 @@ export class SalesQuoteService {
     const page = rows.slice(0, request.limit);
     const last = page.at(-1);
     const now = new Date();
+    const names = await staffNames(page.flatMap(({ row }) => [row.createdBy, row.sentBy]));
     return {
       rows: page.map(({ row }) => ({
         ...row,
         expired: isQuoteExpired(row, now),
+        createdByName: nameOf(names, row.createdBy),
+        sentByName: nameOf(names, row.sentBy),
       })),
       nextCursor:
         rows.length > request.limit && last !== undefined
@@ -780,9 +804,12 @@ export class SalesQuoteService {
         .where(eq(salesQuoteEvents.quoteId, quote.id))
         .orderBy(desc(salesQuoteEvents.createdAt)),
     ]);
+    const names = await staffNames([quote.createdBy, quote.sentBy]);
     return {
       ...quote,
       expired: isQuoteExpired(quote, new Date()),
+      createdByName: nameOf(names, quote.createdBy),
+      sentByName: nameOf(names, quote.sentBy),
       lines,
       sections,
       events,
@@ -1383,9 +1410,7 @@ export class SalesQuoteService {
       approvalManagedBy: byWorkflow ? 'workflow' : null,
       paymentMethod: input.paymentMethod,
       paymentTerms: input.paymentTerms?.trim() || null,
-      showBillingAddress:
-        input.showBillingAddress === true &&
-        Object.values(input.billingAddress ?? {}).some((value) => value.trim().length > 0),
+      showBillingAddress: input.showBillingAddress !== false,
       paymentDetails: input.paymentDetails?.trim() || null,
       termsAndConditions: input.termsAndConditions?.trim() || null,
       validUntil: input.validUntil ? new Date(`${input.validUntil}T23:59:59`) : null,
@@ -1870,6 +1895,7 @@ export class SalesQuoteService {
       .set({
         status: 'sent',
         sentAt: new Date(),
+        sentBy: userId,
         shareTokenHash: tokenHash(token),
         updatedAt: new Date(),
       })

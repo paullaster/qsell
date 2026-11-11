@@ -18,8 +18,8 @@ const PATHS = ['/admin/delivery/slots', '/admin/delivery/deliveries'];
 export async function slotsScreenAction() {
   return await runDelivery('delivery_slots:manage', async (ctx) => {
     const s = getContainer().deliverySlots;
-    const [slots, closed, leads, sla] = await Promise.all([s.list(ctx.companyId), s.closedDays(ctx.companyId), s.leadTimes(ctx.companyId), getContainer().deliverySla.settings(ctx.companyId)]);
-    return { slots, closed, leads, sla };
+    const [slots, closed, leads, sla, shopperChoice] = await Promise.all([s.list(ctx.companyId), s.closedDays(ctx.companyId), s.leadTimes(ctx.companyId), getContainer().deliverySla.settings(ctx.companyId), s.shopperChoice(ctx.companyId)]);
+    return { slots, closed, leads, sla, shopperChoice };
   });
 }
 
@@ -98,6 +98,14 @@ export async function acknowledgeLateAction(raw: unknown) {
     const i = objectOf(raw);
     return dataOf(await getContainer().deliverySla.acknowledge({ companyId: ctx.companyId, userId: ctx.userId }, idOf(i.deliveryId, 'delivery'), { note: i.note }));
   }, ['/admin/delivery/late']);
+}
+
+/** Turns the shop's choice of delivery time on or off; off means dispatch plans every delivery. */
+export async function setShopperChoiceAction(raw: unknown) {
+  return await runDelivery('delivery_slots:manage', async (ctx) => {
+    const i = objectOf(raw);
+    return dataOf(await getContainer().deliverySlots.setShopperChoice({ companyId: ctx.companyId, userId: ctx.userId }, { enabled: i.enabled, expectedVersion: i.expectedVersion }));
+  }, PATHS);
 }
 
 export async function slaSettingsAction() {

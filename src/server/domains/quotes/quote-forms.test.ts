@@ -74,6 +74,12 @@ const saved = {
   ],
 } as unknown as SalesQuote;
 
+describe('the customer details on a quote', () => {
+  it('are shown on a new quote unless someone hides them', () => {
+    expect(blankQuoteForm(new Date('2026-11-01')).showBillingAddress).toBe(true);
+  });
+});
+
 describe('the form for a new quote', () => {
   it('is empty, in shillings, valid for thirty days', () => {
     const form = blankQuoteForm(new Date('2026-10-14T10:00:00Z'));

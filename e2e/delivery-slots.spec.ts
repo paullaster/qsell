@@ -104,4 +104,30 @@ test.describe('delivery slots', () => {
       deliveryTool('close', tag);
     }
   });
+  test('the company turns the shopper\'s choice of delivery time off and on, and the setting is kept', async ({ page }, testInfo) => {
+    test.slow();
+    const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}`;
+    deliveryTool('shopper-choice', tag, 'on');
+    try {
+      await open(page, '/admin/delivery/slots', 'Delivery slots');
+      const form = page.getByRole('form', { name: 'Shopper choice' });
+      const box = form.getByRole('checkbox', { name: 'Let shoppers choose a delivery time at checkout' });
+      const save = form.getByRole('button', { name: 'Save' });
+      await expect(box).toBeChecked();
+      // Nothing to save until something changes.
+      await expect(save).toBeDisabled();
+      await box.uncheck();
+      await save.click();
+      await expect(page.getByText('The checkout no longer offers delivery times; you plan every delivery.')).toBeVisible({ timeout: 30_000 });
+      await noHorizontalScroll(page);
+      await page.reload();
+      await expect(page.getByRole('heading', { name: 'Delivery slots', level: 1 })).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByRole('form', { name: 'Shopper choice' }).getByRole('checkbox', { name: 'Let shoppers choose a delivery time at checkout' })).not.toBeChecked();
+      await page.getByRole('form', { name: 'Shopper choice' }).getByRole('checkbox', { name: 'Let shoppers choose a delivery time at checkout' }).check();
+      await page.getByRole('form', { name: 'Shopper choice' }).getByRole('button', { name: 'Save' }).click();
+      await expect(page.getByText('Shoppers can now choose a delivery time at checkout.')).toBeVisible({ timeout: 30_000 });
+    } finally {
+      deliveryTool('shopper-choice', tag, 'on');
+    }
+  });
 });
