@@ -7,6 +7,11 @@ import { riderTool } from './support/rider-fixtures';
 
 // The choice of rider kinds is company-wide, so the steps run one after another and put it back at the end.
 test.describe.configure({ mode: 'serial' });
+// The first test expects the default (staff only) to start from, so another spec that switched own accounts on cannot upset it.
+test.beforeAll(() => {
+  riderTool('reset', 'x');
+});
+
 test.afterAll(() => {
   riderTool('reset', 'x');
 });

@@ -115,7 +115,7 @@ graph TD
 - **Who rides**: choose whether the company uses its own staff as riders, riders with an account of their own, or both. A kind cannot be switched off while people of that kind are still working.
 - **Proof at the door**: what a rider must show to mark a delivery delivered (nothing, the customer's code, a photo, or either).
 - **Add a member of staff as a rider** (the staff member keeps signing in with their own account) or **Make an account for a rider** (an account that opens the rider app and nothing else).
-- **Each rider's card**: kind, email, phone, vehicle, branch, runs still to do, and status (*Riding*, *Paused*, *Left*); buttons to pause, resume, mark as left, and (for riders with their own account) give a new first password.
+- **Each rider's card**: kind, email, phone, usual vehicle, branch, runs still to do, and status (*Riding*, *Paused*, *Left*); a **Usual vehicle** picker with **Save the vehicle** (not shown once a rider has left); buttons to pause, resume, mark as left, and (for riders with their own account) give a new first password.
 - **Sign in with a phone number and PIN** (riders with their own account only): the rider's PIN panel shows *No PIN*, *Waiting for the rider to choose their own*, *PIN set* or *Shut out for ...*, the number they sign in with, when they last signed in, and any wrong tries in a row. Buttons: **Give a PIN**, **Give a new PIN**, **Let them try again**, **Turn off the PIN**. See *Action 4*.
 
 ### 5a. Vehicles (`/admin/delivery/vehicles`)
@@ -236,7 +236,8 @@ graph TD
 | **Email to sign in with** | The rider's account address. | Email | **Required** | Must not already belong to another account. |
 | **Phone** | The number the rider signs in with when using a PIN, and the number customers can call. | Phone | **Required** | For a PIN: a Kenyan mobile number (07.. or 01.., with or without +254). |
 | **First password** | The password the rider changes at their first email sign-in. | Text | **Required** | Must meet the password rules. |
-| **Vehicle (optional)** | Motorcycle, van or plate number. | Text (Max 80) | Optional | Shown on the rider's card. |
+| **Usual vehicle (optional)** | The vehicle this rider normally goes out in, chosen from the Vehicles list. | Lookup of vehicles in use | Optional | A run planned for this rider with no vehicle of its own goes in it. A stopped vehicle cannot be chosen. |
+| **Or a vehicle typed in** | A motorcycle, van or plate that is not on the Vehicles list. | Text (Max 80) | Optional | Shown on the rider's card; limits nothing and is not brought to runs. Switched off while a vehicle is chosen. |
 | **Branch** | The branch the rider belongs to. | Lookup | Optional | Only active branches. |
 
 ### Rider PIN Fields
@@ -350,7 +351,7 @@ graph TD
 ### Action 1: Planning and Dispatching a Multi-Drop Delivery Run
 1. Navigate to `/admin/delivery/dispatch`. **Ready to go** lists the deliveries of your own riders that are ready; courier deliveries are handed over, not carried.
 2. In **Plan a run** choose **Leaves from** (the branch), the **Day**, and the rider: pick one in **Rider**, or type a name in **Or a name, for someone not using the app** (that rider will not see the run in the rider app).
-3. Choose **Vehicle (optional)** from your list, or type one in **Or a vehicle typed in** (a typed-in vehicle limits nothing). When a vehicle is chosen the typed box is switched off.
+3. Choose **Vehicle (optional)** from your list, or type one in **Or a vehicle typed in** (a typed-in vehicle limits nothing). When a vehicle is chosen the typed box is switched off. If you leave the vehicle empty and the rider has a **usual vehicle**, the run goes in it; the message after *Plan the run* says so (*Run RUN-… is planned in Van*). A usual vehicle that has since been stopped is not used, and the run is made with no vehicle.
 4. Click **Plan the run**. The message *Run RUN-… is planned* appears.
 5. In **Ready to go**, choose the run in **Put deliveries on this run**, then click **Put … on the run** beside each delivery. A delivery must leave from the run's branch. If the vehicle has limits and the delivery would take the run over them, it is refused in words, for example *"Small van carries at most 12 kg; this run would carry 16 kg. Choose another run or another vehicle for this delivery."* The run is left as it was.
 6. Open the run (**Runs to do**). **Stops** lists the deliveries: use **Move … up/down** to order them, **Nearest first** to have the system suggest an order from the pins, and **Take … off the run** to remove one. **Change the vehicle** swaps the vehicle while the run has not gone out; the new vehicle must fit what is already on the run.
@@ -429,6 +430,11 @@ graph TD
 
 ---
 
+### Action 12: Giving a Rider a Usual Vehicle
+1. Open `/admin/delivery/riders`. When adding a rider (a member of staff, or an own account) choose **Usual vehicle (optional)**; or find the rider's card and use **Usual vehicle of …**, then **Save the vehicle**. Clear the picker and save to take it away.
+2. From then on, **Plan the run** for that rider with no vehicle chosen puts the run in it, so the vehicle's weight and stop limits apply as stops are added.
+3. Changing the usual vehicle does not change runs already planned.
+
 ### Action 11: Setting Up the Fleet's Vehicles
 1. Open `/admin/delivery/vehicles`.
 2. In **Add a vehicle** type the **Name or number plate**, and if wanted **Most weight it carries (kg)** and **Most stops on a run**. Click **Add the vehicle**.
@@ -476,6 +482,7 @@ Under `/admin/delivery/invoicing`, the business configures one of two fiscal mod
 - A vehicle that is stopped cannot be given to a new run. A run already in it keeps its limits, and its name is kept on the run as it was.
 - Changing a vehicle's limits does not move stops already on a run: it applies to what is added next.
 - A vehicle cannot be deleted. Stop it instead.
+- A rider's **usual vehicle** is used only when a run is planned for that rider and no vehicle was chosen or typed. Giving a planned run to another rider later does not change its vehicle.
 
 ### Lateness
 - A delivery promised a window is *On track*, *At risk* (within the warning time of the end of the window, or the window has begun and it is not on its way), *Late* (past the end), *On time* or *Delivered late*. Cancelled and returned deliveries are not watched.

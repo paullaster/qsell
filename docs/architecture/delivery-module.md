@@ -880,3 +880,11 @@ The "at risk" and "late" chips on the dispatch board were worked out at the defa
 **Verified.** 2 database tests (a vehicle named or brought by its run, two vehicles refused, an unknown or another company's vehicle refused, a stopped vehicle still billed, the list naming it, a reversal keeping it, the database refusing a courier cost with a vehicle; the report's figures for a vehicle that delivered and one that did not, and the untied sum) and a browser test on desktop and phone (adding a vehicle, a cost against it, the list and the report naming it, a late cost against the stopped vehicle).
 
 **Not built.** Moving a cost to another vehicle without taking it back; kilometres or litres, so fuel per kilometre; costs by vehicle for runs with only a typed-in vehicle name.
+
+## 58. A rider's usual vehicle (2026-11-11)
+
+`delivery_riders.vehicle_id` (migration 0161; nullable, restrict) is the rider's usual vehicle from the register (§56), set when a rider is added (staff or own account, checked before the account is made, so a vehicle that cannot be used leaves nothing behind), or later with `DeliveryRiders.update` (`vehicleId` from the list, `''` to clear, a typed `vehicle` for a name that is not on the list; an edit that mentions neither leaves it alone). The rider's `vehicle` text keeps the vehicle's name as it was. `DeliveryRiders.carrier` returns the usual vehicle, and `DeliveryRuns.create` uses it when the request names no vehicle, either from the list or typed in; a usual vehicle that has been stopped is skipped quietly, so a run is never refused for it. The planned message names the vehicle. The riders lookup shows each rider's vehicle beside their name.
+
+**Verified.** 3 database tests in the riders file (chosen at creation and refused when stopped or unknown, changed and cleared and left alone by other edits, brought to runs unless another is chosen or typed and skipped when stopped) and a browser test on desktop and phone.
+
+**Not built.** Carrying the usual vehicle over when a planned run is given to another rider.

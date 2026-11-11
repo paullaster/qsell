@@ -1537,6 +1537,8 @@ export const deliveryRiders = pgTable(
     name: text('name').notNull(),
     phone: text('phone'),
     vehicle: text('vehicle'),
+    /** The rider's usual vehicle from the register: a run planned for them with no vehicle of its own goes in this one. */
+    vehicleId: uuid('vehicle_id').references(() => deliveryVehicles.id, { onDelete: 'restrict' }),
     branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
     status: text('status').$type<'active' | 'paused' | 'ended'>().notNull().default('active'),
     statusReason: text('status_reason'),

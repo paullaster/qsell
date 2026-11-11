@@ -200,7 +200,7 @@ const riders = tableSource({
   id: deliveryRiders.id,
   label: deliveryRiders.name,
   searchColumns: [deliveryRiders.name, deliveryRiders.phone],
-  select: { kind: deliveryRiders.kind, phone: deliveryRiders.phone },
+  select: { kind: deliveryRiders.kind, phone: deliveryRiders.phone, vehicle: deliveryRiders.vehicle },
   scope: ({ filters, companyId }) => {
     acceptFilters(filters, {});
     const kindUsed = sql`CASE ${deliveryRiders.kind}
@@ -208,7 +208,7 @@ const riders = tableSource({
       ELSE COALESCE((SELECT s.allow_separate FROM ${deliveryRiderSettings} s WHERE s.company_id = ${companyId}::uuid), false) END`;
     return [and(eq(deliveryRiders.companyId, companyId), eq(deliveryRiders.status, 'active'), kindUsed) ?? sql`false`];
   },
-  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: `${RIDER_KIND_WORDS[row.kind === 'separate' ? 'separate' : 'staff']}${typeof row.phone === 'string' && row.phone !== '' ? ` · ${row.phone}` : ''}`, badge: null }),
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: `${RIDER_KIND_WORDS[row.kind === 'separate' ? 'separate' : 'staff']}${typeof row.phone === 'string' && row.phone !== '' ? ` · ${row.phone}` : ''}${typeof row.vehicle === 'string' && row.vehicle !== '' ? ` · ${row.vehicle}` : ''}`, badge: null }),
 });
 
 /** What a vehicle's limits say beside its name in a list. */
