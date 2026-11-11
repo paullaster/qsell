@@ -1,6 +1,7 @@
 /**
  * Set-up for the rider tests that a person would do from other screens:
  *   tsx e2e/support/rider-fixtures.ts staff <tag>   a member of staff (a plain account that may sign in to the back office), printed with the email and first password
+ *   tsx e2e/support/rider-fixtures.ts own <tag>     a rider with an account of their own (switches the kind on) and a Kenyan phone number, printed with the name and the number as typed
  *   tsx e2e/support/rider-fixtures.ts code <delivery number>  the code the customer was sent for a delivery, the way they read it in their message
  *   tsx e2e/support/rider-fixtures.ts token <order number>  the customer's tracking link token for an order
  *   tsx e2e/support/rider-fixtures.ts proof <rule>  sets what a rider must show at the door (none, code, photo, code_or_photo), so a test does not depend on the one before it
@@ -23,6 +24,22 @@ async function staff(tag: string): Promise<Record<string, string>> {
   const email = `e2e-staff-${tag}@example.test`.toLowerCase();
   const user = await c.usersAdmin.createUser({ email, password: PASSWORD, name: `Staff Rider ${tag}`, phone: '0711000222', role: 'super_admin' });
   return { id: user.id, email, password: PASSWORD, name: `Staff Rider ${tag}` };
+}
+
+async function own(tag: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const c = getContainer();
+  const company = await c.companySettings.ensureSeeded();
+  const actor = { companyId: company.id, userId: 'e2e' };
+  const now = await c.deliveryRiders.settings(company.id);
+  const kinds = await c.deliveryRiders.setKinds(actor, { allowStaff: now.allowStaff, allowSeparate: true, expectedVersion: now.version });
+  if (!kinds.ok) throw new Error(`e2e fixture: ${kinds.message}`);
+  const digits = String(Math.floor(100000 + Math.random() * 899999));
+  const phone = `0711 ${digits.slice(0, 3)} ${digits.slice(3)}`;
+  const name = `Pin Rider ${tag}`;
+  const made = await c.deliveryRiders.createSeparate(actor, { name, email: `e2e-pin-${tag}@example.test`.toLowerCase(), phone, password: PASSWORD });
+  if (!made.ok) throw new Error(`e2e fixture: ${made.message}`);
+  return { id: made.data.id, name, phone };
 }
 
 async function codeOf(number: string): Promise<Record<string, string>> {
@@ -201,6 +218,7 @@ async function main(): Promise<void> {
   const [command, tag] = process.argv.slice(2);
   let result: Record<string, string> | null = null;
   if (command === 'staff' && tag !== undefined) result = await staff(tag);
+  if (command === 'own' && tag !== undefined) result = await own(tag);
   if (command === 'code' && tag !== undefined) result = await codeOf(tag);
   if (command === 'token' && tag !== undefined) result = await tokenOf(tag);
   if (command === 'proof' && tag !== undefined) result = await setProof(tag);

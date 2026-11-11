@@ -326,8 +326,12 @@ function SlaPanel({ sla, onChanged, onError }: { sla: Screen['sla']; onChanged: 
     setBusy(true);
     const r = await attempt(setSlaSettingsAction({ atRiskMinutes: Number(atRisk), escalateAfterMinutes: Number(escalate), notifyDispatch: dispatchTo, notifySupervisor: supervisorTo, expectedVersion: sla.version }));
     setBusy(false);
-    if (r.ok) onChanged('Saved. The Late deliveries screen uses these from now on.');
-    else onError(r.error);
+    if (r.ok) {
+      // What was saved, not what was typed: the server writes addresses in lower case and once each.
+      setDispatchTo(r.data.notifyDispatch.join(', '));
+      setSupervisorTo(r.data.notifySupervisor.join(', '));
+      onChanged('Saved. The Late deliveries screen uses these from now on.');
+    } else onError(r.error);
   };
   return (
     <form

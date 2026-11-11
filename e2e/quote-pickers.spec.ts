@@ -61,7 +61,9 @@ test.describe('the customer, currency and payment method pickers', () => {
     const dialog = await openNewQuote(page);
     const currency = dialog.getByRole('combobox', { name: 'Currency' });
     await currency.click();
-    await expect(page.getByRole('option')).toHaveCount(2);
+    // The seed enables the base currency and two foreign ones; a currency that is switched off would not be here.
+    await expect(page.getByRole('option')).toHaveCount(3);
+    for (const code of ['KES', 'USD', 'CHF']) await expect(page.getByRole('option', { name: new RegExp(code) })).toHaveCount(1);
     await page.getByRole('option', { name: /USD/ }).click();
     await expect(currency).toHaveValue('USD');
   });

@@ -16,6 +16,7 @@
  *   tsx e2e/support/delivery-fixtures.ts close <tag>   takes all of that out of play again, so the shop's other tests are not asked about delivery
  */
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { eq, like, sql } from 'drizzle-orm';
 import { e2eEnvironment } from './env';
 
@@ -197,7 +198,7 @@ async function advance(id: string, number: string): Promise<Record<string, strin
 }
 
 /** A paid order for one salt that is to be sent by courier from the fixture's branch, placed the way the shop places it. */
-async function courierOrder(tag: string): Promise<Record<string, string>> {
+async function courierOrder(tag: string, again = ''): Promise<Record<string, string>> {
   const { getContainer } = await import('@/server/di/container');
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
   const { products } = await import('@/server/db/drizzle/schema');
@@ -211,7 +212,8 @@ async function courierOrder(tag: string): Promise<Record<string, string>> {
   if (branch !== undefined) await db.insert(deliveryMethods).values({ companyId: company.id, branchId: branch.id, method: 'courier' }).onConflictDoNothing();
   const [salt] = await db.select({ id: products.id }).from(products).where(eq(products.name, 'Salt 500g'));
   if (salt === undefined) throw new Error('e2e fixture: the seeded products are not there');
-  const orderNumber = `E2E-CR-${tag}`.toUpperCase();
+  // `again` tells a second order of the same test from the first.
+  const orderNumber = `E2E-CR-${tag}${again}`.toUpperCase();
   const made = await OrderWriteService.createOrder({
     orderNumber,
     customerName: `Courier Buyer ${tag}`,
@@ -273,7 +275,7 @@ async function courierCharge(tag: string, courier: string, amount: string): Prom
   const c = getContainer();
   const company = await c.companySettings.ensureSeeded();
   const actor = { companyId: company.id, userId: 'e2e' };
-  const made = await ready((await courierOrder(tag)).orderNumber ?? '');
+  const made = await ready((await courierOrder(tag, `-${randomUUID().slice(0, 6)}`)).orderNumber ?? '');
   const sent = await c.deliveryDocuments.dispatch(actor, made.id ?? '', { courierName: courier });
   if (!sent.ok) throw new Error(`e2e fixture: ${sent.message}`);
   const charged = await c.deliveryCosts.recordCourier(actor, made.id ?? '', { amount: Number(amount), note: 'E2E waybill' });

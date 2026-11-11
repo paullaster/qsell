@@ -34,7 +34,26 @@ export async function setRiderProofAction(raw: unknown) {
 }
 
 export async function ridersPageAction(raw?: unknown) {
-  return await runDelivery('riders:manage', async (ctx) => await getContainer().deliveryRiders.list(ctx.companyId, objectOf(raw)));
+  return await runDelivery('riders:manage', async (ctx) => {
+    const c = getContainer();
+    const page = await c.deliveryRiders.list(ctx.companyId, objectOf(raw));
+    // The PIN state of the riders on this page, in one read; the PIN itself is never kept and never here.
+    const pins = await c.riderPins.statusFor(ctx.companyId, page.rows.map((r) => r.id));
+    return { ...page, rows: page.rows.map((r) => ({ ...r, pin: pins.get(r.id) ?? null })) };
+  });
+}
+
+/** Gives a rider a PIN to sign in to the rider app with their phone number. The PIN is in the answer once and is never kept. */
+export async function issueRiderPinAction(raw: unknown) {
+  return await runDelivery('riders:manage', async (ctx) => dataOf(await getContainer().riderPins.issue({ companyId: ctx.companyId, userId: ctx.userId }, idOf(objectOf(raw).riderId))), PATHS);
+}
+
+export async function unlockRiderPinAction(raw: unknown) {
+  return await runDelivery('riders:manage', async (ctx) => dataOf(await getContainer().riderPins.unlock({ companyId: ctx.companyId, userId: ctx.userId }, idOf(objectOf(raw).riderId))), PATHS);
+}
+
+export async function removeRiderPinAction(raw: unknown) {
+  return await runDelivery('riders:manage', async (ctx) => dataOf(await getContainer().riderPins.remove({ companyId: ctx.companyId, userId: ctx.userId }, idOf(objectOf(raw).riderId))), PATHS);
 }
 
 /** A member of staff starts riding with the account they have. */

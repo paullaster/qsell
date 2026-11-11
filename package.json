@@ -1,11 +1,12 @@
 {
-  "name": "omnicommerce",
+  "name": "qsell",
   "private": true,
   "version": "1.0.0",
   "packageManager": "pnpm@12.6.0",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "tsx scripts/build-docs.ts && next build",
+    "docs:build": "tsx scripts/build-docs.ts",
     "start": "next start",
     "db:migrate": "drizzle-kit migrate",
     "lint": "eslint . --max-warnings 0",

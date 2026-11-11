@@ -11,6 +11,9 @@ export const RATE_RULES = {
   /** Sign-in: per address and per person, so changing address does not help against one account. */
   login_ip: { limit: 100, seconds: 900 },
   login_account: { limit: 8, seconds: 900 },
+  /** A rider signing in with a phone number and PIN: per address, and per number so one rider's PIN cannot be guessed from many addresses. */
+  rider_pin_ip: { limit: 40, seconds: 900 },
+  rider_pin_phone: { limit: 12, seconds: 900 },
   /** Mail-sending forms: password reset, resend verification. */
   mail_ip: { limit: 10, seconds: 3600 },
   mail_account: { limit: 3, seconds: 3600 },

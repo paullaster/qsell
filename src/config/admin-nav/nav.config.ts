@@ -1430,4 +1430,13 @@ export const ADMIN_NAV: AdminNavItem[] = [
       },
     ],
   },
+  {
+    id: 'documentation',
+    title: 'Implementor Guide',
+    name: 'documentation',
+    href: '/admin/docs',
+    description: 'System implementation manuals, operational specifications, and sales enablement',
+    icon: 'BookOpen',
+    permission: 'dashboard:read',
+  },
 ];

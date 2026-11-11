@@ -118,14 +118,16 @@ test.describe('the dispatch board', () => {
       await expect(withCouriers).toContainText(number, { timeout: 30_000 });
       await withCouriers.getByText(`Record the courier’s news for ${number}`).click();
       await pick(page, withCouriers.getByRole('combobox', { name: `What the courier reported: ${number}` }), 'Still', /Still with the courier/);
-      await withCouriers.getByLabel('Note').fill('At the Nairobi hub');
-      await withCouriers.getByRole('button', { name: 'Record the news' }).click();
+      // Other deliveries with couriers may be on the board too (the tests share one database): work in this delivery's own row.
+      const row = withCouriers.getByRole('listitem').filter({ hasText: number });
+      await row.getByLabel('Note').fill('At the Nairobi hub');
+      await row.getByRole('button', { name: 'Record the news' }).click();
       await expect(page.getByText(`The news for ${number} is recorded.`)).toBeVisible({ timeout: 30_000 });
       await expect(withCouriers).toContainText('At the Nairobi hub');
 
       await pick(page, withCouriers.getByRole('combobox', { name: `What the courier reported: ${number}` }), 'Delivered', /^Delivered/);
-      await withCouriers.getByLabel('Who received it').fill('Gate guard');
-      await withCouriers.getByRole('button', { name: 'Record the news' }).click();
+      await row.getByLabel('Who received it').fill('Gate guard');
+      await row.getByRole('button', { name: 'Record the news' }).click();
       await expect(page.getByText(`The news for ${number} is recorded.`)).toBeVisible({ timeout: 30_000 });
       await expect(withCouriers).not.toContainText(number);
 

@@ -1,5 +1,6 @@
 'use server';
 
+import { signIn } from '@/auth';
 import { requireUser } from '@/server/domains/access-control/guard';
 import { AccessDeniedError } from '@/server/domains/access-control/engine';
 import { getContainer } from '@/server/di/container';
@@ -48,6 +49,19 @@ export async function myRunsAction() {
 /** The rider's own pay: what is owed now, this month, the latest entries and what has been paid. Only ever their own. */
 export async function myPayAction() {
   return await runRider(async (self) => await getContainer().riderPay.mine(self));
+}
+
+/**
+ * The rider chooses their own PIN. The PIN they have now is needed too. The change ends every session made with the old PIN, so this
+ * phone is signed in again with the new one before the answer goes back.
+ */
+export async function changeMyPinAction(raw: unknown) {
+  return await runRider(async (self) => {
+    const i = objectOf(raw);
+    const changed = dataOf(await getContainer().riderPins.change(self, i));
+    await signIn('rider-pin', { phone: changed.phone, pin: i.next, redirect: false });
+    return { done: true as const };
+  });
 }
 
 /** One of the rider's own runs with its stops. Another rider's run answers "not found". */

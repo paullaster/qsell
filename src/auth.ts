@@ -1,7 +1,7 @@
-import NextAuth, { CredentialsSignin } from 'next-auth';
+import NextAuth, { CredentialsSignin, type NextAuthConfig } from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
-import type { NextAuthConfig } from 'next-auth';
 import type {} from 'next-auth/jwt';
+import { firstFilled } from '@/lib/values';
 import { UserRepository } from '@/server/domains/auth/user-repository';
 import { findPortalAccess } from '@/server/domains/vendors/portal-access';
 
@@ -12,6 +12,10 @@ declare module 'next-auth' {
     phone?: string | null;
     customerStoreId?: string | null;
     mustChangePassword?: boolean;
+    /** A rider who signed in with a PIN the office handed out must choose their own first. */
+    mustChangePin?: boolean;
+    /** When the PIN this session was made with was set: a later reset or removal ends the session. */
+    pinStamp?: number;
     vendorId?: string | null;
     vendorRole?: string | null;
   }
@@ -27,6 +31,7 @@ declare module 'next-auth' {
       customerStoreId?: string | null;
       /** Set for admin-issued passwords; the user must choose their own before doing anything else. */
       mustChangePassword: boolean;
+      mustChangePin: boolean;
       /** Set only for a vendor portal user: the vendor business they act for and their portal role. */
       vendorId?: string | null;
       vendorRole?: string | null;
@@ -41,6 +46,8 @@ declare module 'next-auth/jwt' {
     phone?: string | null;
     customerStoreId?: string | null;
     mustChangePassword?: boolean;
+    mustChangePin?: boolean;
+    pinStamp?: number;
     /** Epoch ms when role/status were last confirmed against the database. */
     verifiedAt?: number;
     vendorId?: string | null;
@@ -56,8 +63,17 @@ class EmailNotVerified extends CredentialsSignin {
   override code = EMAIL_NOT_VERIFIED_CODE;
 }
 
-const authSecret = process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
-if (!authSecret) {
+/** Signing in with a PIN failed because too many wrong tries shut the rider out; says for how long. */
+export const RIDER_PIN_LOCKED_CODE = 'rider_pin_locked';
+export class RiderPinLocked extends CredentialsSignin {
+  override code = RIDER_PIN_LOCKED_CODE;
+  constructor(readonly words: string) {
+    super();
+  }
+}
+
+const authSecret = firstFilled(process.env.AUTH_SECRET, process.env.NEXTAUTH_SECRET);
+if (authSecret === null) {
   throw new Error('AUTH_SECRET is required. Generate one with: openssl rand -base64 32');
 }
 
@@ -72,6 +88,9 @@ const PUBLIC_VENDOR_PATHS = new Set(['/vendor/register', '/vendor/invitations/ac
 
 /** A phone fetches the app's manifest without sign-in cookies, so it must be open for the app to be installable. */
 const RIDER_MANIFEST_PATH = '/rider/manifest.webmanifest';
+/** The rider app's own sign-in (phone number and PIN) and where a rider chooses their own PIN. */
+export const RIDER_SIGN_IN_PATH = '/rider/sign-in';
+export const RIDER_PIN_PATH = '/rider/pin';
 
 const authConfig = {
   secret: authSecret,
@@ -83,7 +102,7 @@ const authConfig = {
   // Stale cookies from a previous secret only need a quiet clear, not log spam.
   logger: {
     error(error: Error | string) {
-      const name = typeof error === 'string' ? error : error?.name;
+      const name = typeof error === 'string' ? error : error.name;
       if (name === 'JWTSessionError') return;
       console.error('[auth][error]', error);
     },
@@ -97,16 +116,14 @@ const authConfig = {
         password: { label: 'Password', type: 'password' },
       },
       authorize: async (credentials) => {
-        const email = String(credentials?.email || '')
-          .toLowerCase()
-          .trim();
-        const password = String(credentials?.password || '');
-        if (!email || !password) return null;
+        const email = typeof credentials.email === 'string' ? credentials.email.toLowerCase().trim() : '';
+        const password = typeof credentials.password === 'string' ? credentials.password : '';
+        if (email === '' || password === '') return null;
 
         const users = new UserRepository();
         await users.ensureSuperAdminSeed();
         const user = await users.verifyPassword(email, password);
-        if (!user) return null;
+        if (user === null) return null;
         // The single place credentials are checked — every sign-in path goes through here.
         if (user.emailVerifiedAt === null) throw new EmailNotVerified();
 
@@ -127,22 +144,59 @@ const authConfig = {
         };
       },
     }),
+    Credentials({
+      id: 'rider-pin',
+      name: 'Phone number and PIN',
+      credentials: {
+        phone: { label: 'Phone number', type: 'tel' },
+        pin: { label: 'PIN', type: 'password' },
+      },
+      authorize: async (credentials) => {
+        const { getContainer } = await import('@/server/di/container');
+        const pins = getContainer().riderPins;
+        const checked = await pins.verify(credentials.phone, credentials.pin);
+        if (!checked.ok) {
+          if (checked.reason === 'locked') throw new RiderPinLocked(checked.words);
+          return null;
+        }
+        const user = await new UserRepository().findById(checked.userId);
+        if (user === null || !user.isActive || user.status === 'suspended') return null;
+        // A PIN opens the rider app and nothing else: never a back-office account, whatever the account holds.
+        return {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          isStaff: false,
+          phone: user.phone,
+          customerStoreId: null,
+          mustChangePassword: false,
+          mustChangePin: checked.mustChange,
+          pinStamp: (await pins.stampFor(user.id)) ?? 0,
+          vendorId: null,
+          vendorRole: null,
+        };
+      },
+    }),
   ],
   callbacks: {
     authorized({ auth, request }) {
       const path = request.nextUrl.pathname;
+      const person = auth?.user;
       if (path.startsWith('/admin')) {
-        if (auth?.user.isStaff !== true) return false;
-        if (auth?.user.mustChangePassword === true) {
+        if (person?.isStaff !== true) return false;
+        if (person.mustChangePassword) {
           const target = new URL('/change-password', request.nextUrl);
           target.searchParams.set('callbackUrl', `${path}${request.nextUrl.search}`);
           return Response.redirect(target);
         }
       }
-      if (path.startsWith('/rider') && path !== RIDER_MANIFEST_PATH) {
+      if (path.startsWith('/rider') && path !== RIDER_MANIFEST_PATH && path !== RIDER_SIGN_IN_PATH) {
         // Anyone signed in may reach the door; the pages and actions decide whether they are a rider.
-        if (auth?.user === undefined) return false;
-        if (auth.user.mustChangePassword) {
+        if (person === undefined) return Response.redirect(new URL(RIDER_SIGN_IN_PATH, request.nextUrl));
+        // A PIN the office handed out is replaced with the rider's own before anything else.
+        if (person.mustChangePin && path !== RIDER_PIN_PATH) return Response.redirect(new URL(RIDER_PIN_PATH, request.nextUrl));
+        if (person.mustChangePassword) {
           const target = new URL('/change-password', request.nextUrl);
           target.searchParams.set('callbackUrl', `${path}${request.nextUrl.search}`);
           return Response.redirect(target);
@@ -150,23 +204,29 @@ const authConfig = {
       }
       if (path.startsWith('/vendor') && !PUBLIC_VENDOR_PATHS.has(path)) {
         // Staff never use the portal and vendors never use the back office.
-        if (auth?.user.isStaff === true) return Response.redirect(new URL('/admin', request.nextUrl));
-        return (auth?.user.role === 'vendor' || auth?.user.role === 'customer') && typeof auth.user.vendorId === 'string' && auth.user.vendorId !== '' && typeof auth.user.vendorRole === 'string';
+        if (person?.isStaff === true) return Response.redirect(new URL('/admin', request.nextUrl));
+        return (person?.role === 'vendor' || person?.role === 'customer') && typeof person.vendorId === 'string' && person.vendorId !== '' && typeof person.vendorRole === 'string';
       }
       return true;
     },
     async jwt({ token, user }) {
-      if (user) {
-        token.role = user.role;
-        token.isStaff = user.isStaff === true;
-        token.phone = user.phone;
-        token.customerStoreId = user.customerStoreId;
-        token.mustChangePassword = user.mustChangePassword === true;
-        token.sub = user.id;
-        token.vendorId = user.vendorId ?? null;
-        token.vendorRole = user.vendorRole ?? null;
-        token.verifiedAt = Date.now();
-        return token;
+      // The library types `user` as always present, but it is only there on the call that signs someone in.
+      const signedIn = user as typeof user | undefined;
+      if (signedIn !== undefined) {
+        return {
+          ...token,
+          role: signedIn.role,
+          isStaff: signedIn.isStaff === true,
+          phone: signedIn.phone,
+          customerStoreId: signedIn.customerStoreId,
+          mustChangePassword: signedIn.mustChangePassword === true,
+          mustChangePin: signedIn.mustChangePin === true,
+          pinStamp: signedIn.pinStamp,
+          sub: signedIn.id,
+          vendorId: signedIn.vendorId ?? null,
+          vendorRole: signedIn.vendorRole ?? null,
+          verifiedAt: Date.now(),
+        };
       }
       // Only non-shopper sessions carry privileges worth re-checking; shopper sessions skip
       // the lookup so storefront traffic never pays for it. Tokens issued before the staff
@@ -177,45 +237,47 @@ const authConfig = {
       ) {
         return token;
       }
-      const current =
-        token.sub !== undefined && token.sub !== ''
-          ? await new UserRepository().findById(token.sub)
-          : null;
-      if (!current || !current.isActive || current.status === 'suspended') {
+      const current = token.sub !== undefined && token.sub !== '' ? await new UserRepository().findById(token.sub) : null;
+      if (current === null || !current.isActive || current.status === 'suspended') {
         return null; // Ends the session.
       }
-      token.role = current.role;
-      token.isStaff = await new UserRepository().isStaffRoleKey(current.role);
-      token.mustChangePassword = current.mustChangePassword;
+      // A session made with a PIN ends when the office gives that rider a new PIN or turns the PIN off, or the rider changes it elsewhere.
+      if (typeof token.pinStamp === 'number') {
+        const { getContainer } = await import('@/server/di/container');
+        if ((await getContainer().riderPins.stampFor(current.id)) !== token.pinStamp) return null;
+      }
+      const refreshed = {
+        ...token,
+        role: current.role,
+        isStaff: await new UserRepository().isStaffRoleKey(current.role),
+        mustChangePassword: current.mustChangePassword,
+        verifiedAt: Date.now(),
+      };
       if (current.role === 'vendor' || current.role === 'customer') {
         // A removed portal user or an archived vendor ends the session at the next check.
         const portal = await findPortalAccess(current.id);
         if (portal === null && current.role === 'vendor') return null;
-        token.vendorId = portal?.vendorId ?? null;
-        token.vendorRole = portal?.portalRole ?? null;
-      } else {
-        token.vendorId = null;
-        token.vendorRole = null;
+        return { ...refreshed, vendorId: portal?.vendorId ?? null, vendorRole: portal?.portalRole ?? null };
       }
-      token.verifiedAt = Date.now();
-      return token;
+      return { ...refreshed, vendorId: null, vendorRole: null };
     },
     session({ session, token }) {
-      if (session.user) {
-        session.user.id = token.sub || '';
-        session.user.role = (typeof token.role === 'string' ? token.role : null) || 'customer';
-        session.user.isStaff = token.isStaff === true;
-        session.user.phone =
-          typeof token.phone === 'string' || token.phone === null ? token.phone : null;
-        session.user.customerStoreId =
-          typeof token.customerStoreId === 'string' || token.customerStoreId === null
-            ? token.customerStoreId
-            : null;
-        session.user.mustChangePassword = token.mustChangePassword === true;
-        session.user.vendorId = typeof token.vendorId === 'string' ? token.vendorId : null;
-        session.user.vendorRole = typeof token.vendorRole === 'string' ? token.vendorRole : null;
-      }
-      return session;
+      const role = typeof token.role === 'string' && token.role !== '' ? token.role : 'customer';
+      return {
+        ...session,
+        user: {
+          ...session.user,
+          id: token.sub ?? '',
+          role,
+          isStaff: token.isStaff === true,
+          phone: typeof token.phone === 'string' || token.phone === null ? token.phone : null,
+          customerStoreId: typeof token.customerStoreId === 'string' || token.customerStoreId === null ? token.customerStoreId : null,
+          mustChangePassword: token.mustChangePassword === true,
+          mustChangePin: token.mustChangePin === true,
+          vendorId: typeof token.vendorId === 'string' ? token.vendorId : null,
+          vendorRole: typeof token.vendorRole === 'string' ? token.vendorRole : null,
+        },
+      };
     },
   },
 } satisfies NextAuthConfig;

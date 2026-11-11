@@ -800,7 +800,9 @@ test.describe('the rider app', () => {
       await payForm.getByLabel(/Reference/).fill('SLIP-E2E-1');
       await payForm.getByRole('button', { name: 'Pay KSh 50.00' }).click();
       await expect(page.getByText(/RPY-.*KSh 50\.00 paid to/)).toBeVisible({ timeout: 30_000 });
-      await expect(owed).toContainText('Nothing is owed to any rider');
+      // Other riders in the shared test shop may still be owed; what matters is that this rider no longer is.
+      await expect(owed.getByRole('button', { name: `Pay ${name}` })).toHaveCount(0);
+      await expect(owed).not.toContainText(name);
       await expect(page.getByRole('list', { name: 'Payout list' })).toContainText('SLIP-E2E-1');
       await noHorizontalScroll(page);
       await noInnerHorizontalScroll(page);
@@ -810,7 +812,7 @@ test.describe('the rider app', () => {
       await open(page, '/admin/delivery/reports', 'Delivery report');
       const margin = page.getByRole('region', { name: 'Margin' });
       await expect(margin).toContainText('Customers paid for delivery');
-      await expect(margin).toContainText(/Rider pay [\d.]+ · courier [\d.]+ · other [\d.]+/);
+      await expect(margin).toContainText(/Rider pay [\d.]+ · courier [\d.]+ · fuel [\d.]+ · vehicles [\d.]+ · other [\d.]+/);
       const mine = page.getByRole('region', { name: 'By rider' }).getByRole('listitem').filter({ hasText: name });
       await expect(mine).toContainText('KSh 50.00');
       await expect(mine).toContainText(/Delivered:?\s*1/);

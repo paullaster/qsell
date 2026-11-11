@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { logoutAction } from '@/server/domains/auth/actions';
 
 /** The frame of the rider app: a header with the way home and out, and room for one thing at a time on a phone. */
-export function RiderShell({ children }: { children: ReactNode }) {
+export function RiderShell({ children, signedIn = true }: { children: ReactNode; signedIn?: boolean }) {
   return (
     <div className="min-h-dvh bg-surface text-fg">
       <header className="sticky top-0 z-10 border-b border-line bg-surface-raised pt-[env(safe-area-inset-top)]">
@@ -11,12 +11,14 @@ export function RiderShell({ children }: { children: ReactNode }) {
           <Link href="/rider" className="inline-flex min-h-11 items-center text-base font-bold text-fg-strong">
             Rider app
           </Link>
-          <form action={logoutAction}>
-            <input type="hidden" name="returnTo" value="/login" />
-            <button type="submit" className="min-h-11 rounded-lg px-3 text-sm font-semibold text-fg-muted hover:bg-surface">
-              Sign out
-            </button>
-          </form>
+          {signedIn ? (
+            <form action={logoutAction}>
+              <input type="hidden" name="returnTo" value="/rider/sign-in" />
+              <button type="submit" className="min-h-11 rounded-lg px-3 text-sm font-semibold text-fg-muted hover:bg-surface">
+                Sign out
+              </button>
+            </form>
+          ) : null}
         </div>
       </header>
       <main className="mx-auto max-w-2xl px-4 pb-[calc(2rem+env(safe-area-inset-bottom))] pt-4">{children}</main>

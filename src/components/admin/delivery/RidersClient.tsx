@@ -3,6 +3,8 @@
 import { use, useId, useState } from 'react';
 import { addStaffRiderAction, changeRiderAction, createOwnRiderAction, resetRiderPasswordAction, ridersPageAction, riderSettingsAction, setRiderKindsAction, setRiderProofAction } from '@/server/domains/delivery/rider-actions';
 import type { RiderView } from '@/server/domains/delivery/riders';
+import type { PinStatus } from '@/server/domains/delivery/rider-pins';
+import { RiderPinPanel } from './RiderPinPanel';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
 import { usePagedList } from '@/components/ui/usePagedList';
@@ -20,12 +22,14 @@ export function RidersClient({ settingsPromise }: { settingsPromise: ReturnType<
   return res.ok ? <Screen initial={res.data} /> : <LoadFailed error={res.error} />;
 }
 
+type RiderRow = RiderView & { pin: PinStatus | null };
+
 function Screen({ initial }: { initial: Settings }) {
   const [settings, setSettings] = useState(initial);
   const [notice, setNotice] = useState<Notice>(null);
   const [kind, setKind] = useState<Choice | null>(null);
   const [status, setStatus] = useState<Choice | null>(null);
-  const list = usePagedList<RiderView, { kind: string; status: string }>({
+  const list = usePagedList<RiderRow, { kind: string; status: string }>({
     load: async (filters, cursor) => {
       const result = await ridersPageAction({ kind: filters.kind, status: filters.status, cursor });
       if (!result.ok) return { ok: false, error: result.error };
@@ -254,7 +258,7 @@ function AddOwn({ onAdded, onError }: { onAdded: (text: string) => void; onError
   );
 }
 
-function RiderCard({ rider, onDone, onError }: { rider: RiderView; onDone: (text: string) => void; onError: (text: string) => void }) {
+function RiderCard({ rider, onDone, onError }: { rider: RiderRow; onDone: (text: string) => void; onError: (text: string) => void }) {
   const uid = useId();
   const [asking, setAsking] = useState<RiderChange | 'password' | null>(null);
   const [reason, setReason] = useState('');
@@ -330,6 +334,7 @@ function RiderCard({ rider, onDone, onError }: { rider: RiderView; onDone: (text
           ) : null}
         </div>
       ) : null}
+      {rider.kind === 'separate' && rider.status !== 'ended' ? <RiderPinPanel riderId={rider.id} riderName={rider.name} initial={rider.pin} onError={onError} /> : null}
       {asking === 'password' ? (
         <form
           className="flex flex-wrap items-end gap-3"

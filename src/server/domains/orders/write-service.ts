@@ -60,6 +60,25 @@ function placedBy(channel: string, customerId: string | null, requestedBy: strin
   return { source: channel === 'pos_cash_sale' ? 'pos' : 'staff', actor: { type: 'user', id: requestedBy } };
 }
 
+/** What the shopper is told when the database refused the order. */
+const ORDER_NOT_SAVED = 'We could not place your order just now. Nothing has been charged. Please try again in a moment.';
+
+/** What the shopper is told for a failed order: our own refusal as it is written, a database failure only in general words. */
+function refusalMessage(error: unknown, failure: string | null): string {
+  if (failure !== null) return ORDER_NOT_SAVED;
+  return error instanceof Error ? error.message : 'Customer or dimension assignment failed';
+}
+
+/** The whole of a database failure (its message and the reason the database gave), or null when the error is not one. */
+function databaseFailure(error: unknown): string | null {
+  if (!(error instanceof Error)) return null;
+  const cause = error.cause instanceof Error ? error.cause : null;
+  const isDatabase = error.name === 'DrizzleQueryError' || error.message.startsWith('Failed query:') || (cause !== null && 'code' in cause && typeof cause.code === 'string');
+  if (!isDatabase) return null;
+  const reason = cause === null ? '' : ` | reason: ${cause.message}${'detail' in cause && typeof cause.detail === 'string' ? ` (${cause.detail})` : ''}${'constraint_name' in cause && typeof cause.constraint_name === 'string' ? ` [constraint ${cause.constraint_name}]` : ''}`;
+  return `${error.message}${reason}`;
+}
+
 /** The short reason a failed order creation is recorded with, from what went wrong. */
 function refusalCodeOf(message: string): CheckoutRefusal {
   if (/credit limit/i.test(message)) return 'credit_limit';
@@ -867,7 +886,11 @@ export const OrderWriteService = {
       ).catch((releaseError: unknown) =>
         console.error('[orders] could not release reservation', releaseError),
       );
-      const message = err instanceof Error ? err.message : 'Customer or dimension assignment failed';
+      // A refusal we wrote (credit limit, approval, a floor) is told as it is. A failure of the database is never: its text holds the
+      // query and its values. It is logged in full for the people who run the system, and the shopper is told something they can act on.
+      const failure = databaseFailure(err);
+      if (failure !== null) console.error('[orders] the order could not be saved', failure);
+      const message = refusalMessage(err, failure);
       return {
         success: false,
         error: message,
