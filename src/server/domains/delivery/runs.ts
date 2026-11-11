@@ -137,40 +137,43 @@ export class DeliveryRuns {
   ) {}
 
   /** The rider a run is given to: someone from the rider list who may carry now (their name is kept on the run as it is today), or a name typed in. */
-  private async riderFor(tx: Tx, companyId: string, input: { riderId?: unknown; riderName?: unknown }): Promise<DocResult<{ riderId: string | null; riderName: string }>> {
+  private async riderFor(tx: Tx, companyId: string, input: { riderId?: unknown; riderName?: unknown }): Promise<DocResult<{ riderId: string | null; riderName: string; usualVehicleId: string | null }>> {
     if (typeof input.riderId === 'string' && input.riderId !== '') {
       const rider = await this.riders.carrier(tx, companyId, input.riderId);
-      return rider === null ? fail('not_allowed', 'That rider cannot be given a run now: they are paused, have left, or their kind of rider is switched off.') : { ok: true, data: { riderId: rider.id, riderName: rider.name } };
+      return rider === null ? fail('not_allowed', 'That rider cannot be given a run now: they are paused, have left, or their kind of rider is switched off.') : { ok: true, data: { riderId: rider.id, riderName: rider.name, usualVehicleId: rider.vehicleId } };
     }
     const riderName = text(input.riderName, 120);
-    return riderName === null ? fail('bad_input', 'Say who the rider is.') : { ok: true, data: { riderId: null, riderName } };
+    return riderName === null ? fail('bad_input', 'Say who the rider is.') : { ok: true, data: { riderId: null, riderName, usualVehicleId: null } };
   }
 
-  async create(actor: DocActor, input: { branchId?: unknown; runDate?: unknown; riderId?: unknown; riderName?: unknown; vehicle?: unknown; vehicleId?: unknown; notes?: unknown }): Promise<DocResult<{ id: string; number: string }>> {
+  async create(actor: DocActor, input: { branchId?: unknown; runDate?: unknown; riderId?: unknown; riderName?: unknown; vehicle?: unknown; vehicleId?: unknown; notes?: unknown }): Promise<DocResult<{ id: string; number: string; vehicle: string | null }>> {
     const runDate = typeof input.runDate === 'string' && DATE.test(input.runDate) && !Number.isNaN(Date.parse(input.runDate)) ? input.runDate : null;
     if (runDate === null) return fail('bad_input', 'Choose the day of the run.');
     if (typeof input.branchId !== 'string' || input.branchId === '') return fail('bad_input', 'Choose the branch the run leaves from.');
     const branchId = input.branchId;
-    return await this.db.transaction(async (tx): Promise<DocResult<{ id: string; number: string }>> => {
+    return await this.db.transaction(async (tx): Promise<DocResult<{ id: string; number: string; vehicle: string | null }>> => {
       const [branch] = await tx.select({ id: branches.id }).from(branches).where(and(eq(branches.id, branchId), eq(branches.companyId, actor.companyId), eq(branches.isActive, true)));
       if (branch === undefined) return fail('not_found', 'That branch could not be found.');
       const who = await this.riderFor(tx, actor.companyId, input);
       if (!who.ok) return who;
       const { riderId, riderName } = who.data;
-      const chosen = await this.vehicleFor(tx, actor.companyId, input);
+      // A run given to a rider with a usual vehicle goes in it, unless the office chose or typed another; a usual vehicle that has been stopped is not forced on the run.
+      const asked = (typeof input.vehicleId === 'string' && input.vehicleId !== '') || text(input.vehicle, 80) !== null;
+      const chosen = await this.vehicleFor(tx, actor.companyId, !asked && who.data.usualVehicleId !== null ? { vehicleId: who.data.usualVehicleId } : input, !asked);
       if (!chosen.ok) return chosen;
       const id = crypto.randomUUID();
       const { number } = await this.numbering.assign('delivery_run', { companyId: actor.companyId, date: businessDate(), document: { kind: 'delivery_run', id } }, tx);
       await tx.insert(deliveryRuns).values({ id, companyId: actor.companyId, number, branchId, runDate, riderName, riderId, vehicle: chosen.data.name, vehicleId: chosen.data.id, notes: text(input.notes, 300), createdBy: actor.userId });
       await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_run', id }, action: 'run.created', actor: { type: 'user', id: actor.userId }, to: 'planned', reason: { text: `${riderName}, ${runDate}` } }, tx);
-      return { ok: true, data: { id, number } };
+      return { ok: true, data: { id, number, vehicle: chosen.data.name } };
     });
   }
 
   /** The vehicle a run goes in: one from the register that is in use (its name is kept on the run), or a name typed in, or none. */
-  private async vehicleFor(tx: Tx, companyId: string, input: { vehicleId?: unknown; vehicle?: unknown }): Promise<DocResult<{ id: string | null; name: string | null }>> {
+  private async vehicleFor(tx: Tx, companyId: string, input: { vehicleId?: unknown; vehicle?: unknown }, quietIfUnusable = false): Promise<DocResult<{ id: string | null; name: string | null }>> {
     if (typeof input.vehicleId === 'string' && input.vehicleId !== '') {
       const v = await this.vehicles.usable(tx, companyId, input.vehicleId);
+      if (v === null && quietIfUnusable) return { ok: true, data: { id: null, name: null } };
       return v === null ? fail('not_allowed', 'That vehicle cannot be used now: it is stopped or is not in the list.') : { ok: true, data: { id: v.id, name: v.name } };
     }
     return { ok: true, data: { id: null, name: text(input.vehicle, 80) } };

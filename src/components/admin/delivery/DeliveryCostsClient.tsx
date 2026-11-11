@@ -148,12 +148,13 @@ function RunningCostForm({ onSaved, onError }: { onSaved: (text: string) => void
   const [clientKey] = useState(() => crypto.randomUUID());
   const [kind, setKind] = useState<Choice | null>(null);
   const [run, setRun] = useState<Choice | null>(null);
+  const [vehicle, setVehicle] = useState<Choice | null>(null);
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const save = async () => {
     setBusy(true);
-    const r = await attempt(recordRunningCostAction({ kind: kind?.id, runId: run?.id, amount: Number(amount), note, clientKey }));
+    const r = await attempt(recordRunningCostAction({ kind: kind?.id, runId: run?.id, vehicleId: vehicle?.id, amount: Number(amount), note, clientKey }));
     setBusy(false);
     if (r.ok) onSaved(r.data.replayed ? 'That cost was already saved.' : 'Saved. It counts against delivery in the report.');
     else onError(r.error);
@@ -175,6 +176,7 @@ function RunningCostForm({ onSaved, onError }: { onSaved: (text: string) => void
         <Field id={`${uid}-a`} label="How much (KSh)">
           <input id={`${uid}-a`} className={fieldClass} inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} autoComplete="off" />
         </Field>
+        <ChoicePicker label="Vehicle it was for (optional)" source="delivery-vehicles-all" choice={vehicle} onChoice={setVehicle} placeholder="Choose a vehicle, or leave empty" clearable />
         <ChoicePicker label="Run it was for (optional)" source="delivery-runs-any" choice={run} onChoice={setRun} placeholder="Choose a run, or leave empty" clearable />
         <Field id={`${uid}-n`} label="What it was for">
           <input id={`${uid}-n`} className={fieldClass} value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} autoComplete="off" placeholder="For example: KDA 123X, Thika road run" />
@@ -200,6 +202,7 @@ function CostRow({ cost, onDone, onError }: { cost: CostView; onDone: (text: str
           {cost.deliveryNumber === null ? '' : ` · ${cost.deliveryNumber}`}
           {cost.runNumber === null ? '' : ` · run ${cost.runNumber}`}
           {cost.riderName === null ? '' : ` · ${cost.riderName}`}
+          {cost.vehicleName === null ? '' : ` · ${cost.vehicleName}`}
           {cost.courierName === null ? '' : ` · ${cost.courierName}`}
         </span>
         <span className={`font-mono font-semibold ${negative ? 'text-red-700 dark:text-red-300' : 'text-fg-strong'}`}>

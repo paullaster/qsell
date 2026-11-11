@@ -83,7 +83,7 @@ function Board({ initial }: { initial: Board }) {
           className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"
           onSubmit={(event) => {
             event.preventDefault();
-            void act(() => createRunAction({ branchId: runBranch?.id ?? '', runDate: day, riderId: riderChoice?.id ?? '', riderName: rider, vehicleId: vehicleChoice?.id ?? '', vehicle }), (d) => `Run ${d.number} is planned. Pick it below and put deliveries on it.`);
+            void act(() => createRunAction({ branchId: runBranch?.id ?? '', runDate: day, riderId: riderChoice?.id ?? '', riderName: rider, vehicleId: vehicleChoice?.id ?? '', vehicle }), (d) => `Run ${d.number} is planned${d.vehicle === null ? '' : ` in ${d.vehicle}`}. Pick it below and put deliveries on it.`);
           }}
         >
           <ChoicePicker label="Leaves from" source="delivery-branches" choice={runBranch} onChoice={setRunBranch} placeholder="Choose the branch" />

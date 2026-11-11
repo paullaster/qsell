@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, deliveryRiderSettings, deliveryRiders, deliveryRuns, riderPins, roles, users } from '@/server/db/drizzle/schema';
+import { branches, deliveryRiderSettings, deliveryRiders, deliveryRuns, deliveryVehicles, riderPins, roles, users } from '@/server/db/drizzle/schema';
 import { RIDER_KIND_WORDS, RIDER_STATUS_WORDS, RIDER_STATUSES, dialable, isRiderKind, kindsProblem, mayCarry, riderStatusAfter, type RiderKind, type RiderKinds, type RiderStatus } from '@/lib/delivery-rider';
 import { isProofRule, type ProofRule } from '@/lib/delivery-proof';
 import { validatePassword } from '@/lib/passwordPolicy';
@@ -35,6 +35,8 @@ export interface RiderView {
   kindWords: string;
   phone: string | null;
   vehicle: string | null;
+  /** The usual vehicle chosen from the Vehicles list, when there is one. */
+  vehicleId: string | null;
   branchId: string | null;
   branchName: string | null;
   status: RiderStatus;
@@ -124,7 +126,7 @@ export class DeliveryRiders {
   }
 
   /** A member of staff starts riding with the account they have. */
-  async addStaff(actor: DocActor, input: { userId?: unknown; phone?: unknown; vehicle?: unknown; branchId?: unknown }): Promise<DocResult<{ id: string }>> {
+  async addStaff(actor: DocActor, input: { userId?: unknown; phone?: unknown; vehicle?: unknown; vehicleId?: unknown; branchId?: unknown }): Promise<DocResult<{ id: string }>> {
     if (typeof input.userId !== 'string' || input.userId === '') return fail('bad_input', 'Choose the member of staff.');
     const userId = input.userId;
     return await this.db.transaction(async (tx): Promise<DocResult<{ id: string }>> => {
@@ -138,15 +140,17 @@ export class DeliveryRiders {
       if (already !== undefined) return fail('conflict', already.status === 'ended' ? 'They rode before. Resume them from the list of riders.' : 'They are already a rider.');
       const placed = await this.placeOf(tx, actor.companyId, input.branchId);
       if (!placed.ok) return placed;
+      const ride = await this.vehicleFor(tx, actor.companyId, input);
+      if (!ride.ok) return ride;
       const id = crypto.randomUUID();
-      await tx.insert(deliveryRiders).values({ id, companyId: actor.companyId, userId, kind: 'staff', name: person.name, phone: text(input.phone, 40) ?? person.phone, vehicle: text(input.vehicle, 80), branchId: placed.data, createdBy: actor.userId });
+      await tx.insert(deliveryRiders).values({ id, companyId: actor.companyId, userId, kind: 'staff', name: person.name, phone: text(input.phone, 40) ?? person.phone, vehicle: ride.data.name, vehicleId: ride.data.id, branchId: placed.data, createdBy: actor.userId });
       await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_rider', id }, action: 'rider.added', actor: { type: 'user', id: actor.userId }, to: 'active', reason: { text: `${person.name}, staff` } }, tx);
       return { ok: true, data: { id } };
     });
   }
 
   /** An account made for riding: it opens the rider app and nothing else. The rider must choose their own password at first sign-in. */
-  async createSeparate(actor: DocActor, input: { name?: unknown; email?: unknown; phone?: unknown; password?: unknown; vehicle?: unknown; branchId?: unknown }): Promise<DocResult<{ id: string }>> {
+  async createSeparate(actor: DocActor, input: { name?: unknown; email?: unknown; phone?: unknown; password?: unknown; vehicle?: unknown; vehicleId?: unknown; branchId?: unknown }): Promise<DocResult<{ id: string }>> {
     const name = text(input.name, 120);
     if (name === null) return fail('bad_input', 'Give the rider’s name.');
     const email = text(input.email, 200)?.toLowerCase() ?? null;
@@ -160,13 +164,16 @@ export class DeliveryRiders {
     if (!kinds.allowSeparate) return fail('not_allowed', 'Riders with their own accounts are not switched on. Switch them on in the rider settings first.');
     const placed = await this.placeOf(this.db, actor.companyId, input.branchId);
     if (!placed.ok) return placed;
+    // Looked at before the account is made, so a vehicle that cannot be used leaves nothing behind.
+    const ride = await this.vehicleFor(this.db, actor.companyId, input);
+    if (!ride.ok) return ride;
     const [taken] = await this.db.select({ id: users.id }).from(users).where(eq(users.email, email));
     if (taken !== undefined) return fail('conflict', 'An account with that email already exists. If they are on the staff, add them as a staff rider.');
     const account = await this.accounts.createUser({ email, password, name, phone, role: RIDER_ROLE, branchId: placed.data });
     const id = crypto.randomUUID();
     try {
       await this.db.transaction(async (tx) => {
-        await tx.insert(deliveryRiders).values({ id, companyId: actor.companyId, userId: account.id, kind: 'separate', name, phone, vehicle: text(input.vehicle, 80), branchId: placed.data, createdBy: actor.userId });
+        await tx.insert(deliveryRiders).values({ id, companyId: actor.companyId, userId: account.id, kind: 'separate', name, phone, vehicle: ride.data.name, vehicleId: ride.data.id, branchId: placed.data, createdBy: actor.userId });
         await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_rider', id }, action: 'rider.added', actor: { type: 'user', id: actor.userId }, to: 'active', reason: { text: `${name}, own account` } }, tx);
       });
     } catch (error) {
@@ -175,6 +182,15 @@ export class DeliveryRiders {
       throw error;
     }
     return { ok: true, data: { id } };
+  }
+
+  /** The rider's usual vehicle: one from the Vehicles list that is in use (its name is kept with the rider), or a name typed in, or none. */
+  private async vehicleFor(db: Tx | DrizzleDb, companyId: string, input: { vehicleId?: unknown; vehicle?: unknown }): Promise<DocResult<{ id: string | null; name: string | null }>> {
+    if (typeof input.vehicleId === 'string' && input.vehicleId !== '') {
+      const [v] = await db.select({ id: deliveryVehicles.id, name: deliveryVehicles.name }).from(deliveryVehicles).where(and(eq(deliveryVehicles.id, input.vehicleId), eq(deliveryVehicles.companyId, companyId), eq(deliveryVehicles.isActive, true)));
+      return v === undefined ? fail('not_allowed', 'That vehicle cannot be used now: it is stopped or is not in the list.') : { ok: true, data: { id: v.id, name: v.name } };
+    }
+    return { ok: true, data: { id: null, name: text(input.vehicle, 80) } };
   }
 
   /** A branch the rider belongs to, or none: must be this company's own and in use. */
@@ -190,7 +206,7 @@ export class DeliveryRiders {
     return role?.isStaff === true && role.isActive;
   }
 
-  async update(actor: DocActor, riderId: string, input: { name?: unknown; phone?: unknown; vehicle?: unknown; branchId?: unknown; expectedVersion?: unknown }): Promise<DocResult<RiderView>> {
+  async update(actor: DocActor, riderId: string, input: { name?: unknown; phone?: unknown; vehicle?: unknown; vehicleId?: unknown; branchId?: unknown; expectedVersion?: unknown }): Promise<DocResult<RiderView>> {
     return await this.db.transaction(async (tx): Promise<DocResult<RiderView>> => {
       const found = await this.lock(tx, actor.companyId, riderId, input.expectedVersion);
       if (!found.ok) return found;
@@ -208,7 +224,16 @@ export class DeliveryRiders {
         if (!placed.ok) return placed;
         branchId = placed.data;
       }
-      await tx.update(deliveryRiders).set({ name, phone, vehicle: input.vehicle === undefined ? found.data.vehicle : text(input.vehicle, 80), branchId, version: found.data.version + 1, updatedAt: new Date() }).where(eq(deliveryRiders.id, riderId));
+      // The vehicle is left as it is unless the request names one (from the list, or typed in) or clears it.
+      let vehicle = found.data.vehicle;
+      let vehicleId = found.data.vehicleId;
+      if (input.vehicle !== undefined || input.vehicleId !== undefined) {
+        const ride = await this.vehicleFor(tx, actor.companyId, input);
+        if (!ride.ok) return ride;
+        vehicle = ride.data.name;
+        vehicleId = ride.data.id;
+      }
+      await tx.update(deliveryRiders).set({ name, phone, vehicle, vehicleId, branchId, version: found.data.version + 1, updatedAt: new Date() }).where(eq(deliveryRiders.id, riderId));
       // The PIN belongs to the number it was given for: a new number turns the PIN off, and the office gives a new one.
       if (phone !== found.data.phone) {
         const gone = await tx.delete(riderPins).where(eq(riderPins.riderId, riderId)).returning({ id: riderPins.riderId });
@@ -312,6 +337,7 @@ export class DeliveryRiders {
       kindWords: RIDER_KIND_WORDS[x.r.kind],
       phone: x.r.phone,
       vehicle: x.r.vehicle,
+      vehicleId: x.r.vehicleId,
       branchId: x.r.branchId,
       branchName: x.branchName,
       status: x.r.status,
@@ -339,11 +365,11 @@ export class DeliveryRiders {
   }
 
   /** A rider who may be given a run now, or null: riding, on a kind still used, with a live account. */
-  async carrier(db: Tx | DrizzleDb, companyId: string, riderId: string): Promise<{ id: string; name: string } | null> {
+  async carrier(db: Tx | DrizzleDb, companyId: string, riderId: string): Promise<{ id: string; name: string; vehicleId: string | null } | null> {
     const [row] = await db.select({ r: deliveryRiders, accountOn: users.isActive, accountStatus: users.status }).from(deliveryRiders).innerJoin(users, eq(users.id, deliveryRiders.userId)).where(and(eq(deliveryRiders.id, riderId), eq(deliveryRiders.companyId, companyId)));
     if (row === undefined || !row.accountOn || row.accountStatus !== 'active') return null;
     const kinds = await this.settingsIn(db, companyId);
-    return mayCarry(row.r, kinds) ? { id: row.r.id, name: row.r.name } : null;
+    return mayCarry(row.r, kinds) ? { id: row.r.id, name: row.r.name, vehicleId: row.r.vehicleId } : null;
   }
 
   /**

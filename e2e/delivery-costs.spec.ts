@@ -39,4 +39,49 @@ test.describe('fuel and vehicle costs', () => {
     await expect(page.getByText('The cost is taken back.')).toBeVisible({ timeout: 30_000 });
     await expect(list).toContainText('Was taken back');
   });
+  test('can be tied to a vehicle, which the cost list names and the report adds up, and a stopped vehicle can still be billed', async ({ page }, testInfo) => {
+    test.slow();
+    const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}`;
+    const vehicle = `Costed ${tag}`;
+    await open(page, '/admin/delivery/vehicles', 'Vehicles');
+    const add = page.getByRole('form', { name: 'Add a vehicle' });
+    await add.getByLabel('Name or number plate').fill(vehicle);
+    await add.getByRole('button', { name: 'Add the vehicle' }).click();
+    await expect(page.getByText('The vehicle is added.')).toBeVisible({ timeout: 30_000 });
+
+    await open(page, '/admin/delivery/costs', 'Delivery costs');
+    await noNativeSelect(page);
+    const form = page.getByRole('form', { name: 'Record a running cost' });
+    await pick(page, form.getByRole('combobox', { name: 'What kind of cost' }), 'Fuel', /^Fuel$/);
+    await pick(page, form.getByRole('combobox', { name: 'Vehicle it was for (optional)' }), vehicle, new RegExp(vehicle));
+    await form.getByLabel('How much (KSh)').fill('777');
+    await form.getByLabel('What it was for').fill(`Diesel for ${vehicle}`);
+    await form.getByRole('button', { name: 'Save the cost' }).click();
+    await expect(page.getByText('Saved. It counts against delivery in the report.')).toBeVisible({ timeout: 30_000 });
+    const list = page.getByRole('list', { name: 'Cost list' });
+    await expect(list.getByRole('listitem').filter({ hasText: `Diesel for ${vehicle}` }).first()).toContainText(`· ${vehicle}`, { timeout: 30_000 });
+    await noHorizontalScroll(page);
+
+    // The report adds the vehicle's costs up; with nothing delivered it has no cost per delivery.
+    await open(page, '/admin/delivery/reports', 'Delivery report');
+    const byVehicle = page.getByRole('region', { name: 'By vehicle' });
+    const line = byVehicle.getByRole('listitem').filter({ hasText: vehicle });
+    await expect(line).toContainText('KSh 777.00 (fuel 777.00, repairs 0.00, other 0.00)', { timeout: 30_000 });
+    await expect(line).toContainText('Nothing delivered');
+    await noHorizontalScroll(page);
+    await noInnerHorizontalScroll(page);
+
+    // Stopped, the vehicle is still the one a late bill belongs to.
+    await open(page, '/admin/delivery/vehicles', 'Vehicles');
+    await page.getByRole('list', { name: 'Vehicle list' }).getByRole('listitem').filter({ hasText: vehicle }).getByRole('button', { name: 'Stop using' }).click();
+    await expect(page.getByText(`${vehicle} is stopped.`)).toBeVisible({ timeout: 30_000 });
+    await open(page, '/admin/delivery/costs', 'Delivery costs');
+    const late = page.getByRole('form', { name: 'Record a running cost' });
+    await pick(page, late.getByRole('combobox', { name: 'What kind of cost' }), 'Vehicle cost', /^Vehicle cost/);
+    await pick(page, late.getByRole('combobox', { name: 'Vehicle it was for (optional)' }), vehicle, new RegExp(vehicle));
+    await late.getByLabel('How much (KSh)').fill('120');
+    await late.getByLabel('What it was for').fill(`Late licence for ${vehicle}`);
+    await late.getByRole('button', { name: 'Save the cost' }).click();
+    await expect(page.getByText('Saved. It counts against delivery in the report.')).toBeVisible({ timeout: 30_000 });
+  });
 });

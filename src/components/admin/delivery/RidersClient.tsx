@@ -1,7 +1,7 @@
 'use client';
 
 import { use, useId, useState } from 'react';
-import { addStaffRiderAction, changeRiderAction, createOwnRiderAction, resetRiderPasswordAction, ridersPageAction, riderSettingsAction, setRiderKindsAction, setRiderProofAction } from '@/server/domains/delivery/rider-actions';
+import { addStaffRiderAction, changeRiderAction, createOwnRiderAction, resetRiderPasswordAction, updateRiderAction, ridersPageAction, riderSettingsAction, setRiderKindsAction, setRiderProofAction } from '@/server/domains/delivery/rider-actions';
 import type { RiderView } from '@/server/domains/delivery/riders';
 import type { PinStatus } from '@/server/domains/delivery/rider-pins';
 import { RiderPinPanel } from './RiderPinPanel';
@@ -179,10 +179,11 @@ function AddStaff({ onAdded, onError }: { onAdded: (text: string) => void; onErr
   const [person, setPerson] = useState<Choice | null>(null);
   const [phone, setPhone] = useState('');
   const [vehicle, setVehicle] = useState('');
+  const [vehicleChoice, setVehicleChoice] = useState<Choice | null>(null);
   const [busy, setBusy] = useState(false);
   const add = async () => {
     setBusy(true);
-    const result = await attempt(addStaffRiderAction({ userId: person?.id ?? '', phone, vehicle }));
+    const result = await attempt(addStaffRiderAction({ userId: person?.id ?? '', phone, vehicle, vehicleId: vehicleChoice?.id ?? '' }));
     setBusy(false);
     if (!result.ok) {
       onError(result.error);
@@ -192,6 +193,7 @@ function AddStaff({ onAdded, onError }: { onAdded: (text: string) => void; onErr
     setPerson(null);
     setPhone('');
     setVehicle('');
+    setVehicleChoice(null);
   };
   return (
     <section aria-label="Add a member of staff" className={`${cardClass} space-y-3`}>
@@ -200,8 +202,9 @@ function AddStaff({ onAdded, onError }: { onAdded: (text: string) => void; onErr
       <Field id={`${uid}-phone`} label="Phone (optional, their own is used if left out)">
         <input id={`${uid}-phone`} value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" maxLength={40} className={fieldClass} autoComplete="off" />
       </Field>
-      <Field id={`${uid}-veh`} label="Vehicle (optional)">
-        <input id={`${uid}-veh`} value={vehicle} onChange={(e) => setVehicle(e.target.value)} maxLength={80} className={fieldClass} autoComplete="off" />
+      <ChoicePicker label="Usual vehicle (optional)" source="delivery-vehicles" choice={vehicleChoice} onChoice={setVehicleChoice} placeholder="Choose a vehicle" clearable />
+      <Field id={`${uid}-veh`} label="Or a vehicle typed in">
+        <input id={`${uid}-veh`} value={vehicle} onChange={(e) => setVehicle(e.target.value)} maxLength={80} className={fieldClass} autoComplete="off" disabled={vehicleChoice !== null} />
       </Field>
       <button type="button" className={primaryClass} disabled={busy || person === null} onClick={() => void add()}>
         Make a rider
@@ -213,11 +216,12 @@ function AddStaff({ onAdded, onError }: { onAdded: (text: string) => void; onErr
 function AddOwn({ onAdded, onError }: { onAdded: (text: string) => void; onError: (text: string) => void }) {
   const uid = useId();
   const [form, setForm] = useState({ name: '', email: '', phone: '', password: '', vehicle: '' });
+  const [vehicleChoice, setVehicleChoice] = useState<Choice | null>(null);
   const [busy, setBusy] = useState(false);
   const set = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, [key]: e.target.value });
   const add = async () => {
     setBusy(true);
-    const result = await attempt(createOwnRiderAction(form));
+    const result = await attempt(createOwnRiderAction({ ...form, vehicleId: vehicleChoice?.id ?? '' }));
     setBusy(false);
     if (!result.ok) {
       onError(result.error);
@@ -225,6 +229,7 @@ function AddOwn({ onAdded, onError }: { onAdded: (text: string) => void; onError
     }
     onAdded(`${form.name} has an account. Give them the email and the first password; they choose their own when they first sign in.`);
     setForm({ name: '', email: '', phone: '', password: '', vehicle: '' });
+    setVehicleChoice(null);
   };
   return (
     <form
@@ -248,8 +253,9 @@ function AddOwn({ onAdded, onError }: { onAdded: (text: string) => void; onError
       <Field id={`${uid}-pw`} label="First password" hint="They must choose their own the first time they sign in. At least 8 characters.">
         <input id={`${uid}-pw`} type="text" value={form.password} onChange={set('password')} maxLength={72} className={fieldClass} autoComplete="off" />
       </Field>
-      <Field id={`${uid}-veh`} label="Vehicle (optional)">
-        <input id={`${uid}-veh`} value={form.vehicle} onChange={set('vehicle')} maxLength={80} className={fieldClass} autoComplete="off" />
+      <ChoicePicker label="Usual vehicle (optional)" source="delivery-vehicles" choice={vehicleChoice} onChoice={setVehicleChoice} placeholder="Choose a vehicle" clearable />
+      <Field id={`${uid}-veh`} label="Or a vehicle typed in">
+        <input id={`${uid}-veh`} value={form.vehicle} onChange={set('vehicle')} maxLength={80} className={fieldClass} autoComplete="off" disabled={vehicleChoice !== null} />
       </Field>
       <button type="submit" className={primaryClass} disabled={busy}>
         Create the account
@@ -263,6 +269,7 @@ function RiderCard({ rider, onDone, onError }: { rider: RiderRow; onDone: (text:
   const [asking, setAsking] = useState<RiderChange | 'password' | null>(null);
   const [reason, setReason] = useState('');
   const [password, setPassword] = useState('');
+  const [usual, setUsual] = useState<Choice | null>(rider.vehicleId === null ? null : { id: rider.vehicleId, label: rider.vehicle ?? '' });
   const [busy, setBusy] = useState(false);
 
   const close = () => {
@@ -280,6 +287,16 @@ function RiderCard({ rider, onDone, onError }: { rider: RiderRow; onDone: (text:
     }
     close();
     onDone(`${rider.name}: ${result.data.statusWords.toLowerCase()}.`);
+  };
+  const saveVehicle = async () => {
+    setBusy(true);
+    const result = await attempt(updateRiderAction({ riderId: rider.id, vehicleId: usual?.id ?? '', vehicle: '', expectedVersion: rider.version }));
+    setBusy(false);
+    if (!result.ok) {
+      onError(result.error);
+      return;
+    }
+    onDone(usual === null ? `${rider.name} has no usual vehicle now.` : `${rider.name}'s usual vehicle is ${usual.label}. A run planned for them goes in it unless you choose another.`);
   };
   const reset = async () => {
     setBusy(true);
@@ -334,6 +351,16 @@ function RiderCard({ rider, onDone, onError }: { rider: RiderRow; onDone: (text:
           ) : null}
         </div>
       ) : null}
+      {rider.status === 'ended' ? null : (
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-0 flex-1 basis-64">
+            <ChoicePicker label={`Usual vehicle of ${rider.name}`} source="delivery-vehicles" choice={usual} onChoice={setUsual} placeholder="Choose a vehicle" clearable />
+          </div>
+          <button type="button" className={buttonClass} disabled={busy || (usual?.id ?? null) === rider.vehicleId} onClick={() => void saveVehicle()}>
+            Save the vehicle
+          </button>
+        </div>
+      )}
       {rider.kind === 'separate' && rider.status !== 'ended' ? <RiderPinPanel riderId={rider.id} riderName={rider.name} initial={rider.pin} onError={onError} /> : null}
       {asking === 'password' ? (
         <form

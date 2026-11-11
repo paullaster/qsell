@@ -381,3 +381,53 @@
     color: #fda4af;
   }
 }
+
+/*
+ * Front-page banners that move. Both stop for people who ask their device for less motion; the marquee also has a Pause button.
+ */
+@keyframes banner-marquee-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+@keyframes banner-pulse-glow {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 55%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 12px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+.banner-marquee-track {
+  display: flex;
+  width: max-content;
+  animation: banner-marquee-scroll var(--banner-duration, 25s) linear infinite;
+}
+.banner-marquee-viewport:hover .banner-marquee-track,
+.banner-marquee-viewport:focus-within .banner-marquee-track {
+  animation-play-state: paused;
+}
+.banner-pulse {
+  animation: banner-pulse-glow 2s ease-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .banner-marquee-track,
+  .banner-pulse {
+    animation: none;
+  }
+  .banner-marquee-copy + .banner-marquee-copy,
+  .banner-marquee-pause,
+  .banner-marquee-seg + .banner-marquee-seg {
+    display: none;
+  }
+  .banner-marquee-track {
+    width: auto;
+    white-space: normal;
+  }
+}

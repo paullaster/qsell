@@ -1121,6 +1121,20 @@
       "when": 1794396764350,
       "tag": "0159_quote_sender_and_customer_details",
       "breakpoints": true
+    },
+    {
+      "idx": 160,
+      "version": "7",
+      "when": 1794402851678,
+      "tag": "0160_delivery_cost_vehicle",
+      "breakpoints": true
+    },
+    {
+      "idx": 161,
+      "version": "7",
+      "when": 1794405204706,
+      "tag": "0161_rider_usual_vehicle",
+      "breakpoints": true
     }
   ]
 }

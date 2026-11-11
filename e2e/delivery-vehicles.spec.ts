@@ -3,6 +3,7 @@ import { noHorizontalScroll, noInnerHorizontalScroll, noNativeSelect, open } fro
 import { pick } from './support/quotes';
 import { deliveryTool } from './support/delivery-fixtures';
 import { placeDeliveredOrder } from './support/delivery-shop';
+import { riderTool } from './support/rider-fixtures';
 
 const today = (): string => new Date().toISOString().slice(0, 10);
 
@@ -75,6 +76,58 @@ test.describe('delivery vehicles', () => {
       await expect(page.getByText(`${bike} is stopped.`)).toBeVisible({ timeout: 30_000 });
       await expect(again).toContainText('Stopped');
     } finally {
+      deliveryTool('close', tag);
+    }
+  });
+  test('a rider\'s usual vehicle is chosen from the list, shown on their card, and is the vehicle of a run planned for them', async ({ page }, testInfo) => {
+    test.slow();
+    test.setTimeout(600_000);
+    const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}`;
+    const vehicle = `Usual ${tag}`;
+    const name = `Wafula ${tag}`;
+    deliveryTool('open', tag);
+    try {
+      await open(page, '/admin/delivery/vehicles', 'Vehicles');
+      const add = page.getByRole('form', { name: 'Add a vehicle' });
+      await add.getByLabel('Name or number plate').fill(vehicle);
+      await add.getByRole('button', { name: 'Add the vehicle' }).click();
+      await expect(page.getByText('The vehicle is added.')).toBeVisible({ timeout: 30_000 });
+
+      // A rider is made with that vehicle as their usual one.
+      await open(page, '/admin/delivery/riders', 'Riders');
+      await noNativeSelect(page);
+      const kinds = page.getByRole('region', { name: 'Who rides' });
+      if ((await page.getByRole('form', { name: 'Make an account for a rider' }).count()) === 0) {
+        await kinds.getByLabel(/Own rider account/).check();
+        await kinds.getByRole('button', { name: 'Save' }).click();
+        await expect(page.getByText(/Saved\. This is who can be a rider/)).toBeVisible({ timeout: 30_000 });
+      }
+      const form = page.getByRole('form', { name: 'Make an account for a rider' });
+      await form.getByLabel('Name').fill(name);
+      await form.getByLabel('Email to sign in with').fill(`e2e-usual-${tag}@example.test`.toLowerCase());
+      await form.getByLabel('Phone').fill('0722 555 666');
+      await form.getByLabel('First password').fill('E2eUsualFirst-Pass1');
+      await pick(page, form.getByRole('combobox', { name: 'Usual vehicle (optional)' }), vehicle, new RegExp(vehicle));
+      await expect(form.getByLabel('Or a vehicle typed in')).toBeDisabled();
+      await form.getByRole('button', { name: 'Create the account' }).click();
+      await expect(page.getByText(new RegExp(`${name} has an account`))).toBeVisible({ timeout: 30_000 });
+      const card = page.getByRole('list', { name: 'List of riders' }).getByRole('listitem').filter({ hasText: name });
+      await expect(card).toContainText(vehicle);
+      await expect(card.getByRole('combobox', { name: `Usual vehicle of ${name}` })).toBeVisible();
+      await noHorizontalScroll(page);
+      await noInnerHorizontalScroll(page);
+
+      // A run planned for that rider, with no vehicle chosen, goes in it.
+      await open(page, '/admin/delivery/dispatch', 'Dispatch board');
+      const plan = page.getByRole('region', { name: 'Plan a run' });
+      await pick(page, plan.getByRole('combobox', { name: 'Leaves from' }), `Delivery ${tag}`, new RegExp(`Delivery ${tag}`));
+      await plan.getByLabel('Day').fill(new Date().toISOString().slice(0, 10));
+      await pick(page, plan.getByRole('combobox', { name: 'Rider' }), name, new RegExp(name));
+      await plan.getByRole('button', { name: 'Plan the run' }).click();
+      await expect(page.getByText(new RegExp(`^Run RUN-.* is planned in ${vehicle}\\.`))).toBeVisible({ timeout: 30_000 });
+    } finally {
+      // This test switched own-account riders on; other specs expect the default (staff only), so it is put back.
+      riderTool('reset', tag);
       deliveryTool('close', tag);
     }
   });

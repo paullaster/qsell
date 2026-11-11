@@ -269,6 +269,46 @@ test.describe('front-page banners', () => {
   });
 });
 
+test.describe('front-page banner looks', () => {
+  test('a banner in the company\'s own colours scrolls as a marquee with readable text, and can be paused', async ({ page, browser }, testInfo) => {
+    test.slow();
+    const headline = `Big sale ${String(Date.now()).slice(-6)}`;
+    await open(page, '/admin/company/banners', 'Front-page banners');
+    await page.getByRole('button', { name: 'Add a banner' }).click();
+    await page.getByLabel('Headline of banner 1', { exact: true }).fill(headline);
+    await page.getByLabel('Use my own colours (otherwise the shop\'s usual look)').check();
+    await page.getByRole('button', { name: 'Sunny yellow' }).click();
+    // Pale text on yellow cannot be read: the admin says so, and the shop will use readable text.
+    await page.getByLabel('Text colour, banner 1').fill('#fde047');
+    await expect(page.getByRole('status').filter({ hasText: 'too hard to read' })).toBeVisible();
+    await page.getByRole('button', { name: 'Pick the text colour for me' }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'can be read' })).toBeVisible();
+    const movement = page.getByRole('combobox', { name: 'Movement, banner 1' });
+    await movement.click();
+    await page.getByRole('option', { name: 'Scrolling marquee' }).click();
+    await page.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByText('Banners saved.')).toBeVisible({ timeout: 30_000 });
+
+    const visitor = await signedOutPage(browser, testInfo);
+    try {
+      await visitor.page.goto('/');
+      const notices = visitor.page.getByRole('region', { name: 'Notices' });
+      await expect(notices).toContainText(headline, { timeout: 30_000 });
+      await expect(notices.locator('[style*="background-color"]').first()).toHaveCSS('background-color', 'rgb(250, 204, 21)');
+      const pause = notices.getByRole('button', { name: 'Pause the scrolling banner' });
+      await pause.click();
+      await expect(notices.getByRole('button', { name: 'Play the scrolling banner' })).toBeVisible();
+      await noHorizontalScroll(visitor.page);
+      await noInnerHorizontalScroll(visitor.page);
+    } finally {
+      await visitor.close();
+    }
+    await page.getByRole('button', { name: 'Remove banner 1' }).click();
+    await page.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByText('Banners saved.')).toBeVisible({ timeout: 30_000 });
+  });
+});
+
 test.describe('looking at a product', () => {
   test('the price and buttons are always at hand: beside the pictures on a wide screen, in a bar at the foot on a phone', async ({ page }, testInfo) => {
     await page.goto('/?q=Rice 5kg');

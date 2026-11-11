@@ -68,9 +68,9 @@ describe.skipIf(!has(url))('cash at the door (database)', () => {
     return s;
   };
   /** A ready delivery put on a run of this rider that has gone out: the rider is at the first door. */
-  const onTheRoad = async (rider: { id: string; userId: string }) => {
+  const onTheRoad = async (rider: { id: string; userId: string }, extra: Record<string, unknown> = {}) => {
     const ready = await readyDelivery();
-    const run = await runFor(rider.id, ready.branchId);
+    const run = await runFor(rider.id, ready.branchId, extra);
     const added = await c.deliveryRuns.addStop(dispatcher(), run.id, ready.deliveryId);
     if (!added.ok) throw new Error(added.message);
     const started = await c.deliveryRuns.start(dispatcher(), run.id);
@@ -91,8 +91,8 @@ describe.skipIf(!has(url))('cash at the door (database)', () => {
   };
   /** The business day, in Nairobi: between midnight and 3am the UTC date is still yesterday. */
   const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(new Date());
-  const runFor = async (riderId: string, branchId: string) => {
-    const r = await c.deliveryRuns.create(dispatcher(), { branchId, runDate: today(), riderId });
+  const runFor = async (riderId: string, branchId: string, extra: Record<string, unknown> = {}) => {
+    const r = await c.deliveryRuns.create(dispatcher(), { branchId, runDate: today(), riderId, ...extra });
     if (!r.ok) throw new Error(r.message);
     return r.data;
   };
@@ -476,6 +476,66 @@ describe.skipIf(!has(url))('cash at the door (database)', () => {
       expect(queued).toHaveLength(0);
       // A mistake is taken back with a reason, like any cost.
       expect((await c.deliveryCosts.reverse(dispatcher(), fuel?.id ?? '', { reason: 'Typed twice by mistake' })).ok).toBe(true);
+    });
+
+    it('belong to a vehicle that is named or that their run went out in; two different vehicles are refused, a stopped vehicle can still be billed, and a reversal keeps the vehicle', async () => {
+      const mk = async (name: string) => {
+        const v = await c.deliveryVehicles.create(dispatcher(), { name: `${name} ${code()}` });
+        if (!v.ok) throw new Error(v.message);
+        return v.data;
+      };
+      const van = await mk('Van');
+      const bike = await mk('Bike');
+      const rider = await staffRider();
+      const at = await onTheRoad(rider, { vehicleId: van.id });
+      const one = await c.deliveryCosts.recordRunning(dispatcher(), { kind: 'fuel', amount: 1000, note: 'Diesel for the van', vehicleId: van.id, clientKey: randomUUID() });
+      const two = await c.deliveryCosts.recordRunning(dispatcher(), { kind: 'vehicle', amount: 300, note: 'Wash, from the run', runId: at.runId, clientKey: randomUUID() });
+      expect(one.ok && two.ok).toBe(true);
+      const rows = await db.select().from(schema.deliveryCosts).where(eq(schema.deliveryCosts.vehicleId, van.id));
+      expect(rows.map((r) => r.kind).sort()).toEqual(['fuel', 'vehicle']);
+      // A run that went out in the van and a cost typed against the bike would tell two stories.
+      expect(await c.deliveryCosts.recordRunning(dispatcher(), { kind: 'fuel', amount: 10, note: 'Wrong vehicle', runId: at.runId, vehicleId: bike.id, clientKey: randomUUID() })).toMatchObject({ ok: false, reason: 'bad_input', message: expect.stringContaining('went out in') as string });
+      expect(await c.deliveryCosts.recordRunning(dispatcher(), { kind: 'fuel', amount: 10, note: 'Nobody\'s vehicle', vehicleId: randomUUID(), clientKey: randomUUID() })).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect(await c.deliveryCosts.recordRunning({ ...dispatcher(), companyId: randomUUID() }, { kind: 'fuel', amount: 10, note: 'Another company', vehicleId: van.id, clientKey: randomUUID() })).toMatchObject({ ok: false });
+      // A late bill for a vehicle that is no longer used is still its cost.
+      await c.deliveryVehicles.setActive(dispatcher(), bike.id, { isActive: false, expectedVersion: bike.version });
+      expect(await c.deliveryCosts.recordRunning(dispatcher(), { kind: 'other', amount: 250, note: 'Licence', vehicleId: bike.id, clientKey: randomUUID() })).toMatchObject({ ok: true });
+      // The list names the vehicle, and taking a cost back keeps it with the vehicle.
+      const fuel = rows.find((r) => r.kind === 'fuel');
+      expect((await c.deliveryCosts.list(companyId, { kind: 'fuel' })).rows.find((r) => r.id === fuel?.id)?.vehicleName).toBe(van.name);
+      expect((await c.deliveryCosts.reverse(dispatcher(), fuel?.id ?? '', { reason: 'Typed twice by mistake' })).ok).toBe(true);
+      const after = await db.select().from(schema.deliveryCosts).where(eq(schema.deliveryCosts.vehicleId, van.id));
+      expect(after).toHaveLength(3);
+      expect(after.find((r) => r.reversesId === fuel?.id)?.amount).toBe('-1000.00');
+      // Only a running cost can belong to a vehicle, even straight in the database.
+      await expect(db.insert(schema.deliveryCosts).values({ companyId, kind: 'courier', amount: '5.00', currency: 'KES', deliveryId: at.deliveryId, courierName: 'Swift', vehicleId: van.id, key: `veh-${randomUUID()}`, actorId: 'x' })).rejects.toThrow();
+    });
+
+    it('add up by vehicle in the report: what each vehicle delivered on its runs, its fuel, repairs and other costs, the cost of a delivery, and what is tied to no vehicle', async () => {
+      const mk = await c.deliveryVehicles.create(dispatcher(), { name: `Reported ${code()}` });
+      if (!mk.ok) throw new Error(mk.message);
+      const vehicle = mk.data;
+      const rider = await staffRider();
+      const at = await onTheRoad(rider, { vehicleId: vehicle.id });
+      const before = await c.deliveryReports.summary(companyId, {});
+      if (!before.ok) throw new Error('report');
+      expect(await c.doorWork.deliver(at.self, { runId: at.runId, deliveryId: at.deliveryId, clientKey: key(), receivedBy: 'Mama' })).toMatchObject({ ok: true });
+      for (const [kind, amount, note] of [['fuel', 1200, 'Diesel'], ['vehicle', 600, 'Tyre'], ['other', 200, 'Parking']] as const) {
+        expect((await c.deliveryCosts.recordRunning(dispatcher(), { kind, amount, note, vehicleId: vehicle.id, clientKey: randomUUID() })).ok).toBe(true);
+      }
+      expect((await c.deliveryCosts.recordRunning(dispatcher(), { kind: 'fuel', amount: 90, note: 'Tied to nothing', clientKey: randomUUID() })).ok).toBe(true);
+      const after = await c.deliveryReports.summary(companyId, {});
+      if (!after.ok) throw new Error('report');
+      expect(after.data.byVehicle.find((v) => v.vehicleId === vehicle.id)).toEqual({ vehicleId: vehicle.id, name: vehicle.name, runs: 1, delivered: 1, fuel: '1200.00', repairs: '600.00', other: '200.00', total: '2000.00', perDelivery: '2000.00' });
+      // The table and the total reconcile: what is tied to no vehicle is shown beside it.
+      expect(Number(after.data.untiedRunningCosts) - Number(before.data.untiedRunningCosts)).toBe(90);
+      // A vehicle with a cost and nothing delivered has no cost per delivery.
+      const idle = await c.deliveryVehicles.create(dispatcher(), { name: `Idle ${code()}` });
+      if (!idle.ok) throw new Error(idle.message);
+      await c.deliveryCosts.recordRunning(dispatcher(), { kind: 'vehicle', amount: 75, note: 'Service', vehicleId: idle.data.id, clientKey: randomUUID() });
+      const last = await c.deliveryReports.summary(companyId, {});
+      if (!last.ok) throw new Error('report');
+      expect(last.data.byVehicle.find((v) => v.vehicleId === idle.data.id)).toMatchObject({ delivered: 0, runs: 0, total: '75.00', perDelivery: null });
     });
 
     it('are refused without a kind, money, words or a form key, and for a run that is not the company\'s', async () => {
