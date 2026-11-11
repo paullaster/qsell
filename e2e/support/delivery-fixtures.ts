@@ -65,6 +65,18 @@ async function slotRequest(orderNumber: string): Promise<Record<string, string>>
   return row === undefined ? { outcome: 'none' } : Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v ?? '']));
 }
 
+/** Turns the shop's choice of delivery time on or off for the company, whatever its version is. */
+async function shopperChoice(on: boolean): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const c = getContainer();
+  const company = await c.companySettings.ensureSeeded();
+  const now = await c.deliverySlots.shopperChoice(company.id);
+  if (now.enabled === on) return { enabled: String(on) };
+  const done = await c.deliverySlots.setShopperChoice({ companyId: company.id, userId: 'e2e-fixture' }, { enabled: on, expectedVersion: now.version });
+  if (!done.ok) throw new Error(`e2e fixture: ${done.message}`);
+  return { enabled: String(done.data.enabled) };
+}
+
 async function close(tag: string): Promise<Record<string, string>> {
   const { getContainer } = await import('@/server/di/container');
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
@@ -292,6 +304,7 @@ async function main(): Promise<void> {
   if (command === 'order') result = await order(tag);
   if (command === 'slot') result = await slot(tag);
   if (command === 'slot-request') result = await slotRequest(tag);
+  if (command === 'shopper-choice') result = await shopperChoice(extra === 'on');
   if (command === 'billing') result = await billing(tag);
   if (command === 'pay') result = await pay(tag);
   if (command === 'collection') result = await collection(tag);

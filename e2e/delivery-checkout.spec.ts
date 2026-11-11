@@ -163,4 +163,32 @@ test.describe('delivery at the shop checkout', () => {
       deliveryTool('close', tag);
     }
   });
+  test('when the company plans every delivery itself the checkout still prices the delivery but offers no delivery times', async ({ page }, testInfo) => {
+    test.slow();
+    const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}`;
+    const branchName = deliveryTool('open', tag).branchName ?? '';
+    deliveryTool('slot', tag);
+    deliveryTool('shopper-choice', tag, 'off');
+    try {
+      await cartWithSalt(page);
+      await page.goto('/checkout');
+      await expect(page.getByRole('heading', { name: 'Checkout', level: 1 })).toBeVisible({ timeout: 30_000 });
+      const section = page.getByRole('group', { name: 'Where to deliver and what it costs' });
+      await expect(section).toBeVisible({ timeout: 30_000 });
+      await page.getByLabel('Full name').fill('Wanjiru Untimed');
+      await page.getByLabel('Mobile phone').fill('0711 000 556');
+      await page.getByLabel('Street, building or office').fill('3 Moi Avenue');
+      await page.getByLabel('City or town').fill('Nairobi');
+      await page.getByLabel('County or region').fill('Nairobi');
+      await page.getByLabel(/Estate or area/).fill('Westlands');
+      await expect(section.getByRole('status').filter({ hasText: `Delivery from ${branchName}` })).toContainText('348', { timeout: 30_000 });
+      // The price has arrived with the times, so their absence is the setting and not a slow answer.
+      await expect(section.getByRole('group', { name: /When would you like it/ })).toHaveCount(0);
+      await expect(section.getByText('Looking for delivery times')).toHaveCount(0);
+      await noHorizontalScroll(page);
+    } finally {
+      deliveryTool('shopper-choice', tag, 'on');
+      deliveryTool('close', tag);
+    }
+  });
 });

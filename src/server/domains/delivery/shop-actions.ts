@@ -243,6 +243,8 @@ export async function shopDeliverySlotsAction(raw: unknown): Promise<ShopResult<
     if (!planned.ok) return { ok: false, error: planned.error };
     if (planned.method === 'pickup') return { ok: true, data: { days: [], earliest: null } };
     const { plan, companyId, lines } = planned;
+    // A company that plans every delivery itself shows no times at all: the checkout hides the section when there are none.
+    if (!(await getContainer().deliverySlots.shopperChoice(companyId)).enabled) return { ok: true, data: { days: [], earliest: null } };
     const zone = plan.quote.zone;
     const days = await getContainer().deliverySlots.offer(companyId, { branchId: plan.branch.id, days: 10, basket: { method: planned.method, zone: zone === null ? null : { id: zone.id, name: zone.name }, lines } });
     return { ok: true, data: shopOffer(days) };

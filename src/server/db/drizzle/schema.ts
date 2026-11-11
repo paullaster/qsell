@@ -720,6 +720,20 @@ export const deliverySlaSettings = pgTable(
 );
 
 /**
+ * Whether the shop lets a shopper choose a delivery time at checkout. One row for a company, made when it is first changed; with no row the
+ * answer is yes, which is what the shop did before the setting existed. Off means every delivery is planned by dispatch.
+ */
+export const deliverySlotSettings = pgTable('delivery_slot_settings', {
+  companyId: uuid('company_id')
+    .primaryKey()
+    .references(() => companySettings.id, { onDelete: 'cascade' }),
+  shoppersChoose: boolean('shoppers_choose').notNull().default(true),
+  version: integer('version').notNull().default(1),
+  updatedBy: text('updated_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
  * A delivery reaching a lateness level against the window it was promised: once for each delivery, level and window (a delivery given a new
  * window starts again). Kept for good; the worker raises them, people acknowledge them (`delivery_sla_acks`).
  */

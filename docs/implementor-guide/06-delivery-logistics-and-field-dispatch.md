@@ -48,7 +48,7 @@ graph TD
 3. **Delivery Methods**: Enabled under `/admin/delivery/methods` per branch (*Own Fleet*, *Courier*, *Click & Collect / Pickup*, *Scheduled Visit*).
 4. **Delivery Charges**: Rate cards configured under `/admin/delivery/charges`.
 5. **Riders & Couriers**: Choose which kinds of rider the company uses under `/admin/delivery/riders` (own staff, riders with an account of their own, or both); add riders there. A rider who will sign in with a phone number and PIN needs an account of their own and a **Kenyan mobile number** (for example 0712 345 678). Couriers are connected under `/admin/delivery/couriers`.
-6. **Delivery Times (optional)**: Slots, days with no slots and lead times are set under `/admin/delivery/slots`; a branch needs at least one slot for shoppers to be offered a delivery time.
+6. **Delivery Times (optional)**: Slots, days with no slots and lead times are set under `/admin/delivery/slots`; a branch needs at least one slot for shoppers to be offered a delivery time. The same screen has the switch **Let shoppers choose a delivery time at checkout**; switch it off if you prefer to plan every delivery yourself (it is on until you change it).
 7. **Rider Pay (optional)**: Set what a rider earns for each delivery and for each day on a run under `/admin/delivery/costs`. To have rider pay appear in the accounts, choose the two accounts under **In the books**: the account rider pay is booked to, and the account that holds what is owed to riders (the books must be live; otherwise pay is still recorded and paid out, but nothing is posted).
 8. **Mail for Lateness (optional)**: Type the mail addresses of the dispatchers and supervisors under `/admin/delivery/slots` (**When a delivery counts as late**).
 9. **Required Permissions**: `deliveries:read`, `deliveries:dispatch` (dispatch board, late deliveries, delivery performance), `riders:manage` (riders and their PINs), `delivery_slots:manage` (slots, closed days, lead times and the lateness settings), `couriers:manage` (connecting couriers), `delivery_costs:manage` (costs, rider pay, courier invoices, the delivery report), `door_payments:manage`.
@@ -135,6 +135,7 @@ graph TD
 
 ### 9. Delivery Slots (`/admin/delivery/slots`)
 - **Slots**: the delivery times a branch offers (for example *Morning 09:00 to 12:00*), the days of the week they run, how many deliveries a day each can take, how many minutes before the start an order must be placed, and optionally the most weight it can carry in a day. A slot can be stopped (deliveries already promised it keep it).
+- **Delivery time at checkout**: one switch for the whole company. *On*: a shopper having an order delivered sees the earliest free time and may choose one (it is optional). *Off*: the checkout shows no delivery times at all, the shopper is told nothing about a time, and you plan each delivery when you are ready; slots still work for you, because a dispatcher can book any delivery into a slot from its own screen. Orders whose shopper already chose a time keep it when the switch is turned off. Changes are kept in the decision log with who made them.
 - **Days with no slots**: close a day for all branches or one (public holidays, stock-taking), with the reason.
 - **How long the goods need** (lead times): the least time from order to ready, for a delivery zone or for an item (for example fresh or made-to-order goods). A delivery cannot be promised a slot that starts before the longest lead time that applies.
 - **When a delivery counts as late**: how many minutes before the end of the window a delivery is *At risk*, after how many minutes late it goes to the supervisor, and who is mailed at each level.
@@ -281,6 +282,12 @@ graph TD
 | **Most it can carry in a day, in kg (empty for no limit)** | Weight limit for the day. | Number | Optional | More than nothing. |
 | **Day** / **Branch (all if empty)** / **Why** (*Close a day*) | Closes a day to all branches or one. | Date, lookup, text | **Required** (day and why) | A day already closed is refused. |
 | **Minutes the zone needs** / **Minutes the item needs** (*Lead times*) | The least time before goods are ready. | Whole number | **Required** | A zone or an item is chosen first. |
+
+### Delivery Time at Checkout Field (`/admin/delivery/slots`, *Delivery time at checkout*)
+
+| Field Label | Purpose | Type & Format | Required? | Validation Rules & Hints |
+|---|---|---|---|---|
+| **Let shoppers choose a delivery time at checkout** | Whether the shop offers delivery times to shoppers. | Tick box | **Required** | On by default. *Save* is available only after a change. If a colleague changed it at the same moment you are told to reload. A time sent to the server while it is off is refused, so a checkout page left open from before cannot promise a time. |
 
 ### Lateness Settings Fields (`/admin/delivery/slots`, *When a delivery counts as late*)
 
@@ -443,6 +450,7 @@ Under `/admin/delivery/invoicing`, the business configures one of two fiscal mod
 - The shopper's cut-off is judged at the moment they chose; a day that has already passed is refused.
 - The delivery is booked the slot **when the delivery is made**. If the slot has filled since, **neither the sale nor the delivery is held up**: the customer's request is marked as not kept, and the customer is sent a message in the same step.
 - A booked window is kept as promised, even if the slot is later changed or stopped.
+- **The company can switch the shopper's choice off** (*Delivery slots › Delivery time at checkout*). While it is off the checkout shows no times and refuses one sent anyway ("Delivery times are not chosen at checkout..."), orders are unaffected otherwise, and a dispatcher can still book any delivery into a slot. Turning it back on restores the times at once.
 
 ### Lateness
 - A delivery promised a window is *On track*, *At risk* (within the warning time of the end of the window, or the window has begun and it is not on its way), *Late* (past the end), *On time* or *Delivered late*. Cancelled and returned deliveries are not watched.
@@ -485,7 +493,7 @@ Under `/admin/delivery/invoicing`, the business configures one of two fiscal mod
 ### Common Client Setup Pitfalls
 - **A rider has a landline or foreign number**: a PIN cannot be given. Correct the phone number on the rider first; changing it turns an existing PIN off.
 - **Two riders share one phone number**: the second cannot be given a PIN. Each rider needs their own number.
-- **Slots exist but shoppers are never offered a time**: the branch has no slot on that day of the week, the day is closed, the cut-off has passed, or a lead time makes the goods too late.
+- **Slots exist but shoppers are never offered a time**: the switch *Let shoppers choose a delivery time at checkout* is off, or the branch has no slot on that day of the week, the day is closed, the cut-off has passed, or a lead time makes the goods too late.
 - **Lateness mail never arrives**: no addresses were typed in the lateness settings, or the company's mail sending is not configured; the Late deliveries screen still shows everything.
 - **Rider pay is recorded but not in the accounts**: the books are not live, or the two accounts under *In the books* were not chosen. What is waiting is counted on the screen.
 - **A courier invoice does not agree**: a charge was never typed on the delivery, was taken back, or is already on another invoice. The difference shows how much is missing or extra.
