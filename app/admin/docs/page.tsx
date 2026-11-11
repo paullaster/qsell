@@ -14,15 +14,14 @@ import {
   TrendingUp,
   Truck,
   ArrowRight,
-  Sparkles,
 } from 'lucide-react';
 import { getVersionManifest, getAllChapters, getSearchIndex } from '@/generated/docs';
 import { DocsSearch } from '@/components/admin/docs/DocsSearch';
 
 export const metadata: Metadata = {
-  title: 'Implementor & Sales Enablement Documentation | OmniCommerce',
+  title: 'Documentation | Qsell',
   description:
-    'Comprehensive non-technical implementor manuals, functional specifications, and commercial sales enablement playbook for OmniCommerce.',
+    'Comprehensive playbook for Qsell.',
 };
 
 const CATEGORY_GROUPS = [
@@ -82,19 +81,13 @@ export default function DocsIndexPage() {
       <div className="relative overflow-hidden rounded-2xl border border-line bg-gradient-to-br from-surface to-surface-raised p-6 shadow-xs sm:p-8">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
           <div className="max-w-2xl space-y-3">
-            <div className="inline-flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50/80 px-3 py-1 text-xs font-semibold text-indigo-700 dark:border-indigo-900/60 dark:bg-indigo-950/40 dark:text-indigo-300">
-              <Sparkles className="h-3.5 w-3.5" />
-              Build-Time Pre-Rendered Enterprise Guide
-            </div>
 
             <h1 className="text-2xl font-extrabold tracking-tight text-fg-strong sm:text-3xl">
-              Implementor Blueprint & Commercial Sales Manual
+              QSell Manual
             </h1>
 
             <p className="text-sm leading-relaxed text-fg-muted sm:text-base">
-              Granular functional specifications, prerequisites, validation parameters, and
-              commercial ROI messaging for system implementors and sales team members. Zero
-              technical jargon.
+              The go to Qsell documentation
             </p>
 
             {/* Immutability & Version Badges */}
@@ -134,10 +127,6 @@ export default function DocsIndexPage() {
                 {pdfSizeKb} KB
               </span>
             </a>
-
-            <div className="text-center text-[11px] text-fg-faint">
-              Version-stamped immutable offline asset
-            </div>
           </div>
         </div>
       </div>
