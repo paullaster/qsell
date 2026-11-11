@@ -1,3 +1,5 @@
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { defineConfig } from '@playwright/test';
 import { AUTH_FILE, E2E_PORT, E2E_URL } from './e2e/support/constants';
 import { e2eEnvironment } from './e2e/support/env';
@@ -13,6 +15,10 @@ import { e2eEnvironment } from './e2e/support/env';
  */
 export default defineConfig({
   testDir: 'e2e',
+  // Traces, screenshots and screencast frames are written while a test runs (dozens of files every few seconds). Inside the project the
+  // development server watches them, recompiles and reloads the page under test over and over, so pages never settle and tests time out.
+  // Outside the project that cannot happen. One folder for each port, so two runs never clear each other's.
+  outputDir: join(tmpdir(), `qsell-playwright-${String(E2E_PORT)}`),
   testMatch: '**/*.spec.ts',
   fullyParallel: false,
   workers: 1,

@@ -336,6 +336,25 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'Order Targets',
     ],
   },
+  {
+    navId: 'documentation',
+    name: 'Implementor and staff manuals',
+    summary:
+      'Built-in manuals that explain every screen and workflow in plain words, for the team setting the system up and the team selling it.',
+    features: [
+      'Step-by-step guides for every module and screen',
+      'A pre-loaded PDF handbook for offline reading and field pitches',
+      'A two-week sales curriculum with value talking points',
+      'Search across all manuals by keyword',
+    ],
+    keywords: [
+      'system manuals for business software',
+      'staff training materials software',
+      'implementation guide',
+      'business software handbook',
+    ],
+    subModules: [],
+  },
 ];
 
 /** Words that describe the platform as a whole, ahead of any single module. */

@@ -1093,6 +1093,13 @@
       "when": 1794191841225,
       "tag": "0155_classification_sellable_cascade",
       "breakpoints": true
+    },
+    {
+      "idx": 156,
+      "version": "7",
+      "when": 1794280563368,
+      "tag": "0156_rider_pins",
+      "breakpoints": true
     }
   ]
 }

@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, deliveryRiderSettings, deliveryRiders, deliveryRuns, roles, users } from '@/server/db/drizzle/schema';
+import { branches, deliveryRiderSettings, deliveryRiders, deliveryRuns, riderPins, roles, users } from '@/server/db/drizzle/schema';
 import { RIDER_KIND_WORDS, RIDER_STATUS_WORDS, RIDER_STATUSES, dialable, isRiderKind, kindsProblem, mayCarry, riderStatusAfter, type RiderKind, type RiderKinds, type RiderStatus } from '@/lib/delivery-rider';
 import { isProofRule, type ProofRule } from '@/lib/delivery-proof';
 import { validatePassword } from '@/lib/passwordPolicy';
@@ -209,6 +209,11 @@ export class DeliveryRiders {
         branchId = placed.data;
       }
       await tx.update(deliveryRiders).set({ name, phone, vehicle: input.vehicle === undefined ? found.data.vehicle : text(input.vehicle, 80), branchId, version: found.data.version + 1, updatedAt: new Date() }).where(eq(deliveryRiders.id, riderId));
+      // The PIN belongs to the number it was given for: a new number turns the PIN off, and the office gives a new one.
+      if (phone !== found.data.phone) {
+        const gone = await tx.delete(riderPins).where(eq(riderPins.riderId, riderId)).returning({ id: riderPins.riderId });
+        if (gone.length > 0) await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_rider', id: riderId }, action: 'rider.pin_removed', actor: { type: 'user', id: actor.userId }, reason: { text: 'The phone number changed' } }, tx);
+      }
       await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_rider', id: riderId }, action: 'rider.updated', actor: { type: 'user', id: actor.userId } }, tx);
       return { ok: true, data: await this.viewIn(tx, actor.companyId, riderId) };
     });
@@ -238,6 +243,11 @@ export class DeliveryRiders {
       }
       await tx.update(deliveryRiders).set({ status: to, statusReason: to === 'active' ? null : reason, statusChangedAt: new Date(), version: found.data.version + 1, updatedAt: new Date() }).where(eq(deliveryRiders.id, riderId));
       await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_rider', id: riderId }, action: `rider.${change}`, actor: { type: 'user', id: actor.userId }, from: found.data.status, to, ...(reason === null ? {} : { reason: { text: reason } }) }, tx);
+      // A rider who has left no longer signs in with a PIN, and the number is free for whoever has it next.
+      if (to === 'ended') {
+        const gone = await tx.delete(riderPins).where(eq(riderPins.riderId, riderId)).returning({ id: riderPins.riderId });
+        if (gone.length > 0) await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_rider', id: riderId }, action: 'rider.pin_removed', actor: { type: 'user', id: actor.userId }, reason: { text: 'The rider left' } }, tx);
+      }
       return { ok: true, data: await this.viewIn(tx, actor.companyId, riderId) };
     });
   }

@@ -1151,6 +1151,37 @@ export const courierInvoiceCharges = pgTable(
 );
 
 /**
+ * A rider's PIN, for signing in to the rider app with a phone number. Only riders with an account of their own have one (a member of
+ * staff never signs in with a PIN: it would open a back-office account with six digits). The PIN is never kept, only a hash made with a
+ * secret of the server's own, so a copy of the table is no use to anyone. Wrong tries are counted in this row under a lock, so guesses
+ * made at the same moment cannot get past the count. The phone number is kept as one canonical string and is the rider's alone.
+ */
+export const riderPins = pgTable(
+  'rider_pins',
+  {
+    riderId: uuid('rider_id')
+      .primaryKey()
+      .references(() => deliveryRiders.id, { onDelete: 'cascade' }),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    /** 254 and nine digits. */
+    phone: text('phone').notNull(),
+    pinHash: text('pin_hash').notNull(),
+    /** Handed out by the office: the rider must choose their own before anything else. */
+    mustChange: boolean('must_change').notNull().default(true),
+    failedAttempts: integer('failed_attempts').notNull().default(0),
+    lastFailedAt: timestamp('last_failed_at', { withTimezone: true }),
+    lockedUntil: timestamp('locked_until', { withTimezone: true }),
+    lastSignedInAt: timestamp('last_signed_in_at', { withTimezone: true }),
+    setBy: text('set_by').notNull(),
+    setAt: timestamp('set_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('rider_pins_phone_uidx').on(t.phone), index('rider_pins_company_idx').on(t.companyId), check('rider_pins_phone_chk', sql`${t.phone} ~ '^254[17][0-9]{8}$'`), check('rider_pins_failed_chk', sql`${t.failedAttempts} >= 0`)],
+);
+export type RiderPinRow = typeof riderPins.$inferSelect;
+
+/**
  * Whether a rider-pay cost has reached the books. A queue: the cost is saved first and posted afterwards, retrying with a growing
  * delay, so a mistake in the accounts can never stop a rider's delivery. One row for each cost.
  */
