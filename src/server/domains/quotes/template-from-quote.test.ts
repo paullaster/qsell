@@ -130,13 +130,18 @@ describe('a template made from a quote', () => {
       customerId: null,
       billingAddress: {},
       deliveryAddress: {},
-      showBillingAddress: false,
+      showBillingAddress: true,
     });
     expect(plain.description).toBe('Made from quote QTE-2026-0000000007.');
     const kept = templateDraftFromQuote(quote(), { keepCustomer: true }).input;
     expect(kept).toMatchObject({ customerId: 'cust-1', showBillingAddress: true });
     expect(kept.billingAddress).toEqual({ street: '1 Rd', city: 'Nairobi' });
     expect(kept.description).toContain('Acme Ltd');
+  });
+
+  it('carries the choice made on the quote to hide the customer details into the template', () => {
+    const hidden = templateDraftFromQuote({ ...quote(), showBillingAddress: false }).input;
+    expect(hidden.showBillingAddress).toBe(false);
   });
 
   it('does not copy free gifts, and says how many there were', () => {

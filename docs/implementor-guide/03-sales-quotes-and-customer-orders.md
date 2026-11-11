@@ -83,13 +83,14 @@ graph LR
 ## 4. Interface-by-Interface Walkthrough
 
 ### Sub-Module 1: Sales Quotes (`/admin/quotes`)
-- **Quotes List View (`QuotesTable`)**: Paged table showing Quote Number, Customer Name, Issue Date, Expiration Date, Total Amount, and Status (`Draft`, `Sent`, `Accepted`, `Converted`, `Expired`, `Rejected`).
+- **Quotes List View (`QuotesTable`)**: Paged table showing Quote Number, Customer Name, Issue Date, Expiration Date, Total Amount, and Status (`Draft`, `Sent`, `Accepted`, `Converted`, `Expired`, `Rejected`). A **Staff** column names the person who created the quote and the person who emailed it to the customer ("Not emailed yet" until it is sent), so a manager can see who is responsible for each quote at a glance.
 - **Quote Creation & Editor (`QuoteEditor`)**:
   - Customer selection with instant customer credit standing preview.
   - Line-item editor: SKU selection, unit of measure, quantity, base price, discount %, and tax rate.
   - Real-time calculation toolbar: Subtotal, total discount, VAT, and grand total.
   - Validity expiration date picker and customer memo notes.
-- **Quote Detail Modal (`QuoteDetails`)**: Full proforma document view with actions to **Print PDF**, **Send via Email**, **Accept**, or **Convert to Order**.
+- **Quote windows**: The quote editor and the quote detail window open extra wide so the lines, prices and margins sit side by side; on a phone they fill the screen.
+- **Quote Detail Modal (`QuoteDetails`)**: Opens with *Created by* (name and time) and *Emailed to customer by* (name and time of the latest send), then shows the full proforma document view with actions to **Print PDF**, **Send via Email**, **Accept**, or **Convert to Order**.
 
 ### Sub-Module 2: Customer Orders (`/admin/orders`)
 - **Orders List View**: Filterable by Channel (`Web Shop`, `Counter POS`, `Sales Rep`, `B2B Account`), Status (`Pending`, `Confirmed`, `Processing`, `Dispatched`, `Delivered`, `Cancelled`), Payment Status (`Unpaid`, `Paid`, `Partial`), and Branch.
@@ -127,6 +128,7 @@ graph LR
 |---|---|---|---|---|
 | **Customer** | Account receiving the quote. | Lookup Autocomplete | **Required** | Type 2+ characters to search customer cards. |
 | **Quote Date** | Issue date. | Date (YYYY-MM-DD) | **Required** | Defaults to today's date. |
+| **Hide the customer details (Bill To) on the quote document** | Customer name, email, phone and billing address are printed on the quote by default. Tick this to leave them off. | Checkbox | Optional | Off by default for every new quote, so the customer details appear. Quotes saved before this change keep what they had. A quote template has the same box and passes its choice on to quotes made from it. |
 | **Valid Until** | Expiration date of quoted prices. | Date (YYYY-MM-DD) | **Required** | Must be $\ge$ Quote Date. Quotes cannot be converted after this date. |
 | **Branch** | Fulfilling branch location. | Dropdown | **Required** | Determines inventory availability checks. |
 | **Product Line: SKU** | Product item. | Lookup Autocomplete | **Required** | Must be an active, sellable product. |

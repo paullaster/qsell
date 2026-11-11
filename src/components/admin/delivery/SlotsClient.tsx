@@ -1,7 +1,7 @@
 'use client';
 
 import { use, useId, useState } from 'react';
-import { closeDayAction, createSlotAction, removeLeadTimeAction, reopenDayAction, setLeadTimeAction, setSlaSettingsAction, setSlotActiveAction, slotsScreenAction, updateSlotAction } from '@/server/domains/delivery/slot-actions';
+import { closeDayAction, createSlotAction, removeLeadTimeAction, reopenDayAction, setLeadTimeAction, setShopperChoiceAction, setSlaSettingsAction, setSlotActiveAction, slotsScreenAction, updateSlotAction } from '@/server/domains/delivery/slot-actions';
 import type { SlotView } from '@/server/domains/delivery/slots';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
@@ -32,6 +32,7 @@ function Body({ initial }: { initial: Screen }) {
     <div className="max-w-5xl space-y-5">
       <PageHeader title="Delivery slots" intro="The windows each branch can promise a customer, with room for so many deliveries a day and a time after which a slot can no longer be booked. A delivery is booked into a slot from its own screen." />
       <Message notice={notice} />
+      <ShopperChoicePanel choice={data.shopperChoice} onChanged={(t) => void reload(t)} onError={fail} />
       <SlotForm key="new" onSaved={(t) => void reload(t)} onError={fail} />
       <section aria-label="Slots" className="space-y-3">
         <h3 className="text-sm font-bold text-fg-strong">Slots</h3>
@@ -309,6 +310,44 @@ function LeadForm({ kind, onChanged, onError }: { kind: 'zone' | 'item'; onChang
       </Field>
       <button type="submit" className={primaryClass} disabled={busy}>
         Save the {word}&apos;s lead time
+      </button>
+    </form>
+  );
+}
+
+/** Whether the shop lets a shopper choose a delivery time. Off: every delivery is planned by dispatch and the checkout shows no times. */
+function ShopperChoicePanel({ choice, onChanged, onError }: { choice: Screen['shopperChoice']; onChanged: (text: string) => void; onError: (text: string) => void }) {
+  const uid = useId();
+  const [on, setOn] = useState(choice.enabled);
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    setBusy(true);
+    const r = await attempt(setShopperChoiceAction({ enabled: on, expectedVersion: choice.version }));
+    setBusy(false);
+    if (r.ok) onChanged(r.data.enabled ? 'Saved. Shoppers can now choose a delivery time at checkout.' : 'Saved. The checkout no longer offers delivery times; you plan every delivery.');
+    else onError(r.error);
+  };
+  return (
+    <form
+      key={choice.version}
+      aria-label="Shopper choice"
+      className={`${cardClass} space-y-3`}
+      onSubmit={(e) => {
+        e.preventDefault();
+        void save();
+      }}
+    >
+      <h3 className="text-sm font-bold text-fg-strong">Delivery time at checkout</h3>
+      <label htmlFor={`${uid}-on`} className="flex min-h-11 cursor-pointer items-center gap-3 text-sm text-fg">
+        <input id={`${uid}-on`} type="checkbox" className="h-5 w-5 accent-indigo-600" checked={on} onChange={(e) => setOn(e.target.checked)} />
+        Let shoppers choose a delivery time at checkout
+      </label>
+      <p className="text-xs text-fg-muted">
+        On: a shopper having an order delivered sees the earliest free time from the slots below and may choose one (it is optional). Off: the checkout shows no times, orders are delivered when you plan them, and you can still book a slot for any delivery from its own screen.
+        Orders whose shopper has already chosen a time keep it.
+      </p>
+      <button type="submit" className={primaryClass} disabled={busy || on === choice.enabled}>
+        Save
       </button>
     </form>
   );

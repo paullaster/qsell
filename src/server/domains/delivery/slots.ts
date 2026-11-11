@@ -1,6 +1,6 @@
 import { and, asc, eq, gte, inArray, isNull, notInArray, or, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, deliveries, deliveryClosedDays, deliveryLeadTimes, deliveryLines, deliveryMethods, deliverySlots, deliveryZones, orderDeliveries, orderSlotRequests, orders, products } from '@/server/db/drizzle/schema';
+import { branches, deliveries, deliveryClosedDays, deliveryLeadTimes, deliveryLines, deliveryMethods, deliverySlotSettings, deliverySlots, deliveryZones, orderDeliveries, orderSlotRequests, orders, products } from '@/server/db/drizzle/schema';
 import { UNAVAILABLE_WORDS, checkLead, checkSlot, daysFrom, earliestReady, isDay, leadWords, nairobiDay, unavailable, weekdayOf, weekdaysWords, windowOf, type Lead, type SlotExtra, type SlotRule } from '@/lib/delivery-slot';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { DocActor, DocRefusal, DocResult } from './documents';
@@ -84,6 +84,12 @@ export interface BasketForSlots {
 }
 
 /** The slot a delivery holds, in words, or null when it holds none. */
+/** Whether shoppers choose a delivery time at checkout, and the version to change it from. */
+export interface ShopperChoiceView {
+  enabled: boolean;
+  version: number;
+}
+
 export interface HeldSlot {
   slotId: string;
   name: string;
@@ -211,6 +217,30 @@ export class DeliverySlots {
       .orderBy(asc(deliveryClosedDays.day), asc(deliveryClosedDays.id))
       .limit(200);
     return rows.map((r) => ({ id: r.c.id, day: r.c.day, branchId: r.c.branchId, branchName: r.branchName, reason: r.c.reason }));
+  }
+
+  // ── Whether shoppers choose a delivery time at all ───────────────────────────────────────────────────────────────
+
+  /** With no row the answer is yes: that is how the shop behaved before the setting existed. */
+  async shopperChoice(companyId: string): Promise<ShopperChoiceView> {
+    const [row] = await this.db.select().from(deliverySlotSettings).where(eq(deliverySlotSettings.companyId, companyId));
+    return { enabled: row?.shoppersChoose ?? true, version: row?.version ?? 1 };
+  }
+
+  /** Turns the shopper's choice of delivery time on or off. Deliveries whose shopper already chose a time keep it. */
+  async setShopperChoice(actor: DocActor, input: { enabled: unknown; expectedVersion: unknown }): Promise<DocResult<ShopperChoiceView>> {
+    if (typeof input.enabled !== 'boolean') return fail('bad_input', 'Say whether shoppers choose a delivery time.');
+    const enabled = input.enabled;
+    return await this.run(async (tx) => {
+      await tx.insert(deliverySlotSettings).values({ companyId: actor.companyId }).onConflictDoNothing();
+      const [row] = await tx.select().from(deliverySlotSettings).where(eq(deliverySlotSettings.companyId, actor.companyId)).for('update');
+      if (row === undefined) throw new Error('The setting could not be read.');
+      if (input.expectedVersion !== row.version) return fail('conflict', 'Someone else changed this setting. Reload to see the latest.');
+      const [saved] = await tx.update(deliverySlotSettings).set({ shoppersChoose: enabled, version: row.version + 1, updatedBy: actor.userId, updatedAt: this.clock() }).where(eq(deliverySlotSettings.companyId, actor.companyId)).returning();
+      if (saved === undefined) throw new Error('The setting was not saved.');
+      await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_slot_settings', id: actor.companyId }, action: 'delivery.shopper_choice_changed', actor: { type: 'user', id: actor.userId }, inputs: { before: row.shoppersChoose, after: saved.shoppersChoose } }, tx);
+      return { ok: true, data: { enabled: saved.shoppersChoose, version: saved.version } };
+    });
   }
 
   /** No slot is offered on this day, at one branch or at all of them. Deliveries already promised that day are not moved. */
@@ -446,6 +476,8 @@ export class DeliverySlots {
    * not a promise; the answer is the reason in words, or null when the slot is fine.
    */
   async checkRequest(companyId: string, input: { branchId: string; basket: BasketForSlots; slotId: unknown; day: unknown }): Promise<string | null> {
+    // The browser is not trusted: with the choice turned off, a time sent anyway is refused rather than quietly promised.
+    if (!(await this.shopperChoice(companyId)).enabled) return 'Delivery times are not chosen at checkout; we plan the delivery and let you know. Please place your order without a time.';
     if (typeof input.slotId !== 'string' || !UUID.test(input.slotId) || !isDay(input.day)) return 'Choose one of the delivery times shown.';
     const now = this.clock();
     const [slot] = await this.db.select().from(deliverySlots).where(and(eq(deliverySlots.id, input.slotId), eq(deliverySlots.companyId, companyId), eq(deliverySlots.branchId, input.branchId)));

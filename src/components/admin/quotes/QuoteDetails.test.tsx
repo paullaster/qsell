@@ -32,10 +32,17 @@ const quote = {
   sections: [],
 } as unknown as SalesQuote;
 
-function show(over: { error?: string | null; busy?: boolean; onRevise?: () => void } = {}) {
+function show(
+  over: {
+    error?: string | null;
+    busy?: boolean;
+    onRevise?: () => void;
+    quote?: Partial<SalesQuote>;
+  } = {},
+) {
   return render(
     <QuoteDetails
-      quote={quote}
+      quote={{ ...quote, ...over.quote }}
       canApprove
       canDelete
       canRevise
@@ -77,5 +84,33 @@ describe('QuoteDetails feedback', () => {
     show({ busy: true });
     const working = screen.getByRole('button', { name: 'Creating revision…' });
     expect((working as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe('QuoteDetails staff', () => {
+  it('says who made the quote and that it has not been emailed yet', () => {
+    show({ quote: { createdByName: 'Wanjiru Kamau', sentAt: null, sentByName: null } });
+    expect(screen.getByText('Wanjiru Kamau')).toBeInTheDocument();
+    expect(screen.getByText('Not emailed yet')).toBeInTheDocument();
+  });
+
+  it('says who emailed it to the customer and when', () => {
+    show({
+      quote: {
+        createdByName: 'Wanjiru Kamau',
+        sentAt: new Date('2026-10-02T09:00:00Z'),
+        sentByName: 'Otieno Ouma',
+      },
+    });
+    expect(screen.getByText('Emailed to customer by')).toBeInTheDocument();
+    expect(screen.getByText('Otieno Ouma')).toBeInTheDocument();
+  });
+
+  it('shows the customer details unless they are hidden', () => {
+    const view = show({ quote: { showBillingAddress: true } });
+    expect(screen.getByText('Bill to')).toBeInTheDocument();
+    view.unmount();
+    show({ quote: { showBillingAddress: false } });
+    expect(screen.queryByText('Bill to')).toBeNull();
   });
 });

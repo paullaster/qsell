@@ -450,6 +450,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'riders:manage',
       },
       {
+        id: 'delivery-vehicles',
+        title: 'Vehicles',
+        name: 'delivery-vehicles',
+        href: '/admin/delivery/vehicles',
+        description: 'The vehicles your riders go out in, and the most weight and stops a run may carry in each',
+        icon: 'Truck',
+        permission: 'riders:manage',
+      },
+      {
         id: 'delivery-door-payments',
         title: 'Door payments',
         name: 'delivery-door-payments',

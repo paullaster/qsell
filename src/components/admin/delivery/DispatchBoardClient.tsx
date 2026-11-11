@@ -34,6 +34,7 @@ function Board({ initial }: { initial: Board }) {
   const [rider, setRider] = useState('');
   const [riderChoice, setRiderChoice] = useState<Choice | null>(null);
   const [vehicle, setVehicle] = useState('');
+  const [vehicleChoice, setVehicleChoice] = useState<Choice | null>(null);
   const [day, setDay] = useState('');
   const [runBranch, setRunBranch] = useState<Choice | null>(null);
   const [news, setNews] = useState<Record<string, { state: Choice | null; note: string; receivedBy: string; tracking: string }>>({});
@@ -82,7 +83,7 @@ function Board({ initial }: { initial: Board }) {
           className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"
           onSubmit={(event) => {
             event.preventDefault();
-            void act(() => createRunAction({ branchId: runBranch?.id ?? '', runDate: day, riderId: riderChoice?.id ?? '', riderName: rider, vehicle }), (d) => `Run ${d.number} is planned. Pick it below and put deliveries on it.`);
+            void act(() => createRunAction({ branchId: runBranch?.id ?? '', runDate: day, riderId: riderChoice?.id ?? '', riderName: rider, vehicleId: vehicleChoice?.id ?? '', vehicle }), (d) => `Run ${d.number} is planned. Pick it below and put deliveries on it.`);
           }}
         >
           <ChoicePicker label="Leaves from" source="delivery-branches" choice={runBranch} onChoice={setRunBranch} placeholder="Choose the branch" />
@@ -93,8 +94,9 @@ function Board({ initial }: { initial: Board }) {
           <Field id={`${uid}-rider`} label="Or a name, for someone not using the app">
             <input id={`${uid}-rider`} value={rider} onChange={(e) => setRider(e.target.value)} maxLength={120} className={fieldClass} autoComplete="off" disabled={riderChoice !== null} />
           </Field>
-          <Field id={`${uid}-veh`} label="Vehicle (optional)">
-            <input id={`${uid}-veh`} value={vehicle} onChange={(e) => setVehicle(e.target.value)} maxLength={80} className={fieldClass} autoComplete="off" />
+          <ChoicePicker label="Vehicle (optional)" source="delivery-vehicles" choice={vehicleChoice} onChoice={setVehicleChoice} placeholder="Choose a vehicle" clearable />
+          <Field id={`${uid}-veh`} label="Or a vehicle typed in">
+            <input id={`${uid}-veh`} value={vehicle} onChange={(e) => setVehicle(e.target.value)} maxLength={80} className={fieldClass} autoComplete="off" disabled={vehicleChoice !== null} />
           </Field>
           <div className="sm:col-span-2 lg:col-span-4">
             <button type="submit" className={primaryClass} disabled={busy}>

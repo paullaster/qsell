@@ -307,7 +307,7 @@ export function QuoteEditor({
     <Modal
       title={quoteNumber === undefined ? 'Create sales quote' : `Edit ${quoteNumber}`}
       onClose={onClose}
-      wide
+      extraWide
     >
       <form onSubmit={(event) => void submit(event)} className="space-y-5">
         {error !== null && (
@@ -674,10 +674,10 @@ export function QuoteEditor({
             <label className="flex items-center gap-2 text-sm font-medium text-fg sm:col-span-2">
               <input
                 type="checkbox"
-                checked={input.showBillingAddress !== false}
-                onChange={(event) => setField('showBillingAddress', event.target.checked)}
+                checked={input.showBillingAddress === false}
+                onChange={(event) => setField('showBillingAddress', !event.target.checked)}
               />
-              Include Bill To information on the quote document
+              Hide the customer details (Bill To) on the quote document
             </label>
             {input.showBillingAddress !== false && (
               <label className="text-sm font-medium text-fg sm:col-span-2">
@@ -1007,8 +1007,7 @@ function DraftQuotePreview({
             </dl>
           </header>
 
-          {input.showBillingAddress === true &&
-            Object.values(input.billingAddress ?? {}).some((value) => value.trim().length > 0) && (
+          {input.showBillingAddress !== false && (
               <section className="py-5">
                 <h3 className="text-xs font-bold tracking-wider text-indigo-700 uppercase">
                   Bill to

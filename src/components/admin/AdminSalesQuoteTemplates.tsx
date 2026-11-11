@@ -71,7 +71,7 @@ function emptyTemplate(): QuoteTemplateInput {
     paymentTerms: '',
     paymentDetails: '',
     termsAndConditions: '',
-    showBillingAddress: false,
+    showBillingAddress: true,
     validityDays: 30,
     quoteDiscountPercent: 0,
     shippingFee: 0,
@@ -1144,10 +1144,10 @@ function TemplateEditor({
           <label className="flex items-center gap-2 text-sm font-medium text-fg">
             <input
               type="checkbox"
-              checked={input.showBillingAddress}
-              onChange={(event) => update('showBillingAddress', event.target.checked)}
+              checked={!input.showBillingAddress}
+              onChange={(event) => update('showBillingAddress', !event.target.checked)}
             />
-            Include Bill To information on customer quote documents by default
+            Hide the customer details on quote documents made from this template
           </label>
           <div className="grid gap-4 lg:grid-cols-2">
             {(['billingAddress', 'deliveryAddress'] as const).map((kind) => (

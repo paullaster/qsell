@@ -19,6 +19,7 @@ import { DoorWork } from '@/server/domains/delivery/door';
 import type { CustomerMasterService } from '@/server/domains/customers/master-service';
 import { RiderRuns } from '@/server/domains/delivery/rider-runs';
 import { DeliveryRuns } from '@/server/domains/delivery/runs';
+import { DeliveryVehicles } from '@/server/domains/delivery/vehicles';
 import type { UsersAdminRepository } from '@/server/domains/users/repository';
 import { CourierShipments } from '@/server/domains/delivery/shipments';
 import type { NumberSeriesService } from '@/server/kernel/numbering/service';
@@ -68,7 +69,8 @@ export function createDeliveryServices(input: {
   const deliveryRiders = new DeliveryRiders(input.db, input.decisionLog, input.usersAdmin);
   const riderRuns = new RiderRuns(input.db);
   const deliveryCosts = new DeliveryCosts(input.db, input.decisionLog);
-  const deliveryRuns = new DeliveryRuns(input.db, input.decisionLog, input.numbering, deliveryDocuments, deliveryRiders, deliveryCosts);
+  const deliveryVehicles = new DeliveryVehicles(input.db, input.decisionLog);
+  const deliveryRuns = new DeliveryRuns(input.db, input.decisionLog, input.numbering, deliveryDocuments, deliveryRiders, deliveryCosts, deliveryVehicles);
   const doorPayments = new DoorPayments(input.db, input.decisionLog, deliveryDocuments, input.customers);
   const doorWork = new DoorWork(input.db, deliveryDocuments, deliveryRuns, input.decisionLog, doorPayments, deliveryCosts);
   const courierShipments = new CourierShipments(input.db, deliveryDocuments);
@@ -102,6 +104,7 @@ export function createDeliveryServices(input: {
     deliveryCosts,
     courierShipments,
     courierAccounts,
+    deliveryVehicles,
     courierSync,
     deliveryBilling,
   };

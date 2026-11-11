@@ -1,6 +1,5 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
-import { logoutAction } from '@/server/domains/auth/actions';
 
 /** The frame of the rider app: a header with the way home and out, and room for one thing at a time on a phone. */
 export function RiderShell({ children, signedIn = true }: { children: ReactNode; signedIn?: boolean }) {
@@ -12,8 +11,7 @@ export function RiderShell({ children, signedIn = true }: { children: ReactNode;
             Rider app
           </Link>
           {signedIn ? (
-            <form action={logoutAction}>
-              <input type="hidden" name="returnTo" value="/rider/sign-in" />
+            <form method="post" action="/api/rider/sign-out">
               <button type="submit" className="min-h-11 rounded-lg px-3 text-sm font-semibold text-fg-muted hover:bg-surface">
                 Sign out
               </button>
