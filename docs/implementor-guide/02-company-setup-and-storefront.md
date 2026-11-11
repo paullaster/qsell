@@ -109,6 +109,13 @@ Configures the storefront customer helpdesk:
 ### Sub-Module 6: Banners (`/admin/company/banners`)
 Manages site-wide announcement banners displayed across the top of the storefront (e.g., *"Holiday Sale: 15% off all solar panels until Friday!"*). Supports start/end scheduling and call-to-action buttons.
 
+**Look and attention options (per banner, up to five banners):**
+- **Colours**: by default a banner has the shop's usual look. Tick *Use my own colours* to choose a background (five ready-made colours or any colour of your choice) and a text colour. A readability check shows the contrast; if the chosen text cannot be read on the background, the shop automatically uses white or dark text instead, so a banner can never show unreadable words. *Pick the text colour for me* returns to automatic.
+- **Picture** (optional): upload a PNG, JPEG, WebP, GIF or AVIF picture; it appears beside the headline and can be removed.
+- **Movement**: *Still* (default), *Scrolling marquee* (words move across; visitors can pause it, it pauses under the pointer, and it does not move for people whose device asks for less motion) or *Pulsing glow*. A marquee has a *Scrolling speed* of Slow, Normal or Fast.
+- **Size**: *Normal*, or *Large* (bigger type and more room) for a sale or a closing date.
+- A live preview under each banner shows how it will look in the shop.
+
 ### Sub-Module 7: Policies (`/admin/company/policies`)
 Dedicated rich-text editors for mandatory legal and operational pages:
 - **Privacy Policy**: Data protection compliance.

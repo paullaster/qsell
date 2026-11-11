@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activeBanners, resolveBanners, safeBannerHref } from './banners';
+import { activeBanners, resolveBanners, safeBannerHref, safeBannerImage } from './banners';
 import { resolveCompanyUiConfig } from './resolve';
 
 describe('safeBannerHref', () => {
@@ -7,6 +7,26 @@ describe('safeBannerHref', () => {
     expect(safeBannerHref('/?category=shoes')).toBe('/?category=shoes');
     expect(safeBannerHref('https://example.com/sale')).toBe('https://example.com/sale');
     for (const bad of ['javascript:alert(1)', 'data:text/html,x', '//evil.test', '/\\evil.test', 'ftp://x.test', 'not a url', '']) expect(safeBannerHref(bad)).toBe('');
+  });
+});
+
+describe('safeBannerImage', () => {
+  it('keeps pictures of this site and https addresses only', () => {
+    expect(safeBannerImage('/media/a.jpg')).toBe('/media/a.jpg');
+    expect(safeBannerImage('https://cdn.example.com/a.png')).toBe('https://cdn.example.com/a.png');
+    for (const bad of ['javascript:alert(1)', 'data:image/png;base64,AA', 'http://example.com/a.png', '//evil.test/a.png', '/\\evil.test', '']) expect(safeBannerImage(bad)).toBe('');
+  });
+});
+
+describe('resolveBanners look', () => {
+  it('starts in the shop look and keeps only known motions, speeds and sizes', () => {
+    const [plain, odd] = resolveBanners([{ title: 'A' }, { title: 'B', motion: 'spin', speed: 'warp', size: 'huge', background: 'red' }]);
+    expect(plain).toMatchObject({ background: '', textColor: '', imageUrl: '', motion: 'still', speed: 'normal', size: 'normal' });
+    expect(odd).toMatchObject({ background: '', motion: 'still', speed: 'normal', size: 'normal' });
+  });
+  it('never stores text that cannot be read on the chosen background', () => {
+    const [banner] = resolveBanners([{ title: 'A', background: '#facc15', textColor: '#fde047', motion: 'marquee', speed: 'fast', size: 'large' }]);
+    expect(banner).toMatchObject({ background: '#facc15', textColor: '#111827', motion: 'marquee', speed: 'fast', size: 'large' });
   });
 });
 

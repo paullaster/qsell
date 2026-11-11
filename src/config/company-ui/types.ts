@@ -91,9 +91,28 @@ export interface PromoBanner {
   /** Last day shown, `YYYY-MM-DD`; empty for until removed. */
   endsOn: string;
   active: boolean;
+  /** The banner's background, `#rrggbb`; empty for the shop's own look (the default). */
+  background: string;
+  /** The text colour chosen for that background, `#rrggbb`; empty for automatic. Only used with a background, and only when it can be read on it. */
+  textColor: string;
+  /** A picture for the banner; empty for none. A page of this site or an https address. */
+  imageUrl: string;
+  /** How the banner draws the eye: still (default), a scrolling marquee, or a pulsing glow. */
+  motion: BannerMotion;
+  /** How fast a marquee scrolls. */
+  speed: BannerSpeed;
+  /** Normal, or large type and more room. */
+  size: BannerSize;
 }
 
-export const BANNER_LIMITS = { banners: 5, title: 80, text: 240, cta: 30, href: 500 } as const;
+export const BANNER_MOTIONS = ['still', 'marquee', 'pulse'] as const;
+export type BannerMotion = (typeof BANNER_MOTIONS)[number];
+export const BANNER_SPEEDS = ['slow', 'normal', 'fast'] as const;
+export type BannerSpeed = (typeof BANNER_SPEEDS)[number];
+export const BANNER_SIZES = ['normal', 'large'] as const;
+export type BannerSize = (typeof BANNER_SIZES)[number];
+
+export const BANNER_LIMITS = { banners: 5, title: 80, text: 240, cta: 30, href: 500, image: 500 } as const;
 
 /**
  * Raw / partial UI config as stored in DB (JSONB).
