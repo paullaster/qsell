@@ -330,6 +330,79 @@ describe.skipIf(!has(url))('riders (database)', () => {
     });
   });
 
+  describe('a rider\'s usual vehicle', () => {
+    const vehicle = async (name: string) => {
+      const v = await c.deliveryVehicles.create(dispatcher(), { name: `${name} ${randomUUID().slice(0, 6)}` });
+      if (!v.ok) throw new Error(v.message);
+      return v.data;
+    };
+    const riderRow = async (id: string) => {
+      const [r] = await db.select().from(schema.deliveryRiders).where(eq(schema.deliveryRiders.id, id));
+      if (r === undefined) throw new Error('no rider');
+      return r;
+    };
+
+    it('is chosen from the list when a rider is added, keeping its name; a stopped or unknown vehicle is refused and an account is not made for it', async () => {
+      const van = await vehicle('Rider van');
+      const userId = await person('super_admin');
+      const made = await c.deliveryRiders.addStaff(dispatcher(), { userId, vehicleId: van.id, vehicle: 'ignored' });
+      if (!made.ok) throw new Error(made.message);
+      expect(await riderRow(made.data.id)).toMatchObject({ vehicleId: van.id, vehicle: van.name });
+      const email = `veh-${randomUUID()}@riders.test`;
+      const bad = await c.deliveryRiders.createSeparate(dispatcher(), { name: 'V Rider', email, phone: '0722000444', password: 'a-good-password', vehicleId: randomUUID() });
+      expect(bad).toMatchObject({ ok: false, reason: 'not_allowed' });
+      expect(await db.select({ id: schema.users.id }).from(schema.users).where(eq(schema.users.email, email))).toEqual([]);
+      await c.deliveryVehicles.setActive(dispatcher(), van.id, { isActive: false, expectedVersion: van.version });
+      const another = await person('super_admin');
+      expect(await c.deliveryRiders.addStaff(dispatcher(), { userId: another, vehicleId: van.id })).toMatchObject({ ok: false, reason: 'not_allowed', message: expect.stringContaining('stopped') as string });
+    });
+
+    it('can be changed, cleared or typed in later, and is left alone by an edit that does not mention it', async () => {
+      const first = await vehicle('First');
+      const second = await vehicle('Second');
+      const rider = await staffRider();
+      const r1 = await c.deliveryRiders.update(dispatcher(), rider.id, { vehicleId: first.id, expectedVersion: 1 });
+      expect(r1.ok && r1.data).toMatchObject({ vehicleId: first.id, vehicle: first.name });
+      const r2 = await c.deliveryRiders.update(dispatcher(), rider.id, { phone: '0711 222 333', expectedVersion: 2 });
+      expect(r2.ok && r2.data).toMatchObject({ vehicleId: first.id, vehicle: first.name });
+      const r3 = await c.deliveryRiders.update(dispatcher(), rider.id, { vehicleId: second.id, expectedVersion: 3 });
+      expect(r3.ok && r3.data).toMatchObject({ vehicleId: second.id, vehicle: second.name });
+      const r4 = await c.deliveryRiders.update(dispatcher(), rider.id, { vehicleId: '', vehicle: 'Borrowed bike', expectedVersion: 4 });
+      expect(r4.ok && r4.data).toMatchObject({ vehicleId: null, vehicle: 'Borrowed bike' });
+      const r5 = await c.deliveryRiders.update(dispatcher(), rider.id, { vehicleId: '', vehicle: '', expectedVersion: 5 });
+      expect(r5.ok && r5.data).toMatchObject({ vehicleId: null, vehicle: null });
+    });
+
+    it('is the vehicle of a run planned for the rider unless the office chooses or types another, and is not forced on a run when it has been stopped', async () => {
+      const usual = await vehicle('Usual');
+      const other = await vehicle('Other');
+      const userId = await person('super_admin');
+      const made = await c.deliveryRiders.addStaff(dispatcher(), { userId, vehicleId: usual.id });
+      if (!made.ok) throw new Error(made.message);
+      const branchId = await branch();
+      const get = async (id: string) => {
+        const r = await c.deliveryRuns.get(companyId, id);
+        if (r === null) throw new Error('no run');
+        return r;
+      };
+      const plain = await c.deliveryRuns.create(dispatcher(), { branchId, runDate: today(), riderId: made.data.id });
+      if (!plain.ok) throw new Error(plain.message);
+      expect(plain.data.vehicle).toBe(usual.name);
+      expect(await get(plain.data.id)).toMatchObject({ vehicleId: usual.id, vehicle: usual.name });
+      const chosen = await c.deliveryRuns.create(dispatcher(), { branchId, runDate: today(), riderId: made.data.id, vehicleId: other.id });
+      expect(chosen.ok && (await get(chosen.data.id))).toMatchObject({ vehicleId: other.id });
+      const typed = await c.deliveryRuns.create(dispatcher(), { branchId, runDate: today(), riderId: made.data.id, vehicle: 'Hired lorry' });
+      expect(typed.ok && (await get(typed.data.id))).toMatchObject({ vehicleId: null, vehicle: 'Hired lorry' });
+      // A name typed for a rider who is only a name has no usual vehicle to bring.
+      const walkIn = await c.deliveryRuns.create(dispatcher(), { branchId, runDate: today(), riderName: 'Walk-in' });
+      expect(walkIn.ok && walkIn.data.vehicle).toBeNull();
+      // The usual vehicle is stopped: the run is still made, with no vehicle, rather than refused.
+      await c.deliveryVehicles.setActive(dispatcher(), usual.id, { isActive: false, expectedVersion: usual.version });
+      const after = await c.deliveryRuns.create(dispatcher(), { branchId, runDate: today(), riderId: made.data.id });
+      expect(after.ok && (await get(after.data.id))).toMatchObject({ vehicleId: null, vehicle: null });
+    });
+  });
+
   describe('what the rider app shows', () => {
     it('shows a rider their own runs with the customer’s address, phone and what to carry, and no one else’s', async () => {
       const mine = await ownRider();

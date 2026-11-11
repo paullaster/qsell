@@ -1,0 +1,4 @@
+ALTER TABLE "delivery_costs" ADD COLUMN "vehicle_id" uuid;--> statement-breakpoint
+ALTER TABLE "delivery_costs" ADD CONSTRAINT "delivery_costs_vehicle_id_delivery_vehicles_id_fk" FOREIGN KEY ("vehicle_id") REFERENCES "public"."delivery_vehicles"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "delivery_costs_vehicle_idx" ON "delivery_costs" USING btree ("vehicle_id","created_at") WHERE "delivery_costs"."vehicle_id" IS NOT NULL;--> statement-breakpoint
+ALTER TABLE "delivery_costs" ADD CONSTRAINT "delivery_costs_vehicle_chk" CHECK ("delivery_costs"."vehicle_id" IS NULL OR "delivery_costs"."kind" IN ('fuel','vehicle','other'));

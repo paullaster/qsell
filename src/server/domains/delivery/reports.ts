@@ -29,6 +29,9 @@ export interface DeliveryReport {
   byRider: { riderId: string; name: string; delivered: number; failed: number; pay: string }[];
   byCourier: { courier: string; deliveries: number; charged: string }[];
   byZone: { zone: string; delivered: number; charge: string; directCost: string }[];
+  /** Each vehicle that ran deliveries or had running costs in the period. A cost not tied to a vehicle is counted in `untiedRunningCosts`, so the table and the total reconcile. */
+  byVehicle: { vehicleId: string; name: string; runs: number; delivered: number; fuel: string; repairs: string; other: string; total: string; perDelivery: string | null }[];
+  untiedRunningCosts: string;
   failures: { code: string; words: string; count: number }[];
 }
 
@@ -49,7 +52,7 @@ export class DeliveryReports {
     const start = sql`(${from}::date)::timestamp AT TIME ZONE ${TZ}`;
     const end = sql`((${to}::date) + 1)::timestamp AT TIME ZONE ${TZ}`;
 
-    const [counts, charges, costs, riders, couriers, zones, failures] = await Promise.all([
+    const [counts, charges, costs, riders, couriers, zones, failures, vehicles, untied] = await Promise.all([
       this.db.execute(sql`
         SELECT (SELECT count(*) FROM deliveries d WHERE d.company_id = ${companyId}::uuid AND d.status = 'delivered' AND d.delivered_at >= ${start} AND d.delivered_at < ${end})::int AS delivered,
                (SELECT count(*) FROM delivery_attempts a WHERE a.company_id = ${companyId}::uuid AND a.result NOT IN ('delivered','part_accepted') AND a.occurred_at >= ${start} AND a.occurred_at < ${end})::int AS failed,
@@ -95,6 +98,28 @@ export class DeliveryReports {
         SELECT a.result AS code, count(*)::int AS n FROM delivery_attempts a
         WHERE a.company_id = ${companyId}::uuid AND a.result NOT IN ('delivered','part_accepted') AND a.occurred_at >= ${start} AND a.occurred_at < ${end}
         GROUP BY a.result ORDER BY count(*) DESC, a.result`),
+      // A delivery counts for the vehicle of the run it was delivered on; a cost counts for the vehicle it was typed against (or its run's).
+      this.db.execute(sql`
+        WITH ran AS (
+          SELECT r.vehicle_id, count(DISTINCT r.id)::int AS runs, count(DISTINCT d.id)::int AS delivered
+          FROM deliveries d JOIN delivery_run_stops s ON s.delivery_id = d.id AND s.left_at IS NULL JOIN delivery_runs r ON r.id = s.run_id
+          WHERE d.company_id = ${companyId}::uuid AND d.status = 'delivered' AND d.delivered_at >= ${start} AND d.delivered_at < ${end} AND r.vehicle_id IS NOT NULL
+          GROUP BY r.vehicle_id),
+        spent AS (
+          SELECT c.vehicle_id,
+                 COALESCE(sum(c.amount) FILTER (WHERE c.kind = 'fuel'), 0) AS fuel,
+                 COALESCE(sum(c.amount) FILTER (WHERE c.kind = 'vehicle'), 0) AS repairs,
+                 COALESCE(sum(c.amount) FILTER (WHERE c.kind = 'other'), 0) AS other
+          FROM delivery_costs c WHERE c.company_id = ${companyId}::uuid AND c.vehicle_id IS NOT NULL AND c.created_at >= ${start} AND c.created_at < ${end}
+          GROUP BY c.vehicle_id)
+        SELECT v.id AS vehicle_id, v.name, COALESCE(ran.runs, 0) AS runs, COALESCE(ran.delivered, 0) AS delivered,
+               COALESCE(spent.fuel, 0) AS fuel, COALESCE(spent.repairs, 0) AS repairs, COALESCE(spent.other, 0) AS other
+        FROM delivery_vehicles v LEFT JOIN ran ON ran.vehicle_id = v.id LEFT JOIN spent ON spent.vehicle_id = v.id
+        WHERE v.company_id = ${companyId}::uuid AND (ran.vehicle_id IS NOT NULL OR spent.vehicle_id IS NOT NULL)
+        ORDER BY v.name, v.id`),
+      this.db.execute(sql`
+        SELECT COALESCE(sum(amount), 0) AS total FROM delivery_costs
+        WHERE company_id = ${companyId}::uuid AND vehicle_id IS NULL AND kind IN ('fuel','vehicle','other') AND created_at >= ${start} AND created_at < ${end}`),
     ]);
 
     const kind = new Map<string, number>(costs.map((r) => [String(r.kind), cents(r.total)]));
@@ -125,6 +150,15 @@ export class DeliveryReports {
         byRider: riders.map((r) => ({ riderId: String(r.rider_id), name: String(r.name), delivered: Number(r.delivered), failed: Number(r.failed), pay: money(cents(r.pay)) })),
         byCourier: couriers.map((r) => ({ courier: typeof r.courier === 'string' ? r.courier : '', deliveries: Number(r.deliveries), charged: money(cents(r.charged)) })),
         byZone: zones.map((r) => ({ zone: String(r.zone), delivered: Number(r.delivered), charge: money(cents(r.charge)), directCost: money(cents(r.cost)) })),
+        byVehicle: vehicles.map((r) => {
+          const fuelC = cents(r.fuel);
+          const repairsC = cents(r.repairs);
+          const otherC = cents(r.other);
+          const totalC = fuelC + repairsC + otherC;
+          const delivered = Number(r.delivered);
+          return { vehicleId: String(r.vehicle_id), name: String(r.name), runs: Number(r.runs), delivered, fuel: money(fuelC), repairs: money(repairsC), other: money(otherC), total: money(totalC), perDelivery: delivered === 0 ? null : money(Math.round(totalC / delivered)) };
+        }),
+        untiedRunningCosts: money(cents(untied[0]?.total)),
         failures: failures.map((r) => ({ code: String(r.code), words: FAILURE_REASONS.find((f) => f.code === r.code)?.words ?? String(r.code), count: Number(r.n) })),
       },
     };

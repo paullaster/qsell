@@ -868,3 +868,23 @@ The "at risk" and "late" chips on the dispatch board were worked out at the defa
 **Verified.** 8 rules tests; 6 database tests in the runs file (register rules and versions, a run keeping the vehicle's name and refusing a stopped or unknown one, the weight limit with the run left unchanged and the delivery fitting another run, the stop limit with goods of no weight, the race for the last place, changing the vehicle to one that fits); a browser test on desktop and phone (adding, a bad limit and a duplicate refused, a run in the vehicle refusing a second stop, the run screen showing the load, stopping the vehicle).
 
 **Not built.** A default vehicle for a rider; a vehicle's capacity in volume or parcels; refusing to start a run whose vehicle was changed after stops were added (changing the vehicle is checked, so this cannot happen); vehicle costs by vehicle in the report.
+
+## 57. Running costs by vehicle in the delivery report (2026-11-11)
+
+**Why.** With vehicles in a register (§56) the company can ask which vehicle costs most to run.
+
+**Costs.** `delivery_costs.vehicle_id` (migration 0160; nullable, restrict, indexed with the time; a check lets only fuel, vehicle and other costs carry one, so rider pay and courier charges never do). `DeliveryCosts.recordRunning` takes a `vehicleId`: it must be the company's (a **stopped** vehicle is allowed, because a late bill still belongs to it); a run that went out in a listed vehicle brings its vehicle, and naming a different one is refused in words. `reverse` copies the vehicle, so a taken-back cost lowers the same vehicle's total. The cost list names the vehicle; the costs screen picks it from the `delivery-vehicles-all` lookup (all vehicles, with a *Stopped* badge). Costs stay append-only: a wrong vehicle is put right by taking the cost back and typing it again.
+
+**Report.** `byVehicle`: for each vehicle with a delivery or a running cost in the period, the runs and deliveries delivered on them (a delivery counts for the vehicle of the run it was delivered on, through its stop that was never taken off), fuel, repairs and other costs net of reversals, the total and the cost per delivery (none when nothing was delivered), and `untiedRunningCosts` so that the table and the running costs in the margin reconcile. One grouped query for the vehicles and one for the untied sum, with the existing indexes.
+
+**Verified.** 2 database tests (a vehicle named or brought by its run, two vehicles refused, an unknown or another company's vehicle refused, a stopped vehicle still billed, the list naming it, a reversal keeping it, the database refusing a courier cost with a vehicle; the report's figures for a vehicle that delivered and one that did not, and the untied sum) and a browser test on desktop and phone (adding a vehicle, a cost against it, the list and the report naming it, a late cost against the stopped vehicle).
+
+**Not built.** Moving a cost to another vehicle without taking it back; kilometres or litres, so fuel per kilometre; costs by vehicle for runs with only a typed-in vehicle name.
+
+## 58. A rider's usual vehicle (2026-11-11)
+
+`delivery_riders.vehicle_id` (migration 0161; nullable, restrict) is the rider's usual vehicle from the register (§56), set when a rider is added (staff or own account, checked before the account is made, so a vehicle that cannot be used leaves nothing behind), or later with `DeliveryRiders.update` (`vehicleId` from the list, `''` to clear, a typed `vehicle` for a name that is not on the list; an edit that mentions neither leaves it alone). The rider's `vehicle` text keeps the vehicle's name as it was. `DeliveryRiders.carrier` returns the usual vehicle, and `DeliveryRuns.create` uses it when the request names no vehicle, either from the list or typed in; a usual vehicle that has been stopped is skipped quietly, so a run is never refused for it. The planned message names the vehicle. The riders lookup shows each rider's vehicle beside their name.
+
+**Verified.** 3 database tests in the riders file (chosen at creation and refused when stopped or unknown, changed and cleared and left alone by other edits, brought to runs unless another is chosen or typed and skipped when stopped) and a browser test on desktop and phone.
+
+**Not built.** Carrying the usual vehicle over when a planned run is given to another rider.

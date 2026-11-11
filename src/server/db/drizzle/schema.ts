@@ -1113,6 +1113,8 @@ export const deliveryCosts = pgTable(
     deliveryId: uuid('delivery_id').references(() => deliveries.id, { onDelete: 'restrict' }),
     runId: uuid('run_id').references(() => deliveryRuns.id, { onDelete: 'restrict' }),
     riderId: uuid('rider_id').references(() => deliveryRiders.id, { onDelete: 'restrict' }),
+    /** The fleet vehicle a fuel, vehicle or other running cost belongs to; the report adds costs up by vehicle. */
+    vehicleId: uuid('vehicle_id').references(() => deliveryVehicles.id, { onDelete: 'restrict' }),
     courierName: text('courier_name'),
     note: text('note'),
     key: text('key').notNull(),
@@ -1125,11 +1127,13 @@ export const deliveryCosts = pgTable(
     uniqueIndex('delivery_costs_key_uidx').on(t.companyId, t.key),
     index('delivery_costs_delivery_idx').on(t.deliveryId),
     index('delivery_costs_rider_idx').on(t.riderId, t.createdAt),
+    index('delivery_costs_vehicle_idx').on(t.vehicleId, t.createdAt).where(sql`${t.vehicleId} IS NOT NULL`),
     index('delivery_costs_company_time_idx').on(t.companyId, t.createdAt),
     check('delivery_costs_kind_chk', sql`${t.kind} IN ('rider_delivery','rider_day','courier','fuel','vehicle','other')`),
     check('delivery_costs_amount_chk', sql`${t.amount} <> 0`),
     check('delivery_costs_rider_chk', sql`${t.kind} NOT IN ('rider_delivery','rider_day') OR ${t.riderId} IS NOT NULL`),
     check('delivery_costs_delivery_chk', sql`${t.kind} NOT IN ('rider_delivery','courier') OR ${t.deliveryId} IS NOT NULL`),
+    check('delivery_costs_vehicle_chk', sql`${t.vehicleId} IS NULL OR ${t.kind} IN ('fuel','vehicle','other')`),
     check('delivery_costs_courier_chk', sql`${t.kind} <> 'courier' OR ${t.courierName} IS NOT NULL`),
     // A cost is positive; only a reversal is negative, and it names the cost it takes back.
     check('delivery_costs_reversal_chk', sql`(${t.reversesId} IS NULL) = (${t.amount} > 0)`),
@@ -1533,6 +1537,8 @@ export const deliveryRiders = pgTable(
     name: text('name').notNull(),
     phone: text('phone'),
     vehicle: text('vehicle'),
+    /** The rider's usual vehicle from the register: a run planned for them with no vehicle of its own goes in this one. */
+    vehicleId: uuid('vehicle_id').references(() => deliveryVehicles.id, { onDelete: 'restrict' }),
     branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
     status: text('status').$type<'active' | 'paused' | 'ended'>().notNull().default('active'),
     statusReason: text('status_reason'),

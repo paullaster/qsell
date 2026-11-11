@@ -79,6 +79,18 @@ function Screen({ initial }: { initial: Report }) {
         rows={report.byZone.map((r) => [r.zone, String(r.delivered), `KSh ${r.charge}`, `KSh ${r.directCost}`])}
         note="Direct cost is pay for a delivery and a courier's charge. Pay for a day on a run belongs to the rider, not to a zone."
       />
+      <Table
+        label="By vehicle"
+        empty="No vehicle from the Vehicles list ran a delivery or had a running cost in these days."
+        head={['Vehicle', 'Delivered', 'Running costs', 'Cost per delivery']}
+        rows={report.byVehicle.map((v) => [
+          v.name,
+          `${String(v.delivered)} on ${String(v.runs)} ${v.runs === 1 ? 'run' : 'runs'}`,
+          `KSh ${v.total} (fuel ${v.fuel}, repairs ${v.repairs}, other ${v.other})`,
+          v.perDelivery === null ? 'Nothing delivered' : `KSh ${v.perDelivery}`,
+        ])}
+        note={`Running costs are fuel, vehicle costs and other costs typed against a vehicle (or against a run that went out in it). A delivery counts for the vehicle of the run it was delivered on.${Number(report.untiedRunningCosts) === 0 ? '' : ` Running costs not tied to any vehicle in these days: KSh ${report.untiedRunningCosts}.`}`}
+      />
       <Table label="Why attempts failed" empty="No attempt failed in these days." head={['Reason', 'Attempts']} rows={report.failures.map((f) => [f.words, String(f.count)])} />
       <Table label="Cash riders hold now" empty="No rider holds cash." head={['Rider', 'Holds']} rows={report.cashHeld.map((h) => [h.name, `KSh ${h.balance}`])} note="Not limited to the days above: this is what they hold today, until it is handed in." />
     </div>
