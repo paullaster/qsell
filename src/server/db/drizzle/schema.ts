@@ -831,6 +831,32 @@ export const orderSlotRequests = pgTable(
   ],
 );
 
+/**
+ * A vehicle of the delivery fleet, with what a run may carry in it: the most weight and the most stops, either or both or neither. A vehicle
+ * that is no longer used is stopped, never removed (runs point at it). A run keeps the vehicle's name as it was when it was chosen.
+ */
+export const deliveryVehicles = pgTable(
+  'delivery_vehicles',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    maxWeightKg: numeric('max_weight_kg', { precision: 12, scale: 3, mode: 'number' }),
+    maxStops: integer('max_stops'),
+    isActive: boolean('is_active').notNull().default(true),
+    version: integer('version').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_vehicles_company_name_uidx').on(t.companyId, sql`lower(${t.name})`),
+    check('delivery_vehicles_limits_chk', sql`(${t.maxWeightKg} IS NULL OR (${t.maxWeightKg} > 0 AND ${t.maxWeightKg} <= 1000000)) AND (${t.maxStops} IS NULL OR (${t.maxStops} BETWEEN 1 AND 500))`),
+  ],
+);
+
 /** A rider's trip: several ready deliveries taken out together, in an order. Planned, then on the road, then closed. */
 export const deliveryRuns = pgTable(
   'delivery_runs',
@@ -848,6 +874,8 @@ export const deliveryRuns = pgTable(
     /** The rider's account, when the run is given to someone who uses the rider app. The name above is kept as it was when the run was made. */
     riderId: uuid('rider_id').references(() => deliveryRiders.id, { onDelete: 'restrict' }),
     vehicle: text('vehicle'),
+    /** The fleet vehicle the run goes in, when one was chosen from the register; its limits are checked as stops are added. */
+    vehicleId: uuid('vehicle_id').references(() => deliveryVehicles.id, { onDelete: 'restrict' }),
     notes: text('notes'),
     status: text('status').$type<'planned' | 'started' | 'completed' | 'cancelled'>().notNull().default('planned'),
     startedAt: timestamp('started_at', { withTimezone: true }),
@@ -861,6 +889,7 @@ export const deliveryRuns = pgTable(
     uniqueIndex('delivery_runs_company_number_uidx').on(t.companyId, t.number),
     index('delivery_runs_day_idx').on(t.companyId, t.runDate, t.status),
     index('delivery_runs_rider_idx').on(t.riderId, t.runDate).where(sql`${t.riderId} IS NOT NULL`),
+    index('delivery_runs_vehicle_idx').on(t.vehicleId).where(sql`${t.vehicleId} IS NOT NULL`),
     check('delivery_runs_status_chk', sql`${t.status} IN ('planned','started','completed','cancelled')`),
     check('delivery_runs_closed_chk', sql`(${t.status} IN ('completed','cancelled')) = (${t.closedAt} IS NOT NULL)`),
   ],

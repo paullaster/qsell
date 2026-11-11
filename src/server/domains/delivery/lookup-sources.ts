@@ -1,11 +1,12 @@
 import { DISPOSITION_WORDS, ISSUE_MOMENTS, ISSUE_MOMENT_WORDS, RETURN_DISPOSITIONS } from '@/lib/stock-issue';
 import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import { drizzleDb } from '@/server/db/drizzle/client';
-import { courierAccounts, deliveryCosts, stockLocations, orders, orderVisits, branches, customerGroups, deliveryRiderSettings, deliveryRiders, bankAccounts, deliveryRuns, deliveryZones, glAccounts, paymentMethods, products, users } from '@/server/db/drizzle/schema';
+import { courierAccounts, deliveryCosts, stockLocations, orders, orderVisits, branches, customerGroups, deliveryRiderSettings, deliveryRiders, bankAccounts, deliveryRuns, deliveryVehicles, deliveryZones, glAccounts, paymentMethods, products, users } from '@/server/db/drizzle/schema';
 import { ADAPTER_WORDS, COURIER_ADAPTER_IDS } from '@/server/adapters/courier/registry';
 import { COST_KINDS, COST_WORDS, RUNNING_KINDS } from '@/lib/delivery-cost';
 import { RIDER_KINDS, RIDER_KIND_WORDS, RIDER_STATUSES, RIDER_STATUS_WORDS } from '@/lib/delivery-rider';
 import { RUN_STATUSES, RUN_STATUS_WORDS } from '@/lib/dispatch-run';
+import { kilos } from '@/lib/delivery-vehicle';
 import { DELIVERY_STATUSES, FAILURE_REASONS, STATUS_WORDS } from '@/lib/delivery-document';
 import { acceptFilters, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
 import { CHANNELS } from '@/server/domains/pricing/domain/types';
@@ -208,6 +209,25 @@ const riders = tableSource({
     return [and(eq(deliveryRiders.companyId, companyId), eq(deliveryRiders.status, 'active'), kindUsed) ?? sql`false`];
   },
   toOption: (row) => ({ id: text(row.id), label: text(row.label), description: `${RIDER_KIND_WORDS[row.kind === 'separate' ? 'separate' : 'staff']}${typeof row.phone === 'string' && row.phone !== '' ? ` · ${row.phone}` : ''}`, badge: null }),
+});
+
+/** The fleet's vehicles that are in use, for giving a run its vehicle; what each may carry is shown beside its name. */
+const vehicles = tableSource({
+  key: 'delivery-vehicles',
+  permission: 'deliveries:dispatch',
+  table: deliveryVehicles,
+  id: deliveryVehicles.id,
+  label: deliveryVehicles.name,
+  searchColumns: [deliveryVehicles.name],
+  select: { maxWeightKg: deliveryVehicles.maxWeightKg, maxStops: deliveryVehicles.maxStops },
+  scope: ({ filters, companyId }) => {
+    acceptFilters(filters, {});
+    return [and(eq(deliveryVehicles.companyId, companyId), eq(deliveryVehicles.isActive, true)) ?? sql`false`];
+  },
+  toOption: (row) => {
+    const parts = [typeof row.maxWeightKg === 'number' || typeof row.maxWeightKg === 'string' ? `up to ${kilos(Number(row.maxWeightKg))}` : null, typeof row.maxStops === 'number' ? `${String(row.maxStops)} stops` : null].filter((p): p is string => p !== null);
+    return { id: text(row.id), label: text(row.label), description: parts.length === 0 ? 'No limit set' : parts.join(' · '), badge: null };
+  },
 });
 
 /** Members of staff who are not riders yet, for making one a rider. */
@@ -505,4 +525,4 @@ const runningCostKinds = staticSource({
   },
 });
 
-export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts, deliveryStatuses, deliveryFailureReasons, stockIssueMoments, returnDispositions, openRuns, anyRuns, runStatuses, courierNews, riders, staffToRide, riderKinds, riderStatuses, doorCashMethods, handInAccounts, handInWitnesses, varianceAccounts, costKinds, runningCostKinds, chargedCouriers, payoutMethods, costAccounts, visitCrew, visitOrders, visitProducts, visitLocations, leadProducts, leadZones, activeCouriers, courierKinds];
+export const DELIVERY_LOOKUP_SOURCES: LookupSource[] = [zones, deliveryBranches, deliveryCustomerGroups, deliveryChannels, serviceProducts, deliveryStatuses, deliveryFailureReasons, stockIssueMoments, returnDispositions, openRuns, anyRuns, runStatuses, courierNews, riders, vehicles, staffToRide, riderKinds, riderStatuses, doorCashMethods, handInAccounts, handInWitnesses, varianceAccounts, costKinds, runningCostKinds, chargedCouriers, payoutMethods, costAccounts, visitCrew, visitOrders, visitProducts, visitLocations, leadProducts, leadZones, activeCouriers, courierKinds];

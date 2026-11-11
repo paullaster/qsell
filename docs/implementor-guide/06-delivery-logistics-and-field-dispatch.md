@@ -109,7 +109,7 @@ graph TD
 - A parcel whose booking with the courier's system failed (or whose cancellation failed) shows a **Courier not booked** chip.
 
 ### 4. Delivery Runs (`/admin/delivery/runs`)
-- Multi-drop trip management: Sequenced list of stops for a rider. Calculates total run weight, departure time, estimated arrival at each stop, and starting cash float.
+- Multi-drop trip management: a sequenced list of stops for a rider, with the run's units, value and total weight. A run can be given a **vehicle from the Vehicles list**; then the run screen shows what it carries against that vehicle's limits (for example *85 kg of 120 kg · 4 of 6 stops*) and a delivery that would take it over is refused.
 
 ### 5. Riders (`/admin/delivery/riders`)
 - **Who rides**: choose whether the company uses its own staff as riders, riders with an account of their own, or both. A kind cannot be switched off while people of that kind are still working.
@@ -117,6 +117,11 @@ graph TD
 - **Add a member of staff as a rider** (the staff member keeps signing in with their own account) or **Make an account for a rider** (an account that opens the rider app and nothing else).
 - **Each rider's card**: kind, email, phone, vehicle, branch, runs still to do, and status (*Riding*, *Paused*, *Left*); buttons to pause, resume, mark as left, and (for riders with their own account) give a new first password.
 - **Sign in with a phone number and PIN** (riders with their own account only): the rider's PIN panel shows *No PIN*, *Waiting for the rider to choose their own*, *PIN set* or *Shut out for ...*, the number they sign in with, when they last signed in, and any wrong tries in a row. Buttons: **Give a PIN**, **Give a new PIN**, **Let them try again**, **Turn off the PIN**. See *Action 4*.
+
+### 5a. Vehicles (`/admin/delivery/vehicles`)
+- **Add a vehicle**: a name or number plate, the most weight it carries (kg) and the most stops on a run. Either limit, both or neither may be set; leave a box empty for no limit.
+- **Your vehicles**: each shows *In use* or *Stopped*, its limits, and how many runs are planned or out in it now. **Change the limits** opens the form again for that vehicle; **Stop using** / **Use again** switches it. A vehicle is never deleted, because runs refer to it; a stopped vehicle is not offered for new runs and runs already in it carry on.
+- Needs the *riders:manage* permission, the same as the Riders screen. Every change is in the decision log with who made it.
 
 ### 6. Door Payments (`/admin/delivery/door-payments`)
 - Cash custody ledger: Shows cash and M-Pesa collected by each rider at customer doors.
@@ -243,6 +248,14 @@ graph TD
 | **Your new PIN** | The rider's own PIN. | 6 digits | **Required** | Not one digit repeated, not digits in a row (123456, 987654), not a common choice, not the end of the rider's own phone number, and not the same as the old PIN. |
 | **Your new PIN again** | Confirms the new PIN. | 6 digits | **Required** | Must match. |
 
+### Vehicle Fields (`/admin/delivery/vehicles`, *Add a vehicle*)
+
+| Field Label | Purpose | Type & Format | Required? | Validation Rules & Hints |
+|---|---|---|---|---|
+| **Name or number plate** | How the vehicle is chosen on a run. | Text (up to 80) | **Required** | Spaces are tidied. The same name in any letter case is the same vehicle: a second one is refused ("already in the list"). |
+| **Most weight it carries (kg)** | The most a run in this vehicle may weigh in all. | Number | Optional | More than nothing, at most 1,000,000; kept to the gram. Empty means no weight limit. Goods with no weight on their product count as nothing. |
+| **Most stops on a run** | The most deliveries one run in this vehicle may hold. | Whole number | Optional | 1 to 500. Empty means no limit. |
+
 ### Fuel and Vehicle Cost Fields (`/admin/delivery/costs`)
 
 | Field Label | Purpose | Type & Format | Required? | Validation Rules & Hints |
@@ -333,18 +346,14 @@ graph TD
 ## 6. Step-by-Step User Actions (Down to the Last Click)
 
 ### Action 1: Planning and Dispatching a Multi-Drop Delivery Run
-1. Navigate to `/admin/delivery/dispatch`.
-2. The board lists orders in **Ready for Dispatch** status.
-3. Click **Create Delivery Run**.
-4. Select **Fulfilling Branch**: *"Nairobi Industrial Area"*.
-5. Select **Assigned Rider**: *"David Mutua (Motorcycle #KMDF 123A)"*.
-6. In the orders list, select the 4 customer orders destined for Westlands.
-7. Click **Add to Run**.
-8. In the **Stop Order** list, drag and drop the stops into optimal street delivery sequence.
-9. Click **Finalize & Dispatch Run**.
-10. The system prompts: *"Confirm dispatch of 4 parcels? Stock will move to David Mutua's mobile custody."*
-11. Click **Confirm Dispatch**.
-12. The run status updates to `Out for Delivery`, and the parcels appear immediately on David Mutua's mobile phone at `/rider`.
+1. Navigate to `/admin/delivery/dispatch`. **Ready to go** lists the deliveries of your own riders that are ready; courier deliveries are handed over, not carried.
+2. In **Plan a run** choose **Leaves from** (the branch), the **Day**, and the rider: pick one in **Rider**, or type a name in **Or a name, for someone not using the app** (that rider will not see the run in the rider app).
+3. Choose **Vehicle (optional)** from your list, or type one in **Or a vehicle typed in** (a typed-in vehicle limits nothing). When a vehicle is chosen the typed box is switched off.
+4. Click **Plan the run**. The message *Run RUN-… is planned* appears.
+5. In **Ready to go**, choose the run in **Put deliveries on this run**, then click **Put … on the run** beside each delivery. A delivery must leave from the run's branch. If the vehicle has limits and the delivery would take the run over them, it is refused in words, for example *"Small van carries at most 12 kg; this run would carry 16 kg. Choose another run or another vehicle for this delivery."* The run is left as it was.
+6. Open the run (**Runs to do**). **Stops** lists the deliveries: use **Move … up/down** to order them, **Nearest first** to have the system suggest an order from the pins, and **Take … off the run** to remove one. **Change the vehicle** swaps the vehicle while the run has not gone out; the new vehicle must fit what is already on the run.
+7. Click **Start the run**. All its deliveries go out together, stock leaves custody and the stops appear on the rider's phone at `/rider`. A run that has gone out can no longer be changed.
+8. When each delivery has a result, click **Close the run**. It is refused while a delivery is still out.
 
 ### Action 2: Customer Handover & Verification PIN Confirmation
 1. The rider arrives at the customer's address and opens the `/rider` mobile web app.
@@ -418,6 +427,12 @@ graph TD
 
 ---
 
+### Action 11: Setting Up the Fleet's Vehicles
+1. Open `/admin/delivery/vehicles`.
+2. In **Add a vehicle** type the **Name or number plate**, and if wanted **Most weight it carries (kg)** and **Most stops on a run**. Click **Add the vehicle**.
+3. To correct the limits, click **Change the limits** on the vehicle, edit, and **Save**. The new limits apply to stops put on a run from then on; stops already on a run are not removed.
+4. When a vehicle is sold or off the road, click **Stop using**. It disappears from the vehicle choice for new runs. **Use again** brings it back.
+
 ## 7. Conditions, Business Rules & Edge Cases
 
 ### Handling a Failed Delivery Attempt
@@ -452,6 +467,14 @@ Under `/admin/delivery/invoicing`, the business configures one of two fiscal mod
 - A booked window is kept as promised, even if the slot is later changed or stopped.
 - **The company can switch the shopper's choice off** (*Delivery slots › Delivery time at checkout*). While it is off the checkout shows no times and refuses one sent anyway ("Delivery times are not chosen at checkout..."), orders are unaffected otherwise, and a dispatcher can still book any delivery into a slot. Turning it back on restores the times at once.
 
+### Vehicles and What a Run May Carry
+- A run is limited only when its vehicle was **chosen from the Vehicles list** and has a limit. A vehicle typed in on the run limits nothing.
+- The weight of a run is the sum of what each stop carries (quantity times the product's shipping weight). **Goods with no weight count as nothing**; the run screen says how many stops have no weight.
+- The check happens when a delivery is put on a run and when the vehicle is changed, and the run is locked while it is checked, so two dispatchers adding stops at the same moment cannot together overload a vehicle.
+- A vehicle that is stopped cannot be given to a new run. A run already in it keeps its limits, and its name is kept on the run as it was.
+- Changing a vehicle's limits does not move stops already on a run: it applies to what is added next.
+- A vehicle cannot be deleted. Stop it instead.
+
 ### Lateness
 - A delivery promised a window is *On track*, *At risk* (within the warning time of the end of the window, or the window has begun and it is not on its way), *Late* (past the end), *On time* or *Delivered late*. Cancelled and returned deliveries are not watched.
 - *At risk*, *Late* and *Still late: the supervisor is told* are each raised once for a delivery and a window; a delivery given a new window is watched afresh. A background task checks every minute.
@@ -477,6 +500,7 @@ Under `/admin/delivery/invoicing`, the business configures one of two fiscal mod
 |---|---|---|---|
 | 1 | Configure 3 Delivery Zones with towns and estates. | Zones appear in storefront checkout dropdown. | [ ] |
 | 2 | Configure a Distance-based Rate Card (KES 200 base + KES 30/km). | Checkout pin-drop calculates exact distance and fee accurately. | [ ] |
+| 2a | Add a vehicle with a 12 kg limit and one stop, plan a run in it, and put two deliveries on the run. | The second is refused with the vehicle's name and the number it would reach; the run keeps one stop. | [ ] |
 | 3 | Make an account for a rider with a Kenyan mobile number, then **Give a PIN**. | The PIN is shown once; the rider signs in at `/rider` with the number and PIN and is made to choose their own PIN before anything else. | [ ] |
 | 4 | Plan a Delivery Run and dispatch 2 test orders. | Parcels appear on rider run sheet; stock moves to mobile custody. | [ ] |
 | 5 | Execute Door Payment collection and Cashier Handover. | Rider custody ledger updates and clears to zero upon cashier sign-off. | [ ] |
@@ -491,6 +515,7 @@ Under `/admin/delivery/invoicing`, the business configures one of two fiscal mod
 | 14 | Open *Delivery performance* after a few test deliveries. | On-time, first-try, rider, courier and delivery-time figures appear, and show nothing (not zero percent) where no delivery was promised a window. | [ ] |
 
 ### Common Client Setup Pitfalls
+- **A run carries more than the vehicle should**: the vehicle was typed in on the run instead of chosen from the Vehicles list, the vehicle has no limit set, or the products have no shipping weight (goods with no weight count as nothing).
 - **A rider has a landline or foreign number**: a PIN cannot be given. Correct the phone number on the rider first; changing it turns an existing PIN off.
 - **Two riders share one phone number**: the second cannot be given a PIN. Each rider needs their own number.
 - **Slots exist but shoppers are never offered a time**: the switch *Let shoppers choose a delivery time at checkout* is off, or the branch has no slot on that day of the week, the day is closed, the cut-off has passed, or a lead time makes the goods too late.

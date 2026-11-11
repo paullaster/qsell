@@ -9,6 +9,7 @@ import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, car
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import type { Choice } from '@/lib/payment-options';
 import { moveStop, type RunAction, type RunStatus } from '@/lib/dispatch-run';
+import { loadWords } from '@/lib/delivery-vehicle';
 
 type Loaded = Awaited<ReturnType<typeof runAction>>;
 
@@ -32,6 +33,7 @@ function Screen({ initial }: { initial: RunView }) {
   const [busy, setBusy] = useState(false);
   const [reason, setReason] = useState('');
   const [rider, setRider] = useState<Choice | null>(null);
+  const [vehicle, setVehicle] = useState<Choice | null>(null);
 
   const run = async (body: Record<string, unknown>, done: string, after?: () => void) => {
     setBusy(true);
@@ -76,6 +78,26 @@ function Screen({ initial }: { initial: RunView }) {
           </button>
           {view.riderId === null ? <p className="basis-full text-xs text-fg-muted">{view.riderName} is a name typed in: they do not see this run in the rider app.</p> : null}
         </section>
+      ) : null}
+      {view.editable ? (
+        <section aria-label="Vehicle" className={`${cardClass} flex flex-wrap items-end gap-3`}>
+          <div className="min-w-0 flex-1 basis-64">
+            <ChoicePicker label="Change the vehicle" source="delivery-vehicles" choice={vehicle} onChoice={setVehicle} placeholder="Choose a vehicle" clearable />
+          </div>
+          <button type="button" className={buttonClass} disabled={busy || vehicle === null} onClick={() => void run({ step: 'assign_vehicle', vehicleId: vehicle?.id ?? '' }, 'The run has its new vehicle.', () => setVehicle(null))}>
+            Use this vehicle
+          </button>
+          <p className="basis-full text-xs text-fg-muted">
+            {view.vehicleId === null
+              ? 'No vehicle from the list is set, so nothing limits what this run carries.'
+              : `${view.vehicle ?? 'The vehicle'} takes ${loadWords({ stops: view.totals.stops, weightKg: view.totals.weightKg }, view.limits)}.`}
+          </p>
+        </section>
+      ) : null}
+      {!view.editable && view.vehicleId !== null ? (
+        <p className="text-xs text-fg-muted">
+          {view.vehicle ?? 'The vehicle'} carried {loadWords({ stops: view.totals.stops, weightKg: view.totals.weightKg }, view.limits)}.
+        </p>
       ) : null}
 
       <section aria-label="Totals" className={`${cardClass} grid grid-cols-2 gap-3 sm:grid-cols-4`}>

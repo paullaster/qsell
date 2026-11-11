@@ -1,4 +1,6 @@
 import type { DeliveryCosts } from './costs';
+import type { DeliveryVehicles } from './vehicles';
+import { loadProblem, type VehicleLimits } from '@/lib/delivery-vehicle';
 import { DEFAULT_AT_RISK_MINUTES, slaState, type SlaState } from '@/lib/delivery-sla';
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
@@ -43,6 +45,9 @@ export interface RunView {
   /** The rider's account row when the run is given to someone who uses the rider app; null for a name typed in. */
   riderId: string | null;
   vehicle: string | null;
+  /** The fleet vehicle chosen from the register, and what it may carry; null when the vehicle was only typed in or none was given. */
+  vehicleId: string | null;
+  limits: VehicleLimits | null;
   notes: string | null;
   status: RunStatus;
   statusWords: string;
@@ -128,6 +133,7 @@ export class DeliveryRuns {
     private readonly documents: Pick<DeliveryDocuments, 'dispatch'>,
     private readonly riders: Pick<DeliveryRiders, 'carrier'>,
     private readonly costs: Pick<DeliveryCosts, 'accrueDayIn' | 'accrueDeliveryIn'>,
+    private readonly vehicles: Pick<DeliveryVehicles, 'usable' | 'limitsOf'>,
   ) {}
 
   /** The rider a run is given to: someone from the rider list who may carry now (their name is kept on the run as it is today), or a name typed in. */
@@ -140,7 +146,7 @@ export class DeliveryRuns {
     return riderName === null ? fail('bad_input', 'Say who the rider is.') : { ok: true, data: { riderId: null, riderName } };
   }
 
-  async create(actor: DocActor, input: { branchId?: unknown; runDate?: unknown; riderId?: unknown; riderName?: unknown; vehicle?: unknown; notes?: unknown }): Promise<DocResult<{ id: string; number: string }>> {
+  async create(actor: DocActor, input: { branchId?: unknown; runDate?: unknown; riderId?: unknown; riderName?: unknown; vehicle?: unknown; vehicleId?: unknown; notes?: unknown }): Promise<DocResult<{ id: string; number: string }>> {
     const runDate = typeof input.runDate === 'string' && DATE.test(input.runDate) && !Number.isNaN(Date.parse(input.runDate)) ? input.runDate : null;
     if (runDate === null) return fail('bad_input', 'Choose the day of the run.');
     if (typeof input.branchId !== 'string' || input.branchId === '') return fail('bad_input', 'Choose the branch the run leaves from.');
@@ -151,11 +157,52 @@ export class DeliveryRuns {
       const who = await this.riderFor(tx, actor.companyId, input);
       if (!who.ok) return who;
       const { riderId, riderName } = who.data;
+      const chosen = await this.vehicleFor(tx, actor.companyId, input);
+      if (!chosen.ok) return chosen;
       const id = crypto.randomUUID();
       const { number } = await this.numbering.assign('delivery_run', { companyId: actor.companyId, date: businessDate(), document: { kind: 'delivery_run', id } }, tx);
-      await tx.insert(deliveryRuns).values({ id, companyId: actor.companyId, number, branchId, runDate, riderName, riderId, vehicle: text(input.vehicle, 80), notes: text(input.notes, 300), createdBy: actor.userId });
+      await tx.insert(deliveryRuns).values({ id, companyId: actor.companyId, number, branchId, runDate, riderName, riderId, vehicle: chosen.data.name, vehicleId: chosen.data.id, notes: text(input.notes, 300), createdBy: actor.userId });
       await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_run', id }, action: 'run.created', actor: { type: 'user', id: actor.userId }, to: 'planned', reason: { text: `${riderName}, ${runDate}` } }, tx);
       return { ok: true, data: { id, number } };
+    });
+  }
+
+  /** The vehicle a run goes in: one from the register that is in use (its name is kept on the run), or a name typed in, or none. */
+  private async vehicleFor(tx: Tx, companyId: string, input: { vehicleId?: unknown; vehicle?: unknown }): Promise<DocResult<{ id: string | null; name: string | null }>> {
+    if (typeof input.vehicleId === 'string' && input.vehicleId !== '') {
+      const v = await this.vehicles.usable(tx, companyId, input.vehicleId);
+      return v === null ? fail('not_allowed', 'That vehicle cannot be used now: it is stopped or is not in the list.') : { ok: true, data: { id: v.id, name: v.name } };
+    }
+    return { ok: true, data: { id: null, name: text(input.vehicle, 80) } };
+  }
+
+  /** The load a run would have with one more delivery, against the vehicle's limits; null when it fits or there is no vehicle from the register. */
+  private async overload(tx: Tx, run: { id: string; vehicleId: string | null }, companyId: string, extra: { deliveryId: string; orderId: string } | null): Promise<string | null> {
+    if (run.vehicleId === null) return null;
+    const limits = await this.vehicles.limitsOf(tx, companyId, run.vehicleId);
+    if (limits === null) return null;
+    const current = await this.stopViews(tx, run.id);
+    const facts = [...current.map((s) => ({ units: s.units, value: s.value, weightKg: s.weightKg }))];
+    if (extra !== null) {
+      const more = (await this.loadFacts(tx, [extra])).get(extra.deliveryId);
+      facts.push({ units: more?.units ?? 0, value: more?.value ?? 0, weightKg: more?.weightKg ?? null });
+    }
+    const totals = runTotals(facts);
+    return loadProblem({ stops: totals.stops, weightKg: totals.weightKg }, limits, limits.name);
+  }
+
+  /** Changes the vehicle of a run that has not gone out. A vehicle from the register must be in use and must fit what is already on the run. */
+  async assignVehicle(actor: DocActor, runId: string, input: { vehicleId?: unknown; vehicle?: unknown }, expectedVersion?: number): Promise<DocResult<RunView>> {
+    return await this.db.transaction(async (tx): Promise<DocResult<RunView>> => {
+      const run = await this.editable(tx, actor, runId, expectedVersion);
+      if ('ok' in run) return run;
+      const chosen = await this.vehicleFor(tx, actor.companyId, input);
+      if (!chosen.ok) return chosen;
+      const problem = await this.overload(tx, { id: runId, vehicleId: chosen.data.id }, actor.companyId, null);
+      if (problem !== null) return fail('not_allowed', `${problem} Take a stop off the run first, or choose a bigger vehicle.`);
+      await tx.update(deliveryRuns).set({ vehicle: chosen.data.name, vehicleId: chosen.data.id, version: run.version + 1, updatedAt: new Date() }).where(eq(deliveryRuns.id, runId));
+      await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_run', id: runId }, action: 'run.vehicle_changed', actor: { type: 'user', id: actor.userId }, reason: { text: `${run.vehicle ?? 'none'} to ${chosen.data.name ?? 'none'}` } }, tx);
+      return { ok: true, data: await this.viewIn(tx, actor.companyId, runId) };
     });
   }
 
@@ -196,6 +243,9 @@ export class DeliveryRuns {
       const [elsewhere] = await tx.select({ id: deliveryRunStops.id }).from(deliveryRunStops).where(and(eq(deliveryRunStops.deliveryId, deliveryId), isNull(deliveryRunStops.leftAt)));
       if (!canJoinRun(d.status, elsewhere !== undefined)) return fail('not_allowed', elsewhere === undefined ? 'Only a delivery that is ready to go can be put on a run.' : 'That delivery is already on a run.');
       if (d.branchId !== run.branchId) return fail('not_allowed', 'That delivery leaves from another branch, so it cannot go on this run.');
+      // The vehicle's limits are looked at under the run's lock, so two people adding stops at once cannot together overload it.
+      const tooMuch = await this.overload(tx, run, actor.companyId, { deliveryId, orderId: d.orderId });
+      if (tooMuch !== null) return fail('not_allowed', `${tooMuch} Choose another run or another vehicle for this delivery.`);
       await tx.insert(deliveryRunStops).values({ runId, deliveryId, sequence: live.length + 1, addedBy: actor.userId });
       await tx.update(deliveryRuns).set({ version: run.version + 1, updatedAt: new Date() }).where(eq(deliveryRuns.id, runId));
       await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_run', id: runId }, action: 'run.stop_added', actor: { type: 'user', id: actor.userId }, reason: { text: d.number } }, tx);
@@ -353,6 +403,7 @@ export class DeliveryRuns {
     }
     const stops = await this.stopViews(db, runId);
     const r = row.r;
+    const limits = r.vehicleId === null ? null : await this.vehicles.limitsOf(db, companyId, r.vehicleId);
     return {
       id: r.id,
       number: r.number,
@@ -361,6 +412,8 @@ export class DeliveryRuns {
       riderName: r.riderName,
       riderId: r.riderId,
       vehicle: r.vehicle,
+      vehicleId: r.vehicleId,
+      limits: limits === null ? null : { maxWeightKg: limits.maxWeightKg, maxStops: limits.maxStops },
       notes: r.notes,
       status: r.status,
       statusWords: RUN_STATUS_WORDS[r.status],

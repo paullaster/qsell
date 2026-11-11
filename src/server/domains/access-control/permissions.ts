@@ -416,7 +416,7 @@ export const PERMISSIONS = {
     resource: 'riders',
     action: 'manage',
     category: 'Orders & Sales',
-    description: 'Choose how the company uses riders (staff, riders with their own account, or both), add and remove riders, make accounts for them and give runs to them',
+    description: 'Choose how the company uses riders (staff, riders with their own account, or both), add and remove riders, make accounts for them and give runs to them, and keep the list of vehicles with what a run may carry in each',
   },
   'door_payments:allow': {
     resource: 'door_payments',

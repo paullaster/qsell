@@ -856,3 +856,15 @@ The "at risk" and "late" chips on the dispatch board were worked out at the defa
 **Verified.** A database test (default on, bad input and stale version change nothing, off refuses a time and saves no order, staff booking still works, the decision log, on again accepts), a browser test on desktop and phone of the setting being saved and kept across a reload, and one of the checkout pricing the delivery with no times offered.
 
 **Not built.** Setting it for one branch or one delivery method; showing "we will contact you about the time" text at checkout when it is off.
+
+## 56. Vehicles and what a run may carry (2026-11-11)
+
+**Why.** A rider's vehicle was only text, so nothing stopped a run being loaded with more than the vehicle could take.
+
+**The register** (`delivery_vehicles`, migration 0158; screen *Delivery › Vehicles*, `riders:manage`): a name (unique per company whatever its letter case, by an index on `lower(name)`), an optional weight limit in kg and an optional limit on stops (a check keeps them sensible), in use or stopped, a version, and the decision log (`vehicle.created`, `vehicle.changed`, `vehicle.stopped`, `vehicle.resumed`). A vehicle is stopped, never deleted. Pure rules: `src/lib/delivery-vehicle.ts` (`checkVehicle`, `loadProblem`, `loadWords`).
+
+**On a run.** `delivery_runs.vehicle_id` (nullable, restrict) points at the vehicle chosen from the register; the run keeps the vehicle's name in `vehicle` as it was. A typed-in vehicle still works and limits nothing. `DeliveryRuns.addStop` and the new `assignVehicle` compute the load (the same units, value and weight as the run screen, with goods of no weight counting as nothing) **under the run's row lock** and refuse a stop or a vehicle that would put it over, in words with the numbers. The run view carries `vehicleId` and `limits`; the run screen shows the load against them; the dispatch board's *Plan a run* picks the vehicle through the `delivery-vehicles` lookup (in-use vehicles only, limits shown beside the name).
+
+**Verified.** 8 rules tests; 6 database tests in the runs file (register rules and versions, a run keeping the vehicle's name and refusing a stopped or unknown one, the weight limit with the run left unchanged and the delivery fitting another run, the stop limit with goods of no weight, the race for the last place, changing the vehicle to one that fits); a browser test on desktop and phone (adding, a bad limit and a duplicate refused, a run in the vehicle refusing a second stop, the run screen showing the load, stopping the vehicle).
+
+**Not built.** A default vehicle for a rider; a vehicle's capacity in volume or parcels; refusing to start a run whose vehicle was changed after stops were added (changing the vehicle is checked, so this cannot happen); vehicle costs by vehicle in the report.
