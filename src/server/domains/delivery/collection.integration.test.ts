@@ -207,6 +207,72 @@ describe.skipIf(!has(url))('collecting an order from a branch (database)', () =>
       expect(await c.orderCollections.collectWithCode(staff(), w.order.id, w.code)).toMatchObject({ ok: false, reason: 'order_closed' });
     });
 
+    describe('telling the customer it is ready', () => {
+      const sentMail: { to: string; text: string }[] = [];
+      const texted: { to: string; text: string }[] = [];
+      const flusher = async () => {
+        const { DeliveryMessages } = await import('./messages');
+        return new DeliveryMessages(db, { name: 'test', send: (m: { to: string; text?: string }) => { sentMail.push({ to: m.to, text: m.text ?? '' }); return Promise.resolve({ messageId: 'x', provider: 'test' }); } }, c.companySettings, { tokenFor: () => Promise.resolve('tok9') }, {
+          settings: c.deliveryTextSettings,
+          sender: () => Promise.resolve({ send: (m: { to: string; text: string }) => { texted.push(m); return Promise.resolve({ providerMessageId: null }); } }),
+        });
+      };
+      const setTexts = async (enabled: boolean) => {
+        const now = await c.deliveryTextSettings.get(companyId);
+        return await c.deliveryTextSettings.set({ companyId, userId: 'counter-1' }, { enabled, kinds: ['ready_for_collection'], expectedVersion: now.version });
+      };
+      const messagesOf = async (orderId: string) => (await db.select().from(schema.deliveryMessages).where(eq(schema.deliveryMessages.orderId, orderId))).map((m) => `${m.kind}:${m.channel}:${m.status}`).sort();
+      beforeEach(() => {
+        sentMail.length = 0;
+        texted.length = 0;
+      });
+      afterAll(async () => {
+        await setTexts(false);
+      });
+
+      it('queues one email when it is marked ready, however often, and no text while texting is off', async () => {
+        await setTexts(false);
+        const w = await waiting();
+        expect(await messagesOf(w.order.id)).toEqual([]);
+        await c.orderCollections.markReady(staff(), w.order.id);
+        await c.orderCollections.markReady(staff(), w.order.id);
+        expect(await messagesOf(w.order.id)).toEqual(['ready_for_collection:email:queued']);
+        const [m] = await db.select().from(schema.deliveryMessages).where(eq(schema.deliveryMessages.orderId, w.order.id));
+        expect(m?.deliveryId).toBeNull();
+        expect(m?.messageKey).toBe(`${w.order.id}:ready_for_collection:0`);
+      });
+
+      it('sends the branch and the code by mail and by text, and the staff screen lists them without the code', async () => {
+        await setTexts(true);
+        const w = await waiting();
+        await c.orderCollections.markReady(staff(), w.order.id);
+        expect(await messagesOf(w.order.id)).toEqual(['ready_for_collection:email:queued', 'ready_for_collection:sms:queued']);
+        await (await flusher()).flush(500);
+        const shown = `${w.code.slice(0, 3)}-${w.code.slice(3)}`;
+        const text = texted.find((t) => t.text.includes(shown));
+        expect(text?.text).toMatch(/ready to collect at .+Show code/);
+        expect(text?.text).toContain('/track/tok9');
+        expect(text?.text).not.toMatch(/Test Rd|0700000000/);
+        expect(sentMail.some((m) => m.text.includes(shown))).toBe(true);
+        expect(await messagesOf(w.order.id)).toEqual(['ready_for_collection:email:sent', 'ready_for_collection:sms:sent']);
+        const looked = await actions.collectionOfOrderAction(w.order.id);
+        expect(looked).toMatchObject({ ok: true, data: { messages: [{ kind: 'ready_for_collection' }, { kind: 'ready_for_collection' }] } });
+        expect(JSON.stringify(looked)).not.toContain(w.code);
+        expect(JSON.stringify(looked)).not.toContain(shown);
+        expect(JSON.stringify(looked)).not.toContain('0700000000');
+      });
+
+      it('does not send a ready message for an order collected before it went out', async () => {
+        await setTexts(true);
+        const w = await waiting();
+        await c.orderCollections.markReady(staff(), w.order.id);
+        expect(await c.orderCollections.collectWithCode(staff(), w.order.id, w.code)).toMatchObject({ ok: true });
+        await (await flusher()).flush(500);
+        expect(texted.filter((t) => t.text.includes(w.order.orderNumber))).toHaveLength(0);
+        expect(await messagesOf(w.order.id)).toEqual(['ready_for_collection:email:skipped', 'ready_for_collection:sms:skipped']);
+      });
+    });
+
     it('is marked ready, then handed over once to whoever shows the code, however it is typed, and the order is then delivered', async () => {
       const w = await waiting();
       const ready = await c.orderCollections.markReady(staff(), w.order.id);

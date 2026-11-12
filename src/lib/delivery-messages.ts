@@ -1,7 +1,7 @@
 import type { DeliveryAction } from './delivery-document';
 
 /** The messages a customer gets as their delivery moves. Pure: the words and the rules; the sending is the server's. */
-export const MESSAGE_KINDS = ['out_for_delivery', 'delivered', 'part_delivered', 'attempt_failed', 'returned', 'slot_not_kept'] as const;
+export const MESSAGE_KINDS = ['out_for_delivery', 'delivered', 'part_delivered', 'attempt_failed', 'returned', 'slot_not_kept', 'ready_for_collection'] as const;
 export type MessageKind = (typeof MESSAGE_KINDS)[number];
 export const isMessageKind = (value: unknown): value is MessageKind => typeof value === 'string' && (MESSAGE_KINDS as readonly string[]).includes(value);
 
@@ -14,7 +14,7 @@ export function kindForStep(action: DeliveryAction, whole: boolean): MessageKind
 const SENT_BY_STEP: Partial<Record<DeliveryAction, MessageKind>> = { dispatch: 'out_for_delivery', fail_attempt: 'attempt_failed', return: 'returned' };
 
 /** What each message is, for the shop's own list of what was sent. */
-export const KIND_WORDS: Record<MessageKind, string> = { out_for_delivery: 'On its way', delivered: 'Delivered', part_delivered: 'Part delivered', attempt_failed: 'Could not deliver', returned: 'Coming back to us', slot_not_kept: 'Chosen time not kept' };
+export const KIND_WORDS: Record<MessageKind, string> = { out_for_delivery: 'On its way', delivered: 'Delivered', part_delivered: 'Part delivered', attempt_failed: 'Could not deliver', returned: 'Coming back to us', slot_not_kept: 'Chosen time not kept', ready_for_collection: 'Ready to collect' };
 
 /** One message for one thing that happened, however often the step is retried: the same key is the same message. */
 export const messageKey = (deliveryId: string, kind: MessageKind, attempt: number): string => `${deliveryId}:${kind}:${String(attempt)}`;
@@ -46,6 +46,8 @@ export interface MessageFacts {
   reasonCode: string | null;
   /** How many tries are left, when a delivery failed and can be tried again. */
   triesLeft: number | null;
+  /** For an order collected from a branch: where, and the code to show at the counter (as the customer reads it). Null for a delivery. */
+  collection: { branchName: string; code: string } | null;
 }
 
 export interface MessageContent {
@@ -91,6 +93,17 @@ export function messageContent(kind: MessageKind, f: MessageFacts): MessageConte
         details: base,
         cta: 'Track my delivery',
       };
+    case 'ready_for_collection': {
+      const at = f.collection;
+      return {
+        subject: `Your order ${f.orderNumber} is ready to collect · ${store}`,
+        heading: 'Your order is ready to collect',
+        greeting,
+        body: `Your order is packed and waiting for you${at === null ? '' : ` at ${at.branchName}`}. Show the collection code below at the counter, and only there: whoever has the code can collect the order.`,
+        details: at === null ? [['Order', f.orderNumber]] : [['Order', f.orderNumber], ['Collect from', at.branchName], ['Collection code', at.code]],
+        cta: 'See my order',
+      };
+    }
     case 'returned':
       return { subject: `Your order ${f.orderNumber} is coming back to us · ${store}`, heading: 'We could not deliver, and it is coming back to us', greeting, body: 'We were not able to deliver your order and it is being returned to us. Please contact us so we can arrange another delivery or put it right.', details: base, cta: 'See my delivery' };
   }
@@ -104,6 +117,7 @@ export const TEXT_KIND_CHOICES: readonly { kind: MessageKind; label: string; hin
   { kind: 'attempt_failed', label: 'Could not deliver', hint: 'Says why, and how many tries are left.', onByDefault: true },
   { kind: 'returned', label: 'Coming back to us', hint: 'Says the order is being returned.', onByDefault: false },
   { kind: 'slot_not_kept', label: 'Delivery time not kept', hint: 'Says the chosen time could not be held.', onByDefault: false },
+  { kind: 'ready_for_collection', label: 'Ready to collect', hint: 'For orders collected from a branch: says where, and carries the collection code to show at the counter.', onByDefault: true },
 ];
 
 export type TextKindsInput = { ok: true; kinds: MessageKind[] } | { ok: false; error: string };
@@ -139,6 +153,8 @@ export function textContent(kind: MessageKind, f: MessageFacts): string {
         return `${hello} part of your ${shop}${order} was delivered. The rest will follow. ${link}`;
       case 'attempt_failed':
         return `${hello} we could not deliver your ${shop}${order}: ${reasonForCustomer(f.reasonCode)}.${f.triesLeft !== null && f.triesLeft > 0 ? ` We will try again (${String(f.triesLeft)} ${f.triesLeft === 1 ? 'try' : 'tries'} left).` : ''} ${link}`;
+      case 'ready_for_collection':
+        return `${hello} your ${shop}${order} is ready to collect${f.collection === null ? '' : ` at ${f.collection.branchName}`}.${f.collection === null ? '' : ` Show code ${f.collection.code} at the counter, and only there.`} ${link}`;
       case 'returned':
         return `${hello} we could not deliver your ${shop}${order} and it is coming back to us. ${link}`;
       case 'slot_not_kept':

@@ -1,8 +1,10 @@
 import { and, desc, eq, inArray, lte, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { deliveries, deliveryEvents, deliveryMessages, orders } from '@/server/db/drizzle/schema';
+import { branches, deliveries, deliveryEvents, deliveryMessages, orderCollections, orders } from '@/server/db/drizzle/schema';
 import { MAX_DELIVERY_ATTEMPTS } from '@/lib/delivery-document';
 import { isMessageKind, messageContent, quietEndsAt, textContent, type MessageFacts, type MessageKind } from '@/lib/delivery-messages';
+import { showCollectionCode } from '@/lib/collection-code';
+import { decryptCredentials } from '@/server/domains/payments/crypto';
 import { internationalPhone, maskedPhone } from '@/lib/sms-providers';
 import { maskEmail } from '@/lib/tracking-token';
 import { resolvePublicBaseUrl } from '@/server/domains/auth/account-service';
@@ -20,6 +22,9 @@ type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 const MAX_TRIES = 5;
 const LEASE_MINUTES = 10;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Thrown while sending when the message no longer applies (the order was collected meanwhile): it is marked skipped, not failed. */
+class MessageNotNeeded extends Error {}
 
 export interface MessageView {
   id: string;
@@ -39,6 +44,8 @@ function shownRecipient(channel: string, recipient: string | null): string {
   if (channel !== 'sms') return maskEmail(recipient);
   return recipient === null ? '' : maskedPhone(recipient);
 }
+
+const viewOfMessage = (r: typeof deliveryMessages.$inferSelect): MessageView => ({ id: r.id, kind: r.kind, channel: r.channel, status: r.status, recipient: shownRecipient(r.channel, r.recipient), attempts: r.attempts, note: r.lastError, createdAt: r.createdAt.toISOString(), sentAt: r.sentAt?.toISOString() ?? null });
 
 /** The wait before another try: 5 minutes, then 10, 20, 40. */
 export const retryWaitMinutes = (attempts: number): number => 5 * 2 ** Math.max(0, attempts - 1);
@@ -65,7 +72,7 @@ export class DeliveryMessages {
    * company has turned texting on for this kind of message, the same message is also queued by text to the customer's number, as its own
    * row (the key ends in `:sms`), so a mail that fails never holds back the text, or the other way round.
    */
-  async enqueueIn(tx: Tx, input: { companyId: string; orderId: string; deliveryId: string; kind: MessageKind; key: string }): Promise<void> {
+  async enqueueIn(tx: Tx, input: { companyId: string; orderId: string; deliveryId: string | null; kind: MessageKind; key: string }): Promise<void> {
     const [order] = await tx.select({ email: orders.customerEmail, phone: orders.customerPhone }).from(orders).where(eq(orders.id, input.orderId));
     const address = order?.email.trim().toLowerCase() ?? '';
     const usable = EMAIL.test(address);
@@ -115,6 +122,10 @@ export class DeliveryMessages {
         await this.db.update(deliveryMessages).set({ status: 'sent', sentAt: new Date(), lastError: null }).where(eq(deliveryMessages.id, m.id));
         sent += 1;
       } catch (error) {
+        if (error instanceof MessageNotNeeded) {
+          await this.db.update(deliveryMessages).set({ status: 'skipped', lastError: error.message }).where(eq(deliveryMessages.id, m.id));
+          continue;
+        }
         const why = (error instanceof Error ? error.message : 'The message could not be sent.').slice(0, 300);
         console.error('[delivery.messages] not sent', { id: m.id, kind: m.kind, channel: m.channel, why });
         // A text the provider refuses for good (a wrong key, no balance, a number it will not use) is not tried again.
@@ -128,18 +139,9 @@ export class DeliveryMessages {
     return sent;
   }
 
-  /** A text that falls in the company's quiet hours waits for them to end; mail never waits. Null means send now. */
-  private async heldForMorning(m: typeof deliveryMessages.$inferSelect, now: Date, memo: Map<string, Date | null>): Promise<Date | null> {
-    if (m.channel !== 'sms' || this.texting === null) return null;
-    if (!memo.has(m.companyId)) {
-      const settings = await this.texting.settings.get(m.companyId);
-      memo.set(m.companyId, quietEndsAt(now, settings.quiet, DEFAULT_BUSINESS_TIMEZONE));
-    }
-    return memo.get(m.companyId) ?? null;
-  }
-
-  private async send(m: typeof deliveryMessages.$inferSelect): Promise<void> {
-    if (m.recipient === null || m.deliveryId === null || !isMessageKind(m.kind)) throw new Error('This message has nothing to send.');
+  /** What a delivery message says, read from the delivery as it is now. */
+  private async deliveryFacts(m: typeof deliveryMessages.$inferSelect, kind: MessageKind, tradingName: string, url: string): Promise<{ facts: MessageFacts; orderNumber: string }> {
+    if (m.deliveryId === null) throw new Error('This message has nothing to send.');
     const [row] = await this.db
       .select({ d: deliveries, orderNumber: orders.orderNumber, customerName: orders.customerName })
       .from(deliveries)
@@ -152,31 +154,80 @@ export class DeliveryMessages {
       .where(and(eq(deliveryEvents.deliveryId, m.deliveryId), eq(deliveryEvents.action, 'fail_attempt')))
       .orderBy(desc(deliveryEvents.sequence))
       .limit(1);
-    const settings = await this.company.ensureSeeded();
-    const token = await this.links.tokenFor(m.companyId, m.orderId);
-    const base = resolvePublicBaseUrl(settings.publicBaseUrl);
-    // With the link turned off the message still goes, pointing at the shop's own "Track my order".
-    const url = token === null ? `${base}/` : `${base}/track/${token}`;
     const facts: MessageFacts = {
-      tradingName: settings.tradingName,
+      tradingName,
       firstName: row.customerName.trim().split(/\s+/)[0] ?? '',
       orderNumber: row.orderNumber,
       deliveryNumber: row.d.number,
       trackUrl: url,
       courierName: row.d.method === 'courier' ? row.d.courierName : null,
       receivedBy: row.d.receivedBy,
-      handoverCode: m.kind === 'out_for_delivery' ? row.d.handoverCode : null,
+      handoverCode: kind === 'out_for_delivery' ? row.d.handoverCode : null,
       reasonCode: failed?.reason ?? null,
       triesLeft: Math.max(0, MAX_DELIVERY_ATTEMPTS - row.d.failedAttempts),
+      collection: null,
     };
-    const content = messageContent(m.kind, facts);
+    return { facts, orderNumber: row.orderNumber };
+  }
+
+  /**
+   * What "ready to collect" says: the branch and the code as it is now (a new code given since is the one sent). An order that has been
+   * collected, or cancelled, is no longer waiting, so the message is skipped rather than sent late.
+   */
+  private async collectionFacts(m: typeof deliveryMessages.$inferSelect, tradingName: string, url: string): Promise<{ facts: MessageFacts; orderNumber: string }> {
+    const [row] = await this.db
+      .select({ status: orderCollections.status, sealed: orderCollections.codeSealed, branch: branches.name, orderNumber: orders.orderNumber, customerName: orders.customerName })
+      .from(orderCollections)
+      .innerJoin(orders, eq(orders.id, orderCollections.orderId))
+      .innerJoin(branches, eq(branches.id, orderCollections.branchId))
+      .where(and(eq(orderCollections.orderId, m.orderId), eq(orderCollections.companyId, m.companyId)));
+    if (row === undefined) throw new Error('The collection of this message is gone.');
+    if (row.status === 'collected' || row.status === 'cancelled') throw new MessageNotNeeded('The order is no longer waiting to be collected.');
+    const opened = decryptCredentials(row.sealed);
+    if (typeof opened?.code !== 'string') throw new Error('The collection code could not be read.');
+    const facts: MessageFacts = {
+      tradingName,
+      firstName: row.customerName.trim().split(/\s+/)[0] ?? '',
+      orderNumber: row.orderNumber,
+      deliveryNumber: '',
+      trackUrl: url,
+      courierName: null,
+      receivedBy: null,
+      handoverCode: null,
+      reasonCode: null,
+      triesLeft: null,
+      collection: { branchName: row.branch, code: showCollectionCode(opened.code) },
+    };
+    return { facts, orderNumber: row.orderNumber };
+  }
+
+  /** A text that falls in the company's quiet hours waits for them to end; mail never waits. Null means send now. */
+  private async heldForMorning(m: typeof deliveryMessages.$inferSelect, now: Date, memo: Map<string, Date | null>): Promise<Date | null> {
+    if (m.channel !== 'sms' || this.texting === null) return null;
+    if (!memo.has(m.companyId)) {
+      const settings = await this.texting.settings.get(m.companyId);
+      memo.set(m.companyId, quietEndsAt(now, settings.quiet, DEFAULT_BUSINESS_TIMEZONE));
+    }
+    return memo.get(m.companyId) ?? null;
+  }
+
+  private async send(m: typeof deliveryMessages.$inferSelect): Promise<void> {
+    if (m.recipient === null || !isMessageKind(m.kind)) throw new Error('This message has nothing to send.');
+    const kind = m.kind;
+    const settings = await this.company.ensureSeeded();
+    const token = await this.links.tokenFor(m.companyId, m.orderId);
+    const base = resolvePublicBaseUrl(settings.publicBaseUrl);
+    // With the link turned off the message still goes, pointing at the shop's own "Track my order".
+    const url = token === null ? `${base}/` : `${base}/track/${token}`;
+    const { facts, orderNumber } = kind === 'ready_for_collection' ? await this.collectionFacts(m, settings.tradingName, url) : await this.deliveryFacts(m, kind, settings.tradingName, url);
+    const content = messageContent(kind, facts);
     if (m.channel === 'sms') {
       const sender = await this.texting?.sender(m.companyId);
       if (sender === null || sender === undefined) throw new SmsSendError('No SMS provider is set up, so the text could not be sent. Connect one in Settings > SMS providers.', true);
-      await sender.send({ to: m.recipient, text: textContent(m.kind, facts) });
+      await sender.send({ to: m.recipient, text: textContent(kind, facts) });
       return;
     }
-    const footer = `You are receiving this because you placed order ${row.orderNumber}. Please do not forward it: the link shows your order.`;
+    const footer = `You are receiving this because you placed order ${orderNumber}. Please do not forward it: the link shows your order.`;
     const html = layout({ heading: content.heading, greeting: content.greeting, body: content.body, cta: content.cta, actionUrl: url, footer, details: content.details });
     const text = `${content.heading}\n\n${content.greeting}\n\n${content.body}\n\n${content.details.map(([k, v]) => `${k}: ${v}`).join('\n')}\n\n${content.cta}: ${url}\n\n${footer}`;
     await this.email.send({ to: m.recipient, subject: content.subject, html, text });
@@ -185,6 +236,12 @@ export class DeliveryMessages {
   /** The messages a delivery has caused, newest first, with the address hidden but for its first letter. */
   async forDelivery(companyId: string, deliveryId: string): Promise<MessageView[]> {
     const rows = await this.db.select().from(deliveryMessages).where(and(eq(deliveryMessages.companyId, companyId), eq(deliveryMessages.deliveryId, deliveryId))).orderBy(desc(deliveryMessages.createdAt)).limit(50);
-    return rows.map((r) => ({ id: r.id, kind: r.kind, channel: r.channel, status: r.status, recipient: shownRecipient(r.channel, r.recipient), attempts: r.attempts, note: r.lastError, createdAt: r.createdAt.toISOString(), sentAt: r.sentAt?.toISOString() ?? null }));
+    return rows.map(viewOfMessage);
+  }
+
+  /** Staff: what was sent to the customer about collecting their order (a collected order has no delivery to hang these on). */
+  async forCollection(companyId: string, orderId: string): Promise<MessageView[]> {
+    const rows = await this.db.select().from(deliveryMessages).where(and(eq(deliveryMessages.companyId, companyId), eq(deliveryMessages.orderId, orderId), eq(deliveryMessages.kind, 'ready_for_collection'))).orderBy(desc(deliveryMessages.createdAt)).limit(20);
+    return rows.map(viewOfMessage);
   }
 }

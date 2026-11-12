@@ -797,7 +797,7 @@ describe.skipIf(!has(url))('delivery slots (database)', () => {
     });
 
     it('is off until the company turns it on, then keeps the choice with a version, and refuses nonsense', async () => {
-      expect(await c.deliveryTextSettings.get(companyId)).toMatchObject({ enabled: false, kinds: ['out_for_delivery', 'delivered', 'attempt_failed'] });
+      expect(await c.deliveryTextSettings.get(companyId)).toMatchObject({ enabled: false, kinds: ['out_for_delivery', 'delivered', 'attempt_failed', 'ready_for_collection'] });
       expect(await setCustomerTexts(true, [])).toMatchObject({ ok: false, reason: 'bad_input' });
       expect(await setCustomerTexts(true, ['nonsense'])).toMatchObject({ ok: false, reason: 'bad_input' });
       const on = await setCustomerTexts(true, ['delivered', 'out_for_delivery']);

@@ -10,6 +10,8 @@ import {
   reissueCollectionCodeAction,
 } from '@/server/domains/delivery/collection-actions';
 import type { CollectionView } from '@/server/domains/delivery/collection';
+import type { MessageView } from '@/server/domains/delivery/messages';
+import { KIND_WORDS, isMessageKind } from '@/lib/delivery-messages';
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
 import { attempt, buttonClass, fieldClass, primaryClass } from '@/components/ui/screen-kit';
 
@@ -20,6 +22,7 @@ const STATUS_WORDS: Record<CollectionView['status'], string> = {
   locked: 'Code locked',
   cancelled: 'Cancelled',
 };
+const MESSAGE_WORDS = { sent: 'Sent', failed: 'Not sent yet', skipped: 'Not sent', queued: 'Waiting to send' } as const;
 const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' });
 
 /**
@@ -30,6 +33,7 @@ const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { da
 export function OrderCollectionPanel({ orderId, onChanged }: { orderId: string; onChanged: () => void }) {
   const uid = useId();
   const [view, setView] = useState<CollectionView | null>(null);
+  const [messages, setMessages] = useState<MessageView[]>([]);
   const [hidden, setHidden] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -46,7 +50,8 @@ export function OrderCollectionPanel({ orderId, onChanged }: { orderId: string; 
       if (cancelled) return;
       if (!r.ok || r.data === null) setHidden(true);
       else {
-        setView(r.data);
+        setView(r.data.view);
+        setMessages(r.data.messages);
         setHidden(false);
       }
     });
@@ -93,6 +98,19 @@ export function OrderCollectionPanel({ orderId, onChanged }: { orderId: string; 
           {open ? ` · ${String(view.attemptsLeft)} ${view.attemptsLeft === 1 ? 'try' : 'tries'} left on the code` : ''}
         </p>
       </div>
+
+      {messages.length === 0 ? null : (
+        <ul aria-label="Messages to the customer" className="space-y-0.5 text-xs text-fg-muted">
+          {messages.map((m) => (
+            <li key={m.id}>
+              {isMessageKind(m.kind) ? KIND_WORDS[m.kind] : m.kind}
+              {m.channel === 'sms' ? ' (text message)' : ' (email)'}: {MESSAGE_WORDS[m.status]}
+              {m.recipient === '' ? '' : ` to ${m.recipient}`}
+              {m.note === null ? '' : ` · ${m.note}`}
+            </li>
+          ))}
+        </ul>
+      )}
 
       {error === null ? null : (
         <p role="alert" className="text-xs text-red-700">

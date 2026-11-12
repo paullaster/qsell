@@ -1191,6 +1191,13 @@
       "when": 1794476850690,
       "tag": "0169_package_orders",
       "breakpoints": true
+    },
+    {
+      "idx": 170,
+      "version": "7",
+      "when": 1794483574104,
+      "tag": "0170_delivery_text_collection",
+      "breakpoints": true
     }
   ]
 }

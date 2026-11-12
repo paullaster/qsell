@@ -120,6 +120,9 @@ test.describe('collecting an order from a branch', () => {
       await panel.getByRole('button', { name: 'Mark ready for collection' }).click();
       await expect(panel.getByText('Marked ready for collection.')).toBeVisible({ timeout: 30_000 });
       await expect(panel).toContainText('Ready, waiting for the customer');
+      // The customer is told, and the counter can see it was: the mail to them is listed, without the code.
+      await expect(panel.getByRole('list', { name: 'Messages to the customer' })).toContainText('Ready to collect (email)', { timeout: 30_000 });
+      await expect(panel.getByRole('list', { name: 'Messages to the customer' })).not.toContainText(shown(code));
 
       const wrong = code === 'ZZZZZZ' ? 'YYYYYY' : 'ZZZZZZ';
       await panel.getByLabel('Code the customer shows').fill(wrong);

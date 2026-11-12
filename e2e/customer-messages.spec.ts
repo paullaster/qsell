@@ -22,7 +22,7 @@ test.describe('customer messages', () => {
     // Turned on with nothing ticked is refused in words; with some ticked it is saved.
     await on.check();
     // Nothing ticked at all, whatever an earlier run left ticked.
-    for (const label of [/^On its way/, /^Delivered/, /^Part delivered/, /^Could not deliver/, /^Coming back/, /^Delivery time not kept/]) await form.getByLabel(label).uncheck();
+    for (const label of [/^On its way/, /^Delivered/, /^Part delivered/, /^Could not deliver/, /^Coming back/, /^Delivery time not kept/, /^Ready to collect/]) await form.getByLabel(label).uncheck();
     await form.getByRole('button', { name: 'Save' }).click();
     await expect(page.getByRole('alert').filter({ hasText: 'Choose at least one message' })).toBeVisible({ timeout: 30_000 });
     await form.getByLabel(/^On its way/).check();

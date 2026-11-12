@@ -7,6 +7,7 @@ import { decryptCredentials, encryptCredentials, fingerprintSecret } from '@/ser
 import { OrderStages } from '@/server/domains/orders/stages';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { orderReadinessProblem } from './order-readiness';
+import type { DeliveryMessages } from './messages';
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
@@ -68,6 +69,8 @@ export class OrderCollections {
     private readonly db: DrizzleDb,
     private readonly decisions: DecisionLog,
     private readonly randomSource: (count: number) => Uint8Array = (count) => new Uint8Array(randomBytes(count)),
+    /** Tells the customer, by mail and (when the company has it on) text, that the order is ready to collect. */
+    private readonly messages: Pick<DeliveryMessages, 'enqueueIn'> | null = null,
   ) {}
 
   private fingerprint(orderId: string, code: string): string {
@@ -154,6 +157,8 @@ export class OrderCollections {
       if (row.status === 'ready') return { ok: true, view: await this.requireView(tx, actor.companyId, orderId) };
       await tx.update(orderCollections).set({ status: 'ready', readyAt: new Date(), readyBy: actor.userId, updatedAt: new Date() }).where(eq(orderCollections.orderId, orderId));
       await OrderStages.moveIn(tx, orderId, 'ready', 'succeeded', { actor: { type: 'user', id: actor.userId }, message: 'Ready for collection', detail: { branchId: row.branchId } });
+      // In the same transaction, so there is never a ready order whose customer was never to be told (and never a message for a step that was undone).
+      await this.messages?.enqueueIn(tx, { companyId: actor.companyId, orderId, deliveryId: null, kind: 'ready_for_collection', key: `${orderId}:ready_for_collection:0` });
       return { ok: true, view: await this.requireView(tx, actor.companyId, orderId) };
     });
     return done;

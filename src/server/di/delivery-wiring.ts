@@ -64,10 +64,10 @@ export function createDeliveryServices(input: {
     deliveryQuotes,
   );
   const orderDeliveries = new OrderDeliveries(input.db, input.decisionLog);
-  const orderCollections = new OrderCollections(input.db, input.decisionLog);
   const trackingLinks = new TrackingLinks(input.db, input.decisionLog);
   const deliveryTextSettings = new DeliveryTextSettings(input.db, input.decisionLog);
   const deliveryMessages = new DeliveryMessages(input.db, input.email, input.companySettings, trackingLinks, { settings: deliveryTextSettings, sender: (companyId) => input.sms.defaultSender(companyId) });
+  const orderCollections = new OrderCollections(input.db, input.decisionLog, undefined, deliveryMessages);
   const deliverySlots = new DeliverySlots(input.db, input.decisionLog);
   const deliveryDocuments = new DeliveryDocuments(input.db, input.decisionLog, input.numbering, input.stockReservations, deliveryMessages, deliverySlots);
   const deliveryRiders = new DeliveryRiders(input.db, input.decisionLog, input.usersAdmin);

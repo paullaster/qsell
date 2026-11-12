@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { TEXT_KIND_CHOICES, isMessageKind, kindForStep, messageContent, messageKey, minutesToClock, quietEndsAt, readQuietHours, readTextKinds, reasonForCustomer, textContent, MESSAGE_KINDS, type MessageFacts } from './delivery-messages';
 
 const facts: MessageFacts = { tradingName: 'Test Traders', firstName: 'Wanjiru', orderNumber: 'ORD-77', deliveryNumber: 'DLV-26-0000000007', trackUrl: 'https://shop.example.test/track/abc', courierName: null, receivedBy: null,
-  handoverCode: null, reasonCode: null, triesLeft: null };
+  handoverCode: null, reasonCode: null, triesLeft: null, collection: null };
 
 describe('which step sends which message', () => {
   it('sends one for going out, arriving (whole or in part), a failed attempt and a return, and none for the quiet steps', () => {
@@ -72,7 +72,7 @@ describe('the delivery code', () => {
 });
 
 describe('customer text messages', () => {
-  const facts = { tradingName: 'Wanjiku Traders', firstName: 'Achieng', orderNumber: 'ORD-1001', deliveryNumber: 'DLV-55', trackUrl: 'https://shop.example/track/abcdef1234567890abcdef1234567890', courierName: null, receivedBy: 'Brian', handoverCode: '482913', reasonCode: 'customer_absent', triesLeft: 2 };
+  const facts = { tradingName: 'Wanjiku Traders', firstName: 'Achieng', orderNumber: 'ORD-1001', deliveryNumber: 'DLV-55', trackUrl: 'https://shop.example/track/abcdef1234567890abcdef1234567890', courierName: null, receivedBy: 'Brian', handoverCode: '482913', reasonCode: 'customer_absent', triesLeft: 2, collection: null };
   it('says the state in a few words with the tracking link last, and the code only when it is on its way', () => {
     const way = textContent('out_for_delivery', facts);
     expect(way).toContain('on its way');
@@ -134,5 +134,25 @@ describe('quiet hours for texts', () => {
     const lunch = { from: 12 * 60, until: 14 * 60 };
     expect(quietEndsAt(new Date('2026-11-12T09:30:00Z'), lunch, tz)?.toISOString()).toBe('2026-11-12T11:00:00.000Z');
     expect(quietEndsAt(new Date('2026-11-12T11:00:00Z'), lunch, tz)).toBeNull();
+  });
+});
+
+describe('ready to collect', () => {
+  const at = { ...facts, collection: { branchName: 'Westlands Branch', code: 'ABC-DEF' } };
+  it('names the branch and carries the collection code in the mail and the text, and the text stays short with the link last', () => {
+    const m = messageContent('ready_for_collection', at);
+    expect(m.subject).toContain('ready to collect');
+    expect(m.body).toContain('Westlands Branch');
+    expect(m.details).toContainEqual(['Collection code', 'ABC-DEF']);
+    expect(m.details.some(([k]) => k === 'Delivery')).toBe(false);
+    const t = textContent('ready_for_collection', at);
+    expect(t).toMatch(/ready to collect at Westlands Branch\. Show code ABC-DEF at the counter/);
+    expect(t.endsWith(facts.trackUrl)).toBe(true);
+    expect(t.length).toBeLessThanOrEqual(306);
+    expect(textContent('ready_for_collection', { ...at, tradingName: 'A Very Long Trading Name Indeed '.repeat(8) }).length).toBeLessThanOrEqual(306);
+  });
+  it('never carries the code in any other message, and says nothing of a code when it has none', () => {
+    for (const kind of MESSAGE_KINDS.filter((k) => k !== 'ready_for_collection')) expect(textContent(kind, at)).not.toContain('ABC-DEF');
+    expect(textContent('ready_for_collection', facts)).not.toMatch(/code/i);
   });
 });

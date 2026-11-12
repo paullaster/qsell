@@ -30,7 +30,12 @@ const PATHS = ['/admin/orders'];
 
 /** Staff: how an order's collection stands (never the code). Null when the order is not one for collection. */
 export async function collectionOfOrderAction(orderId: unknown) {
-  return await runDelivery('deliveries:handover', async (ctx) => await getContainer().orderCollections.view(ctx.companyId, idOfOrder(orderId)));
+  return await runDelivery('deliveries:handover', async (ctx) => {
+    const id = idOfOrder(orderId);
+    const view = await getContainer().orderCollections.view(ctx.companyId, id);
+    if (view === null) return null;
+    return { view, messages: await getContainer().deliveryMessages.forCollection(ctx.companyId, id) };
+  });
 }
 
 /** The order ids here are text ids, not UUIDs: only their size is checked, and the lookup is for this company alone. */
@@ -42,7 +47,12 @@ function idOfOrder(value: unknown): string {
 export async function markReadyForCollectionAction(orderId: unknown) {
   return await runDelivery(
     'deliveries:handover',
-    async (ctx) => viewOf(await getContainer().orderCollections.markReady({ companyId: ctx.companyId, userId: ctx.userId }, idOfOrder(orderId))),
+    async (ctx) => {
+      const view = viewOf(await getContainer().orderCollections.markReady({ companyId: ctx.companyId, userId: ctx.userId }, idOfOrder(orderId)));
+      // The customer is told now rather than at the next sweep.
+      void getContainer().deliveryMessages.flush(5).catch((e: unknown) => console.error('[delivery.messages] flush', e));
+      return view;
+    },
     PATHS,
   );
 }
