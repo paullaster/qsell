@@ -30,7 +30,7 @@ export class PackageShopService {
   ) {}
 
   /** The packages among these products that the shop may offer, with the stock facts to judge them. */
-  async load(companyId: string, productIds: readonly string[]): Promise<{ packages: Map<string, ShopPackage>; stock: LineStock; views: Map<string, PackageView> }> {
+  async load(companyId: string, productIds: readonly string[], staff = false): Promise<{ packages: Map<string, ShopPackage>; stock: LineStock; views: Map<string, PackageView> }> {
     const ids = [...new Set(productIds)].slice(0, MAX_BASKET_PACKAGES);
     const views = ids.length === 0 ? [] : await this.packages.list(companyId, ids);
     const forSale = views.length === 0
@@ -38,7 +38,7 @@ export class PackageShopService {
       : await this.db
           .select({ id: products.id })
           .from(products)
-          .where(and(inArray(products.id, views.map((v) => v.productId)), eq(products.isActive, true), eq(products.isSellable, true), eq(products.showOnWebShop, true), eq(products.isCheckoutPackaging, false), isNull(products.deletedAt)));
+          .where(and(inArray(products.id, views.map((v) => v.productId)), eq(products.isActive, true), eq(products.isSellable, true), ...(staff ? [] : [eq(products.showOnWebShop, true)]), eq(products.isCheckoutPackaging, false), isNull(products.deletedAt)));
     const sellable = new Set(forSale.map((r) => r.id));
     const offered = views.filter((v) => v.isActive && sellable.has(v.productId));
 
@@ -77,6 +77,14 @@ export class PackageShopService {
       }
     }
     return { package: pkg, available: [...available], offered: packageAvailable(pkg, available) };
+  }
+
+  /** The builder for staff (a quote): every option can be chosen whatever stock says, and the product need not be on the web shop. */
+  async staffBuilder(companyId: string, productId: string): Promise<ShopBuilder | null> {
+    const { packages } = await this.load(companyId, [productId], true);
+    const pkg = packages.get(productId);
+    if (pkg === undefined) return null;
+    return { package: pkg, available: pkg.slots.flatMap((slot) => slot.options.map((o) => o.id)), offered: true };
   }
 
   /** Whether each of these products is a package the shop offers (the page decides between the plain purchase panel and the builder). */

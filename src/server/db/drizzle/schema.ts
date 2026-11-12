@@ -4845,6 +4845,8 @@ export const salesQuotes = pgTable(
     approvedAt: timestamp('approved_at', { withTimezone: true }),
     sentAt: timestamp('sent_at', { withTimezone: true }),
     /** The staff member who emailed the quote to the customer (the latest send). */
+    /** The date the goods or the service are needed (`YYYY-MM-DD`), when it matters: a package's notice, closing day and daily limit are counted against it when the quote becomes an order. */
+    neededOn: text('needed_on'),
     sentBy: text('sent_by'),
     acceptedAt: timestamp('accepted_at', { withTimezone: true }),
     rejectedAt: timestamp('rejected_at', { withTimezone: true }),

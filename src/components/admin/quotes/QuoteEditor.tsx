@@ -9,6 +9,7 @@ import { ReplaceLineButton } from '../quote-layout/ReplaceLineButton';
 import { ReplacedNotice } from '../quote-layout/ReplacedNotice';
 import { useLineReplace } from '../quote-layout/useLineReplace';
 import { canReplaceLine, replaceLineProduct } from '@/lib/quote-replace';
+import { QuotePackageDialog, type ChosenPackage } from '@/components/admin/quotes/QuotePackageDialog';
 import { refreshLinesForProduct, type RefreshNote } from '@/lib/quote-product-refresh';
 import { getQuoteCatalogueProductAction } from '@/server/domains/quotes/actions';
 
@@ -100,6 +101,8 @@ export function QuoteEditor({
   const currency = useRef('');
   const latest = useRef(initial);
   const [bulkOpen, setBulkOpen] = useState(false);
+  /** The package dialog: a new line (`index` null) or the choices of the line at `index`. */
+  const [packageDialog, setPackageDialog] = useState<{ index: number | null } | null>(null);
   const lastAdded = useRef<{ productId: string; sectionId: string | null } | null>(null);
   const [focusLine, setFocusLine] = useState<{ index: number; nonce: number } | null>(null);
   const [draftPreviewOpen, setDraftPreviewOpen] = useState(false);
@@ -203,6 +206,27 @@ export function QuoteEditor({
       'lines',
       input.lines.map((line, lineIndex) => (lineIndex === index ? { ...line, ...patch } : line)),
     );
+  /** A package was chosen in the dialog: a new line, or new choices on the line being changed. The server prices it. */
+  const choosePackage = (chosen: ChosenPackage) => {
+    const at = packageDialog?.index ?? null;
+    setPackageDialog(null);
+    const line = {
+      productId: chosen.productId,
+      quantity: chosen.servings,
+      priceMode: 'catalog' as const,
+      discountPercent: at === null ? 0 : (input.lines[at]?.discountPercent ?? 0),
+      package: { picks: chosen.picks, summary: chosen.summary },
+      sectionId: at === null ? null : (input.lines[at]?.sectionId ?? null),
+    };
+    if (at === null) setField('lines', [...input.lines, line]);
+    else patchLine(at, line);
+    // The package product may not be in the catalogue this screen loaded: read it, so its name and tax show.
+    if (!productById.has(chosen.productId)) {
+      void getQuoteCatalogueProductAction(chosen.productId).then((fresh) => {
+        if (fresh !== null) setRefreshed((r) => ({ ...r, [fresh.id]: fresh }));
+      });
+    }
+  };
   /**
    * Changing a line's unit (kg to crate) keeps the quantity typed and puts the line back on the price lists;
    * until the lists answer, the catalogue price for one of the new unit is shown.
@@ -427,6 +451,15 @@ export function QuoteEditor({
             />
           </label>
           <label className="text-sm font-medium text-fg">
+            Needed on
+            <input
+              type="date"
+              value={input.neededOn ?? ''}
+              onChange={(event) => setField('neededOn', event.target.value)}
+              className="mt-1 block w-full rounded-lg border border-line bg-surface px-3 py-2 text-fg-strong"
+            />
+          </label>
+          <label className="text-sm font-medium text-fg">
             Valid until
             <input
               type="date"
@@ -478,6 +511,11 @@ export function QuoteEditor({
               with its items listed under it when you keep it expanded.
             </p>
           </header>
+          <div>
+            <button type="button" onClick={() => setPackageDialog({ index: null })} className="min-h-11 cursor-pointer rounded-lg border border-line-strong bg-surface-sunken px-4 text-sm font-semibold text-fg-strong hover:bg-hover">
+              Add a package
+            </button>
+          </div>
           <QuoteLayoutBoard
             noun="quote"
             sectionTemplateLinks={{
@@ -535,9 +573,16 @@ export function QuoteEditor({
                 <>
                   <td className="p-3">
                     <div className="flex items-start justify-between gap-2">
-                      <div className="font-medium text-fg-strong">{entry.product?.name}</div>
+                      <div className="font-medium text-fg-strong">
+                        {line.package === undefined ? entry.product?.name : (line.package.summary ?? entry.product?.name)}
+                        {line.package === undefined ? null : (
+                          <button type="button" onClick={() => setPackageDialog({ index })} className="ml-2 min-h-8 cursor-pointer text-xs font-semibold text-indigo-500 hover:underline">
+                            Change choices
+                          </button>
+                        )}
+                      </div>
                       <div className="flex shrink-0 items-center">
-                        {canReplaceLine(line) ? (
+                        {canReplaceLine(line) && line.package === undefined ? (
                           <ReplaceLineButton name={entry.product?.name ?? 'item'} onClick={() => lineSwap.open(index)} />
                         ) : null}
                         <ProductEditLink productId={line.productId} name={entry.product?.name ?? 'item'} canEdit={canEditProducts} />
@@ -553,7 +598,7 @@ export function QuoteEditor({
                       value={line.quantity}
                       onChange={(value) => patchLine(index, { quantity: Number(value) })}
                     />
-                    {entry.product === undefined || entry.product.baseUnitId === '' ? null : (
+                    {line.package !== undefined || entry.product === undefined || entry.product.baseUnitId === '' ? null : (
                       <div className="mt-1">
                         <ChoicePicker
                           label={`Unit of ${entry.product.name}`}
@@ -572,20 +617,24 @@ export function QuoteEditor({
                     )}
                   </td>
                   <td className="p-3">
-                    <input
-                      aria-label={`Unit price of ${entry.product?.name ?? 'item'}`}
-                      type="number"
-                      min="0"
-                      step="0.0001"
-                      value={line.unitPrice ?? ''}
-                      onChange={(event) =>
-                        patchLine(index, {
-                          unitPrice: Number(event.target.value),
-                          priceMode: 'manual',
-                        })
-                      }
-                      className="w-28 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong"
-                    />
+                    {line.package === undefined ? (
+                      <input
+                        aria-label={`Unit price of ${entry.product?.name ?? 'item'}`}
+                        type="number"
+                        min="0"
+                        step="0.0001"
+                        value={line.unitPrice ?? ''}
+                        onChange={(event) =>
+                          patchLine(index, {
+                            unitPrice: Number(event.target.value),
+                            priceMode: 'manual',
+                          })
+                        }
+                        className="w-28 rounded-md border border-line bg-surface px-2 py-1 text-fg-strong"
+                      />
+                    ) : (
+                      <span className="text-xs text-fg-muted">Set by the package: the base price plus the choices</span>
+                    )}
                     <QuoteLinePriceNote
                       mode={line.priceMode ?? (line.unitPrice != null ? 'manual' : 'catalog')}
                       trace={traces[index]}
@@ -857,6 +906,16 @@ export function QuoteEditor({
           onHere={(productId) => heldIn(productId, input.lines[lineSwap.replacing ?? 0].sectionId ?? null)}
           onChoose={(product) => lineSwap.replaceProduct(lineSwap.replacing ?? 0, product)}
           onClose={lineSwap.close}
+        />
+      )}
+      {packageDialog !== null && (
+        <QuotePackageDialog
+          money={(amount) => money(amount, input.currency)}
+          {...(packageDialog.index === null || input.lines[packageDialog.index]?.package === undefined
+            ? {}
+            : { editing: { productId: input.lines[packageDialog.index].productId, servings: input.lines[packageDialog.index].quantity, picks: input.lines[packageDialog.index].package?.picks ?? [] } })}
+          onClose={() => setPackageDialog(null)}
+          onChosen={choosePackage}
         />
       )}
       {catalogOpen && (

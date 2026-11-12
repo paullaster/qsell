@@ -180,3 +180,51 @@ export function packageAvailable(pkg: ShopPackage, available: ReadonlySet<string
     return count >= (slot.allowRepeats ? 1 : needed);
   });
 }
+
+/**
+ * A selection as a quote keeps it: by the slot's name and the part's product, not by option ids (a package that is changed gets new
+ * ids, but a quote made yesterday must still be understood today). The name is what the customer was shown.
+ */
+export interface StoredPick {
+  slotName: string;
+  productId: string;
+  name: string;
+  count: number;
+}
+
+/** The picks as a quote keeps them. */
+export function storedPicks(pkg: ShopPackage, picks: readonly RawPick[]): StoredPick[] {
+  return picks.flatMap((pick) => {
+    const slot = pkg.slots.find((s) => s.id === pick.slotId);
+    const option = slot?.options.find((o) => o.id === pick.optionId);
+    return slot === undefined || option === undefined ? [] : [{ slotName: slot.name, productId: option.productId, name: option.name, count: pick.count }];
+  });
+}
+
+export type ResolvedPicks = { ok: true; picks: RawPick[] } | { ok: false; problems: string[] };
+
+/** Finds today's slots and options for what a quote kept; anything the package no longer offers is named, so a replacement can be chosen. */
+export function resolveStoredPicks(pkg: ShopPackage, stored: readonly StoredPick[]): ResolvedPicks {
+  const picks: RawPick[] = [];
+  const problems: string[] = [];
+  const same = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase();
+  for (const pick of stored) {
+    const slot = pkg.slots.find((s) => same(s.name, pick.slotName));
+    const option = slot?.options.find((o) => o.productId === pick.productId);
+    if (slot === undefined || option === undefined) problems.push(`${pick.name} is no longer offered in ${pick.slotName}.`);
+    else picks.push({ slotId: slot.id, optionId: option.id, count: pick.count });
+  }
+  return problems.length > 0 ? { ok: false, problems } : { ok: true, picks };
+}
+
+/** What a quote kept, as far as the package still offers it: the picks that are found, and the names of those that are not (to be chosen again). */
+export function resolveStoredPicksLenient(pkg: ShopPackage, stored: readonly StoredPick[]): { picks: RawPick[]; missing: string[] } {
+  const picks: RawPick[] = [];
+  const missing: string[] = [];
+  for (const pick of stored) {
+    const found = resolveStoredPicks(pkg, [pick]);
+    if (found.ok) picks.push(...found.picks);
+    else missing.push(pick.name);
+  }
+  return { picks, missing };
+}

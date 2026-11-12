@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { canPermission, requirePermission } from '@/server/domains/access-control/guard';
+import { getContainer } from '@/server/di/container';
 import { parseQuoteListRequest } from './quote-list';
 import { parseTemplateListRequest } from './template-list';
 import { runQuoteAction } from './run';
@@ -348,4 +349,18 @@ export async function getSalesQuoteCapabilitiesAction() {
     canPermission('products:update'),
   ]);
   return { canCreate, canUpdate, canApprove, canDelete, canConfigure, canEditProducts };
+}
+
+
+/** Staff: the builder for a package product on a quote. Every option can be chosen whatever stock says, because a quote promises nothing from the shelves. */
+export async function quotePackageBuilderAction(productId: unknown): Promise<{ ok: true; data: Awaited<ReturnType<ReturnType<typeof getContainer>['packageShop']['staffBuilder']>> } | { ok: false; error: string }> {
+  await requirePermission('quotes:read');
+  if (typeof productId !== 'string' || productId.length === 0 || productId.length > 100) return { ok: true, data: null };
+  try {
+    const container = getContainer();
+    return { ok: true, data: await container.packageShop.staffBuilder((await container.companySettings.ensureSeeded()).id, productId) };
+  } catch (error) {
+    console.error('[quotes] package builder', error);
+    return { ok: false, error: 'Could not open the package. Please try again.' };
+  }
 }

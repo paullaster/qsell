@@ -4,7 +4,7 @@ import { Suspense, use } from 'react';
 import type { PublicProduct } from '@/types/index';
 import type { ShopBuilder } from '@/server/domains/pricing/package-shop-service';
 import { ProductPurchase } from '@/components/store/product/ProductPurchase';
-import { PackageBuilder } from '@/components/store/product/PackageBuilder';
+import { ShopPackageBuilder } from '@/components/store/product/ShopPackageBuilder';
 
 function Choice({ product, builder }: { product: PublicProduct; builder: Promise<ShopBuilder | null> }) {
   const found = use(builder);
@@ -13,7 +13,7 @@ function Choice({ product, builder }: { product: PublicProduct; builder: Promise
   if (!found.offered) {
     return <p role="status" className="rounded-xl border border-line bg-surface p-4 text-sm font-medium text-fg-muted">{product.name} is not available right now. Please check back soon.</p>;
   }
-  return <PackageBuilder productName={product.name} builder={found} />;
+  return <ShopPackageBuilder productName={product.name} builder={found} />;
 }
 
 /**

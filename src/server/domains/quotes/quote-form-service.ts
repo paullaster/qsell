@@ -86,14 +86,27 @@ export class QuoteFormService {
       byId,
       request.lines.map((line) => ({ productId: line.productId, quantity: line.quantity, unitId: line.unitId, unitPrice: line.unitPrice })),
     );
+    // Package lines: the choices are priced and split into parts by the same service the saved quote uses (stock is not looked at).
+    const wanted = request.lines.flatMap((line, index) => (line.package === undefined ? [] : [{ index, productId: line.productId, servings: line.quantity, stored: line.package.picks }]));
+    const prepared = wanted.length === 0 || wanted.some((w) => !Number.isInteger(w.servings) || w.servings < 1)
+      ? null
+      : await container.packageOrders.prepareStored({ companyId, customerGroupId: null, signedIn: true, forDate: null, now: new Date(), previewOnly: true, skipStock: true }, wanted);
+    if (wanted.length > 0 && prepared?.ok !== true) throw new Error(prepared === null ? 'A package is quoted in whole servings.' : prepared.error);
+    const packageAt = new Map((prepared?.ok === true ? prepared.lines : []).map((l) => [l.index, l]));
     return computeQuoteTotals(
       {
         ...request,
         lines: request.lines.map((line, i) => {
           const unit = required(unitLines[i], 'the unit of a line');
-          const { unitId: _unitId, ...rest } = line;
+          const { unitId: _unitId, package: _package, ...rest } = line;
+          const chosen = packageAt.get(i);
+          const base = byId.get(line.productId);
+          // The base price (the product's own) plus what the choices add, or the choices added up.
+          const packageUnit = chosen === undefined || base === undefined ? null : Math.round(((chosen.summedPerServing ?? (base.price ?? 0) + (chosen.addedPerServing ?? 0)) + Number.EPSILON) * 100) / 100;
           return {
             ...rest,
+            ...(chosen === undefined ? {} : { kit: chosen.kit }),
+            ...(packageUnit === null ? {} : { unitPrice: packageUnit }),
             quantity: unit.quantity,
             ...(unit.unitPrice === undefined ? {} : { unitPrice: unit.unitPrice }),
             ...(unit.enteredUnitPrice !== null && unit.enteredQuantity !== null ? { exactAmount: unit.enteredUnitPrice * unit.enteredQuantity } : {}),

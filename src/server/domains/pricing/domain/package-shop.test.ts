@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkPackageBasket, checkPackageLine, optionsToShow, packageAvailable, selectionSentence, wordsList, type LineStock, type ShopPackage } from './package-shop';
+import { resolveStoredPicks, storedPicks, checkPackageBasket, checkPackageLine, optionsToShow, packageAvailable, selectionSentence, wordsList, type LineStock, type ShopPackage } from './package-shop';
 
 const lunch: ShopPackage = {
   productId: 'lunch',
@@ -158,5 +158,26 @@ describe('what stock lets the shopper see', () => {
   it('does not mind an optional slot with nothing left', () => {
     const optional: ShopPackage = { ...lunch, slots: [...lunch.slots, { id: 'extra', name: 'Extras', helpText: '', minPicks: 0, maxPicks: 2, allowRepeats: false, included: false, options: [{ id: 'e', productId: 'p-e', name: 'Chilli', quantity: 1, difference: 20, price: 20, isDefault: false }] }] };
     expect(packageAvailable(optional, available)).toBe(true);
+  });
+});
+
+describe('a selection kept by a quote', () => {
+  const raw = [{ slotId: 'fish', optionId: 'large', count: 1 }, { slotId: 'starch', optionId: 'brown', count: 1 }, { slotId: 'veg', optionId: 'sukuma', count: 1 }];
+  it('is kept by slot name and part, and found again by them', () => {
+    const stored = storedPicks(lunch, raw);
+    expect(stored).toEqual([
+      { slotName: 'Fish', productId: 'p-large', name: 'Large fish', count: 1 },
+      { slotName: 'Starch', productId: 'p-brown', name: 'Brown ugali', count: 1 },
+      { slotName: 'Vegetables', productId: 'p-sukuma', name: 'Sukuma', count: 1 },
+    ]);
+    expect(resolveStoredPicks(lunch, stored)).toEqual({ ok: true, picks: raw });
+  });
+  it('still resolves when the package was changed and its option ids are new', () => {
+    const renewed: ShopPackage = { ...lunch, slots: lunch.slots.map((s) => ({ ...s, id: `${s.id}-2`, options: s.options.map((o) => ({ ...o, id: `${o.id}-2` })) })) };
+    expect(resolveStoredPicks(renewed, storedPicks(lunch, raw))).toEqual({ ok: true, picks: [{ slotId: 'fish-2', optionId: 'large-2', count: 1 }, { slotId: 'starch-2', optionId: 'brown-2', count: 1 }, { slotId: 'veg-2', optionId: 'sukuma-2', count: 1 }] });
+  });
+  it('names what the package no longer offers', () => {
+    const without: ShopPackage = { ...lunch, slots: lunch.slots.map((s) => ({ ...s, options: s.options.filter((o) => o.id !== 'brown') })) };
+    expect(resolveStoredPicks(without, storedPicks(lunch, raw))).toEqual({ ok: false, problems: ['Brown ugali is no longer offered in Starch.'] });
   });
 });

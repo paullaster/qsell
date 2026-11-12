@@ -1,14 +1,10 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { Check, Minus, Plus, ShoppingCart, Zap } from 'lucide-react';
 import { checkPackageLine, optionsToShow, type ShopOption, type ShopPackage, type ShopSlot } from '@/server/domains/pricing/domain/package-shop';
 import { packageBuilderAction } from '@/server/domains/pricing/package-shop-actions';
-import { MAX_SERVINGS, packageLine, type PackageCartLine, type PackagePick } from '@/lib/package-cart';
-import { useCart } from '@/components/store/cart/CartProvider';
-import { useStore } from '@/components/store/StoreContext';
-import { useToast } from '@/components/store/ToastProvider';
+import { MAX_SERVINGS, type PackagePick } from '@/lib/package-cart';
 
 type Chosen = Record<string, Record<string, number>>;
 
@@ -34,7 +30,7 @@ const without = (record: Record<string, number>, key: string): Record<string, nu
 const countIn = (chosen: Chosen, slotId: string): number => Object.values(chosen[slotId] ?? {}).reduce((n, c) => n + c, 0);
 
 /** The choices to start from: an edited line's, or each slot's defaults that can be had (otherwise the first available option when the slot needs one). */
-export function startingChoices(pkg: ShopPackage, available: ReadonlySet<string>, line?: PackageCartLine): Chosen {
+export function startingChoices(pkg: ShopPackage, available: ReadonlySet<string>, line?: { picks: readonly PackagePick[] }): Chosen {
   const chosen: Chosen = {};
   if (line !== undefined) {
     for (const pick of line.picks) chosen[pick.slotId] = { ...(chosen[pick.slotId] ?? {}), [pick.optionId]: pick.count };
@@ -52,21 +48,28 @@ export function startingChoices(pkg: ShopPackage, available: ReadonlySet<string>
 interface Props {
   productName: string;
   builder: { package: ShopPackage; available: string[] };
-  /** Editing a line already in the basket: the builder opens with its choices and saves over it. */
-  editing?: PackageCartLine;
-  onDone?: () => void;
+  /** Opening on choices already made (editing a cart line or a quote line). */
+  initial?: { picks: readonly PackagePick[]; servings: number };
+  money: (amount: number) => string;
+  /** Takes the choices; returns the problem in words, or null when they were accepted. `intent` is `buy` for the second button. */
+  onSubmit: (picks: PackagePick[], servings: number, intent: 'add' | 'buy') => Promise<string | null>;
+  submitLabel?: string;
+  /** The second button ("Buy now"); none when left out. */
+  buyLabel?: string;
+  /** Ask the server again what stock allows when the servings change (the shop does; a quote does not look at stock). */
+  watchStock?: boolean;
+  servingsLabel?: string;
 }
 
-/** The step-by-step builder for a configurable package: one group of cards per slot, a live price, and Add to cart. The server checks everything again. */
-export function PackageBuilder({ productName, builder, editing, onDone }: Props) {
+/**
+ * The step-by-step builder for a configurable package: one group of cards per slot, a live price and a button. One component for
+ * the shop, the staff screens and the quote; the screen decides what pressing the button does. The server checks everything again.
+ */
+export function PackageBuilder({ productName, builder, initial, money, onSubmit, submitLabel = 'Add to cart', buyLabel, watchStock = true, servingsLabel = 'Servings' }: Props) {
   const pkg = builder.package;
-  const { money } = useStore();
-  const cart = useCart();
-  const toast = useToast();
-  const router = useRouter();
   const [available, setAvailable] = useState<Set<string>>(() => new Set(builder.available));
-  const [chosen, setChosen] = useState<Chosen>(() => startingChoices(pkg, new Set(builder.available), editing));
-  const [servings, setServings] = useState(editing?.servings ?? 1);
+  const [chosen, setChosen] = useState<Chosen>(() => startingChoices(pkg, new Set(builder.available), initial));
+  const [servings, setServings] = useState(initial?.servings ?? 1);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [announce, setAnnounce] = useState('');
@@ -74,7 +77,7 @@ export function PackageBuilder({ productName, builder, editing, onDone }: Props)
   // What stock allows depends on how many servings: ask again, quietly, a moment after the number changes.
   const asked = useRef(0);
   useEffect(() => {
-    if (servings === 1 && available.size === builder.available.length) return;
+    if (!watchStock || (servings === 1 && available.size === builder.available.length)) return;
     const ask = ++asked.current;
     const timer = window.setTimeout(() => {
       packageBuilderAction(pkg.productId, servings)
@@ -85,7 +88,7 @@ export function PackageBuilder({ productName, builder, editing, onDone }: Props)
     }, 300);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only a change of servings asks again
-  }, [servings, pkg.productId]);
+  }, [servings, pkg.productId, watchStock]);
 
   const picks = picksOf(chosen);
   // The same rules the server runs, over what is available now: options out of stock count as sold out, so the shopper hears why before pressing Add.
@@ -122,20 +125,13 @@ export function PackageBuilder({ productName, builder, editing, onDone }: Props)
     });
   };
 
-  const submit = async (goToCheckout: boolean) => {
+  const submit = async (intent: 'add' | 'buy') => {
     if (!checked.ok) return;
     setBusy(true);
     setProblem(null);
-    const line = packageLine(pkg.productId, picks, servings);
-    const answer = editing === undefined ? await cart.addPackage(line) : await cart.editPackage(editing.id, line);
+    const answer = await onSubmit(picks, servings, intent);
     setBusy(false);
-    if (!answer.ok) {
-      setProblem(answer.problems[0] ?? 'This choice cannot be ordered.');
-      return;
-    }
-    toast({ type: 'success', title: editing === undefined ? 'Added to your cart' : 'Changes saved', message: answer.summary });
-    if (onDone !== undefined) onDone();
-    else if (goToCheckout) router.push('/checkout');
+    if (answer !== null) setProblem(answer);
   };
 
   const reason = checked.ok ? null : (checked.problems[0] ?? 'Choose your options.');
@@ -204,7 +200,7 @@ export function PackageBuilder({ productName, builder, editing, onDone }: Props)
       })}
 
       <div className="flex items-center justify-between gap-3">
-        <span className="text-sm font-medium text-fg-muted">Servings</span>
+        <span className="text-sm font-medium text-fg-muted">{servingsLabel}</span>
         <span className="flex items-center gap-1">
           <button type="button" aria-label="One less serving" disabled={servings <= 1} onClick={() => setServings(servings - 1)} className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-lg border border-line-strong hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"><Minus className="h-4 w-4" aria-hidden="true" /></button>
           <span className="w-10 text-center text-sm font-semibold" aria-label={`${String(servings)} servings`}>{servings}</span>
@@ -225,29 +221,29 @@ export function PackageBuilder({ productName, builder, editing, onDone }: Props)
       <p className="sr-only" role="status">{announce}</p>
       {problem === null ? null : <p role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">{problem}</p>}
 
-      <div className={`grid grid-cols-1 gap-2 ${editing === undefined ? 'min-[420px]:grid-cols-2' : ''}`}>
+      <div className={`grid grid-cols-1 gap-2 ${buyLabel === undefined ? '' : 'min-[420px]:grid-cols-2'}`}>
         <button
           type="button"
           disabled={!checked.ok || busy}
-          onClick={() => void submit(false)}
+          onClick={() => void submit('add')}
           className="flex min-h-12 cursor-pointer items-center justify-center gap-2 rounded-xl border border-line-strong bg-surface-sunken px-4 py-2.5 text-sm font-semibold text-fg-strong transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
         >
           <ShoppingCart className="h-4 w-4 text-indigo-400" aria-hidden="true" />
-          {editing === undefined ? 'Add to cart' : 'Save changes'}
+          {submitLabel}
         </button>
-        {editing === undefined ? (
+        {buyLabel !== undefined ? (
           <button
             type="button"
             disabled={!checked.ok || busy}
-            onClick={() => void submit(true)}
+            onClick={() => void submit('buy')}
             className="flex min-h-12 cursor-pointer items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-600/20 transition-all hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Zap className="h-4 w-4" aria-hidden="true" />
-            Buy now
+            {buyLabel}
           </button>
         ) : null}
       </div>
-      {checked.ok || reason === null ? null : <p className="text-xs text-fg-muted">Add to cart is off: {reason}</p>}
+      {checked.ok || reason === null ? null : <p className="text-xs text-fg-muted">{submitLabel} is off: {reason}</p>}
     </div>
   );
 }

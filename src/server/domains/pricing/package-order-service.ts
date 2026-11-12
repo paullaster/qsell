@@ -3,7 +3,7 @@ import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { orders, packageInstancePicks, packageInstances, productPackages, products } from '@/server/db/drizzle/schema';
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import { canonicalSelection, orderingProblem, packageComponentDefs, servingCost, type CanonicalPick, type LocalMoment, type OrderingRules, type RawPick } from './domain/packages';
-import { checkPackageBasket, type PackageLineInput, type ShopPackage } from './domain/package-shop';
+import { checkPackageBasket, resolveStoredPicks, storedPicks, type PackageLineInput, type ShopPackage, type StoredPick } from './domain/package-shop';
 import type { Kit, KitComponent } from './kit-service';
 import type { PackageShopService } from './package-shop-service';
 import { toDefinition, type PackageView } from './package-service';
@@ -28,6 +28,10 @@ export interface OrderContext {
   now: Date;
   /** A preview (the basket's total, a delivery quote) checks the choices and stock but leaves the audience and ordering rules to the order itself. */
   previewOnly?: boolean;
+  /** A quote promises nothing from the shelves: stock is not looked at (it is, when the quote becomes an order). */
+  skipStock?: boolean;
+  /** Staff documents (a quote, a sales order) may sell a package that is kept off the web shop. */
+  staff?: boolean;
 }
 
 /** One package line ready to be priced, split into parts and recorded. */
@@ -47,6 +51,10 @@ export interface PreparedPackage {
   costPerServing: number;
   /** The chosen parts as a kit of this line, under a made-up id so two lines of one package never meet. */
   kit: Kit;
+  /** "Express lunch: Large fish, Ugali and Sukuma" */
+  summary: string;
+  /** The picks as a quote keeps them (by slot name and part). */
+  stored: StoredPick[];
   picks: { slotName: string; optionId: string; productId: string; name: string; count: number; quantity: number }[];
   forDate: string | null;
 }
@@ -91,6 +99,39 @@ export class PackageOrderService {
     private readonly shop: PackageShopService,
   ) {}
 
+  /**
+   * Like `prepare`, for lines whose choices a quote kept by slot name and part. A part the package no longer offers is named, so the
+   * person can choose a replacement.
+   */
+  async prepareStored(ctx: OrderContext, lines: readonly { index: number; productId: string; servings: number; stored: readonly StoredPick[] }[]): Promise<Prepared> {
+    if (lines.length === 0) return { ok: true, lines: [] };
+    const { packages } = await this.shop.load(ctx.companyId, lines.map((l) => l.productId), true);
+    const resolved: (PackageOrderLine & { index: number })[] = [];
+    for (const line of lines) {
+      const pkg = packages.get(line.productId);
+      if (pkg === undefined) return { ok: false, error: 'A package in this document is not available any more.', code: 'not_for_sale' };
+      const found = resolveStoredPicks(pkg, line.stored);
+      if (!found.ok) return { ok: false, error: `${pkg.name}: ${found.problems.join(' ')} Choose a replacement.`, code: 'package_choice' };
+      resolved.push({ index: line.index, productId: line.productId, servings: line.servings, picks: found.picks });
+    }
+    return await this.prepare({ ...ctx, staff: true }, resolved);
+  }
+
+  /** Today's option ids for what quotes kept, or what is wrong in words (a part the package no longer offers). */
+  async resolve(companyId: string, lines: readonly { productId: string; stored: readonly StoredPick[] }[]): Promise<{ ok: true; picks: RawPick[][] } | { ok: false; error: string }> {
+    if (lines.length === 0) return { ok: true, picks: [] };
+    const { packages } = await this.shop.load(companyId, lines.map((l) => l.productId), true);
+    const out: RawPick[][] = [];
+    for (const line of lines) {
+      const pkg = packages.get(line.productId);
+      if (pkg === undefined) return { ok: false, error: 'A package in this quote is not available any more.' };
+      const found = resolveStoredPicks(pkg, line.stored);
+      if (!found.ok) return { ok: false, error: `${pkg.name}: ${found.problems.join(' ')} Change the quote and choose a replacement.` };
+      out.push(found.picks);
+    }
+    return { ok: true, picks: out };
+  }
+
   /** How many servings of this package are promised for a date by orders that still stand. */
   private async promised(db: DrizzleDb | Tx, companyId: string, productId: string, forDate: string): Promise<number> {
     const [row] = await db
@@ -103,9 +144,10 @@ export class PackageOrderService {
 
   async prepare(ctx: OrderContext, lines: readonly (PackageOrderLine & { index: number })[]): Promise<Prepared> {
     if (lines.length === 0) return { ok: true, lines: [] };
-    const { packages, stock, views } = await this.shop.load(ctx.companyId, lines.map((l) => l.productId));
+    const { packages, stock, views } = await this.shop.load(ctx.companyId, lines.map((l) => l.productId), ctx.staff === true);
     const inputs: PackageLineInput[] = lines.map(({ productId, picks, servings }) => ({ productId, picks, servings }));
-    const checks = checkPackageBasket(packages, inputs, stock);
+    const everyPart = [...packages.values()].flatMap((p) => p.slots.flatMap((sl) => sl.options.map((o) => o.productId)));
+    const checks = checkPackageBasket(packages, inputs, ctx.skipStock === true ? { free: new Map(), unlimited: new Set(everyPart) } : stock);
     if (ctx.forDate !== null && !/^\d{4}-\d{2}-\d{2}$/.test(ctx.forDate)) return { ok: false, error: 'The date for this order is not a valid date.', code: 'package_rule' };
     const now = localMoment(ctx.now);
     const fulfilment: LocalMoment | null = ctx.forDate === null ? null : { date: ctx.forDate, minute: 0 };
@@ -155,6 +197,8 @@ export class PackageOrderService {
         addedPerServing: pkg.pricingMode === 'summed' ? null : Math.round((extra + Number.EPSILON) * 100) / 100,
         summedPerServing: pkg.pricingMode === 'summed' ? check.servingPrice : null,
         costPerServing: servingCost(picks),
+        summary: check.summary,
+        stored: storedPicks(pkg, line.picks),
         kit: { id: `package:${String(line.index)}`, productId: `package:${String(line.index)}`, allocation: view.allocation, components },
         picks: picks.map((p) => ({ slotName: pkg.slots.find((s) => s.id === p.slotId)?.name ?? '', optionId: p.optionId, productId: p.option.productId, name: pkg.slots.flatMap((s) => s.options).find((o) => o.id === p.optionId)?.name ?? '', count: p.count, quantity: p.option.quantity })),
         forDate: ctx.forDate,

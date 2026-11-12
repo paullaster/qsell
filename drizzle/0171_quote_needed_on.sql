@@ -1,0 +1,1 @@
+ALTER TABLE "sales_quotes" ADD COLUMN "needed_on" text;

@@ -27,6 +27,7 @@ export function useQuoteTotals(input: QuoteInput): {
       discountPercent: line.discountPercent,
       ...(line.unitPrice === undefined ? {} : { unitPrice: line.unitPrice }),
       sectionId: line.sectionId ?? null,
+      ...(line.package === undefined ? {} : { package: { picks: line.package.picks } }),
     })),
     discountPercent: input.discountPercent,
     shippingFee: Number.isFinite(input.shippingFee) ? input.shippingFee : 0,

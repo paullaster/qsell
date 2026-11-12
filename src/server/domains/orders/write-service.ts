@@ -8,7 +8,7 @@ import { basketQuantityProblems } from '@/lib/quantity-limits';
 import { priceItemFor } from '@/server/domains/pricing/service';
 import { randomUUID } from 'node:crypto';
 import type { Order, OrderItem, PaymentProvider } from '@/types/index';
-import { computeCheckoutTotals } from '@/lib/checkoutPricing';
+import { computeCheckoutTotals, exactTotals } from '@/lib/checkoutPricing';
 import { getContainer } from '@/server/di/container';
 import { CatalogService } from '@/server/domains/catalog/service';
 import { isSalesChannel } from '@/lib/stock';
@@ -240,6 +240,8 @@ export const OrderWriteService = {
       }
     }
     const quotedItems = new Map((params.quotedItems ?? []).map((item) => [item.productId, item]));
+    // A package line is matched to its quoted line by position (two lines of one package have different choices and prices).
+    const quotedFor = (item: { productId: string; package?: unknown }, index: number) => (item.package === undefined ? quotedItems.get(item.productId) : params.quotedItems?.[index]);
 
     // A quantity is counted in the product's unit: 2 pieces, 2.5 kg, never 2.5 pieces.
     for (const item of params.items) {
@@ -281,7 +283,7 @@ export const OrderWriteService = {
       const toPrice: number[] = [];
       params.items.forEach((item, i) => {
         const prod = catalogProducts.get(item.productId);
-        if (prod !== undefined && prod.isSellable && !quotedItems.has(item.productId))
+        if (prod !== undefined && prod.isSellable && quotedFor(item, i) === undefined)
           toPrice.push(i);
       });
       const priced = await pricing.priceLines(
@@ -304,7 +306,7 @@ export const OrderWriteService = {
     // Package lines: checked against the package as it is now (choices, stock, who may order, notice, closing time, days), then priced
     // as the base plus what the choices add. The browser's word is only ids and counts.
     const preparedPackages = new Map<number, PreparedPackage>();
-    const packageContext = { companyId: saleCompanyId, customerGroupId: await getContainer().pricing.groupFor(saleCompanyId, saleCustomerId), signedIn: saleCustomerId !== null, forDate: params.delivery?.slot?.day ?? params.fulfilmentDate ?? null, now: new Date() };
+    const packageContext = { companyId: saleCompanyId, customerGroupId: await getContainer().pricing.groupFor(saleCompanyId, saleCustomerId), signedIn: saleCustomerId !== null, forDate: params.delivery?.slot?.day ?? params.fulfilmentDate ?? null, now: new Date(), staff: (params.salesModule ?? 'ecommerce') !== 'ecommerce' };
     {
       const wanted = params.items.flatMap((item, index) => (item.package === undefined ? [] : [{ index, productId: item.productId, picks: item.package.picks, servings: item.quantity }]));
       if (wanted.length > 0) {
@@ -345,7 +347,7 @@ export const OrderWriteService = {
       if (prod.soldOnlyInPackages === true) {
         return { success: false, error: packageOnlyRefusal(prod.name), code: 'not_for_sale' };
       }
-      const quoted = quotedItems.get(item.productId);
+      const quoted = quotedFor(item, index);
       if (!prod.isSellable && !quoted) {
         return { success: false, error: `${prod.name} is not sellable and cannot be ordered.`, code: 'not_for_sale' };
       }
@@ -620,7 +622,8 @@ export const OrderWriteService = {
       // A quote's totals stand, but its kit lines are split by the kit as it is now. If the kit has changed since, the parts no
       // longer add up to what was quoted: refuse, so the quote is made again, rather than book parts that disagree with the total.
       if (soldKit && params.quotedTotals !== undefined) {
-        const again = computeCheckoutTotals(pricedLines);
+        // To the cent, as the quote works it out (the order's own totals are rounded to whole shillings, which would differ by up to 50 cents).
+        const again = exactTotals(pricedLines);
         if (Math.abs(again.subtotal - params.quotedTotals.subtotal) > 0.05 || Math.abs(again.tax - params.quotedTotals.tax) > 0.05) {
           return { success: false, error: 'A kit in this quote has changed since it was quoted, so its parts no longer add up to the quoted total. Please make the quote again.', code: 'kit_error' };
         }

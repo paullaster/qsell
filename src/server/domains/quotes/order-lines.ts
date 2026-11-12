@@ -9,6 +9,8 @@ export interface QuoteLineForOrder {
   enteredQuantity?: number | null;
   qtyPerUnit?: string | null;
   enteredUnitPrice?: string | null;
+  /** Set on a package line: it is never folded into another line, because each has its own choices. */
+  priceTrace?: { quotedAsPackage?: unknown } | null;
 }
 
 const money = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
@@ -21,7 +23,8 @@ const money = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 export function mergeLinesForOrder<T extends QuoteLineForOrder>(lines: T[]): T[] {
   const out: T[] = [];
   for (const line of lines) {
-    const same = line.productId ? out.find((o) => o.productId === line.productId) : undefined;
+    const isPackage = line.priceTrace?.quotedAsPackage !== undefined;
+    const same = line.productId !== null && line.productId !== '' && !isPackage ? out.find((o) => o.productId === line.productId && o.priceTrace?.quotedAsPackage === undefined) : undefined;
     if (!same) {
       out.push({ ...line });
       continue;

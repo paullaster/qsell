@@ -8,7 +8,7 @@ import type { ShopBuilder } from '@/server/domains/pricing/package-shop-service'
 import { MAX_SERVINGS, type PackageCartLine } from '@/lib/package-cart';
 import { useCart } from '@/components/store/cart/CartProvider';
 import { useStore } from '@/components/store/StoreContext';
-import { PackageBuilder } from '@/components/store/product/PackageBuilder';
+import { ShopPackageBuilder } from '@/components/store/product/ShopPackageBuilder';
 import { productHref } from '@/lib/product-link';
 
 /** The sum of the lines the shop has accepted (a line it refuses has no price to add). */
@@ -66,7 +66,7 @@ export function PackageCartLines({ onNavigate }: { onNavigate?: () => void }) {
             </div>
             {open !== null ? (
               <div className="border-t border-line pt-3">
-                <PackageBuilder productName={open.builder.package.name} builder={open.builder} editing={line} onDone={() => setEditing(null)} />
+                <ShopPackageBuilder productName={open.builder.package.name} builder={open.builder} editing={line} onDone={() => setEditing(null)} />
                 <button type="button" onClick={() => setEditing(null)} className="mt-2 min-h-10 cursor-pointer text-sm font-medium text-fg-muted hover:underline">Cancel</button>
               </div>
             ) : (

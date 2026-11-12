@@ -1,5 +1,5 @@
 import { packageOnlyRefusal } from '@/lib/package-only';
-import { required } from '@/lib/values';
+import { has, required } from '@/lib/values';
 import { basketQuantityProblems } from '@/lib/quantity-limits';
 import { effectiveStandardPrice } from '@/lib/standard-price';
 import { priceItemFor } from '@/server/domains/pricing/service';
@@ -37,6 +37,8 @@ import type { GuardTrace, PriceTrace } from '@/server/domains/pricing/domain/typ
 import type { GuardLine } from '@/server/domains/pricing/guard-service';
 import type { PricedItem, RuleApplication } from '@/server/domains/pricing/discount-service';
 import { kitCost, kitTax } from '@/server/domains/pricing/kit-service';
+import type { StoredPick } from '@/server/domains/pricing/domain/package-shop';
+import type { PreparedPackage } from '@/server/domains/pricing/package-order-service';
 import { PAYMENT_METHOD_LABELS } from '@/lib/payment-method-labels';
 import { encodeCursor, escapeLike } from '@/server/domains/lookups/request';
 import { CLOSED_QUOTE_STATUSES, isQuoteExpired } from './expiry';
@@ -115,6 +117,8 @@ export interface QuoteInput {
   termsAndConditions?: string | null;
   validUntil?: string | null;
   customerReference?: string | null;
+  /** The date it is needed (`YYYY-MM-DD`); packages with ordering rules are checked against it when the quote becomes an order. */
+  neededOn?: string | null;
   publicNotes?: string | null;
   internalNotes?: string | null;
   discountPercent: number;
@@ -158,6 +162,8 @@ export interface QuoteInput {
     discountPercent: number;
     /** A free gift the quote added. Gifts are worked out again on every save, so these are dropped. */
     isGift?: boolean;
+    /** A configurable package: the choices made (by slot name and part); `quantity` is the servings. The price is always worked out from the package. */
+    package?: { picks: StoredPick[]; /** What the line read like when it was chosen (for the screen only; the server works its own out). */ summary?: string };
   }[];
 }
 
@@ -870,6 +876,7 @@ export class SalesQuoteService {
       termsAndConditions: previous.termsAndConditions,
       validUntil: previous.validUntil?.toISOString().slice(0, 10),
       customerReference: previous.customerReference,
+      neededOn: previous.neededOn,
       publicNotes: previous.publicNotes,
       internalNotes: previous.internalNotes,
       discountPercent: num(previous.quoteDiscountPercent),
@@ -961,6 +968,21 @@ export class SalesQuoteService {
       companyId,
       input.lines.map((line) => line.productId),
     );
+    // Package lines: the choices are checked against the package as it is now (stock is not looked at: a quote promises nothing from
+    // the shelves), and the price is always worked out from the package, never typed.
+    const preparedPackages = new Map<number, PreparedPackage>();
+    {
+      const wanted = input.lines.flatMap((line, index) => (line.package === undefined ? [] : [{ index, productId: line.productId, servings: line.quantity, stored: line.package.picks }]));
+      if (wanted.length > 0) {
+        const { packageOrders, pricing } = getContainer();
+        if (wanted.some((w) => !Number.isInteger(w.servings) || w.servings < 1)) throw new Error('A package is quoted in whole servings.');
+        const customerId = has(input.customerId) ? input.customerId : null;
+        const prepared = await packageOrders.prepareStored({ companyId, customerGroupId: await pricing.groupFor(companyId, customerId), signedIn: customerId !== null, forDate: null, now: new Date(), previewOnly: true, skipStock: true }, wanted);
+        if (!prepared.ok) throw new Error(prepared.error);
+        for (const line of prepared.lines) preparedPackages.set(line.index, line);
+        input.lines = input.lines.map((line, i) => (preparedPackages.has(i) ? { ...line, unitPrice: undefined, priceMode: 'catalog' as const, discountPercent: line.discountPercent } : line));
+      }
+    }
     const sections = input.sections ?? [];
     const sectionIds = new Set(sections.map((section) => section.id));
     if (sections.some((section) => !section.title.trim())) {
@@ -1039,6 +1061,13 @@ export class SalesQuoteService {
       toPrice.map(itemFor),
     );
     const engine = new Map(toPrice.map((i, n) => [i, priced[n]!]));
+    // A package serving is the base price plus what the choices add (or the choices' own prices added up); discounts then apply to that.
+    for (const [index, line] of preparedPackages) {
+      const base = engine.get(index);
+      if (base?.unitPrice == null) continue;
+      const unit = money(line.summedPerServing ?? base.unitPrice + (line.addedPerServing ?? 0));
+      engine.set(index, { ...base, unitPrice: unit, lineTotal: money(unit * (input.lines[index]?.quantity ?? 0)) });
+    }
     // What the lists say a hand-typed price replaces, so a reduction can be measured against it.
     const manualAt = input.lines.flatMap((line, i) =>
       modes[i] === 'manual' && products.get(line.productId)?.isSellable !== false ? [i] : [],
@@ -1187,7 +1216,7 @@ export class SalesQuoteService {
       const rate = Math.max(0, product.taxRate ?? 0);
       const inclusive = product.isTaxInclusive !== false;
       // A kit is taxed component by component, each at its own rate, and costs what it holds.
-      const kit = kitDefs.get(product.id);
+      const kit = preparedPackages.get(index)?.kit ?? kitDefs.get(product.id);
       const split = kit ? kitTax(discountedGross, line.quantity, kit, inclusive) : null;
       const net = split
         ? split.net
@@ -1217,7 +1246,7 @@ export class SalesQuoteService {
           Boolean(sections.find((section) => section.id === line.sectionId)?.sectionTemplateId),
         lineNumber: (index + 1) * 10000,
         sku: product.sku,
-        description: product.name,
+        description: preparedPackages.get(index)?.summary ?? product.name,
         quantity: line.quantity.toFixed(3),
         unitPrice: unitPrice.toFixed(4),
         unitCost: unitCost.toFixed(4),
@@ -1323,12 +1352,14 @@ export class SalesQuoteService {
     const verdict = await getContainer().priceGuard.assess(companyId, userId, guardLines);
     if (verdict.blocked.length > 0) throw new Error(verdict.blocked[0]);
     lines.forEach((l, i) => {
-      const { quotedAsKit: _stale, ...trace } = l.priceTrace ?? handTypedTrace(l, input.currency);
+      const { quotedAsKit: _stale, quotedAsPackage: _stalePackage, ...trace } = l.priceTrace ?? handTypedTrace(l, input.currency);
       const kit = l.productId === null ? undefined : kitDefs.get(l.productId);
+      const chosen = preparedPackages.get(i);
       l.priceTrace = {
         ...trace,
         guard: verdict.lines[i]!,
         ...(kit === undefined ? {} : { quotedAsKit: { kitId: kit.id, name: l.description } }),
+        ...(chosen === undefined ? {} : { quotedAsPackage: { productId: chosen.productId, name: chosen.name, version: chosen.version, key: chosen.key, servings: chosen.servings, picks: chosen.stored } }),
       };
     });
     // What the discounts gave, kept on the quote so converting it records their use.
@@ -1418,6 +1449,7 @@ export class SalesQuoteService {
       termsAndConditions: input.termsAndConditions?.trim() || null,
       validUntil: input.validUntil ? new Date(`${input.validUntil}T23:59:59`) : null,
       customerReference: input.customerReference?.trim() || null,
+      neededOn: /^\d{4}-\d{2}-\d{2}$/.test(input.neededOn ?? '') ? (input.neededOn ?? null) : null,
       publicNotes: input.publicNotes?.trim() || null,
       internalNotes: input.internalNotes?.trim() || null,
       updatedAt: now,
@@ -1763,10 +1795,20 @@ export class SalesQuoteService {
         throw new Error(`${gone.description} was a kit when this quote was made and is not one now. Please make the quote again.`);
     }
     const orderLines = mergeLinesForOrder(quote.lines);
-    const items = orderLines.map((line) => ({
-      productId: line.productId ?? '',
-      quantity: num(line.quantity),
-    }));
+    // Package lines: the quote's choices and price stand, found again by slot name and part. A part the package no longer offers stops
+    // the conversion and is named, so the quote can be changed.
+    const packageLines = orderLines.flatMap((line, index) => (line.priceTrace?.quotedAsPackage === undefined || line.productId === null ? [] : [{ index, productId: line.productId, stored: line.priceTrace.quotedAsPackage.picks }]));
+    const resolved = await getContainer().packageOrders.resolve((await getContainer().companySettings.ensureSeeded()).id, packageLines);
+    if (!resolved.ok) throw new Error(resolved.error);
+    const items = orderLines.map((line, index) => {
+      const at = packageLines.findIndex((p) => p.index === index);
+      const picks = at < 0 ? undefined : resolved.picks[at];
+      return {
+        productId: line.productId ?? '',
+        quantity: num(line.quantity),
+        ...(picks === undefined ? {} : { package: { picks } }),
+      };
+    });
     if (items.some((line) => !line.productId))
       throw new Error('A quoted product was removed from the catalog and cannot be converted.');
     const [claimed] = await drizzleDb
@@ -1805,6 +1847,7 @@ export class SalesQuoteService {
           country: address.country,
         },
         items,
+        ...(quote.neededOn === null ? {} : { fulfilmentDate: quote.neededOn }),
         quotedItems: orderLines.map((line) => ({
           productId: line.productId!,
           quantity: num(line.quantity),

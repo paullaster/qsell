@@ -135,6 +135,9 @@ graph LR
 | **Product Line: Qty** | Number of units quoted. | Decimal / Integer | **Required** | Must be $> 0$. Validated against unit of measure decimals. |
 | **Product Line: Price** | Unit selling price. | Currency (KES) | **Required** | Defaults to price list. Cannot violate price floor. |
 | **Product Line: Discount** | Line-item discount percentage. | Percentage (0-100%) | Optional | Capped by user's role override limit. |
+| **Needed On** | The date the goods or the meal are needed. Packages with notice, closing-time, day-of-week or daily-limit rules are checked against it when the quote becomes an order. | Date (YYYY-MM-DD) | Optional (needed for such packages) | Without it, a quote of a package with date rules is refused at conversion with "choose the date you need it". |
+| **Add a package** (button) | Sells a configurable package (such as an express lunch) on the quote, choosing its options with the same builder the shop uses. | Dialog: package picker, then the builder | Optional | Only active packages are offered. Every option can be chosen whatever stock says (a quote promises nothing from the shelves). The line's price is set by the package (base price plus what the choices add, or the choices added up) and cannot be typed; a discount percentage can still be given. |
+| **Package line: Change choices** | Reopens the builder on the choices kept on the line. | Button on the line | n/a | A part the package no longer offers is named and left empty so a replacement can be chosen. |
 | **Notes / Terms** | Commercial stipulations on quote. | Text (Max 500 chars) | Optional | Printed on proforma footer (e.g., *"Lead time 7 days"*). |
 
 ### Customer Card Fields (`/admin/customers/new`)
@@ -201,6 +204,11 @@ graph LR
   - If an **Approval Workflow** for credit override is configured, the order status halts in `Pending Credit Approval` and alerts the Credit Manager.
   - If no approval workflow exists, order creation is **blocked** with the error: *"Customer credit limit exceeded by KES [Amount]. Payment required before placement."*
 
+### Packages on a Quote
+- A package line reads as its choices ("Express lunch: Large fish, Ugali and Sukuma") in the editor, the PDF and the email. The server works out the price, the tax (each chosen part at its own rate, like a kit) and the cost (what the chosen parts cost); the margin and the price floor use those figures.
+- The quote keeps the choices by the slot's name and the part, not by internal ids. A package changed after the quote was made does not stop the quote being understood; if a chosen part is no longer offered, **converting the quote stops and names it** ("Large fish is no longer offered in Fish"), the quote can be reopened, the part replaced and saved again. Stock is not looked at when quoting; it is looked at, with the package's ordering rules (servings, notice, closing time, days, daily limit, who may order) and the date in **Needed On**, when the quote becomes an order. The quote's price stands even if the package's base price has moved.
+- Two lines of one package with different choices stay two lines, also on the order; the exact selection of each is saved with the order for the preparation sheet.
+
 ### Stage Immutability & Reversals
 - Once an order stage timestamp is recorded in the append-only event log, it can **never** be edited or deleted.
 - If an order must be cancelled after dispatch:
@@ -218,4 +226,5 @@ graph LR
 | 2 | Issue a Sales Quote with a 10% line discount. | Proforma calculates discount and VAT accurately; status shows Draft/Sent. | [ ] |
 | 3 | Convert Quote to Order. | Order created with identical lines; Quote status transitions to Converted. | [ ] |
 | 4 | Attempt to place an order exceeding Credit Customer's limit. | System blocks or routes to Credit Approval queue as configured. | [ ] |
+| 4a | If the company sells packages: quote one with **Add a package**, change its choices, convert the quote. | The line reads as its choices; the order's parts add up to the quote's total; a package with a daily limit refuses a second quote for the same date once full. | [ ] |
 | 5 | Verify Order Timeline Events. | Placement, payment, and dispatch timestamps render accurately in order modal. | [ ] |

@@ -1,4 +1,4 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { customerGroups, products } from '@/server/db/drizzle/schema';
 import { PACKAGE_AUDIENCE_CHOICES, PACKAGE_PRICING_CHOICES, PACKAGE_SHORT_STOCK_CHOICES, PACKAGE_SPLIT_CHOICES, type PackageChoice } from '@/lib/package-choices';
 import { acceptFilters, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
@@ -47,6 +47,22 @@ const packageOptionProducts = tableSource({
   toOption: (row) => ({ id: String(row.id), label: String(row.label), description: String(row.sku), badge: row.onlyInPackages === true ? 'Packages only' : null }),
 });
 
+/** The packages a quote can sell (staff with quote access, not only those who set packages up). */
+const quotePackages = tableSource({
+  key: 'quote-packages',
+  permission: 'quotes:read',
+  table: products,
+  id: products.id,
+  label: products.name,
+  searchColumns: [products.name, products.sku],
+  select: { sku: products.sku },
+  scope: ({ filters }) => {
+    acceptFilters(filters, {});
+    return [and(eq(products.isActive, true), eq(products.isSellable, true), isNull(products.deletedAt), sql`${products.id} IN (SELECT product_id FROM product_packages WHERE is_active)`) ?? eq(products.isActive, true)];
+  },
+  toOption: (row) => ({ id: String(row.id), label: String(row.label), description: String(row.sku), badge: null }),
+});
+
 /** The customer groups a package can be limited to. */
 const packageCustomerGroups = tableSource({
   key: 'package-customer-groups',
@@ -69,6 +85,7 @@ export const PRICING_LOOKUP_SOURCES: LookupSource[] = [
   fixed('package-split-methods', PACKAGE_SPLIT_CHOICES),
   fixed('package-audiences', PACKAGE_AUDIENCE_CHOICES),
   packageCustomerGroups,
+  quotePackages,
   packageProducts,
   packageOptionProducts,
 ];

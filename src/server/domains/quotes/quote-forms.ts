@@ -1,3 +1,4 @@
+import type { StoredPick } from '@/server/domains/pricing/domain/package-shop';
 import type { QuoteInput, SalesQuote } from './service';
 import type { TotalsLine } from './totals';
 
@@ -19,6 +20,7 @@ export function blankQuoteForm(now: Date): QuoteInput {
     sections: [],
     validUntil: new Date(now.getTime() + 30 * 86_400_000).toISOString().slice(0, 10),
     customerReference: '',
+    neededOn: '',
     publicNotes: '',
     internalNotes: '',
     discountPercent: 0,
@@ -61,6 +63,7 @@ export function quoteFormOf(quote: SalesQuote, newId: () => string): QuoteInput 
     })),
     validUntil: quote.validUntil === null ? null : quote.validUntil.toISOString().slice(0, 10),
     customerReference: quote.customerReference,
+    neededOn: quote.neededOn,
     publicNotes: quote.publicNotes,
     internalNotes: quote.internalNotes,
     discountPercent: Number(quote.quoteDiscountPercent),
@@ -76,10 +79,12 @@ export function quoteFormOf(quote: SalesQuote, newId: () => string): QuoteInput 
         unitPrice: Number(line.enteredUnitPrice ?? line.unitPrice),
         unitId: line.enteredQuantity === null ? null : line.unitId,
         unitCode: line.enteredQuantity === null ? null : line.unitCode,
-        priceMode: 'kept' as const,
+        // A package is always priced from the package; the choices come back as they were kept.
+        priceMode: line.priceTrace?.quotedAsPackage === undefined ? ('kept' as const) : ('catalog' as const),
         discountPercent: Number(line.discountPercent),
         fromTemplate: line.fromTemplate,
         fromSectionTemplate: line.fromSectionTemplate,
+        ...(line.priceTrace?.quotedAsPackage === undefined ? {} : { package: { picks: line.priceTrace.quotedAsPackage.picks, summary: line.description }, quantity: Number(line.quantity) }),
       })),
   };
 }
@@ -94,6 +99,20 @@ export interface TotalsRequest {
 
 const finite = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
+
+/** The choices of a package line as the browser sends them: names, a part and a count, bounded. Anything else is dropped. */
+function readPackage(raw: unknown): { picks: StoredPick[] } | undefined {
+  if (typeof raw !== 'object' || raw === null || !Array.isArray((raw as { picks?: unknown }).picks)) return undefined;
+  const picks: StoredPick[] = [];
+  for (const entry of (raw as { picks: unknown[] }).picks.slice(0, 1000)) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const pick = entry as Record<string, unknown>;
+    if (typeof pick.slotName === 'string' && pick.slotName.length <= 200 && typeof pick.productId === 'string' && pick.productId.length <= 100 && typeof pick.name === 'string' && pick.name.length <= 200 && typeof pick.count === 'number' && Number.isInteger(pick.count) && pick.count > 0 && pick.count <= 1000) {
+      picks.push({ slotName: pick.slotName, productId: pick.productId, name: pick.name, count: pick.count });
+    }
+  }
+  return { picks };
+}
 
 /** Checks what the browser sends to have a quote's totals worked out. */
 export function parseTotalsRequest(raw: unknown): TotalsRequest {
@@ -141,6 +160,7 @@ export function parseTotalsRequest(raw: unknown): TotalsRequest {
         productId: line.productId,
         quantity: line.quantity,
         discountPercent: line.discountPercent,
+        ...(readPackage(line.package) === undefined ? {} : { package: readPackage(line.package) }),
         ...(typeof line.unitPrice === 'number' ? { unitPrice: line.unitPrice } : {}),
         ...(typeof line.sectionId === 'string' ? { sectionId: line.sectionId } : {}),
         ...(typeof line.unitId === 'string' ? { unitId: line.unitId } : {}),
