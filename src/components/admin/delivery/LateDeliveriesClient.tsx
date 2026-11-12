@@ -2,9 +2,10 @@
 
 import { use, useId, useState } from 'react';
 import Link from 'next/link';
-import { acknowledgeLateAction, lateDeliveriesAction } from '@/server/domains/delivery/slot-actions';
+import { acknowledgeLateAction, lateAlertsStateAction, lateDeliveriesAction, turnOffLateAlertsAction, turnOnLateAlertsAction } from '@/server/domains/delivery/slot-actions';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
 import { lateWords, windowWords } from '@/lib/delivery-sla';
+import { AlertsToggle } from '@/components/push/AlertsToggle';
 
 type Loaded = Awaited<ReturnType<typeof lateDeliveriesAction>>;
 type Data = Extract<Loaded, { ok: true }>['data'];
@@ -43,6 +44,15 @@ function Screen({ initial }: { initial: Data }) {
         }
       />
       <Message notice={notice} />
+      <AlertsToggle
+        title="Alerts on this device"
+        help="Get an alert on this phone or computer when a delivery on your lateness list is at risk or late, even with this page closed. It names the delivery and the time promised, nothing about the customer. The emails still go."
+        workerUrl="/alerts-sw.js"
+        scope="/admin"
+        load={lateAlertsStateAction}
+        turnOn={turnOnLateAlertsAction}
+        turnOff={turnOffLateAlertsAction}
+      />
       <p role="status" className="text-sm text-fg-muted">
         {data.late.length === 0 ? 'Nothing is late or at risk.' : `${String(lateCount)} late, ${String(data.late.length - lateCount)} at risk.`}
       </p>

@@ -4,6 +4,7 @@ import { branches, deliveries, deliverySlaAcks, deliverySlaEvents, deliverySlaNo
 import { DEFAULT_AT_RISK_MINUTES, DEFAULT_ESCALATE_MINUTES, LEVEL_WORDS, SLA_WORDS, audienceFor, checkSlaSettings, readAddressList, levelsReached, slaState, type EscalationLevel, type SlaState } from '@/lib/delivery-sla';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { DocActor, DocRefusal, DocResult } from './documents';
+import type { DeliveryPush } from './push';
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
@@ -62,6 +63,7 @@ export class DeliverySla {
     private readonly db: DrizzleDb,
     private readonly decisions: DecisionLog,
     private readonly clock: () => Date = () => new Date(),
+    private readonly push: DeliveryPush | null = null,
   ) {}
 
   async settings(companyId: string): Promise<SlaSettingsView> {
@@ -114,6 +116,7 @@ export class DeliverySla {
           .returning({ id: deliverySlaEvents.id, level: deliverySlaEvents.level });
         const notices = events.flatMap((e) => (audienceFor(e.level) === 'supervisor' ? r.notifySupervisor : r.notifyDispatch).map((recipient) => ({ companyId: r.companyId, eventId: e.id, recipient })));
         if (notices.length > 0) await tx.insert(deliverySlaNotices).values(notices).onConflictDoNothing();
+        await this.push?.queue(tx, { companyId: r.companyId, deliveryId: r.id, events, staffEmails: (level) => (audienceFor(level) === 'supervisor' ? r.notifySupervisor : r.notifyDispatch) });
         for (const e of events) await this.decisions.record({ companyId: r.companyId, subject: { type: 'delivery', id: r.id }, action: `delivery.sla_${e.level}`, actor: { type: 'system', id: 'delivery-sla-scan' }, inputs: { windowEnd: end.toISOString(), minutesLate } }, tx);
         return events;
       });

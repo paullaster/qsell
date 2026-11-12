@@ -11371,3 +11371,63 @@ export const newsletterSubscribers = pgTable(
     ),
   ],
 );
+
+/**
+ * A browser a person has agreed to be sent alerts on (web push). One row per browser (the push service's address is unique); the keys
+ * are what that browser gave to receive messages, not secrets of ours. A browser that has stopped listening is removed when the push
+ * service says so.
+ */
+export const pushSubscriptions = pgTable(
+  'push_subscriptions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    endpoint: text('endpoint').notNull(),
+    p256dh: text('p256dh').notNull(),
+    auth: text('auth').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastSentAt: timestamp('last_sent_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('push_subscriptions_endpoint_uidx').on(t.endpoint),
+    index('push_subscriptions_user_idx').on(t.companyId, t.userId),
+    check('push_subscriptions_endpoint_chk', sql`char_length(${t.endpoint}) BETWEEN 10 AND 2048 AND ${t.endpoint} LIKE 'https://%'`),
+  ],
+);
+
+/** The alert a delivery's lateness causes for one subscribed browser, queued in the step that raises the lateness and sent with retries, like the mails. */
+export const deliverySlaPushes = pgTable(
+  'delivery_sla_pushes',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    eventId: uuid('event_id')
+      .notNull()
+      .references(() => deliverySlaEvents.id, { onDelete: 'restrict' }),
+    subscriptionId: uuid('subscription_id')
+      .notNull()
+      .references(() => pushSubscriptions.id, { onDelete: 'cascade' }),
+    /** Who it is for, which decides where the alert opens: the staff Late deliveries screen, or the rider's own app. */
+    audience: text('audience').$type<'staff' | 'rider'>().notNull(),
+    status: text('status').$type<'queued' | 'sent' | 'failed'>().notNull().default('queued'),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+    nextTryAt: timestamp('next_try_at', { withTimezone: true }).notNull().defaultNow(),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_sla_pushes_once_uidx').on(t.eventId, t.subscriptionId),
+    index('delivery_sla_pushes_due_idx').on(t.status, t.nextTryAt),
+    check('delivery_sla_pushes_audience_chk', sql`${t.audience} IN ('staff','rider')`),
+    check('delivery_sla_pushes_status_chk', sql`${t.status} IN ('queued','sent','failed')`),
+    check('delivery_sla_pushes_attempts_chk', sql`${t.attempts} >= 0`),
+  ],
+);

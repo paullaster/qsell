@@ -411,6 +411,12 @@ export const deliverySlaScan = async (_payload: unknown, helpers: JobHelpers) =>
     return 0;
   });
   if (mailed > 0) helpers.logger.info(`Delivery lateness mails sent: ${String(mailed)}`);
+  // The alerts on phones go the same way: a push service that is down never stops the scan or the mails.
+  const alerted = await c.deliveryPush.flush(50).catch((error: unknown) => {
+    helpers.logger.error(`Delivery lateness alerts: ${String(error)}`);
+    return 0;
+  });
+  if (alerted > 0) helpers.logger.info(`Delivery lateness alerts sent: ${String(alerted)}`);
 };
 
 /** Worker cron task: parcels are booked with their couriers, asked about on the road and cancelled when their delivery is; a courier that is down never stops the rest. */

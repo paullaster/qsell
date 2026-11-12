@@ -133,6 +133,10 @@ import { DeliverySla } from '@/server/domains/delivery/sla';
 import { DeliveryReports } from '@/server/domains/delivery/reports';
 import { CourierInvoices } from '@/server/domains/delivery/courier-invoices';
 import { DeliverySlaNotices } from '@/server/domains/delivery/sla-notices';
+import { DeliveryPush } from '@/server/domains/delivery/push';
+import type { PushPort } from '@/server/ports/push';
+import { NoPushAdapter, WebPushAdapter } from '@/server/adapters/push/web-push.adapter';
+import { pushRuntimeConfig } from '@/server/adapters/push/config';
 import { RiderPins } from '@/server/domains/delivery/rider-pins';
 import { RiderPay } from '@/server/domains/delivery/rider-pay';
 import { DeliveryPerformanceReports } from '@/server/domains/delivery/performance';
@@ -322,6 +326,7 @@ export interface AppContainer {
   deliverySlots: DeliverySlots;
   deliverySla: DeliverySla;
   deliverySlaNotices: DeliverySlaNotices;
+  deliveryPush: DeliveryPush;
   courierInvoices: CourierInvoices;
   doorHandIns: DoorHandIns;
   doorMpesa: DoorMpesa;
@@ -377,6 +382,11 @@ function createEmailPort(): EmailPort {
     return new NodemailerSmtpAdapter();
   }
   return new ConsoleEmailAdapter();
+}
+
+function createPushPort(): PushPort {
+  const config = pushRuntimeConfig(process.env);
+  return config === null ? new NoPushAdapter() : new WebPushAdapter(config);
 }
 
 function createPdfPort(): InvoicePdfPort {
@@ -454,6 +464,7 @@ export function getContainer(): AppContainer {
 
   const invoicePdf = createPdfPort();
   const email = createEmailPort();
+  const deliveryPush = new DeliveryPush(drizzleDb, createPushPort());
   const companySettings = new CompanySettingsRepository(drizzleDb);
   const invoices = new InvoiceService({
     db: drizzleDb,
@@ -685,8 +696,9 @@ export function getContainer(): AppContainer {
     riderPins: new RiderPins(drizzleDb, decisionLog, deliveryServices.deliveryRiders),
     orderVisits: new OrderVisits(drizzleDb, decisionLog, stockLedger),
     deliverySlots: deliveryServices.deliverySlots,
-    deliverySla: new DeliverySla(drizzleDb, decisionLog),
+    deliverySla: new DeliverySla(drizzleDb, decisionLog, undefined, deliveryPush),
     deliverySlaNotices: new DeliverySlaNotices(drizzleDb, email, companySettings),
+    deliveryPush,
     courierInvoices: new CourierInvoices(drizzleDb, decisionLog),
     doorHandIns: new DoorHandIns(drizzleDb, decisionLog, finance.engine, numbering),
     doorMpesa: new DoorMpesa(drizzleDb, {

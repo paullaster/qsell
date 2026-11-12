@@ -44,6 +44,21 @@ test.describe('late deliveries', () => {
     }
   });
 
+  test('the late screen has an alerts card that says plainly when this installation cannot send alerts, and the alert workers are served', async ({ page, request }) => {
+    // A real alert needs the browsers' push services, so the end-to-end check is what a person sees and what is served; sending is tested with the database.
+    await open(page, '/admin/delivery/late', 'Late deliveries');
+    const card = page.getByRole('region', { name: 'Alerts on this device' });
+    await expect(card).toBeVisible({ timeout: 30_000 });
+    await expect(card).toContainText(/not set up on this installation yet|Turn on alerts in this browser|cannot show alerts/, { timeout: 30_000 });
+    await noHorizontalScroll(page);
+    await noInnerHorizontalScroll(page);
+    for (const path of ['/alerts-sw.js', '/push-handlers.js']) {
+      const response = await request.get(path);
+      expect(response.status()).toBe(200);
+      expect(await response.text()).toContain('push');
+    }
+  });
+
   test('the lateness settings are saved with words, and refused when they make no sense', async ({ page }) => {
     await open(page, '/admin/delivery/slots', 'Delivery slots');
     const form = page.getByRole('form', { name: 'Lateness' });

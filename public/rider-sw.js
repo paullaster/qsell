@@ -3,6 +3,7 @@
  * the copy is used only when the network does not answer. Nothing outside the rider app (and the app's own files) is kept, and
  * nothing is kept for an answer that is not a plain success. What is done at a door while offline is kept by the app itself, not here. */
 importScripts('/rider-sync.js');
+importScripts('/push-handlers.js');
 
 const PAGES = 'rider-app-pages-v1';
 const FILES = 'rider-app-files-v1';

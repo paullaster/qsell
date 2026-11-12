@@ -87,6 +87,11 @@ describe.skipIf(!has(url))('delivery slots (database)', () => {
   beforeAll(async () => {
     releaseLedgerSwitch = await holdLedgerSwitch(url);
     process.env.DATA_ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString('base64');
+    const webpush = await import('web-push');
+    const keys = webpush.generateVAPIDKeys();
+    process.env.VAPID_PUBLIC_KEY = keys.publicKey;
+    process.env.VAPID_PRIVATE_KEY = keys.privateKey;
+    process.env.VAPID_SUBJECT = 'mailto:ops@slots.test';
     const mod = await import('@/server/di/container');
     db = (await import('@/server/db/drizzle/client')).drizzleDb;
     schema = await import('@/server/db/drizzle/schema');
@@ -408,6 +413,169 @@ describe.skipIf(!has(url))('delivery slots (database)', () => {
     await c.deliverySla.scan(now);
     for (const id of [far, done, gone, none]) expect(await eventsOf(id)).toEqual([]);
     expect((await c.deliverySla.overview(companyId, now)).some((l) => [far, done, gone, none].includes(l.deliveryId))).toBe(false);
+  });
+
+  describe('push alerts about lateness', () => {
+    interface Sent { endpoint: string; title: string; body: string; url: string; tag: string }
+    const fakePush = (mode: 'up' | 'down' | 'gone' = 'up') => {
+      const sent: Sent[] = [];
+      const port = {
+        publicKey: () => 'test-public-key',
+        send: (t: { endpoint: string }, m: { title: string; body: string; url: string; tag: string }) => {
+          if (mode === 'down') return Promise.reject(new Error('The push service answered 503.'));
+          if (mode === 'gone') return Promise.resolve('gone' as const);
+          sent.push({ endpoint: t.endpoint, title: m.title, body: m.body, url: m.url, tag: m.tag });
+          return Promise.resolve('sent' as const);
+        },
+      };
+      return { sent, port };
+    };
+    const made: string[] = [];
+    const person = async (email: string, role = 'manager') => {
+      const id = randomUUID();
+      await db.insert(schema.users).values({ id, email, passwordHash: 'x', name: `Push ${id.slice(0, 4)}`, role });
+      made.push(id);
+      return id;
+    };
+    const endpoint = () => `https://push.example.test/send/${randomUUID()}`;
+    const sub = (e = endpoint()) => ({ endpoint: e, p256dh: 'BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM', auth: 'tBHItJI5svbpez7KI4CCXg' });
+    const setLists = async (dispatch: string, supervisor = '') => {
+      const now = await c.deliverySla.settings(companyId);
+      await must(c.deliverySla.setSettings(actor(), { atRiskMinutes: 60, escalateAfterMinutes: 60, notifyDispatch: dispatch, notifySupervisor: supervisor, expectedVersion: now.version }));
+    };
+    const pushesOf = async (deliveryId: string) => {
+      const events = await db.select({ id: schema.deliverySlaEvents.id, level: schema.deliverySlaEvents.level }).from(schema.deliverySlaEvents).where(eq(schema.deliverySlaEvents.deliveryId, deliveryId));
+      const rows = events.length === 0 ? [] : await db.select().from(schema.deliverySlaPushes).where(inArray(schema.deliverySlaPushes.eventId, events.map((e) => e.id)));
+      return rows.map((r) => `${events.find((e) => e.id === r.eventId)?.level ?? '?'}:${r.audience}:${r.status}`).sort();
+    };
+    afterAll(async () => {
+      // A person who became a rider stays (riders are kept for good); the rest are removed with their browsers.
+      for (const id of made) await db.delete(schema.users).where(eq(schema.users.id, id)).catch(() => undefined);
+    });
+
+    it('turns alerts on for a browser, keeps one row for it, and only its owner can turn it off', async () => {
+      const { DeliveryPush } = await import('./push');
+      const push = new DeliveryPush(db, fakePush().port);
+      const a = await person(`pa-${randomUUID()}@push.test`);
+      const b = await person(`pb-${randomUUID()}@push.test`);
+      const mine = sub();
+      expect(await push.subscribe({ companyId, userId: a }, mine)).toEqual({ ok: true });
+      expect(await push.subscribe({ companyId, userId: a }, mine)).toEqual({ ok: true });
+      expect((await push.state(companyId, a)).browsers).toBe(1);
+      expect(await push.unsubscribe({ companyId, userId: b }, mine.endpoint)).toEqual({ ok: true });
+      expect((await push.state(companyId, a)).browsers).toBe(1);
+      expect(await push.unsubscribe({ companyId, userId: a }, mine.endpoint)).toEqual({ ok: true });
+      expect((await push.state(companyId, a)).browsers).toBe(0);
+      expect(await push.subscribe({ companyId, userId: a }, { ...mine, endpoint: 'http://not-secure.test/x' })).toMatchObject({ ok: false });
+      expect(await push.subscribe({ companyId, userId: a }, { endpoint: endpoint(), p256dh: 'x', auth: 'y' })).toMatchObject({ ok: false });
+      expect(await push.subscribe({ companyId, userId: a }, null)).toMatchObject({ ok: false });
+      for (let i = 0; i < 7; i += 1) await push.subscribe({ companyId, userId: a }, sub());
+      expect((await push.state(companyId, a)).browsers).toBe(5);
+    });
+
+    it('says plainly when the installation has no push keys, and refuses to subscribe', async () => {
+      const { DeliveryPush } = await import('./push');
+      const { NoPushAdapter } = await import('@/server/adapters/push/web-push.adapter');
+      const push = new DeliveryPush(db, new NoPushAdapter());
+      const a = await person(`pn-${randomUUID()}@push.test`);
+      expect(await push.state(companyId, a)).toEqual({ available: false, publicKey: null, browsers: 0 });
+      expect(await push.subscribe({ companyId, userId: a }, sub())).toMatchObject({ ok: false });
+    });
+
+    it('queues an alert for a subscribed person on the list in the same step as the lateness, sends it once with no personal details, and not to people off the list', async () => {
+      const { DeliveryPush } = await import('./push');
+      const fake = fakePush();
+      const push = new DeliveryPush(db, fake.port);
+      const email = `Desk-${randomUUID()}@push.test`;
+      const onList = await person(email);
+      const offList = await person(`off-${randomUUID()}@push.test`);
+      const mine = sub();
+      await push.subscribe({ companyId, userId: onList }, mine);
+      await push.subscribe({ companyId, userId: offList }, sub());
+      await setLists(email);
+      const now = new Date();
+      const a = await delivery();
+      await windowed(a, -120, 30, now);
+      await c.deliverySla.scan(now);
+      await c.deliverySla.scan(now);
+      expect(await pushesOf(a)).toEqual(['at_risk:staff:queued']);
+      await push.flush(500);
+      const mineSent = fake.sent.filter((x) => x.endpoint === mine.endpoint);
+      expect(mineSent).toHaveLength(1);
+      expect(mineSent[0]?.title).toMatch(/^Delivery DLV-.* is at risk$/);
+      expect(mineSent[0]?.url).toBe('/admin/delivery/late');
+      expect(`${mineSent[0]?.title ?? ""} ${mineSent[0]?.body ?? ""}`).not.toMatch(/0700|Test Rd|Wanjiru|@/i);
+      expect(await pushesOf(a)).toEqual(['at_risk:staff:sent']);
+      await push.flush(500);
+      expect(fake.sent.filter((x) => x.endpoint === mine.endpoint)).toHaveLength(1);
+    });
+
+    it('sends the supervisors the escalation and nobody else, and the rider whose run holds the delivery the first two levels', async () => {
+      const { DeliveryPush } = await import('./push');
+      const fake = fakePush();
+      const push = new DeliveryPush(db, fake.port);
+      const boss = `boss-${randomUUID()}@push.test`;
+      const bossId = await person(boss);
+      const bossSub = sub();
+      await push.subscribe({ companyId, userId: bossId }, bossSub);
+      const riderUser = await person(`rider-${randomUUID()}@push.test`, 'super_admin');
+      const riderSub = sub();
+      await push.subscribe({ companyId, userId: riderUser }, riderSub);
+      const kinds = await c.deliveryRiders.settings(companyId);
+      await c.deliveryRiders.setKinds(actor(), { allowStaff: true, allowSeparate: true, expectedVersion: kinds.version });
+      const rider = await c.deliveryRiders.addStaff(actor(), { userId: riderUser });
+      if (!rider.ok) throw new Error(rider.message);
+      await setLists('', boss);
+      const now = new Date();
+      const a = await delivery();
+      await windowed(a, -120, 30, now);
+      const run = await must(c.deliveryRuns.create(actor(), { branchId, runDate: nairobiDay(now), riderId: rider.data.id }));
+      // Readiness is tested with the runs; here the delivery only needs to be a live stop of the rider's run.
+      await db.insert(schema.deliveryRunStops).values({ runId: run.id, deliveryId: a, sequence: 1, addedBy: 'dispatcher-1' });
+      await c.deliverySla.scan(now);
+      await c.deliverySla.scan(new Date(now.getTime() + 50 * 60_000));
+      await c.deliverySla.scan(new Date(now.getTime() + 95 * 60_000));
+      expect(await pushesOf(a)).toEqual(['at_risk:rider:queued', 'escalated:staff:queued', 'late:rider:queued']);
+      await push.flush(500);
+      // Other deliveries left late by earlier tests are alerted too; this one is told apart by its tag.
+      const ours = fake.sent.filter((x) => x.tag === `delivery-${a}`);
+      expect(ours.filter((x) => x.endpoint === riderSub.endpoint).map((x) => x.url)).toEqual(['/rider', '/rider']);
+      expect(ours.filter((x) => x.endpoint === bossSub.endpoint)).toHaveLength(1);
+      expect(ours).toHaveLength(3);
+    });
+
+    it('forgets a browser the push service says is gone, and keeps an alert that could not be sent to try again after a wait', async () => {
+      const { DeliveryPush } = await import('./push');
+      const email = `gone-${randomUUID()}@push.test`;
+      const user = await person(email);
+      const mine = sub();
+      await new DeliveryPush(db, fakePush().port).subscribe({ companyId, userId: user }, mine);
+      await setLists(email);
+      const now = new Date();
+      const a = await delivery();
+      await windowed(a, -120, 30, now);
+      await c.deliverySla.scan(now);
+      const down = new DeliveryPush(db, fakePush('down').port);
+      expect(await down.flush(500)).toBe(0);
+      expect(await pushesOf(a)).toEqual(['at_risk:staff:failed']);
+      const [failed] = await db.select().from(schema.deliverySlaPushes).where(eq(schema.deliverySlaPushes.status, 'failed'));
+      expect(failed?.attempts).toBe(1);
+      expect(failed?.lastError).toContain('503');
+      expect(new Date(failed?.nextTryAt ?? 0).getTime()).toBeGreaterThan(Date.now());
+      // Not due yet: nothing is tried; once the wait is over it goes.
+      const up = fakePush();
+      const again = new DeliveryPush(db, up.port);
+      expect(await again.flush(500)).toBe(0);
+      await db.update(schema.deliverySlaPushes).set({ nextTryAt: new Date(Date.now() - 1000) }).where(eq(schema.deliverySlaPushes.status, 'failed'));
+      expect(await again.flush(500)).toBeGreaterThanOrEqual(1);
+      expect(up.sent.some((x) => x.endpoint === mine.endpoint)).toBe(true);
+      // A later alert to a browser that has gone removes the browser.
+      const b = await delivery();
+      await windowed(b, -120, 30, now);
+      await c.deliverySla.scan(now);
+      await new DeliveryPush(db, fakePush('gone').port).flush(500);
+      expect((await new DeliveryPush(db, fakePush().port).state(companyId, user)).browsers).toBe(0);
+    });
   });
 
   describe('mail about lateness', () => {

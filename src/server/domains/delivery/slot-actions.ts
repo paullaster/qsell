@@ -93,6 +93,28 @@ export async function lateDeliveriesAction() {
   });
 }
 
+/** Whether this person's browsers get alerts when a delivery is at risk or late, and whether this installation can send them. */
+export async function lateAlertsStateAction() {
+  return await runDelivery('deliveries:dispatch', async (ctx) => await getContainer().deliveryPush.state(ctx.companyId, ctx.userId));
+}
+
+/** Turns alerts on for the browser the person is in (it gives its own subscription). */
+export async function turnOnLateAlertsAction(raw: unknown) {
+  return await runDelivery('deliveries:dispatch', async (ctx) => {
+    const done = await getContainer().deliveryPush.subscribe({ companyId: ctx.companyId, userId: ctx.userId }, raw);
+    if (!done.ok) throw new DeliveryError(done.error, 'BAD_INPUT');
+    return await getContainer().deliveryPush.state(ctx.companyId, ctx.userId);
+  });
+}
+
+export async function turnOffLateAlertsAction(raw: unknown) {
+  return await runDelivery('deliveries:dispatch', async (ctx) => {
+    const done = await getContainer().deliveryPush.unsubscribe({ companyId: ctx.companyId, userId: ctx.userId }, objectOf(raw).endpoint);
+    if (!done.ok) throw new DeliveryError(done.error, 'BAD_INPUT');
+    return await getContainer().deliveryPush.state(ctx.companyId, ctx.userId);
+  });
+}
+
 export async function acknowledgeLateAction(raw: unknown) {
   return await runDelivery('deliveries:dispatch', async (ctx) => {
     const i = objectOf(raw);
