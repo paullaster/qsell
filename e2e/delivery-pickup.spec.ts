@@ -72,8 +72,8 @@ async function openOrder(page: Page, orderNumber: string): Promise<void> {
   await page.getByLabel('Search orders').fill(orderNumber);
   const manage = page.getByRole('button', { name: /Manage/ }).first();
   await expect(manage).toBeVisible({ timeout: 60_000 });
-  await manage.click();
-  await expect(page.getByRole('dialog')).toBeVisible({ timeout: 30_000 });
+  // The list can be drawn before its buttons are wired up, and a click in that moment does nothing.
+  await clickUntilVisible(manage, page.getByRole('dialog'));
 }
 
 const shown = (code: string): string => `${code.slice(0, 3)}-${code.slice(3)}`;
