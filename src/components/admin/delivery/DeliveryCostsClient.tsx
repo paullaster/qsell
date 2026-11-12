@@ -150,16 +150,19 @@ function RunningCostForm({ onSaved, onError }: { onSaved: (text: string) => void
   const [run, setRun] = useState<Choice | null>(null);
   const [vehicle, setVehicle] = useState<Choice | null>(null);
   const [amount, setAmount] = useState('');
+  const [litres, setLitres] = useState('');
+  const [km, setKm] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const isFuel = kind?.id === 'fuel';
   const save = async () => {
     setBusy(true);
-    const r = await attempt(recordRunningCostAction({ kind: kind?.id, runId: run?.id, vehicleId: vehicle?.id, amount: Number(amount), note, clientKey }));
+    const r = await attempt(recordRunningCostAction({ kind: kind?.id, runId: run?.id, vehicleId: vehicle?.id, amount: Number(amount), litres: isFuel && litres.trim() !== '' ? Number(litres) : undefined, km: isFuel && km.trim() !== '' ? Number(km) : undefined, note, clientKey }));
     setBusy(false);
     if (r.ok) onSaved(r.data.replayed ? 'That cost was already saved.' : 'Saved. It counts against delivery in the report.');
     else onError(r.error);
   };
-  const ready = kind !== null && amount.trim() !== '' && !Number.isNaN(Number(amount)) && note.trim().length >= 3;
+  const ready = kind !== null && amount.trim() !== '' && !Number.isNaN(Number(amount)) && note.trim().length >= 3 && (!isFuel || (!Number.isNaN(Number(litres)) && !Number.isNaN(Number(km))));
   return (
     <form
       aria-label="Record a running cost"
@@ -170,12 +173,22 @@ function RunningCostForm({ onSaved, onError }: { onSaved: (text: string) => void
       }}
     >
       <h3 className="text-sm font-bold text-fg-strong">Fuel and vehicle costs</h3>
-      <p className="text-xs text-fg-muted">What it cost to keep the fleet on the road. It counts against delivery in the report and the margin. It is not booked here: record the receipt as an expense or a supplier invoice as usual, so it is not counted twice in the books.</p>
+      <p className="text-xs text-fg-muted">What it cost to keep the fleet on the road. It counts against delivery in the report and the margin. For fuel you can add the litres and the kilometres driven on them; the report then shows kilometres to the litre and the fuel cost of a kilometre for each vehicle. It is not booked here: record the receipt as an expense or a supplier invoice as usual, so it is not counted twice in the books.</p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <ChoicePicker label="What kind of cost" source="delivery-running-cost-kinds" choice={kind} onChoice={setKind} placeholder="Fuel, a vehicle cost or another cost" />
         <Field id={`${uid}-a`} label="How much (KSh)">
           <input id={`${uid}-a`} className={fieldClass} inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} autoComplete="off" />
         </Field>
+        {isFuel ? (
+          <>
+            <Field id={`${uid}-l`} label="Litres bought (optional)">
+              <input id={`${uid}-l`} className={fieldClass} inputMode="decimal" value={litres} onChange={(e) => setLitres(e.target.value)} autoComplete="off" />
+            </Field>
+            <Field id={`${uid}-k`} label="Kilometres driven on them (optional)">
+              <input id={`${uid}-k`} className={fieldClass} inputMode="decimal" value={km} onChange={(e) => setKm(e.target.value)} autoComplete="off" />
+            </Field>
+          </>
+        ) : null}
         <ChoicePicker label="Vehicle it was for (optional)" source="delivery-vehicles-all" choice={vehicle} onChoice={setVehicle} placeholder="Choose a vehicle, or leave empty" clearable />
         <ChoicePicker label="Run it was for (optional)" source="delivery-runs-any" choice={run} onChoice={setRun} placeholder="Choose a run, or leave empty" clearable />
         <Field id={`${uid}-n`} label="What it was for">
@@ -211,6 +224,7 @@ function CostRow({ cost, onDone, onError }: { cost: CostView; onDone: (text: str
       </div>
       <p className="flex flex-wrap items-center gap-2 text-xs text-fg-muted">
         {when(cost.createdAt)}
+        {cost.litres === null && cost.km === null ? null : <span>· {[cost.litres === null ? null : `${cost.litres} litres`, cost.km === null ? null : `${cost.km} km`].filter((p): p is string => p !== null).join(', ')}</span>}
         {cost.note === null ? null : <span>· {cost.note}</span>}
         {negative ? <Chip tone="gray">Taken back</Chip> : null}
         {cost.reversed ? <Chip tone="gray">Was taken back</Chip> : null}

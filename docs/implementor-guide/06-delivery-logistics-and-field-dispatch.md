@@ -168,7 +168,7 @@ graph TD
 
 ### 12. Delivery Report (`/admin/delivery/reports`)
 - Executive analytics: Delivery success rates, failure reason distributions (e.g. customer unavailable, wrong address), and zone profitability.
-- **By vehicle**: for each vehicle on the Vehicles list that ran a delivery or had a running cost in the days chosen: deliveries delivered on its runs and how many runs, its running costs (fuel, repairs, other) and the **cost per delivery**. A delivery counts for the vehicle of the run it was delivered on. Running costs not tied to any vehicle are shown in a line under the table, so the table and the total cost reconcile. A vehicle with costs and nothing delivered shows *Nothing delivered* in place of a cost per delivery.
+- **By vehicle**: for each vehicle on the Vehicles list that ran a delivery or had a running cost in the days chosen: deliveries delivered on its runs and how many runs, its running costs (fuel, repairs, other) and the **cost per delivery**. A delivery counts for the vehicle of the run it was delivered on. Running costs not tied to any vehicle are shown in a line under the table, so the table and the total cost reconcile. A vehicle with costs and nothing delivered shows *Nothing delivered* in place of a cost per delivery. Where fuel fills gave kilometres or litres, the line also reads the kilometres, the litres, **kilometres a litre** (from fills that gave both) and the **fuel cost of a kilometre** (from fills that gave kilometres); a fill that was taken back takes its figures back too, and a vehicle with no such fills shows none of these.
 
 ### 13. Courier Invoices (`/admin/delivery/courier-invoices`)
 - **Charged to us, on no invoice yet**: by courier, how many charges and how much have not been put on any invoice.
@@ -277,6 +277,8 @@ graph TD
 |---|---|---|---|---|
 | **What kind of cost** | Groups the cost in the report. | Choice: *Fuel*, *Vehicle cost (repairs, service, parking, tolls)*, *Other cost* | **Required** | Rider pay and courier charges are recorded by the system, not typed here. |
 | **How much (KSh)** | The amount. | Currency | **Required** | More than nothing, to the cent, at most 10 million. |
+| **Litres bought (optional)** | How much fuel the fill was. Shown only when the kind is *Fuel*. | Number, to the hundredth | Optional | More than nothing, at most 2,000. |
+| **Kilometres driven on them (optional)** | The distance driven on that fuel (since the last fill). Shown only when the kind is *Fuel*. | Number, to a tenth | Optional | More than nothing, at most 20,000. Either figure can be given alone. |
 | **Vehicle it was for (optional)** | Ties the cost to a vehicle, so the report can show what each vehicle costs. | Lookup of the company's vehicles, **including stopped ones** (a late bill still belongs to them) | Optional | Leave empty for a cost that belongs to no particular vehicle; it is then shown in the report as *not tied to any vehicle*. |
 | **Run it was for (optional)** | Ties the cost to a run (and so to its rider). | Lookup of the company's runs | Optional | A run that went out in a vehicle from the list brings that vehicle with it. Choosing a *different* vehicle for the same run is refused, because the cost would then have two stories. |
 | **What it was for** | The words kept with the cost. | Text (3 to 300 characters) | **Required** | For example the vehicle and the trip. |
@@ -427,7 +429,7 @@ graph TD
 7. To stop using a courier, click **Stop using** and confirm; **Make a new secret** replaces the signing secret (the old one stops working).
 
 ### Action 8: Recording Fuel and Other Running Costs
-1. Open `/admin/delivery/costs`. In **Fuel and vehicle costs** choose **What kind of cost**, type **How much (KSh)** and **What it was for**, and optionally pick the **Vehicle it was for** and the **Run it was for**. (Choosing a run that went out in a listed vehicle fills in the vehicle for you.)
+1. Open `/admin/delivery/costs`. In **Fuel and vehicle costs** choose **What kind of cost**, type **How much (KSh)** and **What it was for**, and optionally pick the **Vehicle it was for** and the **Run it was for**. (Choosing a run that went out in a listed vehicle fills in the vehicle for you.) For fuel, also type the **Litres bought** and the **Kilometres driven on them** if you know them: the report then shows each vehicle's kilometres to the litre and fuel cost of a kilometre.
 2. Click **Save the cost**. A confirmation appears and the form empties; clicking twice saves it once.
 3. The cost appears in the list and counts in the delivery report. It is not posted to the accounts here: record the receipt as an expense or a supplier invoice in the usual way, so it is not counted twice.
 4. If it was typed wrongly, type **Why it is being taken back** on its row and confirm **Take it back**.
@@ -517,6 +519,7 @@ Under `/admin/delivery/invoicing`, the business configures one of two fiscal mod
 - Rider pay for a delivery is counted once however many times the delivery is retried. Pay for a day is counted once for a rider and a day.
 - What is owed to a rider is the pay earned less anything taken back, not yet paid out. If more was taken back than earned, nothing can be paid and the balance is set against their next pay.
 - Fuel and vehicle costs reduce the delivery margin in the report but are not posted to the accounts.
+- Litres and kilometres belong to fuel only, are optional, and must be more than nothing. Taking a fill back takes its litres and kilometres back, so the vehicle's figures follow. They are only as good as what is typed: a fill without kilometres adds nothing to kilometres a litre or to the cost of a kilometre.
 - A running cost can be tied to a vehicle (fuel, vehicle costs and other costs only; rider pay and courier charges never are). The tie is kept when the cost is taken back, so the vehicle's total falls by the same amount. A cost cannot be moved to another vehicle afterwards: take it back and type it again.
 - A courier charge is on at most one invoice; matching a set of charges is all or nothing; a voided invoice frees its charges and its number; an invoice's words cannot be changed once typed.
 

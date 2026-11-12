@@ -51,6 +51,45 @@ export function runningCostProblem(kind: unknown, amount: unknown, note: unknown
   return { kind, cents: cents(amount), note: words.slice(0, 300) };
 }
 
+/**
+ * The litres bought and the kilometres driven on them, typed with a fuel cost. Both are optional, and only fuel carries them. Empty means
+ * "not given"; anything else must be more than nothing (litres to the hundredth, kilometres to a tenth).
+ */
+export function fuelFiguresProblem(kind: unknown, litres: unknown, km: unknown): { error: string } | { litres: number | null; km: number | null } {
+  const given = (v: unknown): boolean => v !== undefined && v !== null && v !== '';
+  if (!given(litres) && !given(km)) return { litres: null, km: null };
+  if (kind !== 'fuel') return { error: 'Litres and kilometres are only for fuel.' };
+  const read = (v: unknown, max: number, places: number, what: string): { error: string } | { n: number | null } => {
+    if (!given(v)) return { n: null };
+    if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0 || v > max) return { error: `${what} must be more than nothing and not more than ${String(max)}.` };
+    const f = 10 ** places;
+    const n = Math.round(v * f) / f;
+    return n > 0 ? { n } : { error: `${what} must be more than nothing and not more than ${String(max)}.` };
+  };
+  const l = read(litres, 2000, 2, 'The litres');
+  if ('error' in l) return l;
+  const k = read(km, 20000, 1, 'The kilometres');
+  if ('error' in k) return k;
+  return { litres: l.n, km: k.n };
+}
+
+export interface FuelSums {
+  /** Fuel spent on fills that gave kilometres, litres and kilometres of the fills that gave both, kilometres of the fills that gave any. Reversals are already netted off. */
+  costWithKm: number;
+  km: number;
+  litresWithKm: number;
+  kmWithLitres: number;
+}
+
+/** What the fuel gave: kilometres to the litre (fills with both figures) and the cost of a kilometre (fills with kilometres). Null when there is nothing to divide by. */
+export function fuelEconomy(sums: FuelSums): { kmPerLitre: number | null; costPerKm: number | null } {
+  const round = (n: number): number => Math.round(n * 100) / 100;
+  return {
+    kmPerLitre: sums.litresWithKm > 0 && sums.kmWithLitres > 0 ? round(sums.kmWithLitres / sums.litresWithKm) : null,
+    costPerKm: sums.km > 0 && sums.costWithKm > 0 ? round(sums.costWithKm / 100 / sums.km) : null,
+  };
+}
+
 /** What a courier charged, as typed: more than nothing, to the cent. */
 export function courierChargeProblem(amount: unknown): { error: string } | { cents: number } {
   if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0 || amount > 10_000_000) return { error: 'Say what the courier charged, in shillings.' };

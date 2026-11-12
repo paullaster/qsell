@@ -1154,6 +1154,9 @@ export const deliveryCosts = pgTable(
     /** The fleet vehicle a fuel, vehicle or other running cost belongs to; the report adds costs up by vehicle. */
     vehicleId: uuid('vehicle_id').references(() => deliveryVehicles.id, { onDelete: 'restrict' }),
     courierName: text('courier_name'),
+    /** Fuel only, optional: the litres bought and the kilometres driven on them (since the last fill). A reversal carries both with the opposite sign, like the amount. */
+    litres: numeric('litres', { precision: 8, scale: 2 }),
+    km: numeric('km', { precision: 8, scale: 1 }),
     note: text('note'),
     key: text('key').notNull(),
     /** The cost this entry takes back. */
@@ -1173,6 +1176,10 @@ export const deliveryCosts = pgTable(
     check('delivery_costs_delivery_chk', sql`${t.kind} NOT IN ('rider_delivery','courier') OR ${t.deliveryId} IS NOT NULL`),
     check('delivery_costs_vehicle_chk', sql`${t.vehicleId} IS NULL OR ${t.kind} IN ('fuel','vehicle','other')`),
     check('delivery_costs_courier_chk', sql`${t.kind} <> 'courier' OR ${t.courierName} IS NOT NULL`),
+    // Litres and kilometres belong to fuel, are never zero, and lean the same way as the amount (a reversal takes both back).
+    check('delivery_costs_fuel_figures_chk', sql`(${t.litres} IS NULL AND ${t.km} IS NULL) OR ${t.kind} = 'fuel'`),
+    check('delivery_costs_litres_sign_chk', sql`${t.litres} IS NULL OR (${t.litres} <> 0 AND (${t.litres} > 0) = (${t.amount} > 0))`),
+    check('delivery_costs_km_sign_chk', sql`${t.km} IS NULL OR (${t.km} <> 0 AND (${t.km} > 0) = (${t.amount} > 0))`),
     // A cost is positive; only a reversal is negative, and it names the cost it takes back.
     check('delivery_costs_reversal_chk', sql`(${t.reversesId} IS NULL) = (${t.amount} > 0)`),
   ],

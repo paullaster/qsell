@@ -1,0 +1,5 @@
+ALTER TABLE "delivery_costs" ADD COLUMN "litres" numeric(8, 2);--> statement-breakpoint
+ALTER TABLE "delivery_costs" ADD COLUMN "km" numeric(8, 1);--> statement-breakpoint
+ALTER TABLE "delivery_costs" ADD CONSTRAINT "delivery_costs_fuel_figures_chk" CHECK (("delivery_costs"."litres" IS NULL AND "delivery_costs"."km" IS NULL) OR "delivery_costs"."kind" = 'fuel');--> statement-breakpoint
+ALTER TABLE "delivery_costs" ADD CONSTRAINT "delivery_costs_litres_sign_chk" CHECK ("delivery_costs"."litres" IS NULL OR ("delivery_costs"."litres" <> 0 AND ("delivery_costs"."litres" > 0) = ("delivery_costs"."amount" > 0)));--> statement-breakpoint
+ALTER TABLE "delivery_costs" ADD CONSTRAINT "delivery_costs_km_sign_chk" CHECK ("delivery_costs"."km" IS NULL OR ("delivery_costs"."km" <> 0 AND ("delivery_costs"."km" > 0) = ("delivery_costs"."amount" > 0)));

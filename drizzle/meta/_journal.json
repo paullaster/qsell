@@ -1205,6 +1205,13 @@
       "when": 1794484728481,
       "tag": "0171_quote_needed_on",
       "breakpoints": true
+    },
+    {
+      "idx": 172,
+      "version": "7",
+      "when": 1794491215899,
+      "tag": "0172_delivery_fuel_figures",
+      "breakpoints": true
     }
   ]
 }
