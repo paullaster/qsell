@@ -103,6 +103,13 @@ function LateCard({ item, onDone, onError }: { item: Late; onDone: (text: string
           {item.mails.failed > 0 ? `, ${String(item.mails.failed)} could not be sent` : ''}
         </p>
       )}
+      {item.texts.sent + item.texts.waiting + item.texts.failed === 0 ? null : (
+        <p className="text-xs text-fg-muted">
+          Text messages: {item.texts.sent} sent
+          {item.texts.waiting > 0 ? `, ${String(item.texts.waiting)} waiting` : ''}
+          {item.texts.failed > 0 ? `, ${String(item.texts.failed)} could not be sent` : ''}
+        </p>
+      )}
       {item.acknowledged === null ? (
         <form
           aria-label={`Acknowledge ${item.number}`}

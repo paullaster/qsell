@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { audienceFor, checkSlaSettings, readAddressList, lateWords, levelsReached, slaState, windowWords } from './delivery-sla';
+import { audienceFor, checkSlaSettings, lateText, readAddressList, readPhoneList, lateWords, levelsReached, slaState, windowWords } from './delivery-sla';
 
 const start = new Date('2026-11-06T06:00:00Z'); // 09:00 Nairobi
 const end = new Date('2026-11-06T09:00:00Z'); // 12:00 Nairobi
@@ -85,5 +85,38 @@ describe('who is mailed about lateness', () => {
     expect(audienceFor('at_risk')).toBe('dispatch');
     expect(audienceFor('late')).toBe('dispatch');
     expect(audienceFor('escalated')).toBe('supervisor');
+  });
+});
+
+describe('phone numbers for lateness texts', () => {
+  it('writes each number with its country code, once, however it was typed', () => {
+    expect(readPhoneList('0712 345 678, +254712345678; 0722111222\n0733 000 111')).toEqual({ ok: true, numbers: ['+254712345678', '+254722111222', '+254733000111'] });
+    expect(readPhoneList('')).toEqual({ ok: true, numbers: [] });
+    expect(readPhoneList(null)).toEqual({ ok: true, numbers: [] });
+  });
+  it('names a number that cannot be a mobile number, and stops at ten', () => {
+    expect(readPhoneList('0712345678, nonsense')).toEqual({ ok: false, error: '"nonsense" is not a mobile number.' });
+    expect(readPhoneList(Array.from({ length: 11 }, (_, i) => `07120000${String(10 + i)}`).join(','))).toMatchObject({ ok: false });
+    expect(readPhoneList(5)).toMatchObject({ ok: false });
+  });
+});
+
+describe('the lateness text', () => {
+  const window = { windowStart: new Date('2026-11-12T07:00:00Z'), windowEnd: new Date('2026-11-12T09:00:00Z') };
+  it('says the delivery, the time promised and how late, with the shop, in one message', () => {
+    const late = lateText({ level: 'late', number: 'DLV-12', ...window, minutesLate: 25, shop: 'Wanjiku Traders' });
+    expect(late).toContain('Delivery DLV-12 is late by 25 minutes.');
+    expect(late).toContain('Promised');
+    expect(late.endsWith('Wanjiku Traders')).toBe(true);
+    expect(late.length).toBeLessThanOrEqual(160);
+    expect(lateText({ level: 'at_risk', number: 'DLV-12', ...window, minutesLate: 0, shop: 'Shop' })).toContain('at risk of being late');
+  });
+  it('keeps the facts and drops the shop name when the message would be too long', () => {
+    const text = lateText({ level: 'escalated', number: 'DLV-12', ...window, minutesLate: 9000, shop: 'S'.repeat(200) });
+    expect(text.length).toBeLessThanOrEqual(160);
+    expect(text).toContain('Delivery DLV-12');
+  });
+  it('copes with no window', () => {
+    expect(lateText({ level: 'late', number: 'DLV-1', windowStart: null, windowEnd: null, minutesLate: 5, shop: 'Shop' })).toBe('Delivery DLV-1 is late by 5 minutes. Shop');
   });
 });

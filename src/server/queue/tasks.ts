@@ -417,6 +417,12 @@ export const deliverySlaScan = async (_payload: unknown, helpers: JobHelpers) =>
     return 0;
   });
   if (alerted > 0) helpers.logger.info(`Delivery lateness alerts sent: ${String(alerted)}`);
+  // And the text messages, through the company's own SMS provider; with none connected they wait and are then left unsent.
+  const texted = await c.deliverySlaTexts.flush(20).catch((error: unknown) => {
+    helpers.logger.error(`Delivery lateness texts: ${String(error)}`);
+    return 0;
+  });
+  if (texted > 0) helpers.logger.info(`Delivery lateness texts sent: ${String(texted)}`);
 };
 
 /** Worker cron task: parcels are booked with their couriers, asked about on the road and cancelled when their delivery is; a courier that is down never stops the rest. */

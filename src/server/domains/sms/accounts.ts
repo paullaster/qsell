@@ -126,6 +126,12 @@ export class SmsAccounts {
     return a === undefined ? null : this.open(a);
   }
 
+  /** The name of the connection messages go through, for screens that say where texts will go; null when there is none (or it is stopped). */
+  async defaultName(companyId: string): Promise<string | null> {
+    const [a] = await this.db.select({ name: smsProviderAccounts.name }).from(smsProviderAccounts).where(and(eq(smsProviderAccounts.companyId, companyId), eq(smsProviderAccounts.isDefault, true), eq(smsProviderAccounts.isActive, true)));
+    return a?.name ?? null;
+  }
+
   async create(actor: SmsActor, input: Record<string, unknown>): Promise<SmsOutcome<SmsAccountView>> {
     const name = typeof input.name === 'string' ? input.name.trim() : '';
     if (name.length < 2 || name.length > 80) return fail('bad_input', 'Give this connection a name, between 2 and 80 letters.');

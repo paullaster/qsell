@@ -25,4 +25,4 @@ Unit tests for the provider definitions and phone numbers and for each adapter a
 
 ## Not built
 
-Nothing yet *uses* the default sender: lateness alerts by SMS (recipients' phone numbers, a queue like the mails and push alerts) is the next slice. A real send through Africa's Talking or Twilio has not been exercised (no account); the request shapes follow their documentation and are held by tests against a fake. Delivery receipts from providers are not read.
+The default sender is used by lateness texts (delivery-module.md §61). Customer messages by text, and other events, are not built. A real send through Africa's Talking or Twilio has not been exercised (no account); the request shapes follow their documentation and are held by tests against a fake. Delivery receipts from providers are not read.

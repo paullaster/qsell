@@ -18,8 +18,8 @@ const PATHS = ['/admin/delivery/slots', '/admin/delivery/deliveries'];
 export async function slotsScreenAction() {
   return await runDelivery('delivery_slots:manage', async (ctx) => {
     const s = getContainer().deliverySlots;
-    const [slots, closed, leads, sla, shopperChoice] = await Promise.all([s.list(ctx.companyId), s.closedDays(ctx.companyId), s.leadTimes(ctx.companyId), getContainer().deliverySla.settings(ctx.companyId), s.shopperChoice(ctx.companyId)]);
-    return { slots, closed, leads, sla, shopperChoice };
+    const [slots, closed, leads, sla, shopperChoice, textsGoThrough] = await Promise.all([s.list(ctx.companyId), s.closedDays(ctx.companyId), s.leadTimes(ctx.companyId), getContainer().deliverySla.settings(ctx.companyId), s.shopperChoice(ctx.companyId), getContainer().smsAccounts.defaultName(ctx.companyId)]);
+    return { slots, closed, leads, sla, shopperChoice, textsGoThrough };
   });
 }
 
@@ -137,7 +137,7 @@ export async function slaSettingsAction() {
 export async function setSlaSettingsAction(raw: unknown) {
   return await runDelivery('delivery_slots:manage', async (ctx) => {
     const i = objectOf(raw);
-    return dataOf(await getContainer().deliverySla.setSettings({ companyId: ctx.companyId, userId: ctx.userId }, { atRiskMinutes: i.atRiskMinutes, escalateAfterMinutes: i.escalateAfterMinutes, notifyDispatch: i.notifyDispatch, notifySupervisor: i.notifySupervisor, expectedVersion: i.expectedVersion }));
+    return dataOf(await getContainer().deliverySla.setSettings({ companyId: ctx.companyId, userId: ctx.userId }, { atRiskMinutes: i.atRiskMinutes, escalateAfterMinutes: i.escalateAfterMinutes, notifyDispatch: i.notifyDispatch, notifySupervisor: i.notifySupervisor, notifyDispatchPhones: i.notifyDispatchPhones, notifySupervisorPhones: i.notifySupervisorPhones, textTheRider: i.textTheRider, expectedVersion: i.expectedVersion }));
   }, PATHS);
 }
 

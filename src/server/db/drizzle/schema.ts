@@ -712,11 +712,49 @@ export const deliverySlaSettings = pgTable(
     /** Who is mailed when a delivery is at risk or late (the dispatchers) and when it has been late too long (the supervisors). */
     notifyDispatch: text('notify_dispatch').array().notNull().default(sql`'{}'::text[]`),
     notifySupervisor: text('notify_supervisor').array().notNull().default(sql`'{}'::text[]`),
+    /** The same two groups by text message: mobile numbers, written with the country code. */
+    notifyDispatchPhones: text('notify_dispatch_phones').array().notNull().default(sql`'{}'::text[]`),
+    notifySupervisorPhones: text('notify_supervisor_phones').array().notNull().default(sql`'{}'::text[]`),
+    /** Also text the rider whose run holds a delivery that is at risk or late. */
+    textTheRider: boolean('text_the_rider').notNull().default(false),
     version: integer('version').notNull().default(1),
     updatedBy: text('updated_by'),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [check('delivery_sla_settings_chk', sql`${t.atRiskMinutes} BETWEEN 0 AND 1440 AND ${t.escalateAfterMinutes} BETWEEN 1 AND 1440 AND cardinality(${t.notifyDispatch}) <= 10 AND cardinality(${t.notifySupervisor}) <= 10`)],
+  (t) => [
+    check('delivery_sla_settings_chk', sql`${t.atRiskMinutes} BETWEEN 0 AND 1440 AND ${t.escalateAfterMinutes} BETWEEN 1 AND 1440 AND cardinality(${t.notifyDispatch}) <= 10 AND cardinality(${t.notifySupervisor}) <= 10`),
+    check('delivery_sla_settings_phones_chk', sql`cardinality(${t.notifyDispatchPhones}) <= 10 AND cardinality(${t.notifySupervisorPhones}) <= 10`),
+  ],
+);
+
+/** The text message a delivery's lateness causes for one number, queued in the step that raises the lateness and sent with retries, like the mails. */
+export const deliverySlaTexts = pgTable(
+  'delivery_sla_texts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    eventId: uuid('event_id')
+      .notNull()
+      .references(() => deliverySlaEvents.id, { onDelete: 'restrict' }),
+    /** International form, +254… */
+    recipient: text('recipient').notNull(),
+    audience: text('audience').$type<'staff' | 'rider'>().notNull(),
+    status: text('status').$type<'queued' | 'sent' | 'failed'>().notNull().default('queued'),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+    nextTryAt: timestamp('next_try_at', { withTimezone: true }).notNull().defaultNow(),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_sla_texts_once_uidx').on(t.eventId, t.recipient),
+    index('delivery_sla_texts_due_idx').on(t.status, t.nextTryAt),
+    check('delivery_sla_texts_audience_chk', sql`${t.audience} IN ('staff','rider')`),
+    check('delivery_sla_texts_status_chk', sql`${t.status} IN ('queued','sent','failed')`),
+    check('delivery_sla_texts_attempts_chk', sql`${t.attempts} >= 0`),
+  ],
 );
 
 /**

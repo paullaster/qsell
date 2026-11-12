@@ -135,6 +135,7 @@ import { CourierInvoices } from '@/server/domains/delivery/courier-invoices';
 import { DeliverySlaNotices } from '@/server/domains/delivery/sla-notices';
 import { DeliveryPush } from '@/server/domains/delivery/push';
 import { SmsAccounts } from '@/server/domains/sms/accounts';
+import { DeliverySlaTexts } from '@/server/domains/delivery/sla-texts';
 import type { PushPort } from '@/server/ports/push';
 import { NoPushAdapter, WebPushAdapter } from '@/server/adapters/push/web-push.adapter';
 import { pushRuntimeConfig } from '@/server/adapters/push/config';
@@ -328,6 +329,7 @@ export interface AppContainer {
   deliverySla: DeliverySla;
   deliverySlaNotices: DeliverySlaNotices;
   deliveryPush: DeliveryPush;
+  deliverySlaTexts: DeliverySlaTexts;
   smsAccounts: SmsAccounts;
   courierInvoices: CourierInvoices;
   doorHandIns: DoorHandIns;
@@ -529,6 +531,8 @@ export function getContainer(): AppContainer {
     etimsTransmission,
   );
   const decisionLog = new DecisionLog(drizzleDb);
+  const smsAccounts = new SmsAccounts(drizzleDb, decisionLog, undefined);
+  const deliverySlaTexts = new DeliverySlaTexts(drizzleDb, smsAccounts, companySettings);
   const reasonCodes = new ReasonCodes(drizzleDb);
   const numbering = createNumbering(decisionLog, reasonCodes);
   const creditNotes = new CreditNoteService(drizzleDb, kraSigning, numbering);
@@ -698,10 +702,11 @@ export function getContainer(): AppContainer {
     riderPins: new RiderPins(drizzleDb, decisionLog, deliveryServices.deliveryRiders),
     orderVisits: new OrderVisits(drizzleDb, decisionLog, stockLedger),
     deliverySlots: deliveryServices.deliverySlots,
-    deliverySla: new DeliverySla(drizzleDb, decisionLog, undefined, deliveryPush),
+    deliverySla: new DeliverySla(drizzleDb, decisionLog, undefined, deliveryPush, deliverySlaTexts),
     deliverySlaNotices: new DeliverySlaNotices(drizzleDb, email, companySettings),
     deliveryPush,
-    smsAccounts: new SmsAccounts(drizzleDb, decisionLog, undefined),
+    smsAccounts,
+    deliverySlaTexts,
     courierInvoices: new CourierInvoices(drizzleDb, decisionLog),
     doorHandIns: new DoorHandIns(drizzleDb, decisionLog, finance.engine, numbering),
     doorMpesa: new DoorMpesa(drizzleDb, {

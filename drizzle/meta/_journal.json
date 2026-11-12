@@ -1156,6 +1156,13 @@
       "when": 1794453088674,
       "tag": "0164_product_sold_only_in_packages",
       "breakpoints": true
+    },
+    {
+      "idx": 165,
+      "version": "7",
+      "when": 1794456942237,
+      "tag": "0165_delivery_sla_texts",
+      "breakpoints": true
     }
   ]
 }
