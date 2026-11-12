@@ -498,7 +498,7 @@ Under `/admin/delivery/invoicing`, the business configures one of two fiscal mod
 - A vehicle that is stopped cannot be given to a new run. A run already in it keeps its limits, and its name is kept on the run as it was.
 - Changing a vehicle's limits does not move stops already on a run: it applies to what is added next.
 - A vehicle cannot be deleted. Stop it instead.
-- A rider's **usual vehicle** is used only when a run is planned for that rider and no vehicle was chosen or typed. Giving a planned run to another rider later does not change its vehicle.
+- A rider's **usual vehicle** is used only when a run is planned for that rider and no vehicle was chosen or typed. Giving a planned run to another rider (*Give the run to another rider* on the run screen) brings the new rider's usual vehicle when the run was only following the first rider's (or had no vehicle), the new rider's vehicle is in use, and it can carry what is already on the run. A vehicle the office chose or typed is never replaced, a new rider with no usual vehicle leaves the run in the vehicle it had, and a stopped or too-small usual vehicle is skipped without a message: look at the vehicle named under the run's title after giving the run, and change it with *Change the vehicle* if it is not the one wanted.
 
 ### Lateness
 - A delivery promised a window is *On track*, *At risk* (within the warning time of the end of the window, or the window has begun and it is not on its way), *Late* (past the end), *On time* or *Delivered late*. Cancelled and returned deliveries are not watched.

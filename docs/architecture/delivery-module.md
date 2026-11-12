@@ -887,7 +887,7 @@ The "at risk" and "late" chips on the dispatch board were worked out at the defa
 
 **Verified.** 3 database tests in the riders file (chosen at creation and refused when stopped or unknown, changed and cleared and left alone by other edits, brought to runs unless another is chosen or typed and skipped when stopped) and a browser test on desktop and phone.
 
-**Not built.** Carrying the usual vehicle over when a planned run is given to another rider.
+**Not built.** (Carrying the usual vehicle over when a planned run is given to another rider: built in section 65.)
 
 ## 59. Saved door work is sent in the background (2026-11-12)
 
@@ -944,3 +944,9 @@ Migration 0170: the settings check now allows the new kind, and the column defau
 Staff see what was sent: the *Collection* panel on the order lists the messages (kind, email or text message, sent / waiting / not sent, where to masked, the note) via `DeliveryMessages.forCollection`.
 
 **Verified.** Unit tests for the mail and text words (branch, code, link last, 306 characters, the code in no other kind, no code text when there is none); database tests (one email however often marked ready and no text while off; mail and text both carry branch and code and the staff list shows neither code nor number; collected before sending is skipped); the browser test of the counter flow extended to see the message listed without the code. **Not verified.** A real mail or text reaching a phone. **Not built.** Sending the new code again when a code is reissued (the staff member is shown it and gives it); a reminder if the order sits uncollected.
+
+## 65. A rider's usual vehicle follows the run to another rider (2026-11-12)
+
+No migration. `DeliveryRuns.assignRider` now asks `vehicleToCarryOver` whether the run should change vehicle with the rider, and does it in the same transaction and under the same run lock, and says so in the decision log (`run.rider_changed`: `A to B; vehicle X to Y`). The new rider's usual vehicle (`delivery_riders.vehicle_id`, §58) is brought when **all** hold: the new rider has one; the run has no vehicle at all, or has the old rider's own usual vehicle (so it was only following the rider, not chosen or typed by the office); the new rider's is in use (not stopped); and it can carry what is already on the run (weight and stops, the same check as adding a stop). Otherwise the vehicle is left exactly as it was, and the rider still changes: a vehicle the office chose or typed is never replaced; a new rider with no usual vehicle leaves the run in the old rider's (the office changes it from the run screen if wanted); a stopped or too-small usual vehicle is skipped quietly, and the run screen still shows the vehicle and its load line.
+
+**Verified.** 3 database tests in the riders file (brought when following or when the run had none, with the decision-log line; left alone when chosen, typed, the new rider has none, it is the same rider, or the new rider's vehicle is stopped; kept when the new rider's would be overloaded by a 30 kg stop) and a browser test (a second rider with another vehicle, the planned run given to them, and the run screen showing their vehicle). **Not built.** A message to the rider or the office when a usual vehicle was skipped for being too small.

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { eq, inArray, like } from 'drizzle-orm';
+import { and, eq, inArray, like } from 'drizzle-orm';
 import { has } from '@/lib/values';
 import type * as mod_server_di_container from '@/server/di/container';
 import type * as mod_server_db_drizzle_client from '@/server/db/drizzle/client';
@@ -400,6 +400,91 @@ describe.skipIf(!has(url))('riders (database)', () => {
       await c.deliveryVehicles.setActive(dispatcher(), usual.id, { isActive: false, expectedVersion: usual.version });
       const after = await c.deliveryRuns.create(dispatcher(), { branchId, runDate: today(), riderId: made.data.id });
       expect(after.ok && (await get(after.data.id))).toMatchObject({ vehicleId: null, vehicle: null });
+    });
+  });
+
+  describe('giving a planned run to another rider', () => {
+    const vehicle = async (name: string, over: Record<string, unknown> = {}) => {
+      const v = await c.deliveryVehicles.create(dispatcher(), { name: `${name} ${randomUUID().slice(0, 6)}`, ...over });
+      if (!v.ok) throw new Error(v.message);
+      return v.data;
+    };
+    const riderWith = async (vehicleId?: string) => {
+      const userId = await person('super_admin');
+      const made = await c.deliveryRiders.addStaff(dispatcher(), { userId, ...(vehicleId === undefined ? {} : { vehicleId }) });
+      if (!made.ok) throw new Error(made.message);
+      return made.data.id;
+    };
+    const vehicleOf = async (runId: string) => {
+      const r = await c.deliveryRuns.get(companyId, runId);
+      if (r === null) throw new Error('no run');
+      return { vehicleId: r.vehicleId, vehicle: r.vehicle };
+    };
+
+    it('brings the new rider\'s usual vehicle when the run was only following the old rider\'s, or had none', async () => {
+      const bike = await vehicle('Bike');
+      const van = await vehicle('Van');
+      const a = await riderWith(bike.id);
+      const b = await riderWith(van.id);
+      const branchId = await branch();
+      const run = await c.deliveryRuns.create(dispatcher(), { branchId, runDate: today(), riderId: a });
+      if (!run.ok) throw new Error(run.message);
+      expect(await vehicleOf(run.data.id)).toEqual({ vehicleId: bike.id, vehicle: bike.name });
+      expect(await c.deliveryRuns.assignRider(dispatcher(), run.data.id, { riderId: b })).toMatchObject({ ok: true, data: { vehicleId: van.id, vehicle: van.name } });
+      const log = await db.select().from(schema.decisionLog).where(and(eq(schema.decisionLog.subjectId, run.data.id), eq(schema.decisionLog.action, 'run.rider_changed')));
+      expect(log.map((l) => l.reasonText)).toEqual([expect.stringContaining(`vehicle ${bike.name} to ${van.name}`) as string]);
+      // A run with no vehicle at all takes the new rider's.
+      const bare = await c.deliveryRuns.create(dispatcher(), { branchId, runDate: today(), riderName: 'Walk-in' });
+      if (!bare.ok) throw new Error(bare.message);
+      expect(await c.deliveryRuns.assignRider(dispatcher(), bare.data.id, { riderId: b })).toMatchObject({ ok: true });
+      expect(await vehicleOf(bare.data.id)).toEqual({ vehicleId: van.id, vehicle: van.name });
+    });
+
+    it('leaves a vehicle the office chose or typed, a rider with no usual vehicle, and a stopped usual vehicle alone', async () => {
+      const bike = await vehicle('Bike');
+      const van = await vehicle('Van');
+      const other = await vehicle('Chosen');
+      const a = await riderWith(bike.id);
+      const b = await riderWith(van.id);
+      const plain = await riderWith();
+      const branchId = await branch();
+      const make = async (over: Record<string, unknown>) => {
+        const r = await c.deliveryRuns.create(dispatcher(), { branchId, runDate: today(), riderId: a, ...over });
+        if (!r.ok) throw new Error(r.message);
+        return r.data.id;
+      };
+      const chosen = await make({ vehicleId: other.id });
+      await c.deliveryRuns.assignRider(dispatcher(), chosen, { riderId: b });
+      expect(await vehicleOf(chosen)).toEqual({ vehicleId: other.id, vehicle: other.name });
+      const typed = await make({ vehicle: 'Hired lorry' });
+      await c.deliveryRuns.assignRider(dispatcher(), typed, { riderId: b });
+      expect(await vehicleOf(typed)).toEqual({ vehicleId: null, vehicle: 'Hired lorry' });
+      const toPlain = await make({});
+      await c.deliveryRuns.assignRider(dispatcher(), toPlain, { riderId: plain });
+      expect(await vehicleOf(toPlain)).toEqual({ vehicleId: bike.id, vehicle: bike.name });
+      const sameRider = await make({});
+      await c.deliveryRuns.assignRider(dispatcher(), sameRider, { riderId: a });
+      expect(await vehicleOf(sameRider)).toEqual({ vehicleId: bike.id, vehicle: bike.name });
+      const stoppedVan = await vehicle('Old van');
+      const c2 = await riderWith(stoppedVan.id);
+      const following = await make({});
+      await c.deliveryVehicles.setActive(dispatcher(), stoppedVan.id, { isActive: false, expectedVersion: stoppedVan.version });
+      expect(await c.deliveryRuns.assignRider(dispatcher(), following, { riderId: c2 })).toMatchObject({ ok: true });
+      expect(await vehicleOf(following)).toEqual({ vehicleId: bike.id, vehicle: bike.name });
+    });
+
+    it('keeps the vehicle when the new rider\'s usual one could not carry what is already on the run', async () => {
+      const bike = await vehicle('Bike');
+      const small = await vehicle('Small', { maxWeightKg: 12 });
+      const a = await riderWith(bike.id);
+      const b = await riderWith(small.id);
+      const ready = await readyDelivery();
+      await db.update(schema.products).set({ weight: '10' }).where(eq(schema.products.name, ready.productName));
+      const run = await c.deliveryRuns.create(dispatcher(), { branchId: ready.branchId, runDate: today(), riderId: a });
+      if (!run.ok) throw new Error(run.message);
+      expect(await c.deliveryRuns.addStop(dispatcher(), run.data.id, ready.deliveryId)).toMatchObject({ ok: true });
+      // 3 x 10 kg is more than the small vehicle takes: the rider changes, the vehicle stays.
+      expect(await c.deliveryRuns.assignRider(dispatcher(), run.data.id, { riderId: b })).toMatchObject({ ok: true, data: { vehicleId: bike.id } });
     });
   });
 

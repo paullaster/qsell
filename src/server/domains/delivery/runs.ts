@@ -4,7 +4,7 @@ import { loadProblem, type VehicleLimits } from '@/lib/delivery-vehicle';
 import { DEFAULT_AT_RISK_MINUTES, slaState, type SlaState } from '@/lib/delivery-sla';
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, deliveries, deliveryLines, deliveryRunStops, deliveryRuns, deliverySlaSettings, deliveryShipments, orderItems, orders, products } from '@/server/db/drizzle/schema';
+import { branches, deliveries, deliveryLines, deliveryRiders, deliveryRunStops, deliveryRuns, deliverySlaSettings, deliveryShipments, orderItems, orders, products } from '@/server/db/drizzle/schema';
 import { RUN_ACTION_WORDS, RUN_STATUS_WORDS, canJoinRun, isReordering, isRunEditable, nearestNext, nextRunStatus, runActionsFrom, runCloseProblem, runTotals, waitingSince, type RunAction, type RunStatus, type RunTotals } from '@/lib/dispatch-run';
 import { STATUS_WORDS, type DeliveryStatus } from '@/lib/delivery-document';
 import { readGeoPoint, type GeoPoint } from '@/lib/geo';
@@ -216,10 +216,29 @@ export class DeliveryRuns {
       if ('ok' in run) return run;
       const who = await this.riderFor(tx, actor.companyId, input);
       if (!who.ok) return who;
-      await tx.update(deliveryRuns).set({ riderId: who.data.riderId, riderName: who.data.riderName, version: run.version + 1, updatedAt: new Date() }).where(eq(deliveryRuns.id, runId));
-      await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_run', id: runId }, action: 'run.rider_changed', actor: { type: 'user', id: actor.userId }, reason: { text: `${run.riderName} to ${who.data.riderName}` } }, tx);
+      const vehicle = await this.vehicleToCarryOver(tx, actor.companyId, run, who.data);
+      await tx.update(deliveryRuns).set({ riderId: who.data.riderId, riderName: who.data.riderName, ...(vehicle === null ? {} : { vehicle: vehicle.name, vehicleId: vehicle.id }), version: run.version + 1, updatedAt: new Date() }).where(eq(deliveryRuns.id, runId));
+      await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_run', id: runId }, action: 'run.rider_changed', actor: { type: 'user', id: actor.userId }, reason: { text: `${run.riderName} to ${who.data.riderName}${vehicle === null ? '' : `; vehicle ${run.vehicle ?? 'none'} to ${vehicle.name}`}` } }, tx);
       return { ok: true, data: await this.viewIn(tx, actor.companyId, runId) };
     });
+  }
+
+  /**
+   * The new rider's usual vehicle, when a planned run is given to them and it should go in that: the run has no vehicle, or has the
+   * previous rider's usual one (so it was only following the rider, not chosen or typed by the office). Never when the new rider has none,
+   * when theirs is stopped, when it would be overloaded by what is already on the run, or when the office chose another: those stay as they are.
+   */
+  private async vehicleToCarryOver(tx: Tx, companyId: string, run: { id: string; riderId: string | null; vehicleId: string | null; vehicle: string | null }, next: { riderId: string | null; usualVehicleId: string | null }): Promise<{ id: string; name: string } | null> {
+    if (next.usualVehicleId === null || next.riderId === run.riderId || run.vehicleId === next.usualVehicleId) return null;
+    let followsRider = run.vehicleId === null && run.vehicle === null;
+    if (!followsRider && run.vehicleId !== null && run.riderId !== null) {
+      const [previous] = await tx.select({ vehicleId: deliveryRiders.vehicleId }).from(deliveryRiders).where(and(eq(deliveryRiders.id, run.riderId), eq(deliveryRiders.companyId, companyId)));
+      followsRider = previous?.vehicleId === run.vehicleId;
+    }
+    if (!followsRider) return null;
+    const usable = await this.vehicles.usable(tx, companyId, next.usualVehicleId);
+    if (usable === null) return null;
+    return (await this.overload(tx, { id: run.id, vehicleId: usable.id }, companyId, null)) === null ? { id: usable.id, name: usable.name } : null;
   }
 
   /** Locks a run and checks the version and that it can still be edited. */
