@@ -175,6 +175,11 @@ export const servingCost = (picks: readonly CanonicalPick[]): number => round2(p
  * (chosen in two slots) are one part. In summed mode each part takes its own price because the split is by price.
  */
 export function packageParts(def: Pick<PackageDef, 'pricingMode' | 'allocation'>, picks: readonly CanonicalPick[], linePrice: number, servings: number): KitPart[] {
+  return allocateKit(round2(linePrice), servings, packageComponentDefs(picks), def.allocation);
+}
+
+/** The chosen options as kit components for one serving, a product chosen twice being one component (weighted averages of price and cost). */
+export function packageComponentDefs(picks: readonly CanonicalPick[]): KitComponentDef[] {
   const byProduct = new Map<string, KitComponentDef>();
   for (const pick of picks) {
     const quantity = pick.option.quantity * pick.count;
@@ -190,7 +195,7 @@ export function packageParts(def: Pick<PackageDef, 'pricingMode' | 'allocation'>
       found.quantity = totalQuantity;
     }
   }
-  return allocateKit(round2(linePrice), servings, [...byProduct.values()], def.allocation);
+  return [...byProduct.values()];
 }
 
 export interface Availability {

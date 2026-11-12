@@ -1,4 +1,6 @@
 import { packageAsLineRefusal, packageOnlyRefusal } from '@/lib/package-only';
+import type { RawPick } from '@/server/domains/pricing/domain/packages';
+import type { PreparedPackage } from '@/server/domains/pricing/package-order-service';
 import { quantityProblem } from '@/lib/unit-rules';
 import type { CheckoutRefusal, StageSource } from '@/lib/order-stages';
 import { OrderStages, type StageActor } from './stages';
@@ -65,6 +67,13 @@ function placedBy(channel: string, customerId: string | null, requestedBy: strin
 const ORDER_NOT_SAVED = 'We could not place your order just now. Nothing has been charged. Please try again in a moment.';
 
 /** What the shopper is told for a failed order: our own refusal as it is written, a database failure only in general words. */
+/** A part's price trace names the made-up id of its package line; it should name the package product. */
+function tracedToPackage(trace: PriceTrace | null | undefined, prepared: ReadonlyMap<number, PreparedPackage>): PriceTrace | null {
+  if (trace?.kit === undefined) return trace ?? null;
+  const line = [...prepared.values()].find((p) => p.kit.productId === trace.kit?.productId);
+  return line === undefined ? trace : { ...trace, kit: { ...trace.kit, productId: line.productId, name: line.name } };
+}
+
 function refusalMessage(error: unknown, failure: string | null): string {
   if (failure !== null) return ORDER_NOT_SAVED;
   return error instanceof Error ? error.message : 'Customer or dimension assignment failed';
@@ -108,7 +117,7 @@ export const OrderWriteService = {
       postalCode?: string;
       country: string;
     };
-    items: { productId: string; quantity: number }[];
+    items: { productId: string; quantity: number; /** A configurable package: the choices made (ids and counts only), and `quantity` is the servings. */ package?: { picks: RawPick[] } }[];
     quotedItems?: {
       productId: string;
       quantity: number;
@@ -150,6 +159,8 @@ export const OrderWriteService = {
     };
     orderId?: string;
     orderNumber?: string;
+    /** The date the order is for (`YYYY-MM-DD`) when it has no delivery slot (a staff order, a collection): package rules of notice, days and daily limits count against it. */
+    fulfilmentDate?: string;
     currency: 'KES' | 'USD';
     paymentMethod: PaymentProvider;
     /**
@@ -290,6 +301,19 @@ export const OrderWriteService = {
       toPrice.forEach((i, n) => engine.set(i, nth(priced, n)));
     }
 
+    // Package lines: checked against the package as it is now (choices, stock, who may order, notice, closing time, days), then priced
+    // as the base plus what the choices add. The browser's word is only ids and counts.
+    const preparedPackages = new Map<number, PreparedPackage>();
+    const packageContext = { companyId: saleCompanyId, customerGroupId: await getContainer().pricing.groupFor(saleCompanyId, saleCustomerId), signedIn: saleCustomerId !== null, forDate: params.delivery?.slot?.day ?? params.fulfilmentDate ?? null, now: new Date() };
+    {
+      const wanted = params.items.flatMap((item, index) => (item.package === undefined ? [] : [{ index, productId: item.productId, picks: item.package.picks, servings: item.quantity }]));
+      if (wanted.length > 0) {
+        const prepared = await getContainer().packageOrders.prepare(packageContext, wanted);
+        if (!prepared.ok) return { success: false, error: prepared.error, code: prepared.code === 'out_of_stock' ? 'stock_short' : prepared.code };
+        for (const line of prepared.lines) preparedPackages.set(line.index, line);
+      }
+    }
+
     /** Lines the price lists priced: discounts apply to them, then they are checked against floors. */
     const guarded: {
       itemIndex: number;
@@ -311,7 +335,7 @@ export const OrderWriteService = {
 
     for (const [index, item] of params.items.entries()) {
       const prod = catalogProducts.get(item.productId);
-      if (prod && packagedIds.has(item.productId)) {
+      if (prod && packagedIds.has(item.productId) && item.package === undefined) {
         return { success: false, error: packageAsLineRefusal(prod.name), code: 'not_for_sale' };
       }
       if (!prod) {
@@ -344,12 +368,16 @@ export const OrderWriteService = {
       ) {
         return { success: false, error: `${prod.name} has no valid selling price.`, code: 'cannot_be_priced' };
       }
-      const { unitPrice, total: itemTotal } = lineAmounts(
+      const base = lineAmounts(
         quoted,
         priced,
         prod.price,
         item.quantity,
       );
+      // A package serving costs the base price plus what the choices add (or the choices' own prices, added up).
+      const chosen = quoted === undefined ? preparedPackages.get(index) : undefined;
+      const unitPrice = chosen === undefined ? base.unitPrice : Math.round(((chosen.summedPerServing ?? base.unitPrice + (chosen.addedPerServing ?? 0)) + Number.EPSILON) * 100) / 100;
+      const itemTotal = chosen === undefined ? base.total : Math.round((unitPrice * item.quantity + Number.EPSILON) * 100) / 100;
       // Promotions and coupons apply to every channel's price-list lines, the shop's included (price floors stay with the staff channels).
       if (priced && !quoted) {
         guarded.push({
@@ -532,16 +560,31 @@ export const OrderWriteService = {
       // Read fresh: a sale must never use a kit another server has just changed.
       { fresh: true },
     );
-    if (kitDefs.size > 0) {
-      const soldKit = orderItems.some((i) => kitDefs.has(i.productId));
+    // What each package line came to, before it is split into parts (its record keeps this).
+    const packageTotals = [...preparedPackages.values()].map((line, n) => ({ lineNo: n + 1, servingPrice: nth(orderItems, line.index).unitPrice, lineTotal: nth(orderItems, line.index).totalPrice }));
+    // The price floor on the choice actually made: what the chosen parts cost against what the line came to after discounts.
+    for (const line of preparedPackages.values()) {
+      const priced = nth(pricedLines, line.index);
+      const total = nth(orderItems, line.index).totalPrice;
+      const net = priced.isTaxInclusive && priced.taxRate > 0 ? total / (1 + priced.taxRate / 100) : total;
+      if (net + 0.005 < line.costPerServing * line.servings) {
+        return { success: false, error: `${line.name} with these choices would sell for less than its parts cost. Please change a choice.`, code: 'approval_needed' };
+      }
+    }
+    // A package line is a kit of its own choices (under a made-up id, so two lines of one package never meet).
+    const sellKits = new Map(kitDefs);
+    for (const line of preparedPackages.values()) sellKits.set(line.kit.productId, line.kit);
+    if (sellKits.size > 0) {
+      const soldKit = orderItems.some((i) => kitDefs.has(i.productId)) || preparedPackages.size > 0;
       try {
         const expansion = expandKits(
           orderItems.map((item, i) => ({
             ...item,
+            productId: preparedPackages.get(i)?.kit.productId ?? item.productId,
             taxRate: nth(pricedLines, i).taxRate,
             isTaxInclusive: nth(pricedLines, i).isTaxInclusive,
           })),
-          kitDefs,
+          sellKits,
           params.currency,
         );
         orderItems.splice(
@@ -555,7 +598,7 @@ export const OrderWriteService = {
             unitPrice: l.unitPrice,
             totalPrice: l.totalPrice,
             imageUrl: l.imageUrl,
-            priceTrace: l.priceTrace ?? null,
+            priceTrace: tracedToPackage(l.priceTrace, preparedPackages),
             isGift: l.isGift,
           })),
         );
@@ -812,6 +855,12 @@ export const OrderWriteService = {
               message: delivered.choice.words,
               detail: { charge: delivered.quote.split.gross, tax: delivered.quote.split.tax, policy: delivered.quote.policy === null ? null : `${delivered.quote.policy.code} v${String(delivered.quote.policy.version)}`, branch: delivered.branch.code },
             });
+          }
+          // The exact selections of package lines, in the same transaction (this also takes the day's limit).
+          if (preparedPackages.size > 0) {
+            const lines = [...preparedPackages.values()];
+            await getContainer().packageOrders.record(tx, packageContext, saved.id, lines);
+            await getContainer().packageOrders.priceInstances(tx, saved.id, packageTotals);
           }
           // What the discounts used is recorded in the same transaction as the order.
           if (discountApplications.length > 0)

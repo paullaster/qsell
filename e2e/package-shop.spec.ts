@@ -88,12 +88,25 @@ test.describe('configurable packages in the web shop', () => {
     await expect(line).toContainText('sold out for 3 servings', { timeout: 30_000 }).catch(() => undefined);
     await line.getByRole('button', { name: 'One less serving' }).click();
 
-    // Ordering a package opens with the next step: checkout says so plainly rather than leaving it out of an order.
+    // Checkout takes the package like any line: it is listed with its price, and the order is placed and confirmed.
     await page.goto('/checkout');
-    await expect(page.getByTestId('packages-not-orderable')).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByTestId('packages-not-orderable')).toContainText('cannot be ordered here yet');
-    await page.getByRole('button', { name: 'Remove this package' }).click();
-    await expect(page.getByRole('heading', { name: 'Your cart is empty' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('heading', { name: 'Checkout', level: 1 })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('summary-package')).toContainText(made.large, { timeout: 30_000 });
+    await page.getByLabel('Full name').fill('Wanjiru Lunch');
+    await page.getByLabel('Mobile phone').fill('0711 000 777');
+    await page.getByLabel('Street, building or office').fill('1 Moi Avenue');
+    await page.getByLabel('City or town').fill('Nairobi');
+    await page.getByLabel('County or region').fill('Nairobi');
+    // A payment cannot finish in the test shop, but the order is placed first and holds the stock: that is what is being checked.
+    await page.getByLabel(/number to pay from$/).fill('0733 555 777');
+    await page.getByRole('button', { name: /^Pay / }).click();
+    const failed = page.getByRole('region', { name: 'Payment not completed' });
+    const waiting = page.getByRole('region', { name: 'Waiting for payment' });
+    await expect(failed.or(waiting)).toBeVisible({ timeout: 90_000 });
+    const text = await page.locator('main, body').first().innerText();
+    expect(/order\s+[A-Z]{2,}-[A-Z0-9-]*\d[A-Z0-9-]*/i.test(text), 'the page names the order').toBe(true);
+    // The cart is spent once the order holds the stock.
+    await expect(page.getByRole('button', { name: 'Shopping Cart' })).not.toContainText('2');
   });
 
   test('a package is never added to the cart as it stands, and the parts only packages sell have no page of their own', async ({ page }, testInfo) => {

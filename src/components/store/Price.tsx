@@ -13,6 +13,7 @@ export function Price({ product, size = 'md' }: { product: PublicProduct; size?:
   return (
     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
       <span className={`font-mono font-bold text-fg-strong ${size === 'lg' ? 'text-2xl' : 'text-base'}`}>
+        {product.isPackage === true ? <span className="mr-1 text-sm font-normal text-fg-muted">From</span> : null}
         {money(price)}
         {perUnitSuffix(product) === '' ? null : <span className="text-sm font-normal text-fg-muted">{perUnitSuffix(product)}</span>}
       </span>

@@ -116,7 +116,10 @@ export function CheckoutScreen({ cartHandoff }: { cartHandoff?: string }) {
     try {
       const result = await placeOrderAction({
         ...data,
-        items: cart.lines.map((line) => ({ productId: line.product.id, quantity: line.quantity })),
+        items: [
+          ...cart.lines.map((line) => ({ productId: line.product.id, quantity: line.quantity })),
+          ...cart.packages.map((line) => ({ productId: line.productId, quantity: line.servings, package: { picks: line.picks } })),
+        ],
       });
       if (!result.ok) {
         setError(result.error);
@@ -240,6 +243,16 @@ export function CheckoutScreen({ cartHandoff }: { cartHandoff?: string }) {
     );
   }
 
+  // Package lines as the shop priced them; one the shop refuses stops the order here, with the reason, before anything is paid.
+  const priced = cart.packages.flatMap((line) => {
+    const check = cart.packageChecks[line.id];
+    return check?.ok === true ? [{ id: line.id, productId: line.productId, picks: line.picks, servings: line.servings, summary: check.summary, total: check.total }] : [];
+  });
+  const refused = cart.packages.flatMap((line) => {
+    const check = cart.packageChecks[line.id];
+    return check?.ok === false ? [check.problems.join(' ')] : [];
+  });
+
   let body: ReactNode;
   if (!ready) {
     body = (
@@ -247,17 +260,7 @@ export function CheckoutScreen({ cartHandoff }: { cartHandoff?: string }) {
         Checking your cart…
       </p>
     );
-  } else if (cart.packages.length > 0) {
-    // Ordering a package is not open yet: it is never dropped from an order without a word, so checkout stops here and says why.
-    body = (
-      <div className="space-y-4" data-testid="packages-not-orderable">
-        <p role="alert" className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-fg">
-          Your cart has a package you built. Packages cannot be ordered here yet, so nothing has been left out of an order by mistake. Remove the package below to check out the rest of your cart.
-        </p>
-        <PackageCartLines />
-      </div>
-    );
-  } else if (cart.lines.length === 0) {
+  } else if (cart.lines.length === 0 && cart.packages.length === 0) {
     body = (
       <div className="mx-auto max-w-md space-y-4 rounded-2xl border border-line bg-surface-raised p-10 text-center">
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-surface-sunken text-fg-subtle">
@@ -280,9 +283,17 @@ export function CheckoutScreen({ cartHandoff }: { cartHandoff?: string }) {
       </div>
     );
   } else {
-    body = (
+    body = refused.length > 0 ? (
+      <div className="space-y-4" data-testid="packages-refused">
+        <p role="alert" className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-fg">
+          Something in your cart cannot be ordered as it is: {refused.join(' ')} Change or remove it below.
+        </p>
+        <PackageCartLines />
+      </div>
+    ) : (
       <CheckoutForm
         lines={cart.lines}
+        packages={priced}
         defaultCountry={company.country}
         submitting={submitting}
         error={error}

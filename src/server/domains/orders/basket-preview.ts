@@ -2,6 +2,8 @@ import { inArray } from 'drizzle-orm';
 import { computeCheckoutTotals } from '@/lib/checkoutPricing';
 import { priceItemFor } from '@/server/domains/pricing/service';
 import { expandKits } from '@/server/domains/pricing/kit-service';
+import type { BasketItem } from '@/lib/basket-items';
+import type { PreparedPackage } from '@/server/domains/pricing/package-order-service';
 import { CatalogService } from '@/server/domains/catalog/service';
 import { getContainer } from '@/server/di/container';
 import { drizzleDb } from '@/server/db/drizzle/client';
@@ -41,8 +43,9 @@ export type BasketPreview =
  * branch), so the value and the weight a delivery charge is worked from are the ones the order will have. The order is the
  * authority; if anything here differs, the order's own charge differs and the shopper is told before paying.
  */
-export async function previewShopBasket(items: readonly { productId: string; quantity: number }[], customerId: string | null, options: { couponCodes?: readonly string[]; paymentMethod?: string | null } = {}): Promise<BasketPreview> {
-  const { companySettings, organizations, branches, pricing, kits, discounts } = getContainer();
+export async function previewShopBasket(rawItems: readonly BasketItem[], customerId: string | null, options: { couponCodes?: readonly string[]; paymentMethod?: string | null } = {}): Promise<BasketPreview> {
+  const items = rawItems;
+  const { companySettings, organizations, branches, pricing, kits, discounts, packageOrders } = getContainer();
   const company = await companySettings.ensureSeeded();
   const { branch } = await organizations.ensureDefaultOrgAndBranch(company.id, orElse(firstFilled(company.tradingName, company.legalName), 'Company'));
   const sellingBranch = (await branches.getDefault(company.id)) ?? branch;
@@ -50,6 +53,14 @@ export async function previewShopBasket(items: readonly { productId: string; qua
 
   const sellable = items.filter((i) => found.get(i.productId)?.isSellable === true && found.get(i.productId)?.showOnWebShop === true && found.get(i.productId)?.soldOnlyInPackages !== true);
   if (sellable.length !== items.length || sellable.length === 0) return { ok: false, error: 'Something in your basket is no longer for sale. Please look at your basket again.' };
+  // Package lines: the choices are checked as the order will check them (the audience and ordering rules are left to the order itself).
+  const preparedPackages = new Map<number, PreparedPackage>();
+  const wanted = items.flatMap((item, index) => (item.package === undefined ? [] : [{ index, productId: item.productId, picks: item.package.picks, servings: item.quantity }]));
+  if (wanted.length > 0) {
+    const prepared = await packageOrders.prepare({ companyId: company.id, customerGroupId: await pricing.groupFor(company.id, customerId), signedIn: customerId !== null, forDate: null, now: new Date(), previewOnly: true }, wanted);
+    if (!prepared.ok) return { ok: false, error: prepared.error };
+    for (const line of prepared.lines) preparedPackages.set(line.index, line);
+  }
   const priced = await pricing.priceLines(
     company.id,
     { customerId, branchId: sellingBranch.id, salesType: 'cash', channel: 'ecommerce' },
@@ -64,7 +75,11 @@ export async function previewShopBasket(items: readonly { productId: string; qua
     const product = nth([...found.values()].filter((p) => p.id === item.productId), 0);
     const result = priced[n];
     if (result?.unitPrice == null && (product.price == null || !Number.isFinite(product.price) || product.price <= 0)) return null;
-    const { unitPrice, total } = lineAmounts(undefined, result, product.price, item.quantity);
+    const base = lineAmounts(undefined, result, product.price, item.quantity);
+    // A package serving costs the base price plus what the choices add (or the choices' own prices, added up).
+    const chosen = preparedPackages.get(n);
+    const unitPrice = chosen === undefined ? base.unitPrice : Math.round(((chosen.summedPerServing ?? base.unitPrice + (chosen.addedPerServing ?? 0)) + Number.EPSILON) * 100) / 100;
+    const total = chosen === undefined ? base.total : Math.round((unitPrice * item.quantity + Number.EPSILON) * 100) / 100;
     return { item, product, unitPrice, total, result };
   });
   if (lines.some((l) => l === null)) return { ok: false, error: 'Something in your basket cannot be priced right now.' };
@@ -91,14 +106,15 @@ export async function previewShopBasket(items: readonly { productId: string; qua
     couponProblems: discounted.couponProblems,
   };
 
-  const kitDefs = await kits.forProducts(company.id, priceable.map((l) => l.item.productId));
+  const kitDefs = new Map(await kits.forProducts(company.id, priceable.map((l) => l.item.productId)));
+  for (const line of preparedPackages.values()) kitDefs.set(line.kit.productId, line.kit);
   let stock = [...priceable.map((l) => ({ productId: l.item.productId, quantity: l.item.quantity })), ...discounted.gifts.map((g) => ({ productId: g.productId, quantity: g.quantity }))];
   // What is taxed: the lines as the order will have them. A kit is taxed part by part, each at its own rate.
   let taxed = priceable.map((l) => ({ productId: l.item.productId, quantity: l.item.quantity, unitPrice: l.unitPrice, taxRate: l.product.taxRate ?? 0, isTaxInclusive: l.product.isTaxInclusive !== false }));
   if (kitDefs.size > 0) {
     try {
       const expansion = expandKits(
-        priceable.map((l) => ({ productId: l.item.productId, productName: l.product.name, sku: l.product.sku, quantity: l.item.quantity, unitPrice: l.unitPrice, totalPrice: l.total, imageUrl: l.product.imageUrl, taxRate: l.product.taxRate ?? 0, isTaxInclusive: l.product.isTaxInclusive !== false })),
+        priceable.map((l, n) => ({ productId: preparedPackages.get(n)?.kit.productId ?? l.item.productId, productName: l.product.name, sku: l.product.sku, quantity: l.item.quantity, unitPrice: l.unitPrice, totalPrice: l.total, imageUrl: l.product.imageUrl, taxRate: l.product.taxRate ?? 0, isTaxInclusive: l.product.isTaxInclusive !== false })),
         kitDefs,
       );
       stock = expansion.lines.map((l) => ({ productId: l.productId, quantity: l.quantity }));

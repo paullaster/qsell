@@ -59,11 +59,18 @@ test.describe('packages', () => {
     const change = page.getByRole('form', { name: 'Change package' });
     await expect(change).toBeVisible();
     await change.getByRole('button', { name: 'Remove slot 2' }).click();
+    // Rules of ordering are settings too: a daily limit and the days it is served.
+    await change.getByLabel('Most servings promised for one day').fill('40');
+    await change.getByLabel('Fewest servings per order').fill('5');
+    await change.getByRole('checkbox', { name: 'Monday' }).check();
+    await noNativeSelect(page);
     await change.getByRole('combobox', { name: /Reason/ }).click();
     await page.getByRole('option').first().click();
     await change.getByRole('button', { name: 'Save package' }).click();
     await expect(page.getByText('Package saved. It applies to the next order.')).toBeVisible({ timeout: 30_000 });
     await expect(page.getByRole('listitem').filter({ hasText: lunch.name }).first()).not.toContainText('Starch');
+    await expect(page.getByRole('listitem').filter({ hasText: lunch.name }).first()).toContainText('40 servings a day');
+    await expect(page.getByRole('listitem').filter({ hasText: lunch.name }).first()).toContainText('From 5');
 
     // Removing it asks first, and the product is ordinary again.
     await page.getByRole('listitem').filter({ hasText: lunch.name }).first().getByRole('button', { name: `Change ${lunch.name}` }).click();

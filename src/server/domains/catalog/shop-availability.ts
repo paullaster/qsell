@@ -97,6 +97,13 @@ async function withPackageFlag(products: PublicProduct[]): Promise<PublicProduct
     .from(productPackages)
     .where(and(inArray(productPackages.productId, products.map((p) => p.id)), eq(productPackages.isActive, true)));
   if (rows.length === 0) return products;
-  const packages = new Set(rows.map((r) => r.productId));
-  return products.map((p) => (packages.has(p.id) ? { ...p, isPackage: true, inventoryKind: 'non_inventory' } : p));
+  const container = getContainer();
+  // The shop shows the "from" price, the price of the cheapest choice that can be made (it also feeds the page's structured data and share card).
+  const views = await container.packageConfig.list((await container.companySettings.ensureSeeded()).id, rows.map((r) => r.productId));
+  const from = new Map(views.map((v) => [v.productId, v.from.price]));
+  return products.map((p) => {
+    if (!from.has(p.id)) return p;
+    const price = from.get(p.id);
+    return { ...p, isPackage: true, inventoryKind: 'non_inventory', ...(price === null || price === undefined ? {} : { price }) };
+  });
 }

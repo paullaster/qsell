@@ -30,7 +30,7 @@ export class PackageShopService {
   ) {}
 
   /** The packages among these products that the shop may offer, with the stock facts to judge them. */
-  private async load(companyId: string, productIds: readonly string[]): Promise<{ packages: Map<string, ShopPackage>; stock: LineStock; views: Map<string, PackageView> }> {
+  async load(companyId: string, productIds: readonly string[]): Promise<{ packages: Map<string, ShopPackage>; stock: LineStock; views: Map<string, PackageView> }> {
     const ids = [...new Set(productIds)].slice(0, MAX_BASKET_PACKAGES);
     const views = ids.length === 0 ? [] : await this.packages.list(companyId, ids);
     const forSale = views.length === 0

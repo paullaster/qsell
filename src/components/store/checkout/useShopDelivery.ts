@@ -1,5 +1,6 @@
 'use client';
 
+import type { BasketItem } from '@/lib/basket-items';
 import { useCallback, useEffect, useState } from 'react';
 import type { GeoPoint } from '@/lib/geo';
 import type { ShopSlotOffer } from '@/lib/delivery-slot';
@@ -39,7 +40,7 @@ export interface ShopDelivery {
 }
 
 interface Input {
-  items: { productId: string; quantity: number }[];
+  items: BasketItem[];
   county: string;
   town: string;
   area: string;

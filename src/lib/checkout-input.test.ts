@@ -169,3 +169,27 @@ describe('promo codes', () => {
     expect(parseCouponCodes('SAVE').ok).toBe(false);
   });
 });
+
+describe('package lines in the cart', () => {
+  const picks = [{ slotId: 's', optionId: 'o', count: 1 }];
+  it('keeps each package line on its own, with its choices, and merges only plain lines', () => {
+    const result = parseCheckoutInput({
+      ...good(),
+      items: [
+        { productId: 'p1', quantity: 1 },
+        { productId: 'p1', quantity: 2 },
+        { productId: 'lunch', quantity: 2, package: { picks } },
+        { productId: 'lunch', quantity: 1, package: { picks } },
+      ],
+    });
+    expect(result.ok && result.value.items).toEqual([
+      { productId: 'p1', quantity: 3 },
+      { productId: 'lunch', quantity: 2, package: { picks } },
+      { productId: 'lunch', quantity: 1, package: { picks } },
+    ]);
+  });
+  it('refuses a package line whose choices cannot be read, and servings that are not whole', () => {
+    expect(parseCheckoutInput({ ...good(), items: [{ productId: 'lunch', quantity: 1, package: 'x' }] }).ok).toBe(false);
+    expect(parseCheckoutInput({ ...good(), items: [{ productId: 'lunch', quantity: 1.5, package: { picks } }] }).ok).toBe(false);
+  });
+});

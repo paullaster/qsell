@@ -3,6 +3,7 @@
 import { headers } from 'next/headers';
 import { auth } from '@/auth';
 import { getContainer } from '@/server/di/container';
+import { readBasketItems, type BasketItem } from '@/lib/basket-items';
 import { previewShopBasket } from '@/server/domains/orders/basket-preview';
 import { parseCouponCodes } from '@/lib/checkout-input';
 import { readGeoPoint, type GeoPoint } from '@/lib/geo';
@@ -152,7 +153,7 @@ export interface ShopDeliveryQuote {
   caution: string | null;
 }
 
-type ShopPlanned = { ok: true; plan: Extract<Awaited<ReturnType<ReturnType<typeof getContainer>['deliveryPlans']['plan']>>, { ok: true }>; method: 'own_fleet' | 'courier' | 'pickup'; companyId: string; lines: { productId: string; quantity: number }[] } | { ok: false; error: string };
+type ShopPlanned = { ok: true; plan: Extract<Awaited<ReturnType<ReturnType<typeof getContainer>['deliveryPlans']['plan']>>, { ok: true }>; method: 'own_fleet' | 'courier' | 'pickup'; companyId: string; lines: BasketItem[] } | { ok: false; error: string };
 
 /** What the basket and place the browser sent come to on the server: the branch, the charge and the goods. Shared by the price and the delivery times. */
 async function planShopDelivery(raw: unknown): Promise<ShopPlanned> {
@@ -163,9 +164,8 @@ async function planShopDelivery(raw: unknown): Promise<ShopPlanned> {
   const pickupBranchId = method === 'pickup' && typeof raw.pickupBranchId === 'string' && raw.pickupBranchId.length <= 100 ? raw.pickupBranchId : null;
   if (method === 'pickup' && pickupBranchId === null) return { ok: false, error: 'Choose the branch you will collect from.' };
   if (method !== 'pickup' && pin === null && address === undefined) return { ok: false, error: 'Drop a pin on the map or write your area, so we can tell what delivery costs.' };
-  const items = Array.isArray(raw.items) ? raw.items.slice(0, 100) : [];
-  const lines = items.flatMap((i) => (isRecord(i) && typeof i.productId === 'string' && i.productId.length <= 100 && typeof i.quantity === 'number' && Number.isFinite(i.quantity) && i.quantity > 0 && i.quantity <= 1_000_000 ? [{ productId: i.productId, quantity: i.quantity }] : []));
-  if (lines.length === 0 || lines.length !== items.length) return { ok: false, error: 'Your basket could not be read.' };
+  const lines = readBasketItems(raw.items);
+  if (lines === null || lines.length === 0) return { ok: false, error: 'Your basket could not be read.' };
   const wait = await limited('shop_delivery_quote_ip');
   if (wait !== null) return { ok: false, error: wait };
   const session = await auth();
@@ -273,9 +273,8 @@ export interface ShopPickupPoint {
  */
 export async function shopPickupPointsAction(raw: unknown): Promise<ShopResult<ShopPickupPoint[]>> {
   if (!isRecord(raw)) return { ok: false, error: 'Your basket could not be read.' };
-  const items = Array.isArray(raw.items) ? raw.items.slice(0, 100) : [];
-  const lines = items.flatMap((i) => (isRecord(i) && typeof i.productId === 'string' && i.productId.length <= 100 && typeof i.quantity === 'number' && Number.isFinite(i.quantity) && i.quantity > 0 && i.quantity < 1_000_000 ? [{ productId: i.productId, quantity: i.quantity }] : []));
-  if (lines.length === 0 || lines.length !== items.length) return { ok: false, error: 'Your basket could not be read.' };
+  const lines = readBasketItems(raw.items);
+  if (lines === null || lines.length === 0) return { ok: false, error: 'Your basket could not be read.' };
   const wait = await limited('shop_delivery_quote_ip');
   if (wait !== null) return { ok: false, error: wait };
   try {

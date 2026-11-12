@@ -1,6 +1,6 @@
 import { PACKAGE_LIMITS, PRICING_MODES, type ShortStockMode } from './packages';
 import type { KitAllocation } from './kits';
-import type { PackageInput } from '../package-service';
+import { rulesProblem, type PackageInput, type PackageRules } from '../package-service';
 
 /**
  * Reads what the screen sent (untrusted) into a package definition. It only fixes the shapes: strings are trimmed and bounded,
@@ -12,6 +12,30 @@ const text = (value: unknown, max: number): string => (typeof value === 'string'
 const num = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null);
 const SHORT: readonly ShortStockMode[] = ['hide', 'disable', 'substitute'];
 const SPLIT: readonly KitAllocation[] = ['list_price', 'cost', 'explicit'];
+
+const wholeOrNull = (value: unknown): number | null => (value === undefined || value === null || value === '' ? null : num(value));
+
+/** The rules the screen sent; null when none were sent (leave them as they are), or an error in plain words. */
+function parseRules(raw: unknown): { ok: true; rules: PackageRules | undefined } | { ok: false; error: string } {
+  if (raw === undefined || raw === null) return { ok: true, rules: undefined };
+  const r = obj(raw);
+  const numbers = [r.minServings, r.maxServings, r.noticeMinutes, r.closesDaysBefore, r.closesAtMinute, r.dailyLimit];
+  if (numbers.some((n) => n !== undefined && n !== null && n !== '' && num(n) === null)) return { ok: false, error: 'A rule needs a number.' };
+  const audience = r.audience === 'signed_in' || r.audience === 'groups' ? r.audience : 'anyone';
+  const rules: PackageRules = {
+    minServings: wholeOrNull(r.minServings),
+    maxServings: wholeOrNull(r.maxServings),
+    noticeMinutes: wholeOrNull(r.noticeMinutes),
+    closesDaysBefore: wholeOrNull(r.closesDaysBefore),
+    closesAtMinute: wholeOrNull(r.closesAtMinute),
+    weekdays: list(r.weekdays).flatMap((d) => (typeof d === 'number' && Number.isInteger(d) ? [d] : [])).slice(0, 7),
+    dailyLimit: wholeOrNull(r.dailyLimit),
+    audience,
+    groupIds: list(r.groupIds).flatMap((g) => (typeof g === 'string' && g.length > 0 && g.length <= 100 ? [g] : [])).slice(0, 50),
+  };
+  const wrong = rulesProblem(rules);
+  return wrong === null ? { ok: true, rules } : { ok: false, error: wrong };
+}
 
 export type ParsedPackage = { ok: true; input: PackageInput } | { ok: false; error: string };
 
@@ -50,5 +74,7 @@ export function parsePackageInput(raw: unknown): ParsedPackage {
     }
     slots.push({ name: text(slot.name, 80), helpText: text(slot.helpText, 200), minPicks, maxPicks, allowRepeats: slot.allowRepeats === true, included: slot.included === true, options });
   }
-  return { ok: true, input: { productId, pricingMode, allocation, shortStockMode, isActive: i.isActive !== false, slots } };
+  const parsed = parseRules(i.rules);
+  if (!parsed.ok) return { ok: false, error: parsed.error };
+  return { ok: true, input: { productId, pricingMode, allocation, shortStockMode, isActive: i.isActive !== false, ...(parsed.rules === undefined ? {} : { rules: parsed.rules }), slots } };
 }

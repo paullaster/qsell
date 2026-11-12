@@ -1,6 +1,6 @@
 import { and, eq, isNull } from 'drizzle-orm';
-import { products } from '@/server/db/drizzle/schema';
-import { PACKAGE_PRICING_CHOICES, PACKAGE_SHORT_STOCK_CHOICES, PACKAGE_SPLIT_CHOICES, type PackageChoice } from '@/lib/package-choices';
+import { customerGroups, products } from '@/server/db/drizzle/schema';
+import { PACKAGE_AUDIENCE_CHOICES, PACKAGE_PRICING_CHOICES, PACKAGE_SHORT_STOCK_CHOICES, PACKAGE_SPLIT_CHOICES, type PackageChoice } from '@/lib/package-choices';
 import { acceptFilters, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
 
 const fixed = (key: string, choices: readonly PackageChoice[]): LookupSource =>
@@ -47,10 +47,28 @@ const packageOptionProducts = tableSource({
   toOption: (row) => ({ id: String(row.id), label: String(row.label), description: String(row.sku), badge: row.onlyInPackages === true ? 'Packages only' : null }),
 });
 
+/** The customer groups a package can be limited to. */
+const packageCustomerGroups = tableSource({
+  key: 'package-customer-groups',
+  permission: 'pricing:read',
+  table: customerGroups,
+  id: customerGroups.id,
+  label: customerGroups.name,
+  searchColumns: [customerGroups.name, customerGroups.code],
+  select: { code: customerGroups.code },
+  scope: ({ filters, companyId }) => {
+    acceptFilters(filters, {});
+    return [eq(customerGroups.companyId, companyId)];
+  },
+  toOption: (row) => ({ id: String(row.id), label: String(row.label), description: String(row.code), badge: null }),
+});
+
 export const PRICING_LOOKUP_SOURCES: LookupSource[] = [
   fixed('package-pricing-modes', PACKAGE_PRICING_CHOICES),
   fixed('package-short-stock-modes', PACKAGE_SHORT_STOCK_CHOICES),
   fixed('package-split-methods', PACKAGE_SPLIT_CHOICES),
+  fixed('package-audiences', PACKAGE_AUDIENCE_CHOICES),
+  packageCustomerGroups,
   packageProducts,
   packageOptionProducts,
 ];

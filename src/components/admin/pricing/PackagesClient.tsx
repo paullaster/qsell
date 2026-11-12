@@ -4,12 +4,12 @@ import { use, useId, useState } from 'react';
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import { packagesScreenAction, removePackageAction, savePackageAction } from '@/server/domains/pricing/package-actions';
 import type { PackageView } from '@/server/domains/pricing/package-service';
+import { labelOfPackageChoice, minutesOfTime, PACKAGE_AUDIENCE_CHOICES, PACKAGE_PRICING_CHOICES, PACKAGE_SHORT_STOCK_CHOICES, PACKAGE_SPLIT_CHOICES, rulesWords, timeOfMinutes, WEEKDAY_NAMES } from '@/lib/package-choices';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
 import { ReasonField, type ReasonValue } from '../settings/numbering/ReasonField';
 import type { Choice } from '@/lib/payment-options';
-import { PACKAGE_PRICING_CHOICES, PACKAGE_SHORT_STOCK_CHOICES, PACKAGE_SPLIT_CHOICES, labelOfPackageChoice } from '@/lib/package-choices';
 
 type Loaded = Awaited<ReturnType<typeof packagesScreenAction>>;
 
@@ -41,13 +41,23 @@ interface Draft {
   allocation: string;
   shortStockMode: string;
   isActive: boolean;
+  /** The rules of ordering, as typed (empty = no rule). Notice is in hours, closing time as HH:MM. */
+  minServings: string;
+  maxServings: string;
+  noticeHours: string;
+  closesDaysBefore: string;
+  closesAt: string;
+  weekdays: number[];
+  dailyLimit: string;
+  audience: string;
+  groups: Choice[];
   slots: SlotDraft[];
 }
 
 const newKey = (): string => globalThis.crypto.randomUUID();
 const blankOption = (): OptionDraft => ({ key: newKey(), choice: null, quantity: '1', difference: '0', ownPrice: '', isDefault: false, weight: '' });
 const blankSlot = (): SlotDraft => ({ key: newKey(), name: '', helpText: '', minPicks: '1', maxPicks: '1', allowRepeats: false, included: false, options: [blankOption()] });
-const blankDraft = (): Draft => ({ editing: false, product: null, pricingMode: 'base_plus_differences', allocation: 'list_price', shortStockMode: 'hide', isActive: true, slots: [blankSlot()] });
+const blankDraft = (): Draft => ({ editing: false, product: null, pricingMode: 'base_plus_differences', allocation: 'list_price', shortStockMode: 'hide', isActive: true, minServings: '', maxServings: '', noticeHours: '', closesDaysBefore: '', closesAt: '', weekdays: [], dailyLimit: '', audience: 'anyone', groups: [], slots: [blankSlot()] });
 
 const draftOf = (pkg: PackageView): Draft => ({
   editing: true,
@@ -56,6 +66,15 @@ const draftOf = (pkg: PackageView): Draft => ({
   allocation: pkg.allocation,
   shortStockMode: pkg.shortStockMode,
   isActive: pkg.isActive,
+  minServings: pkg.rules.minServings === null ? '' : String(pkg.rules.minServings),
+  maxServings: pkg.rules.maxServings === null ? '' : String(pkg.rules.maxServings),
+  noticeHours: pkg.rules.noticeMinutes === null ? '' : String(pkg.rules.noticeMinutes / 60),
+  closesDaysBefore: pkg.rules.closesDaysBefore === null ? '' : String(pkg.rules.closesDaysBefore),
+  closesAt: pkg.rules.closesAtMinute === null ? '' : timeOfMinutes(pkg.rules.closesAtMinute),
+  weekdays: pkg.rules.weekdays,
+  dailyLimit: pkg.rules.dailyLimit === null ? '' : String(pkg.rules.dailyLimit),
+  audience: pkg.rules.audience,
+  groups: pkg.rules.groupIds.map((id) => ({ id, label: pkg.rules.groupLabels?.[id] ?? 'Customer group' })),
   slots: pkg.slots.map((slot) => ({
     key: slot.id,
     name: slot.name,
@@ -83,6 +102,17 @@ function payloadOf(draft: Draft): unknown {
     allocation: draft.allocation,
     shortStockMode: draft.shortStockMode,
     isActive: draft.isActive,
+    rules: {
+      minServings: optional(draft.minServings),
+      maxServings: optional(draft.maxServings),
+      noticeMinutes: draft.noticeHours.trim() === '' ? null : Math.round(Number(draft.noticeHours) * 60),
+      closesDaysBefore: optional(draft.closesDaysBefore),
+      closesAtMinute: minutesOfTime(draft.closesAt),
+      weekdays: draft.weekdays,
+      dailyLimit: optional(draft.dailyLimit),
+      audience: draft.audience,
+      groupIds: draft.groups.map((g) => g.id),
+    },
     slots: draft.slots.map((slot) => ({
       name: slot.name,
       helpText: slot.helpText,
@@ -155,6 +185,7 @@ function Body({ initial, canManage }: { initial: PackageView[]; canManage: boole
                     <Chip tone={pkg.isActive ? 'green' : 'gray'}>{pkg.isActive ? 'In use' : 'Not in use'}</Chip>
                     <Chip tone="sky">{pkg.pricingMode === 'summed' ? 'Options added up' : 'Base price + differences'}</Chip>
                     {pkg.from.price === null ? <Chip tone="amber">No price yet</Chip> : <Chip tone="gray">From {money(pkg.from.price)}</Chip>}
+                    {rulesWords(pkg.rules).map((w) => <Chip key={w} tone="sky">{w}</Chip>)}
                     {pkg.from.belowCost ? <Chip tone="red">Cheapest choice sells below cost</Chip> : null}
                     {pkg.unavailableOptions > 0 ? <Chip tone="amber">{pkg.unavailableOptions} option{pkg.unavailableOptions === 1 ? '' : 's'} cannot be chosen</Chip> : null}
                   </div>
@@ -237,6 +268,42 @@ function Editor({ initial, onCancel, onSaved }: { initial: Draft; onCancel: () =
         <input type="checkbox" className="size-4" checked={draft.isActive} onChange={(e) => setDraft((d) => ({ ...d, isActive: e.target.checked }))} />
         In use (when off, the product sells as an ordinary product)
       </label>
+
+      <fieldset className="space-y-3 rounded-lg border border-line p-3">
+        <legend className="px-1 text-xs font-bold tracking-wider text-fg-subtle uppercase">Rules of ordering (leave empty for no rule)</legend>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <Field id={`${uid}-min`} label="Fewest servings per order"><input id={`${uid}-min`} inputMode="numeric" className={fieldClass} value={draft.minServings} onChange={(e) => setDraft((d) => ({ ...d, minServings: e.target.value }))} /></Field>
+          <Field id={`${uid}-max`} label="Most servings per order"><input id={`${uid}-max`} inputMode="numeric" className={fieldClass} value={draft.maxServings} onChange={(e) => setDraft((d) => ({ ...d, maxServings: e.target.value }))} /></Field>
+          <Field id={`${uid}-daily`} label="Most servings promised for one day"><input id={`${uid}-daily`} inputMode="numeric" className={fieldClass} value={draft.dailyLimit} onChange={(e) => setDraft((d) => ({ ...d, dailyLimit: e.target.value }))} /></Field>
+          <Field id={`${uid}-notice`} label="Notice needed (hours)"><input id={`${uid}-notice`} inputMode="decimal" className={fieldClass} value={draft.noticeHours} onChange={(e) => setDraft((d) => ({ ...d, noticeHours: e.target.value }))} /></Field>
+          <Field id={`${uid}-closes-days`} label="Ordering closes (days before)"><input id={`${uid}-closes-days`} inputMode="numeric" className={fieldClass} value={draft.closesDaysBefore} onChange={(e) => setDraft((d) => ({ ...d, closesDaysBefore: e.target.value }))} /></Field>
+          <Field id={`${uid}-closes-at`} label="Ordering closes at (time of day)"><input id={`${uid}-closes-at`} type="time" className={fieldClass} value={draft.closesAt} onChange={(e) => setDraft((d) => ({ ...d, closesAt: e.target.value }))} /></Field>
+        </div>
+        <div role="group" aria-label="Days it can be served" className="flex flex-wrap gap-x-4 gap-y-1">
+          {WEEKDAY_NAMES.map((name, day) => (
+            <label key={name} className="flex min-h-10 cursor-pointer items-center gap-2 text-sm">
+              <input type="checkbox" className="size-4" checked={draft.weekdays.includes(day)} onChange={(e) => setDraft((d) => ({ ...d, weekdays: e.target.checked ? [...d.weekdays, day].sort((a, b) => a - b) : d.weekdays.filter((x) => x !== day) }))} />
+              {name}
+            </label>
+          ))}
+          <span className="text-xs text-fg-muted">None ticked means every day. Dates are counted in the company&apos;s time.</span>
+        </div>
+        <ChoicePicker label="Who may order" source="package-audiences" clearable={false} choice={{ id: draft.audience, label: labelOfPackageChoice(PACKAGE_AUDIENCE_CHOICES, draft.audience) }} onChoice={(c) => c !== null && setDraft((d) => ({ ...d, audience: c.id }))} />
+        {draft.audience === 'groups' ? (
+          <div className="space-y-2">
+            <ChoicePicker label="Add a customer group" source="package-customer-groups" choice={null} onChoice={(c) => c !== null && setDraft((d) => (d.groups.some((g) => g.id === c.id) ? d : { ...d, groups: [...d.groups, c] }))} placeholder="Search groups…" />
+            <ul className="flex flex-wrap gap-2" aria-label="Customer groups that may order">
+              {draft.groups.map((g) => (
+                <li key={g.id} className="flex items-center gap-1 rounded-full border border-line px-3 py-1 text-sm">
+                  {g.label}
+                  <button type="button" aria-label={`Remove ${g.label}`} className="flex size-8 cursor-pointer items-center justify-center rounded-full hover:bg-hover" onClick={() => setDraft((d) => ({ ...d, groups: d.groups.filter((x) => x.id !== g.id) }))}>×</button>
+                </li>
+              ))}
+              {draft.groups.length === 0 ? <li className="text-xs text-fg-muted">No group chosen yet.</li> : null}
+            </ul>
+          </div>
+        ) : null}
+      </fieldset>
 
       <div className="space-y-3">
         {draft.slots.map((slot, si) => (

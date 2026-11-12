@@ -149,6 +149,8 @@ export const CHECKOUT_REFUSALS = [
   'pay_on_delivery',
   'approval_needed',
   'kit_error',
+  'package_rule',
+  'package_choice',
   'delivery_unavailable',
   'delivery_changed',
   'slot_unavailable',

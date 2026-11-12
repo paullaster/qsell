@@ -6,6 +6,7 @@ import { ArrowRight, Building, Check, CreditCard, Lock, LogIn, MapPin, Smartphon
 import type { CustomerAccount, CustomerAddress, PaymentProvider } from '@/types/index';
 import type { PaymentProviderCode } from '@/server/domains/payments/types';
 import type { CartLine } from '@/lib/cart-lines';
+import type { BasketItem } from '@/lib/basket-items';
 import { cartTotals } from '@/lib/cartMoney';
 import { readOptionalEmail } from '@/lib/guest-contact';
 import { has, nth, orElse } from '@/lib/values';
@@ -40,6 +41,8 @@ export interface CheckoutSubmission {
 
 interface CheckoutFormProps {
   lines: CartLine[];
+  /** Package lines in the cart: the choices (sent to the server) and what the shop priced them at. */
+  packages?: { id: string; productId: string; picks: { slotId: string; optionId: string; count: number }[]; servings: number; summary: string; total: number }[];
   defaultCountry: string;
   submitting: boolean;
   /** Why the last attempt failed, in words for the shopper. */
@@ -92,7 +95,7 @@ interface LookedUp {
 }
 
 /** Who is buying, where it goes, and how they pay, with the order beside it. The server checks all of it again. */
-export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmit }: CheckoutFormProps) {
+export function CheckoutForm({ lines, packages = [], defaultCountry, submitting, error, onSubmit }: CheckoutFormProps) {
   const { money } = useStore();
   const [customer, setCustomer] = useState<CustomerAccount | null>(null);
   const [customerName, setCustomerName] = useState('');
@@ -184,8 +187,12 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
     if (has(address.recipientPhone)) setCustomerPhone(address.recipientPhone);
   };
 
-  const totals = cartTotals(lines);
-  const items = lines.map((l) => ({ productId: l.product.id, quantity: l.quantity }));
+  const packageSum = packages.reduce((n, p) => n + p.total, 0);
+  const totals = { ...cartTotals(lines), totalAmount: cartTotals(lines).totalAmount + packageSum };
+  const items: BasketItem[] = [
+    ...lines.map((l) => ({ productId: l.product.id, quantity: l.quantity })),
+    ...packages.map((p) => ({ productId: p.productId, quantity: p.servings, package: { picks: p.picks } })),
+  ];
   const delivery = useShopDelivery({ items, county: countyOrState, town: city, area, country, couponCodes });
   const basketPhase = useShopBasket({ items, couponCodes, paymentMethod: chosenMethod });
   const basket = basketPhase.phase === 'ok' ? basketPhase.basket : null;
@@ -485,10 +492,10 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
       </div>
 
       <aside aria-label="Order summary" className="space-y-5 self-start rounded-xl border border-line bg-surface p-4 sm:p-5 lg:sticky lg:top-24 lg:col-span-5">
-        <h2 className="border-b border-line pb-2 text-base font-bold text-fg-strong">Order review ({lines.length} {lines.length === 1 ? 'item' : 'items'})</h2>
+        <h2 className="border-b border-line pb-2 text-base font-bold text-fg-strong">Order review ({lines.length + packages.length} {lines.length + packages.length === 1 ? 'item' : 'items'})</h2>
         <PackagingOptions />
         <PromoCode codes={couponCodes} onCodes={setCouponCodes} basket={basket} />
-        <OrderSummary lines={lines} basket={basket} collecting={collecting} delivery={deliveryQuote === null ? null : { gross: deliveryQuote.gross, net: deliveryQuote.net, tax: deliveryQuote.tax, branchName: deliveryQuote.branchName }} />
+        <OrderSummary lines={lines} packages={packages} basket={basket} collecting={collecting} delivery={deliveryQuote === null ? null : { gross: deliveryQuote.gross, net: deliveryQuote.net, tax: deliveryQuote.tax, branchName: deliveryQuote.branchName }} />
         <button
           type="submit"
           disabled={submitting || providers === null || codeProblem || (deliveryOn && delivery.quote.phase === 'loading')}

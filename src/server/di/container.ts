@@ -18,6 +18,7 @@ import { DiscountConfigService } from '@/server/domains/pricing/discount-config-
 import { KitConfigService, KitService } from '@/server/domains/pricing/kit-service';
 import { PackageConfigService } from '@/server/domains/pricing/package-service';
 import { PackageShopService } from '@/server/domains/pricing/package-shop-service';
+import { PackageOrderService } from '@/server/domains/pricing/package-order-service';
 import { PriceGuardConfigService } from '@/server/domains/pricing/guard-config-service';
 import type { EmailPort, InvoicePdfPort } from '@/server/ports/communications';
 import { PdfKitInvoiceAdapter } from '@/server/adapters/pdf/pdfkit-invoice.adapter';
@@ -376,6 +377,7 @@ export interface AppContainer {
   kitConfig: KitConfigService;
   packageConfig: PackageConfigService;
   packageShop: PackageShopService;
+  packageOrders: PackageOrderService;
   rebates: RebateService;
   rebateConfig: RebateConfigService;
   loyalty: LoyaltyService;
@@ -591,6 +593,7 @@ export function getContainer(): AppContainer {
   const giftCards = new GiftCardService(drizzleDb, decisionLog, reasonCodes, finance.fx);
   const packageConfig = new PackageConfigService(drizzleDb, decisionLog, reasonCodes);
   const packageShop = new PackageShopService(drizzleDb, packageConfig, deliveryServices.stockSettings, deliveryServices.stockAvailability);
+  const packageOrders = new PackageOrderService(drizzleDb, packageShop);
   const insights = new InsightsService(drizzleDb, priceGuard, packageConfig);
   const pricingConfig = new PricingConfigService(
     drizzleDb,
@@ -762,6 +765,7 @@ export function getContainer(): AppContainer {
     kitConfig: new KitConfigService(drizzleDb, decisionLog, reasonCodes, kits),
     packageConfig,
     packageShop,
+    packageOrders,
     rebates,
     rebateConfig: new RebateConfigService(drizzleDb, decisionLog, reasonCodes, rebates, approvals),
     loyalty,

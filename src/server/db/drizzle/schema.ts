@@ -6610,12 +6610,25 @@ export const productPackages = pgTable(
     shortStockMode: text('short_stock_mode').$type<'hide' | 'disable' | 'substitute'>().notNull().default('hide'),
     isActive: boolean('is_active').notNull().default(true),
     version: integer('version').notNull().default(1),
+    /** Ordering rules (all empty = no rule). Servings per order, notice, closing time, days, and the most servings promised for one date. */
+    minServings: integer('min_servings'),
+    maxServings: integer('max_servings'),
+    noticeMinutes: integer('notice_minutes'),
+    closesDaysBefore: integer('closes_days_before'),
+    closesAtMinute: integer('closes_at_minute'),
+    /** Days of the week (0 Sunday to 6) it can be fulfilled on; empty means every day. */
+    weekdays: integer('weekdays').array().notNull().default(sql`'{}'::integer[]`),
+    dailyLimit: integer('daily_limit'),
+    /** Who may order: anyone, signed-in shoppers, or the customer groups in `package_audiences`. */
+    audience: text('audience').$type<'anyone' | 'signed_in' | 'groups'>().notNull().default('anyone'),
     createdBy: text('created_by').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex('product_packages_product_uidx').on(t.productId),
+    check('product_packages_audience_chk', sql`${t.audience} IN ('anyone', 'signed_in', 'groups')`),
+    check('product_packages_rules_chk', sql`(${t.minServings} IS NULL OR ${t.minServings} >= 1) AND (${t.maxServings} IS NULL OR ${t.maxServings} >= 1) AND (${t.minServings} IS NULL OR ${t.maxServings} IS NULL OR ${t.minServings} <= ${t.maxServings}) AND (${t.noticeMinutes} IS NULL OR ${t.noticeMinutes} >= 0) AND (${t.closesDaysBefore} IS NULL OR ${t.closesDaysBefore} >= 0) AND (${t.closesAtMinute} IS NULL OR (${t.closesAtMinute} >= 0 AND ${t.closesAtMinute} < 1440)) AND (${t.dailyLimit} IS NULL OR ${t.dailyLimit} >= 1)`),
     index('product_packages_company_idx').on(t.companyId),
     check('product_packages_pricing_mode_chk', sql`${t.pricingMode} IN ('base_plus_differences', 'summed')`),
     check('product_packages_allocation_chk', sql`${t.allocation} IN ('list_price', 'cost', 'explicit')`),
@@ -6675,6 +6688,74 @@ export const packageOptions = pgTable(
     check('package_options_qty_chk', sql`${t.quantity} > 0`),
     check('package_options_price_chk', sql`${t.ownPrice} IS NULL OR ${t.ownPrice} >= 0`),
   ],
+);
+
+/** The customer groups a package is limited to when its audience is `groups`. */
+export const packageAudiences = pgTable(
+  'package_audiences',
+  {
+    packageId: uuid('package_id')
+      .notNull()
+      .references(() => productPackages.id, { onDelete: 'cascade' }),
+    customerGroupId: uuid('customer_group_id')
+      .notNull()
+      .references(() => customerGroups.id, { onDelete: 'cascade' }),
+  },
+  (t) => [primaryKey({ columns: [t.packageId, t.customerGroupId] })],
+);
+
+/**
+ * One saved selection on a selling document: what was chosen, the price and the date it is for. This, not the (folded) lines, is
+ * the truth for what to prepare. Kept when the package is changed or removed. Keyed by document type and id (orders now; quotes,
+ * point of sale, sales orders, invoices and credit sales register themselves later).
+ */
+export const packageInstances = pgTable(
+  'package_instances',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    documentType: text('document_type').notNull(),
+    documentId: text('document_id').notNull(),
+    /** Position of the selection on the document, from 1. */
+    lineNo: integer('line_no').notNull(),
+    /** Not a foreign key: the history stays when a package or its product goes. */
+    packageProductId: text('package_product_id').notNull(),
+    packageName: text('package_name').notNull(),
+    packageVersion: integer('package_version').notNull(),
+    servings: integer('servings').notNull(),
+    servingPrice: numeric('serving_price', { precision: 14, scale: 2 }).notNull(),
+    lineTotal: numeric('line_total', { precision: 14, scale: 2 }).notNull(),
+    selectionKey: text('selection_key').notNull(),
+    /** The date it is for (delivery or collection), where the package needs one. */
+    forDate: text('for_date'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('package_instances_line_uidx').on(t.documentType, t.documentId, t.lineNo),
+    index('package_instances_day_idx').on(t.companyId, t.forDate, t.packageProductId),
+    check('package_instances_servings_chk', sql`${t.servings} >= 1`),
+  ],
+);
+
+/** The exact parts of an instance, copied as they were (a later rename or price change cannot alter history). */
+export const packageInstancePicks = pgTable(
+  'package_instance_picks',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    instanceId: uuid('instance_id')
+      .notNull()
+      .references(() => packageInstances.id, { onDelete: 'cascade' }),
+    slotName: text('slot_name').notNull(),
+    productId: text('product_id').notNull(),
+    productName: text('product_name').notNull(),
+    /** How many of the option, and units of the product for one serving. */
+    count: integer('count').notNull(),
+    quantity: quantity('quantity').notNull(),
+    sortOrder: integer('sort_order').notNull().default(0),
+  },
+  (t) => [index('package_instance_picks_instance_idx').on(t.instanceId, t.sortOrder), index('package_instance_picks_product_idx').on(t.productId)],
 );
 
 /** How much each scope dimension counts towards a price list's specificity. Per company. */
