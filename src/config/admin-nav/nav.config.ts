@@ -329,6 +329,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'pricing:read',
       },
       {
+        id: 'pricing-packages',
+        title: 'Packages',
+        name: 'pricing-packages',
+        href: '/admin/pricing/packages',
+        description: 'One product made of choices, such as a lunch with a fish, a starch and vegetables to pick',
+        icon: 'Boxes',
+        permission: 'pricing:read',
+      },
+      {
         id: 'pricing-product-groups',
         title: 'Product groups',
         name: 'pricing-product-groups',

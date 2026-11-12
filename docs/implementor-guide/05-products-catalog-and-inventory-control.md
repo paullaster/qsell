@@ -109,6 +109,29 @@ graph TD
 - Line component mapping: Links 4 individual panels, 1 inverter, 2 batteries, and 1 mounting kit into a single sellable SKU.
 - Component Tax Handling: Automatically apportions VAT across components with differing tax rates.
 
+### Sub-Module 6A: Packages (`/admin/pricing/packages`)
+A **package** is one product made of **choices**, for a business whose customers build what they buy: a lunch with a fish, a starch and vegetables to pick; a computer set with a choice of memory, storage and screen. A kit is always the same parts; a package lets the shopper decide some of them. Permission: *pricing read* to see, *pricing manage* to make, change or remove. Every change needs a reason from the pricing reasons list and is written to the decision log.
+
+**What you set up, in order**
+1. Make the **parts** as ordinary stock products. A part that nobody should buy alone (brown ugali, a side portion) is marked **Sold only inside packages** on its product; it keeps its stock, cost and tax but is not listed, found or sold by itself.
+2. Make the **package product** (for example *Express lunch*) with its base price. It must be sold to customers; it cannot be a kit, a part of a kit, a part of another package or marked sold only inside packages.
+3. On the Packages screen choose **New package**, pick that product and set:
+   - **How the package is priced**: *one base price plus a difference for each option* (the usual), or *each option priced on its own and added up*.
+   - **How the price is split over the parts** (for the tax and stock lines on the order): in proportion to the parts' prices (usual), their cost, or shares you set.
+   - **An option that is out of stock**: hide it (usual), show it greyed out saying it is sold out, or show it greyed out and suggest another.
+   - **In use**: when off, the product sells as an ordinary product.
+4. Add **slots**, one for each decision (Fish, Starch, Vegetables, Extras). For each slot give the **fewest and most picks** (1 and 1 is a single choice; 0 as the fewest makes it optional; 1 and 2 lets the shopper pick one or two), whether **the same option can be chosen more than once** (extra portions), and whether it is **included, not a choice** (one option that is always part of it).
+5. Add **options** to each slot: the product, the **quantity** of it in one pick, a **difference** to the base price (zero, higher or lower; in *base plus differences* mode) or a **fixed price** (in *summed* mode; empty means the product's own selling price), and whether it is **pre-selected**.
+6. Choose a **reason** and **Save package**. The change applies to the next order; orders already made keep what was chosen.
+
+**Rules the screen enforces (the server checks them again)**: at least one slot (at most 20) with at least one option (at most 50); the fewest picks is not more than the most; the same product is not listed twice in a slot; a package cannot contain itself, a kit or another package; every product must exist and be sold to customers; in summed mode every option needs a price; with shares you set every option needs a share. The package list shows the **"from" price** (the cheapest valid choice), warns in red when that choice **sells below what its parts cost**, and flags options that can no longer be chosen because their product was switched off or deleted. **Pricing → Insights** raises the same two warnings.
+
+**Protection**: a product that a package offers cannot be deleted (switch it off, or take it out of the package first). Removing a package does not touch orders or quotes already made.
+
+**What is not built yet (later slices)**: the shop builder where customers choose, the rules of ordering (fewest and most servings, notice, closing times, daily limit, who may order, quote first), the customer note, the preparation sheet, selling a package from quotes, staff orders, point of sale, sales orders, invoices and credit sales. The package is already defined once and will be sold the same way everywhere.
+
+**Go-live check**: make a package of two slots, confirm the "from" price is what you expect, make the cheapest choice cost more than its parts, and confirm the red warning disappears. Switch one option's product off and confirm it is flagged.
+
 ### Sub-Module 7: Stock Locations (`/admin/inventory/locations`)
 - Defines physical locations:
   - **Warehouses**: Central distribution godowns.

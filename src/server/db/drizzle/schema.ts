@@ -6588,6 +6588,95 @@ export const productKitComponents = pgTable(
   ],
 );
 
+/**
+ * A configurable package: one product made of choices (docs/architecture/configurable-packages.md). Sold as one line; when a sale
+ * is saved the chosen options become one line per part, as for a kit. Its own stock is not used.
+ */
+export const productPackages = pgTable(
+  'product_packages',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    /** The product that is sold as the package. */
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'cascade' }),
+    /** `base_plus_differences` (the base price plus a difference per option) or `summed` (each option priced on its own). */
+    pricingMode: text('pricing_mode').$type<'base_plus_differences' | 'summed'>().notNull().default('base_plus_differences'),
+    allocation: text('allocation').$type<KitAllocation>().notNull().default('list_price'),
+    /** What the shopper sees of an option that is out of stock: hide it, show it greyed out, or suggest another. */
+    shortStockMode: text('short_stock_mode').$type<'hide' | 'disable' | 'substitute'>().notNull().default('hide'),
+    isActive: boolean('is_active').notNull().default(true),
+    version: integer('version').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('product_packages_product_uidx').on(t.productId),
+    index('product_packages_company_idx').on(t.companyId),
+    check('product_packages_pricing_mode_chk', sql`${t.pricingMode} IN ('base_plus_differences', 'summed')`),
+    check('product_packages_allocation_chk', sql`${t.allocation} IN ('list_price', 'cost', 'explicit')`),
+    check('product_packages_short_stock_chk', sql`${t.shortStockMode} IN ('hide', 'disable', 'substitute')`),
+  ],
+);
+
+/** One decision inside a package ("Fish", "Starch"). */
+export const packageSlots = pgTable(
+  'package_slots',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    packageId: uuid('package_id')
+      .notNull()
+      .references(() => productPackages.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    helpText: text('help_text').notNull().default(''),
+    minPicks: integer('min_picks').notNull().default(1),
+    maxPicks: integer('max_picks').notNull().default(1),
+    allowRepeats: boolean('allow_repeats').notNull().default(false),
+    /** Not asked: one option that is always part of a serving. */
+    included: boolean('included').notNull().default(false),
+    sortOrder: integer('sort_order').notNull().default(0),
+  },
+  (t) => [
+    index('package_slots_package_idx').on(t.packageId, t.sortOrder),
+    check('package_slots_picks_chk', sql`${t.minPicks} >= 0 AND ${t.maxPicks} >= 1 AND ${t.minPicks} <= ${t.maxPicks} AND ${t.maxPicks} <= 50`),
+    check('package_slots_name_chk', sql`length(btrim(${t.name})) > 0`),
+  ],
+);
+
+/** One thing a slot offers: an inventory product (normally one sold only inside packages) and how much of it. */
+export const packageOptions = pgTable(
+  'package_options',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    slotId: uuid('slot_id')
+      .notNull()
+      .references(() => packageSlots.id, { onDelete: 'cascade' }),
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    /** In the product's base unit, per pick. */
+    quantity: quantity('quantity').notNull().default(1),
+    /** Base-plus-differences mode: added to the base price per pick; may be zero or negative. */
+    difference: numeric('difference', { precision: 14, scale: 2 }).notNull().default('0'),
+    /** A fixed price per pick for this package; empty means the product's own selling price. */
+    ownPrice: numeric('own_price', { precision: 14, scale: 2 }),
+    isDefault: boolean('is_default').notNull().default(false),
+    /** For the split by shares you set. */
+    weight: numeric('weight', { precision: 12, scale: 4 }),
+    sortOrder: integer('sort_order').notNull().default(0),
+  },
+  (t) => [
+    uniqueIndex('package_options_slot_product_uidx').on(t.slotId, t.productId),
+    index('package_options_product_idx').on(t.productId),
+    check('package_options_qty_chk', sql`${t.quantity} > 0`),
+    check('package_options_price_chk', sql`${t.ownPrice} IS NULL OR ${t.ownPrice} >= 0`),
+  ],
+);
+
 /** How much each scope dimension counts towards a price list's specificity. Per company. */
 export const priceSpecificityWeights = pgTable(
   'price_specificity_weights',
