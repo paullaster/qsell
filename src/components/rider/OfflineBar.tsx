@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { queueWords, waitingFor, type QueuedItem } from '@/lib/rider-queue';
 import { buttonClass } from '@/components/ui/screen-kit';
 import { removeItem } from './door-queue';
+import { askForBackgroundSend } from './RegisterWorker';
 import { sendQueue } from './send-queue';
 import { useDoorQueue, useOnline } from './useDoorQueue';
 
@@ -62,10 +63,25 @@ export function OfflineBar({ riderId }: { riderId: string }) {
     };
   }, [riderId, reload, router]);
 
-  // Something new was saved here: send it now if there is signal.
+  // Something new was saved here: send it now if there is signal, and ask the browser to send it later if the app is closed first.
   useEffect(() => {
-    if (waiting > 0 && navigator.onLine) flushRef.current();
+    if (waiting === 0) return;
+    askForBackgroundSend();
+    if (navigator.onLine) flushRef.current();
   }, [waiting]);
+
+  // The worker sent something while this screen was open: read what the shop has now.
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return undefined;
+    const heard = (event: MessageEvent): void => {
+      const data = event.data as { type?: string; sent?: number } | null;
+      if (data?.type !== 'door-sent') return;
+      reload();
+      if ((data.sent ?? 0) > 0) router.refresh();
+    };
+    navigator.serviceWorker.addEventListener('message', heard);
+    return () => navigator.serviceWorker.removeEventListener('message', heard);
+  }, [reload, router]);
 
   const line = queueWords(waiting, rejected.length, online);
   if (online && line === null) return null;

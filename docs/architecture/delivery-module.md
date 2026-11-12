@@ -888,3 +888,13 @@ The "at risk" and "late" chips on the dispatch board were worked out at the defa
 **Verified.** 3 database tests in the riders file (chosen at creation and refused when stopped or unknown, changed and cleared and left alone by other edits, brought to runs unless another is chosen or typed and skipped when stopped) and a browser test on desktop and phone.
 
 **Not built.** Carrying the usual vehicle over when a planned run is given to another rider.
+
+## 59. Saved door work is sent in the background (2026-11-12)
+
+The rider app kept what is done at a door offline in IndexedDB (§ D-2d) but sent it only while a rider screen was open (`OfflineBar`). Now the service worker also sends it. `OfflineBar` registers a one-off background sync (`rider-door`) whenever something is waiting (`askForBackgroundSend`); on the `sync` event `rider-sw.js` reads the same IndexedDB store and sends through `public/rider-sync.js`, which holds the sending rules in plain JavaScript (a worker cannot import the app's TypeScript): oldest first, stops before their run's finish, 5 s doubling to 5 min between failed tries, a refusal kept with its reason, a lapsed session leaves the item alone, a photo uploaded once (shrunk to 1600 px where `OffscreenCanvas` exists) and its id kept. A failed send throws so the browser schedules the next try; open screens are told (`door-sent`) and refresh.
+
+A worker cannot call server actions, so items go to `POST /api/rider/door-sync` (JSON, same-origin only, 64 KB, validated), which calls the same actions as the app (`deliverStopAction`, `failStopAction`, `finishRunAction`) and answers the same `{ ok, error, code, forbidden }`. The item names the rider it was saved for; if the signed-in account is a different rider the answer is "sign in" and nothing is done, so work is never sent under another rider's account. The app and the worker can send the same item: the try's key makes that one try, and the worker re-reads an item before rewriting it so it never brings back one the app has just sent.
+
+**Verified.** `src/lib/rider-sync.test.ts` holds the worker's rules to the app's (`verdictOf`, `waitAfter`, `nextToSend` agree on the same cases) and tests its sending against an in-memory store (order, refusal kept, retry with a longer wait, signed-out rider skipped while another is sent, photo once, no resurrection). `e2e/rider-door-sync.spec.ts` checks the route without a session, from another site, with malformed bodies, and that the worker and its rules are served.
+
+**Not verified in a real browser.** The `sync` event itself (needs a production build on an Android Chromium phone; Playwright cannot raise it reliably). Browsers without Background Sync (Safari, Firefox) keep the older behaviour: sent when the app is open.
