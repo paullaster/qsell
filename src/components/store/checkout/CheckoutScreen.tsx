@@ -12,6 +12,7 @@ import {
   type CheckoutPayment,
 } from '@/server/domains/orders/checkout-actions';
 import { useCart } from '@/components/store/cart/CartProvider';
+import { PackageCartLines } from '@/components/store/cart/PackageCartLines';
 import { useStore } from '@/components/store/StoreContext';
 import { CheckoutForm, type CheckoutSubmission } from '@/components/store/checkout/CheckoutForm';
 import { OrderComplete } from '@/components/store/checkout/OrderComplete';
@@ -245,6 +246,16 @@ export function CheckoutScreen({ cartHandoff }: { cartHandoff?: string }) {
       <p role="status" className="py-10 text-center text-sm text-fg-muted">
         Checking your cart…
       </p>
+    );
+  } else if (cart.packages.length > 0) {
+    // Ordering a package is not open yet: it is never dropped from an order without a word, so checkout stops here and says why.
+    body = (
+      <div className="space-y-4" data-testid="packages-not-orderable">
+        <p role="alert" className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-fg">
+          Your cart has a package you built. Packages cannot be ordered here yet, so nothing has been left out of an order by mistake. Remove the package below to check out the rest of your cart.
+        </p>
+        <PackageCartLines />
+      </div>
     );
   } else if (cart.lines.length === 0) {
     body = (

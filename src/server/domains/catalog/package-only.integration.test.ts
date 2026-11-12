@@ -105,4 +105,41 @@ describe.skipIf(!url)('products sold only inside packages (database)', () => {
     // Nothing was held for the refused order.
     expect(Number((await row(id)).reservedQuantity)).toBe(0);
   });
+
+  it('refuses a configurable package as a plain line, because it is built from choices', async () => {
+    const { OrderWriteService } = await import('@/server/domains/orders/write-service');
+    const { getContainer } = await import('@/server/di/container');
+    const company = await getContainer().companySettings.ensureSeeded();
+    const id = await product({ name: 'Express lunch plain-line test' });
+    await db.insert(schema.productPackages).values({ companyId: company.id, productId: id, createdBy: 'package-only-test' });
+    const result = await OrderWriteService.createOrder({
+      branchId,
+      orderNumber: `PL-${randomUUID()}`,
+      customerName: 'Buyer',
+      customerEmail: `pl-${randomUUID()}@pkg.test`,
+      customerPhone: '0700000000',
+      shippingAddress: { street: '1 Rd', city: 'Nairobi', countyOrState: 'Nairobi', country: 'KE' },
+      items: [{ productId: id, quantity: 1 }],
+      currency: 'KES',
+      paymentMethod: 'mpesa_daraja' as never,
+      salesModule: 'ecommerce',
+    });
+    expect(result).toMatchObject({ success: false, code: 'not_for_sale' });
+    expect(JSON.stringify(result)).toContain('Express lunch plain-line test is made to order from choices');
+    // Switched off, it is an ordinary product again and is not refused for this reason.
+    await db.update(schema.productPackages).set({ isActive: false }).where(eq(schema.productPackages.productId, id));
+    const again = await OrderWriteService.createOrder({
+      branchId,
+      orderNumber: `PL-${randomUUID()}`,
+      customerName: 'Buyer',
+      customerEmail: `pl-${randomUUID()}@pkg.test`,
+      customerPhone: '0700000000',
+      shippingAddress: { street: '1 Rd', city: 'Nairobi', countyOrState: 'Nairobi', country: 'KE' },
+      items: [{ productId: id, quantity: 1 }],
+      currency: 'KES',
+      paymentMethod: 'mpesa_daraja' as never,
+      salesModule: 'ecommerce',
+    });
+    expect(JSON.stringify(again)).not.toContain('made to order from choices');
+  });
 });

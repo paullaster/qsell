@@ -13,6 +13,7 @@ import { AppImage } from '@/components/ui/AppImage';
 import { QuantityStepper } from '@/components/store/QuantityStepper';
 import { availableOf, decimalsOf, perUnitSuffix } from '@/lib/cart-quantity';
 import { PackagingOptions } from '@/components/store/PackagingOptions';
+import { PackageCartLines, packagesTotal } from '@/components/store/cart/PackageCartLines';
 
 export type CartItem = CartLine;
 
@@ -27,12 +28,16 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
 }
 
 function OpenCart({ onClose }: { onClose: () => void }) {
-  const { lines: items, ready, setQuantity, remove } = useCart();
+  const { lines: items, ready, setQuantity, remove, packages, packageChecks } = useCart();
   const { money, paymentLabels, sessionName } = useStore();
   const isSignedIn = sessionName !== null;
   const panelRef = useModalKeys<HTMLDivElement>(onClose);
 
-  const totals = cartTotals(items);
+  const baseTotals = cartTotals(items);
+  // Packages are priced by the shop (their tax is worked out when the order is placed), so they are added to what is shown.
+  const packageSum = packagesTotal(packages, packageChecks);
+  const totals = { ...baseTotals, subtotal: baseTotals.subtotal + packageSum, totalAmount: baseTotals.totalAmount + packageSum };
+  const hasAnything = items.length > 0 || packages.length > 0;
   const taxRows = cartTaxRows(items);
   const checkoutWith =
     paymentLabels.length > 0
@@ -60,7 +65,7 @@ function OpenCart({ onClose }: { onClose: () => void }) {
               <ShoppingBag className="h-5 w-5 text-indigo-400" />
               <h2 id="cart-title" className="truncate text-base font-bold text-fg-strong">Your Cart</h2>
               <span className="shrink-0 rounded-md border border-indigo-500/20 bg-indigo-500/10 px-2 py-0.5 text-xs font-semibold text-indigo-400">
-                {items.length} {items.length === 1 ? 'item' : 'items'}
+                {items.length + packages.length} {items.length + packages.length === 1 ? 'item' : 'items'}
               </span>
             </div>
             <button
@@ -79,7 +84,7 @@ function OpenCart({ onClose }: { onClose: () => void }) {
                 Checking your cart…
               </p>
             ) : null}
-            {ready && items.length === 0 ? (
+            {ready && !hasAnything ? (
               <div className="space-y-4 py-16 text-center">
                 <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-surface-sunken text-fg-subtle">
                   <ShoppingBag className="h-8 w-8" />
@@ -97,6 +102,7 @@ function OpenCart({ onClose }: { onClose: () => void }) {
                 </button>
               </div>
             ) : null}
+            {ready ? <PackageCartLines onNavigate={onClose} /> : null}
             {ready && items.length > 0 ? (
               items.map(({ product, quantity }) => {
                 const available = availableOf(product);
@@ -160,7 +166,7 @@ function OpenCart({ onClose }: { onClose: () => void }) {
             {ready && items.some((line) => line.product.isCheckoutPackaging !== true) ? <PackagingOptions /> : null}
           </div>
 
-          {items.length > 0 && (
+          {hasAnything && (
             <div className="space-y-4 border-t border-line bg-surface p-4 sm:p-6">
               {!isSignedIn ? (
                 <div className="rounded-xl border border-indigo-500/25 bg-indigo-500/5 p-3.5 sm:p-4">

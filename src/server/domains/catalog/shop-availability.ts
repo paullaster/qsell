@@ -1,7 +1,7 @@
-import { inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { getContainer } from '@/server/di/container';
 import { drizzleDb } from '@/server/db/drizzle/client';
-import { products as productsTable } from '@/server/db/drizzle/schema';
+import { productPackages, products as productsTable } from '@/server/db/drizzle/schema';
 import { isInventoryManaged } from '@/lib/inventory-kind';
 import { roundQty } from '@/lib/decimal';
 import { kitTax, type Kit } from '@/server/domains/pricing/kit-service';
@@ -17,7 +17,7 @@ import type { PublicProduct } from '@/types/index';
 export async function withShopAvailability(products: PublicProduct[]): Promise<PublicProduct[]> {
   if (products.length === 0) return products;
   try {
-    return await withKitAvailability(await withLedgerAvailability(products));
+    return await withPackageFlag(await withKitAvailability(await withLedgerAvailability(products)));
   } catch (error) {
     console.error('[shop] availability', error);
     return products;
@@ -84,4 +84,19 @@ async function withKitAvailability(products: PublicProduct[]): Promise<PublicPro
     // Parts nobody counts never run out, so neither does the kit.
     return Number.isFinite(made) ? { ...shown, inventoryKind: 'inventory', stockQuantity: made, reservedQuantity: 0 } : { ...shown, inventoryKind: 'non_inventory' };
   });
+}
+
+/**
+ * A configurable package has no stock of its own: it is made of the options a shopper picks. So it is flagged (the shop sends the
+ * shopper to the builder instead of adding it as it stands) and counted as not stock-managed; each option's stock is checked when
+ * the shopper builds it. Only packages that are switched on are flagged.
+ */
+async function withPackageFlag(products: PublicProduct[]): Promise<PublicProduct[]> {
+  const rows = await drizzleDb
+    .select({ productId: productPackages.productId })
+    .from(productPackages)
+    .where(and(inArray(productPackages.productId, products.map((p) => p.id)), eq(productPackages.isActive, true)));
+  if (rows.length === 0) return products;
+  const packages = new Set(rows.map((r) => r.productId));
+  return products.map((p) => (packages.has(p.id) ? { ...p, isPackage: true, inventoryKind: 'non_inventory' } : p));
 }

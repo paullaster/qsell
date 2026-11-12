@@ -275,7 +275,7 @@ The package page follows the project's SEO rules: title led by the trading name,
 |---|---|
 | **P-0** | The `sold only inside packages` flag: schema, product screen, exclusion from shop, search, sitemap, direct address, API and basket; tests. |
 | **P-1** | Package definition: schema, rules and checks, the Packages screen (slots, list options, pricing mode, split method, out-of-stock mode, in use), decision log, the below-cost and unusable-option checks in Insights; pure domain code. The ordering rules, audience, "where it is offered", customer note and quote-first settings arrive with the slice that enforces them (P-3), so no setting is shown that does nothing. |
-| **P-2** | Shop builder: package page, live price, availability streamed in, basket line with edit, server pricing and validation. |
+| **P-2** | Shop builder: package page, live price, availability streamed in, basket line with edit, server pricing and validation. *Built.* The basket is kept in the browser as choices only (not on the account yet); checkout stops while a package is in the basket until P-3 can order it. Not in this slice: the *from* price and `AggregateOffer` data on the page and in the share card (arrive with P-3 because they need the ordering rules), price lists and discounts on the package price (P-3, with the order). |
 | **P-3** | Orders: expansion, stock, tax, floor, package instances, rules of ordering (notice, limits, audience, daily limit); returns and cancellation. |
 | **P-4** | Quotes and staff ordering with the same builder; conversion rules; the document-type registry and the shared cross-document test (section 10.7). The POS, sales order, sales invoice and credit sale register themselves when they are built. |
 | **P-5** | Preparation sheet and totals. |

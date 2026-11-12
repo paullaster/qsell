@@ -27,3 +27,8 @@ export function packageOnlyRefusal(productName: string): string {
 export function firstPackageOnly<T extends { soldOnlyInPackages?: boolean }>(products: readonly (T | undefined)[]): T | undefined {
   return products.find((product) => product?.soldOnlyInPackages === true);
 }
+
+/** What a person is told when a package is asked for as a plain line: it is built from choices, so it is ordered from its page. */
+export function packageAsLineRefusal(productName: string): string {
+  return `${productName} is made to order from choices and cannot be ordered as a plain item. Choose its options on its page.`;
+}

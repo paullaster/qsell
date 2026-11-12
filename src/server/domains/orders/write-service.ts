@@ -1,4 +1,4 @@
-import { packageOnlyRefusal } from '@/lib/package-only';
+import { packageAsLineRefusal, packageOnlyRefusal } from '@/lib/package-only';
 import { quantityProblem } from '@/lib/unit-rules';
 import type { CheckoutRefusal, StageSource } from '@/lib/order-stages';
 import { OrderStages, type StageActor } from './stages';
@@ -13,9 +13,9 @@ import { isSalesChannel } from '@/lib/stock';
 import { InventoryReservationService, ONLINE_PAYMENT_METHODS } from '@/server/domains/inventory/reservation-service';
 import { broadcastRealtime } from '@/server/realtime';
 import { businessDate } from '@/server/kernel/numbering/business-date';
-import { inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { drizzleDb } from '@/server/db/drizzle/client';
-import { products as productsTable } from '@/server/db/drizzle/schema';
+import { productPackages, products as productsTable } from '@/server/db/drizzle/schema';
 import { needsApprovalCheck } from './approval';
 import type { PriceResult, PriceTrace } from '@/server/domains/pricing/domain/types';
 import type { GuardLine } from '@/server/domains/pricing/guard-service';
@@ -301,8 +301,19 @@ export const OrderWriteService = {
       priced: PriceResult;
     }[] = [];
 
+    // A configurable package is built from choices; as a plain line it would sell its base price with no parts (one query for all lines).
+    const packagedIds = new Set(
+      (await drizzleDb
+        .select({ productId: productPackages.productId })
+        .from(productPackages)
+        .where(and(inArray(productPackages.productId, params.items.map((i) => i.productId)), eq(productPackages.isActive, true)))).map((r) => r.productId),
+    );
+
     for (const [index, item] of params.items.entries()) {
       const prod = catalogProducts.get(item.productId);
+      if (prod && packagedIds.has(item.productId)) {
+        return { success: false, error: packageAsLineRefusal(prod.name), code: 'not_for_sale' };
+      }
       if (!prod) {
         return { success: false, error: `Product ID ${item.productId} does not exist.`, code: 'not_found' };
       }

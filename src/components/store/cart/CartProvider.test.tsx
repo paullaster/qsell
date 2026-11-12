@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { useEffect } from 'react';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CART_STORAGE_KEY } from '@/lib/cart-storage';
@@ -15,6 +16,8 @@ const { mergeServerCartAction, saveServerCartAction, serverCartAction, productsB
 
 vi.mock('@/server/domains/cart/actions', () => ({ mergeServerCartAction, saveServerCartAction, serverCartAction }));
 vi.mock('@/server/domains/catalog/storefront-actions', () => ({ productsByIdsAction, packagingProductsByIdsAction }));
+const { checkPackageBasketAction } = vi.hoisted(() => ({ checkPackageBasketAction: vi.fn() }));
+vi.mock('@/server/domains/pricing/package-shop-actions', () => ({ checkPackageBasketAction }));
 vi.mock('@/components/store/StoreContext', () => ({ useStore: () => ({ sessionName: state.sessionName, money: (n: number) => `KES ${String(n)}` }) }));
 vi.mock('@/components/store/ToastProvider', () => ({ useToast: () => vi.fn() }));
 
@@ -111,5 +114,75 @@ describe('CartProvider as a guest', () => {
     await new Promise((resolve) => setTimeout(resolve, 600));
     expect(mergeServerCartAction).not.toHaveBeenCalled();
     expect(saveServerCartAction).not.toHaveBeenCalled();
+  });
+});
+
+describe('CartProvider with packages', () => {
+  const okAnswer = (servings: number) => ({ ok: true, key: 'k', servings, servingPrice: 500, total: 500 * servings, summary: 'Express lunch: Small fish' });
+  const line = (optionId: string, servings = 1) => ({ id: `lunch#fish:${optionId}:1`, productId: 'lunch', picks: [{ slotId: 'fish', optionId, count: 1 }], servings });
+  const holder: { cart: ReturnType<typeof useCart> | null } = { cart: null };
+  function PackageProbe() {
+    const cart = useCart();
+    useEffect(() => {
+      holder.cart = cart;
+    });
+    const names = cart.packages.map((l) => `${l.id}x${String(l.servings)}`).join(',');
+    const text = names === '' ? 'none' : names;
+    return <p data-testid="packages">{cart.ready ? text : 'loading'}|{String(cart.count)}</p>;
+  }
+  const packagesShown = () => screen.getByTestId('packages').textContent;
+
+  beforeEach(() => {
+    state.sessionName = null;
+    checkPackageBasketAction.mockReset().mockImplementation((lines: { servings: number }[]) => Promise.resolve({ ok: true, data: lines.map((l) => okAnswer(l.servings)) }));
+  });
+
+  it('adds a package line once the shop accepts it, counts servings on the badge and keeps only ids and counts in the browser', async () => {
+    render(<CartProvider><PackageProbe /></CartProvider>);
+    await waitFor(() => expect(packagesShown()).toBe('none|0'));
+    await act(async () => { await holder.cart?.addPackage(line('small', 2)); });
+    expect(packagesShown()).toBe('lunch#fish:small:1x2|2');
+    const stored = window.localStorage.getItem('qsell_cart_packages_v1') ?? '';
+    expect(stored).toContain('"servings":2');
+    expect(stored).not.toContain('price');
+  });
+
+  it('does not add a line the shop refuses, and returns the reason', async () => {
+    checkPackageBasketAction.mockResolvedValue({ ok: true, data: [{ ok: false, problems: ['Brown ugali is sold out.'] }] });
+    render(<CartProvider><PackageProbe /></CartProvider>);
+    await waitFor(() => expect(packagesShown()).toBe('none|0'));
+    let answer: unknown = null;
+    await act(async () => { answer = await holder.cart?.addPackage(line('small')); });
+    expect(answer).toEqual({ ok: false, problems: ['Brown ugali is sold out.'] });
+    expect(packagesShown()).toBe('none|0');
+  });
+
+  it('edits a line in place and joins equal choices', async () => {
+    render(<CartProvider><PackageProbe /></CartProvider>);
+    await waitFor(() => expect(packagesShown()).toBe('none|0'));
+    await act(async () => { await holder.cart?.addPackage(line('small')); await holder.cart?.addPackage(line('large', 2)); });
+    await act(async () => { await holder.cart?.editPackage('lunch#fish:small:1', line('large')); });
+    expect(packagesShown()).toBe('lunch#fish:large:1x3|3');
+  });
+
+  it('changes servings, removes a line and empties with the cart', async () => {
+    render(<CartProvider><PackageProbe /></CartProvider>);
+    await waitFor(() => expect(packagesShown()).toBe('none|0'));
+    await act(async () => { await holder.cart?.addPackage(line('small')); });
+    act(() => holder.cart?.setPackageServings('lunch#fish:small:1', 4));
+    expect(packagesShown()).toBe('lunch#fish:small:1x4|4');
+    act(() => holder.cart?.removePackage('lunch#fish:small:1'));
+    expect(packagesShown()).toBe('none|0');
+    await act(async () => { await holder.cart?.addPackage(line('small')); });
+    act(() => holder.cart?.clear());
+    expect(packagesShown()).toBe('none|0');
+  });
+
+  it('is read back from the browser, and checked again, when the page opens', async () => {
+    window.localStorage.setItem('qsell_cart_packages_v1', JSON.stringify([{ productId: 'lunch', servings: 3, picks: [{ slotId: 'fish', optionId: 'small', count: 1 }] }]));
+    render(<CartProvider><PackageProbe /></CartProvider>);
+    await waitFor(() => expect(packagesShown()).toBe('lunch#fish:small:1x3|3'));
+    await waitFor(() => expect(checkPackageBasketAction).toHaveBeenCalled());
+    expect(holder.cart?.packageChecks['lunch#fish:small:1']).toMatchObject({ ok: true, total: 1500 });
   });
 });

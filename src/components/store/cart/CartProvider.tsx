@@ -8,6 +8,9 @@ import { CART_STORAGE_KEY, LEGACY_CART_STORAGE_KEY, parseSavedCart, serializeCar
 import { cartBadgeCount } from '@/lib/cart-quantity';
 import { mergeServerCartAction, saveServerCartAction, serverCartAction } from '@/server/domains/cart/actions';
 import { sameCartLines } from '@/lib/shop-cart';
+import { addPackageLine, packageBadgeCount, PACKAGE_CART_KEY, parsePackageCart, removePackageLine, replacePackageLine, serializePackageCart, setPackageServings, type PackageCartLine } from '@/lib/package-cart';
+import { checkPackageBasketAction } from '@/server/domains/pricing/package-shop-actions';
+import type { BasketLineView } from '@/server/domains/pricing/domain/package-shop';
 import { useStore } from '@/components/store/StoreContext';
 import { useToast } from '@/components/store/ToastProvider';
 
@@ -23,9 +26,26 @@ interface CartValue {
   clear: () => void;
   /** Checks every line against the shop now (price and stock), and tells the shopper what moved. */
   refresh: () => Promise<void>;
+  /** The configured packages in the cart, and the shop's latest answer for each (price and stock), by line id. */
+  packages: PackageCartLine[];
+  packageChecks: Record<string, BasketLineView>;
+  /** Adds a package line after the shop has checked it; the answer says whether it was accepted and why not. */
+  addPackage: (line: PackageCartLine) => Promise<BasketLineView>;
+  /** Replaces the line `id` with the edited one (same place), after the shop has checked it. */
+  editPackage: (id: string, line: PackageCartLine) => Promise<BasketLineView>;
+  setPackageServings: (id: string, servings: number) => void;
+  removePackage: (id: string) => void;
 }
 
 const CartContext = createContext<CartValue | null>(null);
+
+function readPackages(): PackageCartLine[] {
+  try {
+    return parsePackageCart(window.localStorage.getItem(PACKAGE_CART_KEY));
+  } catch {
+    return [];
+  }
+}
 
 function readSaved(): SavedCartLine[] {
   try {
@@ -47,6 +67,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const [lines, setLines] = useState<CartLine[]>([]);
   const [ready, setReady] = useState(false);
   const linesRef = useRef<CartLine[]>([]);
+  const [packages, setPackages] = useState<PackageCartLine[]>([]);
+  const [packageChecks, setPackageChecks] = useState<Record<string, BasketLineView>>({});
+  const packagesRef = useRef<PackageCartLine[]>([]);
+  const packageAsk = useRef(0);
   const moneyRef = useRef(money);
   const toastRef = useRef(toast);
   useEffect(() => {
@@ -194,6 +218,90 @@ export function CartProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  // Package lines hold ids and counts in the browser; the shop prices and checks them, in order (each sees the stock the others take).
+  const checkPackages = useCallback(async (next: PackageCartLine[]): Promise<Record<string, BasketLineView> | null> => {
+    const ask = ++packageAsk.current;
+    if (next.length === 0) {
+      setPackageChecks({});
+      return {};
+    }
+    try {
+      const result = await checkPackageBasketAction(next.map(({ productId, picks, servings }) => ({ productId, picks, servings })));
+      if (!result.ok) return null;
+      const byId: Record<string, BasketLineView> = {};
+      next.forEach((line, index) => {
+        const answer = result.data[index];
+        if (answer !== undefined) byId[line.id] = answer;
+      });
+      // An answer to an older question never replaces a newer one.
+      if (ask === packageAsk.current) setPackageChecks(byId);
+      return byId;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const commitPackages = useCallback((next: PackageCartLine[]) => {
+    packagesRef.current = next;
+    setPackages(next);
+    try {
+      window.localStorage.setItem(PACKAGE_CART_KEY, serializePackageCart(next));
+    } catch {
+      /* a browser that keeps nothing still has a working cart for this visit */
+    }
+  }, []);
+
+  useEffect(() => {
+    // Read after the page is drawn: the saved cart exists only in the browser.
+    const start = async () => {
+      const saved = readPackages();
+      if (saved.length === 0) return;
+      packagesRef.current = saved;
+      setPackages(saved);
+      await checkPackages(saved);
+    };
+    void start();
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== PACKAGE_CART_KEY) return;
+      const changed = readPackages();
+      packagesRef.current = changed;
+      setPackages(changed);
+      void checkPackages(changed);
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [checkPackages]);
+
+  const settlePackages = useCallback(
+    async (next: PackageCartLine[], lineId: string): Promise<BasketLineView> => {
+      const checks = await checkPackages(next);
+      const answer = checks?.[lineId];
+      if (checks === null) return { ok: false, problems: ['The shop could not be reached. Please try again.'] };
+      if (answer === undefined) return { ok: false, problems: ['This package is not available any more.'] };
+      if (answer.ok) commitPackages(next);
+      return answer;
+    },
+    [checkPackages, commitPackages],
+  );
+  const addPackage = useCallback((line: PackageCartLine) => settlePackages(addPackageLine(packagesRef.current, line), line.id), [settlePackages]);
+  const editPackage = useCallback((id: string, line: PackageCartLine) => settlePackages(replacePackageLine(packagesRef.current, id, line), line.id), [settlePackages]);
+  const changeServings = useCallback(
+    (id: string, servings: number) => {
+      const next = setPackageServings(packagesRef.current, id, servings);
+      commitPackages(next);
+      void checkPackages(next);
+    },
+    [checkPackages, commitPackages],
+  );
+  const removePackage = useCallback(
+    (id: string) => {
+      const next = removePackageLine(packagesRef.current, id);
+      commitPackages(next);
+      void checkPackages(next);
+    },
+    [checkPackages, commitPackages],
+  );
+
   const add = useCallback(
     (product: PublicProduct, quantity = 1): AddOutcome => {
       const result = addToCart(linesRef.current, product, quantity);
@@ -213,12 +321,18 @@ export function CartProvider({ children }: { children: ReactNode }) {
     [commit, reprice],
   );
   const remove = useCallback((productId: string) => commit(linesRef.current.filter((line) => line.product.id !== productId)), [commit]);
-  const clear = useCallback(() => commit([]), [commit]);
-  const refresh = useCallback(() => load(savedLines(linesRef.current)), [load]);
+  const clear = useCallback(() => {
+    commit([]);
+    commitPackages([]);
+    setPackageChecks({});
+  }, [commit, commitPackages]);
+  const refresh = useCallback(async () => {
+    await Promise.all([load(savedLines(linesRef.current)), checkPackages(packagesRef.current)]);
+  }, [load, checkPackages]);
 
   const value = useMemo<CartValue>(
-    () => ({ lines, count: cartBadgeCount(lines), ready, add, setQuantity, remove, clear, refresh }),
-    [lines, ready, add, setQuantity, remove, clear, refresh],
+    () => ({ lines, count: cartBadgeCount(lines) + packageBadgeCount(packages), ready, add, setQuantity, remove, clear, refresh, packages, packageChecks, addPackage, editPackage, setPackageServings: changeServings, removePackage }),
+    [lines, ready, add, setQuantity, remove, clear, refresh, packages, packageChecks, addPackage, editPackage, changeServings, removePackage],
   );
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;
 }

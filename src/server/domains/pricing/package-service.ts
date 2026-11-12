@@ -28,6 +28,8 @@ export interface PackageOptionView {
   cost: number;
   /** Free stock of the product (on hand less reserved). */
   stock: number;
+  /** Stock is counted for this product (a service or non-stock item never runs out). */
+  managed: boolean;
   /** The product is switched off, deleted or no longer sold, so this option cannot be chosen. */
   unavailable: boolean;
 }
@@ -118,11 +120,15 @@ export class PackageConfigService {
     return this.reasons.require(companyId, reason, 'pricing_configuration');
   }
 
-  async list(companyId: string, onlyProductId?: string): Promise<PackageView[]> {
+  async list(companyId: string, onlyProductId?: string | readonly string[]): Promise<PackageView[]> {
     const packages = await this.db
       .select()
       .from(productPackages)
-      .where(onlyProductId === undefined ? eq(productPackages.companyId, companyId) : and(eq(productPackages.companyId, companyId), eq(productPackages.productId, onlyProductId)))
+      .where(
+        onlyProductId === undefined
+          ? eq(productPackages.companyId, companyId)
+          : and(eq(productPackages.companyId, companyId), typeof onlyProductId === 'string' ? eq(productPackages.productId, onlyProductId) : inArray(productPackages.productId, [...onlyProductId])),
+      )
       .orderBy(asc(productPackages.createdAt));
     if (packages.length === 0) return [];
     const packageIds = packages.map((p) => p.id);
@@ -152,6 +158,7 @@ export class PackageConfigService {
               cost: products.costPrice,
               stock: products.stockQuantity,
               reserved: products.reservedQuantity,
+              kind: products.inventoryKind,
               active: products.isActive,
               sellable: products.isSellable,
               deleted: products.deletedAt,
@@ -186,6 +193,7 @@ export class PackageConfigService {
             productPrice: o.price === null ? null : Number(o.price),
             cost: Number(o.cost),
             stock: o.stock - o.reserved,
+            managed: o.kind === 'inventory',
             unavailable: o.deleted !== null || !o.active || !o.sellable,
           })),
       }));
