@@ -89,6 +89,8 @@ export interface Product {
   isActive: boolean;
   /** Hidden from catalogue, but may be offered as an inventory-backed checkout add-on. */
   isCheckoutPackaging?: boolean;
+  /** Sold only inside packages: real stock, but never listed and never sold on its own. Such a product is never shown in the web shop. */
+  soldOnlyInPackages?: boolean;
   /** Per-product capacity rules, loaded for packaging administration only. */
   packagingFits?: { productId: string; capacity: number }[];
   imageUrl: string;

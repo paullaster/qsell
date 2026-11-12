@@ -1,3 +1,4 @@
+import { packageOnlyRefusal } from '@/lib/package-only';
 import { required } from '@/lib/values';
 import { basketQuantityProblems } from '@/lib/quantity-limits';
 import { effectiveStandardPrice } from '@/lib/standard-price';
@@ -470,6 +471,7 @@ export class SalesQuoteService {
       const product = products.get(line.productId);
       if (!product || !product.isSellable)
         throw new Error('A template item is missing or is not sellable.');
+      if (product.soldOnlyInPackages === true) throw new Error(packageOnlyRefusal(product.name));
       if (!Number.isFinite(line.quantity) || line.quantity <= 0)
         throw new Error(`${product.name} needs a quantity greater than zero.`);
       this.assertPercent(line.discountPercent, `${product.name} discount`);
@@ -768,7 +770,7 @@ export class SalesQuoteService {
     ];
     const sellable = new Set(
       (await CatalogService.getProductsByIds(productIds))
-        .filter((p) => p.isSellable)
+        .filter((p) => p.isSellable && p.soldOnlyInPackages !== true)
         .map((p) => p.id),
     );
     const takenNames = new Set((await this.listTemplates()).map((t) => t.name.toLowerCase()));
@@ -1132,6 +1134,7 @@ export class SalesQuoteService {
       const product = products.get(line.productId);
       if (!product || product.isSellable === false)
         throw new Error('A selected item is no longer sellable.');
+      if (product.soldOnlyInPackages === true) throw new Error(packageOnlyRefusal(product.name));
       const result = engine.get(index);
       if (result && result.unitPrice == null) {
         throw new Error(

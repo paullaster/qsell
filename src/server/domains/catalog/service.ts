@@ -1,3 +1,4 @@
+import { packageOnlyProblem } from '@/lib/package-only';
 import { and, eq, isNull, or } from 'drizzle-orm';
 import { getContainer } from '@/server/di/container';
 import { drizzleDb } from '@/server/db/drizzle/client';
@@ -85,14 +86,14 @@ export class CatalogService {
   /** A single product as the storefront may see it: published and sellable only. */
   static async getPublicProduct(id: string): Promise<PublicProduct | undefined> {
     const row = await repo().getProductById(id);
-    if (!row || !row.isActive || !row.isSellable || !row.showOnWebShop || row.isCheckoutPackaging) return undefined;
+    if (!row || !row.isActive || !row.isSellable || !row.showOnWebShop || row.isCheckoutPackaging || row.soldOnlyInPackages) return undefined;
     return toPublicProduct(toProduct(row));
   }
 
   /** A product for sale by its readable address (slug) or, for older links, its id. */
   static async getPublicProductByKey(key: string): Promise<PublicProduct | undefined> {
     const row = (await repo().getProductBySlug(key)) ?? (await repo().getProductById(key));
-    if (!row || !row.isActive || !row.isSellable || !row.showOnWebShop || row.isCheckoutPackaging) return undefined;
+    if (!row || !row.isActive || !row.isSellable || !row.showOnWebShop || row.isCheckoutPackaging || row.soldOnlyInPackages) return undefined;
     return toPublicProduct(toProduct(row));
   }
 
@@ -171,6 +172,9 @@ export class CatalogService {
       throw new SettingsError('Checkout packaging must be inventory-managed so its stock can be reserved.');
     }
     if (isCheckoutPackaging && !isSellable) throw new SettingsError('Packaging offered at checkout must use a sellable item type.');
+    const soldOnlyInPackages = productData.soldOnlyInPackages === true;
+    const packageOnlyIssue = packageOnlyProblem({ soldOnlyInPackages, isCheckoutPackaging, isSellable });
+    if (packageOnlyIssue !== null) throw new SettingsError(packageOnlyIssue);
     const kindQuantityIssue = inventoryKindQuantityProblem(inventoryKind, {
       stockQuantity: productData.stockQuantity,
       reservedQuantity: 0,
@@ -232,7 +236,9 @@ export class CatalogService {
       itemTypeName: itemType.name,
       itemTypeCode: itemType.code,
       isSellable,
-      showOnWebShop: productData.showOnWebShop ?? true,
+      // A package-only product is never in the web shop; the database refuses the other combination.
+      showOnWebShop: soldOnlyInPackages ? false : (productData.showOnWebShop ?? true),
+      soldOnlyInPackages,
       inventoryKind,
       isCheckoutPackaging,
       baseUnitId: unit.id,
@@ -400,6 +406,10 @@ export class CatalogService {
     const nextPrice = updates.price ?? existing.price;
     const nextSellable = productSellability({ classificationSellable, kind: nextInventoryKind, price: nextPrice });
     if (nextSellable !== existing.isSellable) updates.isSellable = nextSellable;
+    const nextSoldOnly = updates.soldOnlyInPackages ?? existing.soldOnlyInPackages ?? false;
+    const packageOnlyIssue = packageOnlyProblem({ soldOnlyInPackages: nextSoldOnly, isCheckoutPackaging: nextIsPackaging, isSellable: nextSellable });
+    if (packageOnlyIssue !== null) throw new SettingsError(packageOnlyIssue);
+    if (nextSoldOnly) updates.showOnWebShop = false;
     const nextCost = updates.costPrice ?? existing.costPrice;
 
     if (nextSellable) {

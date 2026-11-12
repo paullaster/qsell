@@ -84,7 +84,7 @@ graph TD
   - **Basic Info**: Title, SKU, Barcode (EAN-13/UPC), Brand, Category, Short Description, and HTML Rich-Text Body.
   - **Pricing & Tax**: Selling Price, Cost Price (for gross margin calculation), KRA Tax Classification (16% VAT, Zero-Rated, Exempt).
   - **Stock & Units**: Unit of Measure picker, Minimum Reorder Threshold, Safety Stock, and Track Inventory toggle.
-  - **Web Shop Flags**: `Show on Web Shop` toggle, SEO title/description, and high-resolution gallery image uploader.
+  - **Web Shop Flags**: `Show on Web Shop` toggle, `Sold only inside packages` toggle, SEO title/description, and high-resolution gallery image uploader.
 
 ### Sub-Module 2: Trash (`/admin/trash/products`)
 - Soft-delete recovery screen. Products removed from the catalog can be **Restored as Drafts** or permanently purged (only if no historic transaction or stock ledger records exist).
@@ -159,6 +159,7 @@ graph TD
 | **Track Inventory** | Enables warehouse stock tracking. | Toggle (On/Off) | **Required** | Set to `Off` for services and digital goods. |
 | **Low Stock Threshold** | Alert trigger limit. | Integer / Decimal | Optional | Generates dashboard attention warning when stock drops below. |
 | **Show on Web Shop** | Customer storefront visibility. | Toggle (On/Off) | **Required** | If `Off`, product only sellable via POS or B2B Quotes. |
+| **Sold only inside packages** | For a part that a customisable package offers as a choice (for example brown ugali in an *Express lunch*) but that nobody should buy on its own. | Toggle (On/Off) | Optional, default `Off` | When `On` the product keeps its stock, cost, tax, suppliers and purchasing, but it is not listed in the shop, not found by search, has no page or sitemap entry, and cannot be ordered, quoted or invoiced by itself (staff and quotes included); a package sells it. `Show on Web Shop` is switched off for it and cannot be turned on. Needs a sellable item type and a selling price so a package can price it. Cannot be combined with checkout packaging. Turning it `Off` later does not put the product back in the shop: switch `Show on Web Shop` on again if you want that. |
 
 ### Stock Transfer Fields (`/admin/inventory/transfers/new`)
 

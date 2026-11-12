@@ -1,3 +1,4 @@
+import { packageOnlyRefusal } from '@/lib/package-only';
 import { quantityProblem } from '@/lib/unit-rules';
 import type { CheckoutRefusal, StageSource } from '@/lib/order-stages';
 import { OrderStages, type StageActor } from './stages';
@@ -304,6 +305,10 @@ export const OrderWriteService = {
       const prod = catalogProducts.get(item.productId);
       if (!prod) {
         return { success: false, error: `Product ID ${item.productId} does not exist.`, code: 'not_found' };
+      }
+      // A package-only product is sold by its package, never as a line of its own (also not from a quote or by staff).
+      if (prod.soldOnlyInPackages === true) {
+        return { success: false, error: packageOnlyRefusal(prod.name), code: 'not_for_sale' };
       }
       const quoted = quotedItems.get(item.productId);
       if (!prod.isSellable && !quoted) {

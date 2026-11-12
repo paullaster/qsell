@@ -408,7 +408,7 @@ export class CatalogRepository {
   async listActiveSellableProducts(): Promise<ProductJoined[]> {
     return this.productQuery()
       .where(
-        and(eq(products.isActive, true), eq(products.isSellable, true), eq(products.isCheckoutPackaging, false), isNull(products.deletedAt)),
+        and(eq(products.isActive, true), eq(products.isSellable, true), eq(products.isCheckoutPackaging, false), eq(products.soldOnlyInPackages, false), isNull(products.deletedAt)),
       )
       .orderBy(asc(products.name));
   }
@@ -467,7 +467,7 @@ export class CatalogRepository {
 
   /** Products a shopper may see. Every storefront read starts from this. */
   private liveProducts(): SQL {
-    return required(and(eq(products.isActive, true), eq(products.isSellable, true), eq(products.showOnWebShop, true), eq(products.isCheckoutPackaging, false), isNull(products.deletedAt)), 'the live-product conditions');
+    return required(and(eq(products.isActive, true), eq(products.isSellable, true), eq(products.showOnWebShop, true), eq(products.isCheckoutPackaging, false), eq(products.soldOnlyInPackages, false), isNull(products.deletedAt)), 'the live-product conditions');
   }
 
   /**

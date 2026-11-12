@@ -99,7 +99,7 @@ export async function getQuoteCatalogueProductAction(id: unknown): Promise<Catal
   await requirePermission('quotes:read');
   if (typeof id !== 'string' || !PRODUCT_ID.test(id)) return null;
   const product = await getProductAction(id);
-  return product === null ? null : toCatalogueProduct(product);
+  return product === null || product.soldOnlyInPackages === true ? null : toCatalogueProduct(product);
 }
 
 /**
@@ -117,7 +117,7 @@ export async function getSalesQuoteEditorDataAction() {
   ]);
   // Only what the editors use: descriptions, specifications and media would make a long catalogue
   // slow to open, and nothing on the screen shows them.
-  const slim = products.map(toCatalogueProduct);
+  const slim = products.filter((p) => p.soldOnlyInPackages !== true).map(toCatalogueProduct);
   return { products: slim, settings, kits };
 }
 

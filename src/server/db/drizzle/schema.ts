@@ -3772,6 +3772,11 @@ export const products = pgTable(
     isActive: boolean('is_active').notNull().default(true),
     /** Checkout-only packaging item: inventory-bearing, but excluded from ordinary catalogue browsing. */
     isCheckoutPackaging: boolean('is_checkout_packaging').notNull().default(false),
+    /**
+     * Sold only inside a package (docs/architecture/configurable-packages.md section 4): real stock, cost and tax, but not listed,
+     * not found, not sold on its own. A package may sell it; nothing else may. Such a product is never shown in the web shop.
+     */
+    soldOnlyInPackages: boolean('sold_only_in_packages').notNull().default(false),
     imageUrl: text('image_url').notNull().default(''),
     additionalImages: jsonb('additional_images').$type<string[]>().notNull().default([]),
     rating: numeric('rating', { precision: 3, scale: 2 }).notNull().default('0'),
@@ -3796,6 +3801,8 @@ export const products = pgTable(
     uniqueIndex('products_slug_uidx')
       .on(t.slug)
       .where(sql`${t.deletedAt} is null`),
+    check('products_package_only_hidden_chk', sql`NOT ${t.soldOnlyInPackages} OR NOT ${t.showOnWebShop}`),
+    check('products_package_only_not_packaging_chk', sql`NOT ${t.soldOnlyInPackages} OR NOT ${t.isCheckoutPackaging}`),
     check('products_min_order_qty_chk', sql`${t.minOrderQty} IS NULL OR ${t.minOrderQty} > 0`),
     check('products_max_order_qty_chk', sql`${t.maxOrderQty} IS NULL OR ${t.maxOrderQty} > 0`),
     check(

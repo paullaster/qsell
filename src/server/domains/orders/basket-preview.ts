@@ -48,7 +48,7 @@ export async function previewShopBasket(items: readonly { productId: string; qua
   const sellingBranch = (await branches.getDefault(company.id)) ?? branch;
   const found = new Map((await CatalogService.getProductsByIds(items.map((i) => i.productId))).map((p) => [p.id, p]));
 
-  const sellable = items.filter((i) => found.get(i.productId)?.isSellable === true && found.get(i.productId)?.showOnWebShop === true);
+  const sellable = items.filter((i) => found.get(i.productId)?.isSellable === true && found.get(i.productId)?.showOnWebShop === true && found.get(i.productId)?.soldOnlyInPackages !== true);
   if (sellable.length !== items.length || sellable.length === 0) return { ok: false, error: 'Something in your basket is no longer for sale. Please look at your basket again.' };
   const priced = await pricing.priceLines(
     company.id,
