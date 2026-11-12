@@ -18,6 +18,7 @@ describe('createDeliveryServices', () => {
       numbering: {} as NumberSeriesService,
       stockReservations: {} as StockReservations,
       email: {} as EmailPort,
+      sms: { defaultSender: () => Promise.resolve(null) },
       geo: {} as GeoService,
       companySettings: {} as CompanySettingsRepository,
       usersAdmin: {} as UsersAdminRepository,

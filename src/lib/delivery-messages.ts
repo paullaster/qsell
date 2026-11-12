@@ -95,3 +95,59 @@ export function messageContent(kind: MessageKind, f: MessageFacts): MessageConte
       return { subject: `Your order ${f.orderNumber} is coming back to us · ${store}`, heading: 'We could not deliver, and it is coming back to us', greeting, body: 'We were not able to deliver your order and it is being returned to us. Please contact us so we can arrange another delivery or put it right.', details: base, cta: 'See my delivery' };
   }
 }
+
+/** The messages a company may choose to also send by text, with the words the settings screen uses and which are on when texting is first turned on. */
+export const TEXT_KIND_CHOICES: readonly { kind: MessageKind; label: string; hint: string; onByDefault: boolean }[] = [
+  { kind: 'out_for_delivery', label: 'On its way', hint: 'Carries the delivery code the customer gives the rider, when the shop asks for one.', onByDefault: true },
+  { kind: 'delivered', label: 'Delivered', hint: 'Says who received it.', onByDefault: true },
+  { kind: 'part_delivered', label: 'Part delivered', hint: 'Says the rest will follow.', onByDefault: false },
+  { kind: 'attempt_failed', label: 'Could not deliver', hint: 'Says why, and how many tries are left.', onByDefault: true },
+  { kind: 'returned', label: 'Coming back to us', hint: 'Says the order is being returned.', onByDefault: false },
+  { kind: 'slot_not_kept', label: 'Delivery time not kept', hint: 'Says the chosen time could not be held.', onByDefault: false },
+];
+
+export type TextKindsInput = { ok: true; kinds: MessageKind[] } | { ok: false; error: string };
+
+/** The kinds ticked on the screen: only known kinds, once each, in the usual order. */
+export function readTextKinds(raw: unknown): TextKindsInput {
+  if (!Array.isArray(raw)) return { ok: false, error: 'Choose which messages are also texted.' };
+  const wanted = new Set<string>();
+  for (const k of raw) {
+    if (!isMessageKind(k)) return { ok: false, error: 'One of the messages chosen is not one we send.' };
+    wanted.add(k);
+  }
+  return { ok: true, kinds: MESSAGE_KINDS.filter((k) => wanted.has(k)) };
+}
+
+/**
+ * The text-message version of a message: short, in plain words, with the tracking link last. It carries only what the email carries
+ * (the order and delivery numbers, the state, the courier, the delivery code), never an address, a phone number or a payment detail. It is
+ * kept to two message parts (306 characters) by shortening the shop's name and then the reason before the link is touched.
+ */
+export function textContent(kind: MessageKind, f: MessageFacts): string {
+  const store = f.tradingName.trim();
+  const hello = f.firstName.trim() === '' ? 'Hello,' : `Hello ${f.firstName.trim()},`;
+  const order = `order ${f.orderNumber}`;
+  const link = `Track: ${f.trackUrl}`;
+  const build = (shop: string): string => {
+    switch (kind) {
+      case 'out_for_delivery':
+        return `${hello} your ${shop}${order} is on its way.${f.handoverCode === null ? '' : ` Give the rider code ${f.handoverCode} when it arrives, and only then.`} ${link}`;
+      case 'delivered':
+        return `${hello} your ${shop}${order} was delivered${f.receivedBy === null ? '' : ` and received by ${f.receivedBy}`}. Thank you. ${link}`;
+      case 'part_delivered':
+        return `${hello} part of your ${shop}${order} was delivered. The rest will follow. ${link}`;
+      case 'attempt_failed':
+        return `${hello} we could not deliver your ${shop}${order}: ${reasonForCustomer(f.reasonCode)}.${f.triesLeft !== null && f.triesLeft > 0 ? ` We will try again (${String(f.triesLeft)} ${f.triesLeft === 1 ? 'try' : 'tries'} left).` : ''} ${link}`;
+      case 'returned':
+        return `${hello} we could not deliver your ${shop}${order} and it is coming back to us. ${link}`;
+      case 'slot_not_kept':
+        return `${hello} we could not keep the delivery time you chose for your ${shop}${order}. We will agree another time with you. ${link}`;
+    }
+  };
+  const named = (name: string): string => (name === '' ? '' : `${name} `);
+  const full = build(named(store));
+  if (full.length <= 306) return full;
+  const short = build(named(store.slice(0, 20).trim()));
+  return short.length <= 306 ? short : build('');
+}

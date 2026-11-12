@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isMessageKind, kindForStep, messageContent, messageKey, reasonForCustomer, MESSAGE_KINDS, type MessageFacts } from './delivery-messages';
+import { TEXT_KIND_CHOICES, isMessageKind, kindForStep, messageContent, messageKey, readTextKinds, reasonForCustomer, textContent, MESSAGE_KINDS, type MessageFacts } from './delivery-messages';
 
 const facts: MessageFacts = { tradingName: 'Test Traders', firstName: 'Wanjiru', orderNumber: 'ORD-77', deliveryNumber: 'DLV-26-0000000007', trackUrl: 'https://shop.example.test/track/abc', courierName: null, receivedBy: null,
   handoverCode: null, reasonCode: null, triesLeft: null };
@@ -68,5 +68,41 @@ describe('the delivery code', () => {
     const m = messageContent('out_for_delivery', facts);
     expect(m.details.some(([k]) => k === 'Delivery code')).toBe(false);
     expect(m.body).not.toContain('delivery code');
+  });
+});
+
+describe('customer text messages', () => {
+  const facts = { tradingName: 'Wanjiku Traders', firstName: 'Achieng', orderNumber: 'ORD-1001', deliveryNumber: 'DLV-55', trackUrl: 'https://shop.example/track/abcdef1234567890abcdef1234567890', courierName: null, receivedBy: 'Brian', handoverCode: '482913', reasonCode: 'customer_absent', triesLeft: 2 };
+  it('says the state in a few words with the tracking link last, and the code only when it is on its way', () => {
+    const way = textContent('out_for_delivery', facts);
+    expect(way).toContain('on its way');
+    expect(way).toContain('482913');
+    expect(way.endsWith(facts.trackUrl)).toBe(true);
+    expect(textContent('out_for_delivery', { ...facts, handoverCode: null })).not.toContain('code');
+    for (const kind of MESSAGE_KINDS.filter((k) => k !== 'out_for_delivery')) expect(textContent(kind, facts)).not.toContain('482913');
+    expect(textContent('delivered', facts)).toContain('received by Brian');
+    expect(textContent('attempt_failed', facts)).toMatch(/nobody was there to receive it.*2 tries left/);
+    expect(textContent('attempt_failed', { ...facts, triesLeft: 1 })).toContain('1 try left');
+  });
+  it('carries no address, phone number or payment, only what the email carries', () => {
+    for (const kind of MESSAGE_KINDS) {
+      const t = textContent(kind, facts);
+      expect(t).not.toMatch(/\b0[17]\d{8}\b|\+254|KSh|street|road/i);
+      expect(t.length).toBeLessThanOrEqual(306);
+    }
+  });
+  it('shortens the shop name, then drops it, before the link or the facts are cut', () => {
+    const long = textContent('attempt_failed', { ...facts, tradingName: 'A Very Long Trading Name Indeed '.repeat(8) });
+    expect(long.length).toBeLessThanOrEqual(306);
+    expect(long.endsWith(facts.trackUrl)).toBe(true);
+    expect(long).toContain('ORD-1001');
+    expect(textContent('delivered', { ...facts, firstName: '', tradingName: '' })).toMatch(/^Hello, your order ORD-1001 was delivered/);
+  });
+  it('reads the kinds ticked: known ones only, once each, in the usual order', () => {
+    expect(readTextKinds(['delivered', 'out_for_delivery', 'delivered'])).toEqual({ ok: true, kinds: ['out_for_delivery', 'delivered'] });
+    expect(readTextKinds([])).toEqual({ ok: true, kinds: [] });
+    expect(readTextKinds(['nonsense']).ok).toBe(false);
+    expect(readTextKinds('delivered').ok).toBe(false);
+    expect(TEXT_KIND_CHOICES.map((c) => c.kind)).toEqual([...MESSAGE_KINDS]);
   });
 });

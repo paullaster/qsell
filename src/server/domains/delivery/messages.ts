@@ -2,12 +2,15 @@ import { and, desc, eq, inArray, lte, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { deliveries, deliveryEvents, deliveryMessages, orders } from '@/server/db/drizzle/schema';
 import { MAX_DELIVERY_ATTEMPTS } from '@/lib/delivery-document';
-import { isMessageKind, messageContent, type MessageKind } from '@/lib/delivery-messages';
+import { isMessageKind, messageContent, textContent, type MessageFacts, type MessageKind } from '@/lib/delivery-messages';
+import { internationalPhone, maskedPhone } from '@/lib/sms-providers';
 import { maskEmail } from '@/lib/tracking-token';
 import { resolvePublicBaseUrl } from '@/server/domains/auth/account-service';
 import { layout } from '@/server/domains/auth/emails';
 import type { CompanySettingsRepository } from '@/server/domains/company/repository';
 import type { EmailPort } from '@/server/ports/communications';
+import { SmsSendError, type SmsPort } from '@/server/ports/sms';
+import type { DeliveryTextSettings } from './text-settings';
 import type { TrackingLinks } from './tracking-links';
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
@@ -20,12 +23,20 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export interface MessageView {
   id: string;
   kind: string;
+  /** `email` or `sms`. */
+  channel: string;
   status: 'queued' | 'sent' | 'failed' | 'skipped';
   recipient: string;
   attempts: number;
   note: string | null;
   createdAt: string;
   sentAt: string | null;
+}
+
+/** Where a message went, with most of it hidden: the first letter and the mail host of an address, or the ends of a number. */
+function shownRecipient(channel: string, recipient: string | null): string {
+  if (channel !== 'sms') return maskEmail(recipient);
+  return recipient === null ? '' : maskedPhone(recipient);
 }
 
 /** The wait before another try: 5 minutes, then 10, 20, 40. */
@@ -44,16 +55,30 @@ export class DeliveryMessages {
     private readonly email: EmailPort,
     private readonly company: CompanySettingsRepository,
     private readonly links: Pick<TrackingLinks, 'tokenFor'>,
+    /** Texting customers is optional: with no settings or sender given the messages go by email only, as before. */
+    private readonly texting: { settings: Pick<DeliveryTextSettings, 'get'>; sender: (companyId: string) => Promise<SmsPort | null> } | null = null,
   ) {}
 
-  /** Queues a message in the caller's transaction. No address (or one that cannot be right) is recorded as skipped, with why. */
+  /**
+   * Queues a message in the caller's transaction. No address (or one that cannot be right) is recorded as skipped, with why. When the
+   * company has turned texting on for this kind of message, the same message is also queued by text to the customer's number, as its own
+   * row (the key ends in `:sms`), so a mail that fails never holds back the text, or the other way round.
+   */
   async enqueueIn(tx: Tx, input: { companyId: string; orderId: string; deliveryId: string; kind: MessageKind; key: string }): Promise<void> {
-    const [order] = await tx.select({ email: orders.customerEmail }).from(orders).where(eq(orders.id, input.orderId));
+    const [order] = await tx.select({ email: orders.customerEmail, phone: orders.customerPhone }).from(orders).where(eq(orders.id, input.orderId));
     const address = order?.email.trim().toLowerCase() ?? '';
     const usable = EMAIL.test(address);
     await tx
       .insert(deliveryMessages)
       .values({ companyId: input.companyId, orderId: input.orderId, deliveryId: input.deliveryId, kind: input.kind, messageKey: input.key, recipient: usable ? address : null, status: usable ? 'queued' : 'skipped', lastError: usable ? null : 'The order has no email address to send to.' })
+      .onConflictDoNothing();
+    if (this.texting === null) return;
+    const settings = await this.texting.settings.get(input.companyId, tx);
+    if (!settings.enabled || !settings.kinds.includes(input.kind)) return;
+    const phone = internationalPhone(order?.phone);
+    await tx
+      .insert(deliveryMessages)
+      .values({ companyId: input.companyId, orderId: input.orderId, deliveryId: input.deliveryId, kind: input.kind, channel: 'sms', messageKey: `${input.key}:sms`, recipient: phone, status: phone === null ? 'skipped' : 'queued', lastError: phone === null ? 'The order has no usable mobile number.' : null })
       .onConflictDoNothing();
   }
 
@@ -83,10 +108,12 @@ export class DeliveryMessages {
         sent += 1;
       } catch (error) {
         const why = (error instanceof Error ? error.message : 'The message could not be sent.').slice(0, 300);
-        console.error('[delivery.messages] not sent', { id: m.id, kind: m.kind, why });
+        console.error('[delivery.messages] not sent', { id: m.id, kind: m.kind, channel: m.channel, why });
+        // A text the provider refuses for good (a wrong key, no balance, a number it will not use) is not tried again.
+        const final = error instanceof SmsSendError && !error.retry;
         await this.db
           .update(deliveryMessages)
-          .set({ status: 'failed', lastError: why, nextTryAt: sql`now() + make_interval(mins => ${retryWaitMinutes(m.attempts)})` })
+          .set({ status: 'failed', lastError: why, ...(final ? { attempts: MAX_TRIES } : {}), nextTryAt: sql`now() + make_interval(mins => ${retryWaitMinutes(m.attempts)})` })
           .where(eq(deliveryMessages.id, m.id));
       }
     }
@@ -112,7 +139,7 @@ export class DeliveryMessages {
     const base = resolvePublicBaseUrl(settings.publicBaseUrl);
     // With the link turned off the message still goes, pointing at the shop's own "Track my order".
     const url = token === null ? `${base}/` : `${base}/track/${token}`;
-    const content = messageContent(m.kind, {
+    const facts: MessageFacts = {
       tradingName: settings.tradingName,
       firstName: row.customerName.trim().split(/\s+/)[0] ?? '',
       orderNumber: row.orderNumber,
@@ -123,7 +150,14 @@ export class DeliveryMessages {
       handoverCode: m.kind === 'out_for_delivery' ? row.d.handoverCode : null,
       reasonCode: failed?.reason ?? null,
       triesLeft: Math.max(0, MAX_DELIVERY_ATTEMPTS - row.d.failedAttempts),
-    });
+    };
+    const content = messageContent(m.kind, facts);
+    if (m.channel === 'sms') {
+      const sender = await this.texting?.sender(m.companyId);
+      if (sender === null || sender === undefined) throw new SmsSendError('No SMS provider is set up, so the text could not be sent. Connect one in Settings > SMS providers.', true);
+      await sender.send({ to: m.recipient, text: textContent(m.kind, facts) });
+      return;
+    }
     const footer = `You are receiving this because you placed order ${row.orderNumber}. Please do not forward it: the link shows your order.`;
     const html = layout({ heading: content.heading, greeting: content.greeting, body: content.body, cta: content.cta, actionUrl: url, footer, details: content.details });
     const text = `${content.heading}\n\n${content.greeting}\n\n${content.body}\n\n${content.details.map(([k, v]) => `${k}: ${v}`).join('\n')}\n\n${content.cta}: ${url}\n\n${footer}`;
@@ -133,6 +167,6 @@ export class DeliveryMessages {
   /** The messages a delivery has caused, newest first, with the address hidden but for its first letter. */
   async forDelivery(companyId: string, deliveryId: string): Promise<MessageView[]> {
     const rows = await this.db.select().from(deliveryMessages).where(and(eq(deliveryMessages.companyId, companyId), eq(deliveryMessages.deliveryId, deliveryId))).orderBy(desc(deliveryMessages.createdAt)).limit(50);
-    return rows.map((r) => ({ id: r.id, kind: r.kind, status: r.status, recipient: maskEmail(r.recipient), attempts: r.attempts, note: r.lastError, createdAt: r.createdAt.toISOString(), sentAt: r.sentAt?.toISOString() ?? null }));
+    return rows.map((r) => ({ id: r.id, kind: r.kind, channel: r.channel, status: r.status, recipient: shownRecipient(r.channel, r.recipient), attempts: r.attempts, note: r.lastError, createdAt: r.createdAt.toISOString(), sentAt: r.sentAt?.toISOString() ?? null }));
   }
 }

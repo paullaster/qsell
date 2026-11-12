@@ -1170,6 +1170,13 @@
       "when": 1794460071116,
       "tag": "0166_configurable_packages",
       "breakpoints": true
+    },
+    {
+      "idx": 167,
+      "version": "7",
+      "when": 1794460211569,
+      "tag": "0167_delivery_text_settings",
+      "breakpoints": true
     }
   ]
 }

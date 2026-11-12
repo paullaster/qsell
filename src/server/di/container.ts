@@ -135,6 +135,7 @@ import { DeliveryReports } from '@/server/domains/delivery/reports';
 import { CourierInvoices } from '@/server/domains/delivery/courier-invoices';
 import { DeliverySlaNotices } from '@/server/domains/delivery/sla-notices';
 import { DeliveryPush } from '@/server/domains/delivery/push';
+import type { DeliveryTextSettings } from '@/server/domains/delivery/text-settings';
 import { SmsAccounts } from '@/server/domains/sms/accounts';
 import { DeliverySlaTexts } from '@/server/domains/delivery/sla-texts';
 import type { PushPort } from '@/server/ports/push';
@@ -340,6 +341,7 @@ export interface AppContainer {
   courierSync: CourierSync;
   trackingLinks: TrackingLinks;
   deliveryMessages: DeliveryMessages;
+  deliveryTextSettings: DeliveryTextSettings;
   trackedOrders: TrackedOrders;
   /** How delivery is billed on invoices and at KRA. */
   deliveryBilling: DeliveryBilling;
@@ -550,7 +552,7 @@ export function getContainer(): AppContainer {
   });
   const stockReservations = new StockReservations(drizzleDb, stockLedger, decisionLog);
   const rateLimits = new RateLimitService(drizzleDb);
-  const deliveryServices = createDeliveryServices({ db: drizzleDb, decisionLog, geo, companySettings, numbering, stockReservations, email, usersAdmin, customers });
+  const deliveryServices = createDeliveryServices({ db: drizzleDb, decisionLog, geo, companySettings, numbering, stockReservations, email, sms: smsAccounts, usersAdmin, customers });
   const orderSla = new OrderSlaService(drizzleDb, new OrderSlaNotifier(email, companySettings));
   const vendorNotifier = new VendorNotifier(drizzleDb, email, companySettings);
   const prequalLifecycle = new PrequalLifecycle(drizzleDb, vendorNotifier);
@@ -730,6 +732,7 @@ export function getContainer(): AppContainer {
     courierSync: deliveryServices.courierSync,
     trackingLinks: deliveryServices.trackingLinks,
     deliveryMessages: deliveryServices.deliveryMessages,
+    deliveryTextSettings: deliveryServices.deliveryTextSettings,
     trackedOrders: deliveryServices.trackedOrders,
     deliveryBilling: deliveryServices.deliveryBilling,
     kraConfigs,

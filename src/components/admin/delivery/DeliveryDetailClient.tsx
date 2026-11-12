@@ -623,7 +623,7 @@ function DeliveryScreen({ initial, canFulfil, initialExtras }: { initial: Delive
           <ul className="space-y-1.5">
             {extra.messages.map((m) => (
               <li key={m.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-                <span className="font-semibold text-fg-strong">{isMessageKind(m.kind) ? KIND_WORDS[m.kind] : m.kind}</span>
+                <span className="font-semibold text-fg-strong">{isMessageKind(m.kind) ? KIND_WORDS[m.kind] : m.kind}{m.channel === 'sms' ? ' (text message)' : ''}</span>
                 <Chip tone={MESSAGE_TONE[m.status]}>{MESSAGE_WORDS[m.status]}</Chip>
                 <span className="text-xs text-fg-muted">
                   {m.recipient === '' ? '' : `to ${m.recipient} · `}

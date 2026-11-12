@@ -495,6 +495,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'deliveries:dispatch',
       },
       {
+        id: 'delivery-messages',
+        title: 'Customer messages',
+        name: 'delivery-messages',
+        href: '/admin/delivery/messages',
+        description: 'The messages customers get as their delivery moves, and whether they are also texted',
+        icon: 'Mail',
+        permission: 'deliveries:manage',
+      },
+      {
         id: 'delivery-slots',
         title: 'Delivery slots',
         name: 'delivery-slots',

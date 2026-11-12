@@ -8,6 +8,8 @@ import { CourierAccounts } from '@/server/domains/delivery/courier-accounts';
 import { CourierSync } from '@/server/domains/delivery/courier-sync';
 import { DeliveryDocuments } from '@/server/domains/delivery/documents';
 import { DeliveryMessages } from '@/server/domains/delivery/messages';
+import { DeliveryTextSettings } from '@/server/domains/delivery/text-settings';
+import type { SmsAccounts } from '@/server/domains/sms/accounts';
 import { TrackingLinks } from '@/server/domains/delivery/tracking-links';
 import { TrackedOrders } from '@/server/domains/delivery/tracked-order';
 import type { EmailPort } from '@/server/ports/communications';
@@ -43,6 +45,7 @@ export function createDeliveryServices(input: {
   numbering: NumberSeriesService;
   stockReservations: StockReservations;
   email: EmailPort;
+  sms: Pick<SmsAccounts, 'defaultSender'>;
   usersAdmin: Pick<UsersAdminRepository, 'createUser' | 'resetPassword'>;
   customers: Pick<CustomerMasterService, 'applyOrderPayment'>;
 }) {
@@ -63,7 +66,8 @@ export function createDeliveryServices(input: {
   const orderDeliveries = new OrderDeliveries(input.db, input.decisionLog);
   const orderCollections = new OrderCollections(input.db, input.decisionLog);
   const trackingLinks = new TrackingLinks(input.db, input.decisionLog);
-  const deliveryMessages = new DeliveryMessages(input.db, input.email, input.companySettings, trackingLinks);
+  const deliveryTextSettings = new DeliveryTextSettings(input.db, input.decisionLog);
+  const deliveryMessages = new DeliveryMessages(input.db, input.email, input.companySettings, trackingLinks, { settings: deliveryTextSettings, sender: (companyId) => input.sms.defaultSender(companyId) });
   const deliverySlots = new DeliverySlots(input.db, input.decisionLog);
   const deliveryDocuments = new DeliveryDocuments(input.db, input.decisionLog, input.numbering, input.stockReservations, deliveryMessages, deliverySlots);
   const deliveryRiders = new DeliveryRiders(input.db, input.decisionLog, input.usersAdmin);
@@ -94,6 +98,7 @@ export function createDeliveryServices(input: {
     deliverySlots,
     trackingLinks,
     deliveryMessages,
+    deliveryTextSettings,
     trackedOrders,
     stockReissue,
     deliveryRuns,

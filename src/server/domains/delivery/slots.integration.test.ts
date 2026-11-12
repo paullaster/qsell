@@ -8,6 +8,8 @@ import type * as mod_server_db_drizzle_client from '@/server/db/drizzle/client';
 import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
 import type { OrderWriteService as OrderWriteServiceType } from '@/server/domains/orders/write-service';
 import type { OrderStages as OrderStagesType } from '@/server/domains/orders/stages';
+import type { DeliveryMessages as DeliveryMessagesType } from './messages';
+import type { SmsSendError as SmsSendErrorType } from '@/server/ports/sms';
 import { holdLedgerSwitch, settleFinanceBacklog } from '@/server/domains/stock/test-support';
 
 const { requirePermission } = vi.hoisted(() => ({ requirePermission: vi.fn() }));
@@ -759,6 +761,123 @@ describe.skipIf(!has(url))('delivery slots (database)', () => {
       await t.texts.flush(500);
       expect(await textsOf(on)).toEqual(['at_risk:rider:+254744000111:sent', 'escalated:staff:+254711000011:sent', 'late:rider:+254744000111:sent']);
       expect(await textsOf(off)).toEqual(['escalated:staff:+254711000011:sent', 'late:rider:+254744000111:sent']);
+    });
+  });
+
+  describe('text messages to customers', () => {
+    const setCustomerTexts = async (enabled: boolean, kinds: string[]) => {
+      const now = await c.deliveryTextSettings.get(companyId);
+      return await c.deliveryTextSettings.set(actor(), { enabled, kinds, expectedVersion: now.version });
+    };
+    const messagesOf = async (deliveryId: string) => (await db.select().from(schema.deliveryMessages).where(eq(schema.deliveryMessages.deliveryId, deliveryId))).map((m) => `${m.kind}:${m.channel}:${m.status}`).sort();
+    const enqueue = async (deliveryId: string, kind: 'out_for_delivery' | 'delivered' | 'attempt_failed', key = `${deliveryId}:${kind}:0`) => {
+      const row = await rowOf(deliveryId);
+      if (row === undefined) throw new Error('no delivery');
+      await db.transaction((tx) => c.deliveryMessages.enqueueIn(tx, { companyId, orderId: row.orderId, deliveryId, kind, key }));
+    };
+    const sentMail: string[] = [];
+    const texted: { to: string; text: string }[] = [];
+    const sender = (mode: 'up' | 'none' | 'refused' | 'down') => ({
+      settings: c.deliveryTextSettings,
+      sender: () => Promise.resolve(mode === 'none' ? null : { send: (m: { to: string; text: string }) => { if (mode === 'refused') return Promise.reject(new SmsSendError('The Africa\'s Talking account has no balance. Top it up and try again.', false)); if (mode === 'down') return Promise.reject(new SmsSendError('The SMS provider had a problem. Try again in a moment.', true)); texted.push(m); return Promise.resolve({ providerMessageId: null }); } }),
+    });
+    const flusher = (mode: 'up' | 'none' | 'refused' | 'down') => new DeliveryMessagesClass(db, { name: 'test', send: (m: { to: string }) => { sentMail.push(m.to); return Promise.resolve({ messageId: 'x', provider: 'test' }); } }, c.companySettings, { tokenFor: () => Promise.resolve('tok123') }, sender(mode));
+    let DeliveryMessagesClass: typeof DeliveryMessagesType;
+    let SmsSendError: typeof SmsSendErrorType;
+    beforeAll(async () => {
+      ({ DeliveryMessages: DeliveryMessagesClass } = await import('./messages'));
+      ({ SmsSendError } = await import('@/server/ports/sms'));
+    });
+    beforeEach(() => {
+      sentMail.length = 0;
+      texted.length = 0;
+    });
+    afterAll(async () => {
+      await setCustomerTexts(false, ['out_for_delivery', 'delivered', 'attempt_failed']);
+    });
+
+    it('is off until the company turns it on, then keeps the choice with a version, and refuses nonsense', async () => {
+      expect(await c.deliveryTextSettings.get(companyId)).toMatchObject({ enabled: false, kinds: ['out_for_delivery', 'delivered', 'attempt_failed'] });
+      expect(await setCustomerTexts(true, [])).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect(await setCustomerTexts(true, ['nonsense'])).toMatchObject({ ok: false, reason: 'bad_input' });
+      const on = await setCustomerTexts(true, ['delivered', 'out_for_delivery']);
+      expect(on).toMatchObject({ ok: true, data: { enabled: true, kinds: ['out_for_delivery', 'delivered'] } });
+      const stale = await c.deliveryTextSettings.set(actor(), { enabled: false, kinds: [], expectedVersion: 1 });
+      expect(stale).toMatchObject({ ok: false, reason: 'conflict' });
+      expect(await setCustomerTexts(false, [])).toMatchObject({ ok: true, data: { enabled: false } });
+    });
+
+    it('queues only the email while texting is off, and the text as its own row when it is on for that kind', async () => {
+      await setCustomerTexts(false, ['out_for_delivery']);
+      const a = await delivery();
+      await enqueue(a, 'out_for_delivery');
+      expect(await messagesOf(a)).toEqual(['out_for_delivery:email:queued']);
+      await setCustomerTexts(true, ['out_for_delivery']);
+      const b = await delivery();
+      await enqueue(b, 'out_for_delivery');
+      await enqueue(b, 'out_for_delivery');
+      await enqueue(b, 'delivered');
+      expect(await messagesOf(b)).toEqual(['delivered:email:queued', 'out_for_delivery:email:queued', 'out_for_delivery:sms:queued']);
+      const [sms] = await db.select().from(schema.deliveryMessages).where(eq(schema.deliveryMessages.messageKey, `${b}:out_for_delivery:0:sms`));
+      expect(sms?.recipient).toBe('+254700123456');
+    });
+
+    it('sends the text through the default SMS connection with the facts, the code and the link, and nothing of the address or the phone', async () => {
+      await setCustomerTexts(true, ['out_for_delivery']);
+      const a = await delivery();
+      await db.update(schema.deliveries).set({ handoverCode: '482913' }).where(eq(schema.deliveries.id, a));
+      await enqueue(a, 'out_for_delivery');
+      await flusher('up').flush(500);
+      const mineText = texted.find((t) => t.to === '+254700123456' && t.text.includes('482913'));
+      expect(mineText).toBeDefined();
+      expect(mineText?.text).toMatch(/on its way/);
+      expect(mineText?.text).toContain('/track/tok123');
+      expect(mineText?.text).not.toMatch(/Test Rd|0700123456/);
+      expect((mineText?.text ?? '').length).toBeLessThanOrEqual(306);
+      expect(await messagesOf(a)).toEqual(['out_for_delivery:email:sent', 'out_for_delivery:sms:sent']);
+      expect(sentMail.length).toBeGreaterThan(0);
+      texted.length = 0;
+      await flusher('up').flush(500);
+      expect(texted.filter((t) => t.text.includes('482913'))).toHaveLength(0);
+    });
+
+    it('does not text a customer with no usable mobile number, and the email still goes', async () => {
+      await setCustomerTexts(true, ['delivered']);
+      const a = await delivery();
+      const row = await rowOf(a);
+      await db.update(schema.orders).set({ customerPhone: 'call me' }).where(eq(schema.orders.id, row?.orderId ?? ''));
+      await enqueue(a, 'delivered');
+      expect(await messagesOf(a)).toEqual(['delivered:email:queued', 'delivered:sms:skipped']);
+      const [skipped] = await db.select().from(schema.deliveryMessages).where(and(eq(schema.deliveryMessages.deliveryId, a), eq(schema.deliveryMessages.channel, 'sms')));
+      expect(skipped?.lastError).toContain('no usable mobile number');
+    });
+
+    it('waits when no SMS provider is connected and says why, never holding back the email', async () => {
+      await setCustomerTexts(true, ['attempt_failed']);
+      const a = await delivery();
+      await enqueue(a, 'attempt_failed');
+      await flusher('none').flush(500);
+      const rows = await db.select().from(schema.deliveryMessages).where(eq(schema.deliveryMessages.deliveryId, a));
+      const sms = rows.find((r) => r.channel === 'sms');
+      expect(sms).toMatchObject({ status: 'failed', attempts: 1 });
+      expect(sms?.lastError).toContain('No SMS provider is set up');
+      expect(rows.find((r) => r.channel === 'email')?.status).toBe('sent');
+    });
+
+    it('does not repeat a refusal asking again cannot change, and tries again a fault after a wait', async () => {
+      await setCustomerTexts(true, ['out_for_delivery']);
+      const a = await delivery();
+      await enqueue(a, 'out_for_delivery');
+      await flusher('refused').flush(500);
+      const [refused] = await db.select().from(schema.deliveryMessages).where(and(eq(schema.deliveryMessages.deliveryId, a), eq(schema.deliveryMessages.channel, 'sms')));
+      expect(refused).toMatchObject({ status: 'failed', attempts: 5 });
+      expect(refused?.lastError).toContain('balance');
+      const b = await delivery();
+      await enqueue(b, 'out_for_delivery');
+      await flusher('down').flush(500);
+      const [again] = await db.select().from(schema.deliveryMessages).where(and(eq(schema.deliveryMessages.deliveryId, b), eq(schema.deliveryMessages.channel, 'sms')));
+      expect(again).toMatchObject({ status: 'failed', attempts: 1 });
+      expect(new Date(again?.nextTryAt ?? 0).getTime()).toBeGreaterThan(Date.now());
     });
   });
 

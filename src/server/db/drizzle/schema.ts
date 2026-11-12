@@ -11604,3 +11604,22 @@ export const smsProviderAccounts = pgTable(
   ],
 );
 export type SmsProviderAccountRow = typeof smsProviderAccounts.$inferSelect;
+
+/**
+ * Whether customers are also told about their delivery by text message, and which of the messages. Off until a company turns it on (a text
+ * costs money at their SMS provider). One row for a company; changes use a version and go to the decision log.
+ */
+export const deliveryTextSettings = pgTable(
+  'delivery_text_settings',
+  {
+    companyId: uuid('company_id')
+      .primaryKey()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    enabled: boolean('enabled').notNull().default(false),
+    kinds: text('kinds').array().notNull().default(sql`'{out_for_delivery,delivered,attempt_failed}'::text[]`),
+    version: integer('version').notNull().default(1),
+    updatedBy: text('updated_by'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check('delivery_text_settings_kinds_chk', sql`${t.kinds} <@ ARRAY['out_for_delivery','delivered','part_delivered','attempt_failed','returned','slot_not_kept']::text[]`)],
+);
