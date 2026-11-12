@@ -319,6 +319,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'Payment methods and gateways',
       'Automatic invoice and order numbering',
       'Time limits for each order stage, with late-order alerts',
+      'Your own SMS provider, connected with your own keys',
     ],
     keywords: [
       'multi-branch retail software',
@@ -335,6 +336,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'Approvals',
       'Tax Compliance',
       'Order Targets',
+      'SMS Providers',
     ],
   },
   {

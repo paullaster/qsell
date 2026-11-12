@@ -84,6 +84,7 @@ const SEED_ROLES: SeedRole[] = [
       'delivery_costs:manage',
       'delivery_slots:manage',
       'couriers:manage',
+      'sms:manage',
       'visits:manage',
       'visits:work',
       'deliveries:handover',

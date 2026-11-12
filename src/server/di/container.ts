@@ -134,6 +134,7 @@ import { DeliveryReports } from '@/server/domains/delivery/reports';
 import { CourierInvoices } from '@/server/domains/delivery/courier-invoices';
 import { DeliverySlaNotices } from '@/server/domains/delivery/sla-notices';
 import { DeliveryPush } from '@/server/domains/delivery/push';
+import { SmsAccounts } from '@/server/domains/sms/accounts';
 import type { PushPort } from '@/server/ports/push';
 import { NoPushAdapter, WebPushAdapter } from '@/server/adapters/push/web-push.adapter';
 import { pushRuntimeConfig } from '@/server/adapters/push/config';
@@ -327,6 +328,7 @@ export interface AppContainer {
   deliverySla: DeliverySla;
   deliverySlaNotices: DeliverySlaNotices;
   deliveryPush: DeliveryPush;
+  smsAccounts: SmsAccounts;
   courierInvoices: CourierInvoices;
   doorHandIns: DoorHandIns;
   doorMpesa: DoorMpesa;
@@ -699,6 +701,7 @@ export function getContainer(): AppContainer {
     deliverySla: new DeliverySla(drizzleDb, decisionLog, undefined, deliveryPush),
     deliverySlaNotices: new DeliverySlaNotices(drizzleDb, email, companySettings),
     deliveryPush,
+    smsAccounts: new SmsAccounts(drizzleDb, decisionLog, undefined),
     courierInvoices: new CourierInvoices(drizzleDb, decisionLog),
     doorHandIns: new DoorHandIns(drizzleDb, decisionLog, finance.engine, numbering),
     doorMpesa: new DoorMpesa(drizzleDb, {

@@ -1316,6 +1316,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'orders:sla_manage',
       },
       {
+        id: 'settings-sms',
+        title: 'SMS Providers',
+        name: 'settings-sms',
+        href: '/admin/settings/sms',
+        description: 'Connect the SMS provider this business sends text messages with, keep its keys safe, and send a test message',
+        icon: 'Mail',
+        permission: 'sms:manage',
+      },
+      {
         id: 'settings-document-numbering',
         title: 'Document Numbering',
         name: 'settings-document-numbering',

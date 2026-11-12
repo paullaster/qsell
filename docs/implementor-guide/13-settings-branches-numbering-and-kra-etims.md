@@ -42,7 +42,8 @@ graph TD
 3. **Number Series**: Formats defined under `/admin/settings/number-series` and bound under `/admin/settings/number-series/bindings`.
 4. **Order Targets**: SLA thresholds set under `/admin/settings/order-targets`.
 5. **KRA eTIMS Mode**: Configured under `/admin/settings/tax-compliance/kra-tims-etims`.
-6. **Required Permissions**: `settings:read/manage`, `branches:read/manage`, `numbering:manage`, `taxes:manage`.
+6. **SMS Provider (optional)**: Connected under `/admin/settings/sms` with the keys the client's own SMS provider gave them (see section 4, item 8).
+7. **Required Permissions**: `settings:read/manage`, `branches:read/manage`, `numbering:manage`, `taxes:manage`, `sms:manage` (SMS providers).
 
 ---
 
@@ -115,6 +116,14 @@ graph TD
   - Define target duration per order stage (e.g. *Picking: Max 45 mins*, *Packing: Max 30 mins*, *Delivery: Max 180 mins*).
   - Configure notification triggers and escalation email alerts when orders languish in a stage.
 
+### 7a. SMS Providers (`/admin/settings/sms`)
+Every client sends text messages through their own SMS provider, so the provider is chosen and its keys are typed in here, per business, with nothing built in. The screen has three parts:
+- **Add an SMS provider**: choose the **Provider** (*Africa's Talking*, *Twilio*, or *Write to the server log (for trying it out)*). The form then shows exactly the boxes that provider needs, with a hint under each. Give the connection a **Name** (only for you, to tell connections apart) and press **Add the connection**. The first connection added becomes the default at once.
+- **Your connections**: one card for each, showing its name, whether it is the **Default: messages go through this**, **In use** or **Stopped**, the provider, and the result of the last test (*Not tested yet*, *Test message accepted by the provider on …*, or the plain reason it did not go).
+- Each card has **Send a test message to** (a mobile number, then **Send the test**), **Change …** (opens the same form; the key box is empty and says *saved*, and leaving it empty keeps the key), **Make this the default**, and **Stop using …** (with a confirm step) or **Use it again**.
+
+The keys are sealed when saved, are never shown again (not in the list, not when the connection is opened to change it) and are used only at the moment a message is sent. Which fields are secret is part of each provider's definition. Nothing is sent by the test except a fixed sentence naming the business (*Test message from …: your SMS provider is connected.*), so the button cannot be used to send anything else; the number typed is not kept, and the same connection can be tested once every half minute. A client whose provider is not in the list needs a new adapter built (a development task, not a setting); the screen and everything that sends messages stay as they are.
+
 ### 7. Tax Compliance & KRA eTIMS (`/admin/settings/tax-compliance`)
 The comprehensive regulatory suite divided into five sub-screens:
 1. **Tax Classification (`.../classification`)**: Maps company tax categories to official KRA eTIMS tax codes:
@@ -149,6 +158,20 @@ The comprehensive regulatory suite divided into five sub-screens:
 | **Padding Length** | Total digits with leading zeros. | Integer (1-10) | **Required** | e.g. `5` yields `00001`, `6` yields `000001`. |
 | **Allow Gaps** | Can sequence skip cancelled numbers? | Toggle (On/Off) | **Required** | Must be `Off` for KRA tax invoices and credit notes. |
 
+### SMS Provider Fields (`/admin/settings/sms`)
+
+| Field Label | Purpose | Type & Format | Required? | Validation Rules & Hints |
+|---|---|---|---|---|
+| **Provider** | Which SMS provider this connection is. | Choose from the list | **Required** | Fixed once the connection is added (add another connection to change provider). |
+| **Name** | Tells connections apart. | Text (2 to 80 characters) | **Required** | Two connections cannot share a name (capital letters do not matter). |
+| **Username** (Africa's Talking) | The username of the client's Africa's Talking app. | Letters, numbers, `.`, `-`, `_` (2 to 40) | **Required** | Use `sandbox` with a sandbox key to try it without sending real messages. |
+| **API key** (Africa's Talking) | Lets the system send through the client's account. | Secret text | **Required** when adding; empty keeps the saved key | Sealed when saved; never shown again. |
+| **Sender name** (Africa's Talking) | The name people see as the sender. | 3 to 11 letters or numbers, no spaces | Optional | Must be approved by Africa's Talking first, otherwise tests are refused; leave empty to use their shared number. |
+| **Account SID** (Twilio) | The client's Twilio account. | `AC` and 32 letters or numbers | **Required** | On the Twilio console home page. |
+| **Auth token** (Twilio) | Lets the system send through the account. | Secret text | **Required** when adding; empty keeps the saved token | Sealed when saved; never shown again. |
+| **Send from** (Twilio) | The number or service messages leave from. | `+` and the country code, or a messaging service starting `MG` | **Required** | e.g. `+254700000000`. |
+| **Send a test message to** | Where the test goes. | A mobile number | Required for a test | `0712 345 678`, `+254712345678` and `254712345678` all mean the same Kenyan number; a number from another country needs its `+` and country code. |
+
 ### KRA Tax Classification Fields (`/admin/settings/tax-compliance/.../classification`)
 
 | Field Label | Purpose | Type & Format | Required? | Validation Rules & Hints |
@@ -162,6 +185,13 @@ The comprehensive regulatory suite divided into five sub-screens:
 ---
 
 ## 6. Step-by-Step User Actions (Down to the Last Click)
+
+### Action 0: Connecting the Client's SMS Provider
+1. Open *Settings and configuration > SMS Providers*. (Needs the SMS permission; without it the entry is not shown.)
+2. In **Add an SMS provider**, choose the **Provider**. The boxes for that provider appear.
+3. Type a **Name** and the boxes the hints ask for, copying the keys from the client's own provider account. Press **Add the connection**. A box filled in wrongly is named in the message and nothing is saved.
+4. In the new card, type the implementor's own mobile number under **Send a test message to** and press **Send the test**. Expected: *The test message was accepted by the provider. Check the phone.* and the text arrives. If it does not go, the message says why in plain words (wrong credentials, no balance, sender name not approved, number refused, provider unreachable); correct the connection with **Change …** and test again.
+5. With more than one connection, use **Make this the default** on the one messages should go through. Stopping the default leaves no default, and the screen says so: messages cannot be sent until another is chosen.
 
 ### Action 1: Creating a Branch-Specific Invoice Number Series
 1. Navigate to `/admin/settings/number-series` and click **New Series**.
@@ -217,3 +247,4 @@ Every invoice generated by the system passes through the **7-Gate Evaluation Pol
 | 3 | Configure KRA eTIMS Tax Classifications (16% VAT, 0%, Exempt). | Product catalog reflects mapped tax codes accurately. | [ ] |
 | 4 | Post a test cash sale invoice and inspect KRA Signing Log. | Document signs successfully; QR code and KRA signature code generated. | [ ] |
 | 5 | Verify Order Stage SLA target timers. | Lapsed orders in Packing stage trigger late warning alerts on dashboard. | [ ] |
+| 6 | Connect the client's SMS provider and send a test message to the implementor's phone. | The card shows *Default* and *Test message accepted*; the text arrives; reopening the connection shows the key box empty. | [ ] |

@@ -11431,3 +11431,42 @@ export const deliverySlaPushes = pgTable(
     check('delivery_sla_pushes_attempts_chk', sql`${t.attempts} >= 0`),
   ],
 );
+
+/**
+ * An SMS provider a company has connected. Each client has its own, so the provider is a kind (`adapter`) with its own settings; keys and
+ * tokens are sealed in `secrets_sealed` and opened only where a message is sent. At most one account is the default (the one used for
+ * sending); a stopped account is never the default. Accounts are stopped, not deleted, so what was sent through them stays explainable.
+ */
+export const smsProviderAccounts = pgTable(
+  'sms_provider_accounts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    adapter: text('adapter').$type<'africastalking' | 'twilio' | 'log'>().notNull(),
+    /** What is not secret: the username, the sender name, the account SID, the number it sends from. */
+    settings: jsonb('settings').$type<Record<string, string>>().notNull().default({}),
+    secretsSealed: jsonb('secrets_sealed').$type<EncryptedCredentialsBlob>(),
+    isDefault: boolean('is_default').notNull().default(false),
+    isActive: boolean('is_active').notNull().default(true),
+    /** The last test message: when, whether it went, and the words for why not. The number it went to is not kept. */
+    lastTestAt: timestamp('last_test_at', { withTimezone: true }),
+    lastTestOk: boolean('last_test_ok'),
+    lastTestError: text('last_test_error'),
+    version: integer('version').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    updatedBy: text('updated_by'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('sms_provider_accounts_name_uidx').on(t.companyId, sql`lower(${t.name})`),
+    uniqueIndex('sms_provider_accounts_default_uidx').on(t.companyId).where(sql`${t.isDefault}`),
+    check('sms_provider_accounts_adapter_chk', sql`${t.adapter} IN ('africastalking','twilio','log')`),
+    check('sms_provider_accounts_default_chk', sql`NOT ${t.isDefault} OR ${t.isActive}`),
+    check('sms_provider_accounts_test_chk', sql`(${t.lastTestAt} IS NULL) = (${t.lastTestOk} IS NULL)`),
+  ],
+);
+export type SmsProviderAccountRow = typeof smsProviderAccounts.$inferSelect;

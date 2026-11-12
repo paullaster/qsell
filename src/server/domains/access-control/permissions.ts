@@ -454,6 +454,12 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'Set the delivery slots each branch offers, with their room and cut-offs, and close days on which no slot is offered',
   },
+  'sms:manage': {
+    resource: 'sms',
+    action: 'manage',
+    category: 'Company & Settings',
+    description: 'Connect the SMS providers the company sends text messages with, keep their keys, choose the one messages go through, and send a test message',
+  },
   'couriers:manage': {
     resource: 'couriers',
     action: 'manage',
