@@ -25,6 +25,6 @@ export async function customerMessagesAction() {
 export async function setCustomerTextsAction(raw: unknown) {
   return await runDelivery('deliveries:manage', async (ctx) => {
     const i = objectOf(raw);
-    return dataOf(await getContainer().deliveryTextSettings.set({ companyId: ctx.companyId, userId: ctx.userId }, { enabled: i.enabled, kinds: i.kinds, expectedVersion: i.expectedVersion }));
+    return dataOf(await getContainer().deliveryTextSettings.set({ companyId: ctx.companyId, userId: ctx.userId }, { enabled: i.enabled, kinds: i.kinds, quietFrom: i.quietFrom, quietUntil: i.quietUntil, expectedVersion: i.expectedVersion }));
   }, PATHS);
 }

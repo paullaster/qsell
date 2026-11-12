@@ -1,0 +1,3 @@
+ALTER TABLE "delivery_text_settings" ADD COLUMN "quiet_from_minute" integer;--> statement-breakpoint
+ALTER TABLE "delivery_text_settings" ADD COLUMN "quiet_until_minute" integer;--> statement-breakpoint
+ALTER TABLE "delivery_text_settings" ADD CONSTRAINT "delivery_text_settings_quiet_chk" CHECK (("delivery_text_settings"."quiet_from_minute" is null and "delivery_text_settings"."quiet_until_minute" is null) or ("delivery_text_settings"."quiet_from_minute" between 0 and 1439 and "delivery_text_settings"."quiet_until_minute" between 0 and 1439 and "delivery_text_settings"."quiet_from_minute" <> "delivery_text_settings"."quiet_until_minute"));

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TEXT_KIND_CHOICES, isMessageKind, kindForStep, messageContent, messageKey, readTextKinds, reasonForCustomer, textContent, MESSAGE_KINDS, type MessageFacts } from './delivery-messages';
+import { TEXT_KIND_CHOICES, isMessageKind, kindForStep, messageContent, messageKey, minutesToClock, quietEndsAt, readQuietHours, readTextKinds, reasonForCustomer, textContent, MESSAGE_KINDS, type MessageFacts } from './delivery-messages';
 
 const facts: MessageFacts = { tradingName: 'Test Traders', firstName: 'Wanjiru', orderNumber: 'ORD-77', deliveryNumber: 'DLV-26-0000000007', trackUrl: 'https://shop.example.test/track/abc', courierName: null, receivedBy: null,
   handoverCode: null, reasonCode: null, triesLeft: null };
@@ -104,5 +104,35 @@ describe('customer text messages', () => {
     expect(readTextKinds(['nonsense']).ok).toBe(false);
     expect(readTextKinds('delivered').ok).toBe(false);
     expect(TEXT_KIND_CHOICES.map((c) => c.kind)).toEqual([...MESSAGE_KINDS]);
+  });
+});
+
+describe('quiet hours for texts', () => {
+  const night = { from: 21 * 60, until: 7 * 60 };
+  const tz = 'Africa/Nairobi';
+  it('reads two times, or none, and refuses half a pair or the same time twice', () => {
+    expect(readQuietHours('21:00', '07:00')).toEqual({ ok: true, quiet: night });
+    expect(readQuietHours('', '')).toEqual({ ok: true, quiet: null });
+    expect(readQuietHours(null, undefined)).toEqual({ ok: true, quiet: null });
+    expect(readQuietHours('21:00', '').ok).toBe(false);
+    expect(readQuietHours('25:00', '07:00').ok).toBe(false);
+    expect(readQuietHours('08:00', '08:00').ok).toBe(false);
+    expect(minutesToClock(7 * 60 + 5)).toBe('07:05');
+  });
+  it('holds a night text until the morning, across midnight, in the business time', () => {
+    // 22:30 in Nairobi is 19:30 UTC; the quiet hours end at 07:00 Nairobi, 04:00 UTC the next day.
+    expect(quietEndsAt(new Date('2026-11-12T19:30:45Z'), night, tz)?.toISOString()).toBe('2026-11-13T04:00:00.000Z');
+    // 02:00 in Nairobi is the same night, so it ends at 07:00 the same day.
+    expect(quietEndsAt(new Date('2026-11-12T23:00:10Z'), night, tz)?.toISOString()).toBe('2026-11-13T04:00:00.000Z');
+  });
+  it('lets a daytime text go, and the very minute the quiet hours end', () => {
+    expect(quietEndsAt(new Date('2026-11-12T09:00:00Z'), night, tz)).toBeNull();
+    expect(quietEndsAt(new Date('2026-11-13T04:00:00Z'), night, tz)).toBeNull();
+    expect(quietEndsAt(new Date('2026-11-12T09:00:00Z'), null, tz)).toBeNull();
+  });
+  it('handles quiet hours inside one day', () => {
+    const lunch = { from: 12 * 60, until: 14 * 60 };
+    expect(quietEndsAt(new Date('2026-11-12T09:30:00Z'), lunch, tz)?.toISOString()).toBe('2026-11-12T11:00:00.000Z');
+    expect(quietEndsAt(new Date('2026-11-12T11:00:00Z'), lunch, tz)).toBeNull();
   });
 });

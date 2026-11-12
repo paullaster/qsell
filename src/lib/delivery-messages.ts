@@ -151,3 +151,40 @@ export function textContent(kind: MessageKind, f: MessageFacts): string {
   const short = build(named(store.slice(0, 20).trim()));
   return short.length <= 306 ? short : build('');
 }
+
+/** Hours when customers are not texted, as minutes after midnight in the business's time: from the first, up to (not including) the second. */
+export interface QuietHours {
+  from: number;
+  until: number;
+}
+
+const HHMM = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+export const minutesToClock = (minutes: number): string => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+
+export type QuietHoursInput = { ok: true; quiet: QuietHours | null } | { ok: false; error: string };
+
+/** Quiet hours as typed (two times like 21:00 and 07:00), or none when both are empty. One time without the other, or the same time twice, is refused. */
+export function readQuietHours(from: unknown, until: unknown): QuietHoursInput {
+  const blank = (v: unknown): boolean => v === undefined || v === null || (typeof v === 'string' && v.trim() === '');
+  if (blank(from) && blank(until)) return { ok: true, quiet: null };
+  const a = typeof from === 'string' ? HHMM.exec(from.trim()) : null;
+  const b = typeof until === 'string' ? HHMM.exec(until.trim()) : null;
+  if (a === null || b === null) return { ok: false, error: 'Give both quiet hours as times like 21:00 and 07:00, or leave both empty.' };
+  const f = Number(a[1]) * 60 + Number(a[2]);
+  const u = Number(b[1]) * 60 + Number(b[2]);
+  if (f === u) return { ok: false, error: 'The quiet hours start and end at the same time. Change one, or leave both empty.' };
+  return { ok: true, quiet: { from: f, until: u } };
+}
+
+/** When a text due `now` may go, if `now` falls in the quiet hours (the next time they end, on the minute); null when it may go now. */
+export function quietEndsAt(now: Date, quiet: QuietHours | null, timeZone: string): Date | null {
+  if (quiet === null) return null;
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(now);
+  const num = (type: string): number => Number(parts.find((p) => p.type === type)?.value ?? '0');
+  const m = num('hour') * 60 + num('minute');
+  const inside = quiet.from < quiet.until ? m >= quiet.from && m < quiet.until : m >= quiet.from || m < quiet.until;
+  if (!inside) return null;
+  const wait = (quiet.until - m + 1440) % 1440;
+  return new Date(now.getTime() - now.getUTCSeconds() * 1000 - now.getUTCMilliseconds() + wait * 60000);
+}

@@ -2,11 +2,12 @@ import { and, desc, eq, inArray, lte, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { deliveries, deliveryEvents, deliveryMessages, orders } from '@/server/db/drizzle/schema';
 import { MAX_DELIVERY_ATTEMPTS } from '@/lib/delivery-document';
-import { isMessageKind, messageContent, textContent, type MessageFacts, type MessageKind } from '@/lib/delivery-messages';
+import { isMessageKind, messageContent, quietEndsAt, textContent, type MessageFacts, type MessageKind } from '@/lib/delivery-messages';
 import { internationalPhone, maskedPhone } from '@/lib/sms-providers';
 import { maskEmail } from '@/lib/tracking-token';
 import { resolvePublicBaseUrl } from '@/server/domains/auth/account-service';
 import { layout } from '@/server/domains/auth/emails';
+import { DEFAULT_BUSINESS_TIMEZONE } from '@/server/kernel/numbering/business-date';
 import type { CompanySettingsRepository } from '@/server/domains/company/repository';
 import type { EmailPort } from '@/server/ports/communications';
 import { SmsSendError, type SmsPort } from '@/server/ports/sms';
@@ -83,12 +84,12 @@ export class DeliveryMessages {
   }
 
   /** Sends what is due, a few at a time. Safe to call from anywhere, any number of times. Returns how many went. */
-  async flush(limit = 10): Promise<number> {
+  async flush(limit = 10, now: Date = new Date()): Promise<number> {
     const claimed = await this.db.transaction(async (tx) => {
       const due = await tx
         .select({ id: deliveryMessages.id })
         .from(deliveryMessages)
-        .where(and(inArray(deliveryMessages.status, ['queued', 'failed']), lte(deliveryMessages.nextTryAt, new Date()), sql`${deliveryMessages.attempts} < ${MAX_TRIES}`))
+        .where(and(inArray(deliveryMessages.status, ['queued', 'failed']), lte(deliveryMessages.nextTryAt, now), sql`${deliveryMessages.attempts} < ${MAX_TRIES}`))
         .orderBy(deliveryMessages.nextTryAt)
         .limit(limit)
         .for('update', { skipLocked: true });
@@ -101,7 +102,14 @@ export class DeliveryMessages {
         .returning();
     });
     let sent = 0;
+    const quietByCompany = new Map<string, Date | null>();
     for (const m of claimed) {
+      const held = await this.heldForMorning(m, now, quietByCompany);
+      if (held !== null) {
+        // Not a try: the text is put back for when the quiet hours end, with the count it had before this pass.
+        await this.db.update(deliveryMessages).set({ attempts: m.attempts - 1, nextTryAt: held, lastError: 'Held until the quiet hours end.' }).where(eq(deliveryMessages.id, m.id));
+        continue;
+      }
       try {
         await this.send(m);
         await this.db.update(deliveryMessages).set({ status: 'sent', sentAt: new Date(), lastError: null }).where(eq(deliveryMessages.id, m.id));
@@ -118,6 +126,16 @@ export class DeliveryMessages {
       }
     }
     return sent;
+  }
+
+  /** A text that falls in the company's quiet hours waits for them to end; mail never waits. Null means send now. */
+  private async heldForMorning(m: typeof deliveryMessages.$inferSelect, now: Date, memo: Map<string, Date | null>): Promise<Date | null> {
+    if (m.channel !== 'sms' || this.texting === null) return null;
+    if (!memo.has(m.companyId)) {
+      const settings = await this.texting.settings.get(m.companyId);
+      memo.set(m.companyId, quietEndsAt(now, settings.quiet, DEFAULT_BUSINESS_TIMEZONE));
+    }
+    return memo.get(m.companyId) ?? null;
   }
 
   private async send(m: typeof deliveryMessages.$inferSelect): Promise<void> {

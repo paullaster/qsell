@@ -31,6 +31,14 @@ test.describe('customer messages', () => {
     await expect(page.getByRole('status').filter({ hasText: 'Customers are now texted for the messages ticked' })).toBeVisible({ timeout: 30_000 });
     await noInnerHorizontalScroll(page);
 
+    // Quiet hours: half a pair is refused in words; a pair is saved and kept.
+    await form.getByLabel('No texts from').fill('21:00');
+    await form.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByRole('alert').filter({ hasText: 'Give both quiet hours' })).toBeVisible({ timeout: 30_000 });
+    await form.getByLabel('Texts resume at').fill('07:00');
+    await form.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Customers are now texted for the messages ticked' })).toBeVisible({ timeout: 30_000 });
+
     // Kept after a reload, then put back to off.
     await open(page, '/admin/delivery/messages', 'Customer messages');
     const again = page.getByRole('form', { name: 'Customer texts' });
@@ -38,6 +46,10 @@ test.describe('customer messages', () => {
     await expect(again.getByLabel(/^On its way/)).toBeChecked();
     await expect(again.getByLabel(/^Part delivered/)).toBeChecked();
     await expect(again.getByLabel(/^Delivered/)).not.toBeChecked();
+    await expect(again.getByLabel('No texts from')).toHaveValue('21:00');
+    await expect(again.getByLabel('Texts resume at')).toHaveValue('07:00');
+    await again.getByLabel('No texts from').fill('');
+    await again.getByLabel('Texts resume at').fill('');
     await again.getByLabel('Also text customers').uncheck();
     await again.getByRole('button', { name: 'Save' }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Customers are no longer texted' })).toBeVisible({ timeout: 30_000 });

@@ -879,6 +879,32 @@ describe.skipIf(!has(url))('delivery slots (database)', () => {
       expect(again).toMatchObject({ status: 'failed', attempts: 1 });
       expect(new Date(again?.nextTryAt ?? 0).getTime()).toBeGreaterThan(Date.now());
     });
+
+    it('keeps quiet hours, refuses half a pair, and holds a night text for the morning while the email goes at once', async () => {
+      const now = await c.deliveryTextSettings.get(companyId);
+      expect(await c.deliveryTextSettings.set(actor(), { enabled: true, kinds: ['out_for_delivery'], quietFrom: '21:00', quietUntil: '', expectedVersion: now.version })).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect(await c.deliveryTextSettings.set(actor(), { enabled: true, kinds: ['out_for_delivery'], quietFrom: '08:00', quietUntil: '08:00', expectedVersion: now.version })).toMatchObject({ ok: false, reason: 'bad_input' });
+      const saved = await c.deliveryTextSettings.set(actor(), { enabled: true, kinds: ['out_for_delivery'], quietFrom: '21:00', quietUntil: '07:00', expectedVersion: now.version });
+      expect(saved).toMatchObject({ ok: true, data: { quiet: { from: 1260, until: 420 } } });
+      expect((await c.deliveryTextSettings.get(companyId)).quiet).toEqual({ from: 1260, until: 420 });
+      const a = await delivery();
+      await db.update(schema.deliveries).set({ handoverCode: '735190' }).where(eq(schema.deliveries.id, a));
+      await enqueue(a, 'out_for_delivery');
+      // 23:00 in Nairobi: the email goes, the text waits.
+      await flusher('up').flush(500, new Date('2030-01-01T20:00:00Z'));
+      expect(texted.filter((t) => t.text.includes('735190'))).toHaveLength(0);
+      const [held] = await db.select().from(schema.deliveryMessages).where(and(eq(schema.deliveryMessages.deliveryId, a), eq(schema.deliveryMessages.channel, 'sms')));
+      expect(held).toMatchObject({ status: 'queued', attempts: 0, lastError: 'Held until the quiet hours end.' });
+      expect(held?.nextTryAt.toISOString()).toBe('2030-01-02T04:00:00.000Z');
+      expect((await messagesOf(a)).sort()).toEqual(['out_for_delivery:email:sent', 'out_for_delivery:sms:queued']);
+      // Still night a little later: nothing is due, so nothing goes. At 07:00 it goes, and the note is cleared.
+      await flusher('up').flush(500, new Date('2030-01-02T03:59:00Z'));
+      expect(texted.filter((t) => t.text.includes('735190'))).toHaveLength(0);
+      await flusher('up').flush(500, new Date('2030-01-02T04:00:00Z'));
+      expect(texted.filter((t) => t.text.includes('735190'))).toHaveLength(1);
+      expect(await messagesOf(a)).toEqual(['out_for_delivery:email:sent', 'out_for_delivery:sms:sent']);
+      await setCustomerTexts(false, []);
+    });
   });
 
   describe('mail about lateness', () => {

@@ -3,8 +3,8 @@
 import { use, useId, useState } from 'react';
 import Link from 'next/link';
 import { setCustomerTextsAction, type customerMessagesAction } from '@/server/domains/delivery/message-actions';
-import { LoadFailed, Message, PageHeader, attempt, cardClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
-import { TEXT_KIND_CHOICES, type MessageKind } from '@/lib/delivery-messages';
+import { LoadFailed, Message, PageHeader, attempt, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
+import { TEXT_KIND_CHOICES, minutesToClock, type MessageKind } from '@/lib/delivery-messages';
 
 type Loaded = Awaited<ReturnType<typeof customerMessagesAction>>;
 type Data = Extract<Loaded, { ok: true }>['data'];
@@ -41,11 +41,15 @@ function TextsForm({ data, onSaved, onError }: { data: Data; onSaved: (settings:
   const uid = useId();
   const [enabled, setEnabled] = useState(data.settings.enabled);
   const [kinds, setKinds] = useState<MessageKind[]>(data.settings.kinds);
+  const [quietFrom, setQuietFrom] = useState(data.settings.quiet === null ? '' : minutesToClock(data.settings.quiet.from));
+  const [quietUntil, setQuietUntil] = useState(data.settings.quiet === null ? '' : minutesToClock(data.settings.quiet.until));
   const [busy, setBusy] = useState(false);
+  const savedFrom = data.settings.quiet === null ? '' : minutesToClock(data.settings.quiet.from);
+  const savedUntil = data.settings.quiet === null ? '' : minutesToClock(data.settings.quiet.until);
   const toggle = (kind: MessageKind) => setKinds((k) => (k.includes(kind) ? k.filter((x) => x !== kind) : [...k, kind]));
   const save = async () => {
     setBusy(true);
-    const r = await attempt(setCustomerTextsAction({ enabled, kinds, expectedVersion: data.settings.version }));
+    const r = await attempt(setCustomerTextsAction({ enabled, kinds, quietFrom, quietUntil, expectedVersion: data.settings.version }));
     setBusy(false);
     if (r.ok) onSaved(r.data);
     else onError(r.error);
@@ -76,6 +80,20 @@ function TextsForm({ data, onSaved, onError }: { data: Data; onSaved: (settings:
           </label>
         ))}
       </fieldset>
+      <fieldset className="space-y-2" disabled={!enabled}>
+        <legend className="text-xs font-semibold text-fg">Quiet hours (optional)</legend>
+        <p className="text-xs text-fg-muted">A text that falls between these times waits and goes when they end, so nobody is woken at night. Emails are not held. Leave both empty to text at any hour.</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label htmlFor={`${uid}-qf`} className="block text-xs font-semibold text-fg">
+            No texts from
+            <input id={`${uid}-qf`} type="time" className={`${fieldClass} mt-1`} value={quietFrom} onChange={(e) => setQuietFrom(e.target.value)} />
+          </label>
+          <label htmlFor={`${uid}-qu`} className="block text-xs font-semibold text-fg">
+            Texts resume at
+            <input id={`${uid}-qu`} type="time" className={`${fieldClass} mt-1`} value={quietUntil} onChange={(e) => setQuietUntil(e.target.value)} />
+          </label>
+        </div>
+      </fieldset>
       <p role="status" className="text-xs text-fg-muted">
         {data.textsGoThrough === null ? (
           <>
@@ -90,7 +108,7 @@ function TextsForm({ data, onSaved, onError }: { data: Data; onSaved: (settings:
         )}{' '}
         Each text costs what your provider charges. A customer whose order has no valid mobile number is simply not texted; the email still goes.
       </p>
-      <button type="submit" className={primaryClass} disabled={busy || (enabled === data.settings.enabled && kinds.length === data.settings.kinds.length && kinds.every((k) => data.settings.kinds.includes(k)))}>
+      <button type="submit" className={primaryClass} disabled={busy || (enabled === data.settings.enabled && quietFrom === savedFrom && quietUntil === savedUntil && kinds.length === data.settings.kinds.length && kinds.every((k) => data.settings.kinds.includes(k)))}>
         {busy ? 'Saving…' : 'Save'}
       </button>
     </form>
