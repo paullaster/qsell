@@ -102,6 +102,15 @@ graph LR
   5. **Collection Panel (`OrderCollectionPanel`)**: Payment method, gateway reference, M-Pesa receipt code, and door cash collection status.
   6. **KRA Invoice Preview (`OrderInvoicePreview`)**: Electronic tax invoice details, KRA digital signature code, and QR verification code.
 
+### Sub-Module 2A: Preparation sheet (`/admin/orders/preparation`)
+For a business that makes what it sells to order (meals, catering, assembled sets), the sheet says **what has to be made for a day**. Permission: *orders read*. It is read from the exact choices saved with each order that holds a configurable package (guide 05, Packages), not from the order lines, which fold the parts of different servings together and no longer say which fish went with which ugali.
+- **Day**: pick a date (it opens on today), press **Today**, press a day in the strip of the coming days that have orders (each shows its servings), or press **Orders with no date** for orders of packages that did not ask for one. The date is the one the order is for (the delivery time the shopper chose, or the date on the quote or order).
+- **Totals**: servings in how many orders; servings of each package; and each chosen part with the **portions** wanted (servings times picks, so *Large fish 9*) and, when a part comes in more than one unit per portion, the **units** (*Ugali 12 (24 units)*), most wanted first.
+- **Under the totals**, grouped by **delivery time** (earliest first, orders with no time last) and by package: every order's own choices as "9 × Large fish and Ugali", with the order number, the customer, and the payment state when it is not paid. Identical choices on different orders stay as separate lines, because each has its own order to prepare for.
+- A **cancelled order is not on the sheet**; if its servings were counted before, the totals drop by them at once. One sheet shows up to 2,000 selections and says so when there are more.
+- **Print** prints only the sheet (the menu and top bar are left out) so it can be pinned in the kitchen. The screen works on a phone.
+- **Not built yet**: the customer's note on a serving ("no pepper") appears on the sheet when notes are added (guide 05, later slice); a per-package filter and a count of what is already made.
+
 ### Sub-Module 3: Customers (`/admin/customers`)
 - **Customer Directory**: Tabular list showing Account Code, Customer Name, Account Type (`Cash` or `Credit`), Phone, Email, City, Balance Owed, and Status (`Active`, `Suspended`).
 - **Customer Card Details**:
@@ -226,5 +235,6 @@ graph LR
 | 2 | Issue a Sales Quote with a 10% line discount. | Proforma calculates discount and VAT accurately; status shows Draft/Sent. | [ ] |
 | 3 | Convert Quote to Order. | Order created with identical lines; Quote status transitions to Converted. | [ ] |
 | 4 | Attempt to place an order exceeding Credit Customer's limit. | System blocks or routes to Credit Approval queue as configured. | [ ] |
+| 4b | Place two package orders for the same day, cancel one, open **Preparation sheet** for that day. | Totals and each order's choices show for the kept order only; Print leaves out the menu. | [ ] |
 | 4a | If the company sells packages: quote one with **Add a package**, change its choices, convert the quote. | The line reads as its choices; the order's parts add up to the quote's total; a package with a daily limit refuses a second quote for the same date once full. | [ ] |
 | 5 | Verify Order Timeline Events. | Placement, payment, and dispatch timestamps render accurately in order modal. | [ ] |

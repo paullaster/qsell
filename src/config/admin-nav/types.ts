@@ -28,6 +28,7 @@ export type AdminNavIconName =
   | 'Store'
   | 'Wallet'
   | 'Boxes'
+  | 'ClipboardList'
   | 'Palette'
   | 'LayoutGrid'
   | 'Tags'

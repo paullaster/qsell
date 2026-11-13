@@ -115,6 +115,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'orders:read',
       },
       {
+        id: 'orders-preparation',
+        title: 'Preparation sheet',
+        name: 'orders-preparation',
+        href: '/admin/orders/preparation',
+        description: 'What to make for a day, from the choices on each order, with totals to print',
+        icon: 'ClipboardList',
+        permission: 'orders:read',
+      },
+      {
         id: 'newsletter',
         title: 'Newsletter',
         name: 'newsletter',

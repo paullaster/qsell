@@ -80,6 +80,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'Sales quotes that become orders',
       'Customer records, order history and newsletter',
       'Product reviews with moderation',
+      'A preparation sheet for catering and made-to-order meals: what to make for each day and delivery time, with totals to print',
       'Price lists, discounts and promotions',
     ],
     keywords: [
@@ -90,10 +91,13 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'quotation software',
       'customer management software',
       'retail POS Nairobi',
+      'catering order software Kenya',
+      'meal preparation sheet',
     ],
     subModules: [
       'Sales Quotes',
       'Customer Orders',
+      'Preparation sheet',
       'Newsletter',
       'Product Reviews',
       'Customers',

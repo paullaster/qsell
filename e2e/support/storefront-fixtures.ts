@@ -5,6 +5,7 @@
  *   tsx e2e/support/storefront-fixtures.ts product <tag>                    a new product for sale with no reviews, named "Reviewed <tag>"
  *   tsx e2e/support/storefront-fixtures.ts limited-product <tag> <min> <max> a product for sale that may be bought only <min> to <max> at a time, named "Limited <tag>"
  *   tsx e2e/support/storefront-fixtures.ts package <tag>                    a configurable package "Express lunch <tag>" (fish, starch, vegetables) with its parts; brown ugali has no stock
+ *   tsx e2e/support/storefront-fixtures.ts package-orders <tag>             that package with three orders for one day ten days ahead, one of them cancelled
  *   tsx e2e/support/storefront-fixtures.ts set-stock <product id> <quantity>   sets a product's stock (to make a checkout run short)
  *   tsx e2e/support/storefront-fixtures.ts order-stages <order number>        the stages an order has been through, in order, and its current stage
  *   tsx e2e/support/storefront-fixtures.ts late-order <tag> [hours]          an order that has waited in "payment started" for that many hours (default 3), recorded as late by the sweep
@@ -113,7 +114,51 @@ async function lunchPackage(tag: string): Promise<Record<string, string>> {
     { type: 'user', id: 'e2e-fixture' },
     { code: 'POLICY_CHANGE' },
   );
-  return { name: `Express lunch ${tag}`, slug: `pk-l-${tag}`.toLowerCase(), small: `Small fish ${tag}`, large: `Large fish ${tag}`, ugali: `Ugali ${tag}`, brown: `Brown ugali ${tag}`, sukuma: `Sukuma ${tag}`, cabbage: `Cabbage ${tag}`, id: lunch, ugaliId: ugali };
+  return { name: `Express lunch ${tag}`, slug: `pk-l-${tag}`.toLowerCase(), small: `Small fish ${tag}`, large: `Large fish ${tag}`, ugali: `Ugali ${tag}`, brown: `Brown ugali ${tag}`, sukuma: `Sukuma ${tag}`, cabbage: `Cabbage ${tag}`, id: lunch, ugaliId: ugali, smallId: small, largeId: large, sukumaId: sukuma };
+}
+
+/** The lunch package with three orders for one day (twelve servings): two kept and one cancelled. The day and the names are returned. */
+async function lunchOrders(tag: string): Promise<Record<string, string>> {
+  const made = await lunchPackage(tag);
+  const { getContainer } = await import('@/server/di/container');
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  // Plenty of every part, so the orders are not held up by stock (the shop tests use the small counts for their own purpose).
+  await db.execute(sql`UPDATE products SET stock_quantity = 100 WHERE id LIKE ${`prod_pk_%_${tag}`}`);
+  const { OrderWriteService } = await import('@/server/domains/orders/write-service');
+  const { OrderStages } = await import('@/server/domains/orders/stages');
+  const container = getContainer();
+  const company = await container.companySettings.ensureSeeded();
+  const branch = await container.branches.getDefault(company.id);
+  if (branch === null) throw new Error('e2e fixture: the company has no default branch');
+  const day = new Date(Date.now() + 10 * 86_400_000).toISOString().slice(0, 10);
+  const stored = (fishId: string, fish: string) => [
+    { slotName: 'Fish', productId: fishId, name: fish, count: 1 },
+    { slotName: 'Starch', productId: made.ugaliId ?? '', name: 'Ugali', count: 1 },
+    { slotName: 'Vegetables', productId: made.sukumaId ?? '', name: 'Sukuma', count: 1 },
+  ];
+  const place = async (n: number, servings: number, fishId: string, fish: string) => {
+    const resolved = await container.packageOrders.resolve(company.id, [{ productId: made.id ?? '', stored: stored(fishId, fish) }]);
+    if (!resolved.ok) throw new Error(resolved.error);
+    const result = await OrderWriteService.createOrder({
+      branchId: branch.id,
+      orderNumber: `PREP-${tag}-${String(n)}`.toUpperCase(),
+      customerName: `Prep Customer ${String(n)} ${tag}`,
+      customerEmail: `prep-${String(n)}-${tag}@example.test`,
+      customerPhone: '0711000333',
+      shippingAddress: { street: '1 Moi Avenue', city: 'Nairobi', countyOrState: 'Nairobi', country: 'Kenya' },
+      items: [{ productId: made.id ?? '', quantity: servings, package: { picks: resolved.picks[0] ?? [] } }],
+      currency: 'KES',
+      paymentMethod: 'mpesa_daraja',
+      fulfilmentDate: day,
+    });
+    if (!result.success || result.order === undefined) throw new Error(result.error ?? 'e2e fixture: the order was refused');
+    return result.order;
+  };
+  await place(1, 3, made.smallId ?? '', made.small ?? '');
+  await place(2, 9, made.largeId ?? '', made.large ?? '');
+  const gone = await place(3, 4, made.smallId ?? '', made.small ?? '');
+  await OrderStages.move(db, gone.id, 'cancelled', 'cancelled', { source: 'staff', reasonCode: 'cancelled', message: 'Customer asked', checkHold: true });
+  return { ...made, day };
 }
 
 async function packaging(tag: string): Promise<Record<string, string>> {
@@ -233,6 +278,7 @@ async function main(): Promise<void> {
   else if (command === 'product' && a !== undefined) result = await product(a);
   else if (command === 'limited-product' && a !== undefined && b !== undefined && process.argv[5] !== undefined) result = await limitedProduct(a, b, process.argv[5]);
   else if (command === 'package' && a !== undefined) result = await lunchPackage(a);
+  else if (command === 'package-orders' && a !== undefined) result = await lunchOrders(a);
   else if (command === 'packaging' && a !== undefined) result = await packaging(a);
   else if (command === 'forget-packaging' && a !== undefined) result = await removePackaging(a);
   else if (command === 'inventory-kind-product' && a !== undefined && b !== undefined) result = await inventoryKindProduct(a, b);
@@ -270,6 +316,13 @@ export function makeLunchPackage(tag: string): Record<'name' | 'slug' | 'small' 
   const made = storefrontTool('package', tag);
   const get = (key: string): string => made[key] ?? '';
   return { name: get('name'), slug: get('slug'), small: get('small'), large: get('large'), ugali: get('ugali'), brown: get('brown'), sukuma: get('sukuma'), cabbage: get('cabbage'), id: get('id'), ugaliId: get('ugaliId') };
+}
+
+/** The lunch package with three orders for a day ten days ahead (3 + 9 servings kept, 4 cancelled). */
+export function makeLunchOrders(tag: string): ReturnType<typeof makeLunchPackage> & { day: string } {
+  const made = storefrontTool('package-orders', tag);
+  const get = (key: string): string => made[key] ?? '';
+  return { name: get('name'), slug: get('slug'), small: get('small'), large: get('large'), ugali: get('ugali'), brown: get('brown'), sukuma: get('sukuma'), cabbage: get('cabbage'), id: get('id'), ugaliId: get('ugaliId'), day: get('day') };
 }
 
 /** Adds a hidden, stocked checkout bag with a fit rule for the seeded rice product. */
