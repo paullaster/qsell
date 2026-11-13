@@ -34,6 +34,7 @@ export interface RunStopView {
   units: number;
   value: number;
   weightKg: number | null;
+  volumeLitres: number | null;
 }
 
 export interface RunView {
@@ -185,13 +186,13 @@ export class DeliveryRuns {
     const limits = await this.vehicles.limitsOf(tx, companyId, run.vehicleId);
     if (limits === null) return null;
     const current = await this.stopViews(tx, run.id);
-    const facts = [...current.map((s) => ({ units: s.units, value: s.value, weightKg: s.weightKg }))];
+    const facts = [...current.map((s) => ({ units: s.units, value: s.value, weightKg: s.weightKg, volumeLitres: s.volumeLitres }))];
     if (extra !== null) {
       const more = (await this.loadFacts(tx, [extra])).get(extra.deliveryId);
-      facts.push({ units: more?.units ?? 0, value: more?.value ?? 0, weightKg: more?.weightKg ?? null });
+      facts.push({ units: more?.units ?? 0, value: more?.value ?? 0, weightKg: more?.weightKg ?? null, volumeLitres: more?.volumeLitres ?? null });
     }
     const totals = runTotals(facts);
-    return loadProblem({ stops: totals.stops, weightKg: totals.weightKg }, limits, limits.name);
+    return loadProblem({ stops: totals.stops, weightKg: totals.weightKg, volumeLitres: totals.volumeLitres }, limits, limits.name);
   }
 
   /** Changes the vehicle of a run that has not gone out. A vehicle from the register must be in use and must fit what is already on the run. */
@@ -435,7 +436,7 @@ export class DeliveryRuns {
       riderId: r.riderId,
       vehicle: r.vehicle,
       vehicleId: r.vehicleId,
-      limits: limits === null ? null : { maxWeightKg: limits.maxWeightKg, maxStops: limits.maxStops },
+      limits: limits === null ? null : { maxWeightKg: limits.maxWeightKg, maxVolumeLitres: limits.maxVolumeLitres, maxStops: limits.maxStops },
       notes: r.notes,
       status: r.status,
       statusWords: RUN_STATUS_WORDS[r.status],
@@ -443,7 +444,7 @@ export class DeliveryRuns {
       startedAt: r.startedAt?.toISOString() ?? null,
       closedAt: r.closedAt?.toISOString() ?? null,
       stops,
-      totals: runTotals(stops.map((s) => ({ units: s.units, value: s.value, weightKg: s.weightKg }))),
+      totals: runTotals(stops.map((s) => ({ units: s.units, value: s.value, weightKg: s.weightKg, volumeLitres: s.volumeLitres }))),
       editable: isRunEditable(r.status),
       actions: runActionsFrom(r.status).map((action) => ({ action, words: RUN_ACTION_WORDS[action] })),
     };
@@ -471,15 +472,16 @@ export class DeliveryRuns {
       units: facts.get(r.d.id)?.units ?? 0,
       value: facts.get(r.d.id)?.value ?? 0,
       weightKg: facts.get(r.d.id)?.weightKg ?? null,
+      volumeLitres: facts.get(r.d.id)?.volumeLitres ?? null,
     }));
   }
 
   /** Units, worth (at the order's own prices) and weight of what each delivery carries. Two reads for any number of deliveries. */
-  private async loadFacts(db: Tx | DrizzleDb, pairs: { deliveryId: string; orderId: string }[]): Promise<Map<string, { units: number; value: number; weightKg: number | null }>> {
-    const out = new Map<string, { units: number; value: number; weightKg: number | null }>();
+  private async loadFacts(db: Tx | DrizzleDb, pairs: { deliveryId: string; orderId: string }[]): Promise<Map<string, { units: number; value: number; weightKg: number | null; volumeLitres: number | null }>> {
+    const out = new Map<string, { units: number; value: number; weightKg: number | null; volumeLitres: number | null }>();
     if (pairs.length === 0) return out;
     const lines = await db
-      .select({ deliveryId: deliveryLines.deliveryId, productId: deliveryLines.productId, quantity: deliveryLines.quantity, picked: deliveryLines.picked, weight: products.weight })
+      .select({ deliveryId: deliveryLines.deliveryId, productId: deliveryLines.productId, quantity: deliveryLines.quantity, picked: deliveryLines.picked, weight: products.weight, volume: products.volumeLitres })
       .from(deliveryLines)
       .innerJoin(products, eq(products.id, deliveryLines.productId))
       .where(inArray(deliveryLines.deliveryId, pairs.map((p) => p.deliveryId)));
@@ -488,10 +490,11 @@ export class DeliveryRuns {
     const orderOf = new Map(pairs.map((p) => [p.deliveryId, p.orderId]));
     for (const l of lines) {
       const q = Number(l.picked ?? l.quantity);
-      const cur = out.get(l.deliveryId) ?? { units: 0, value: 0, weightKg: null };
+      const cur = out.get(l.deliveryId) ?? { units: 0, value: 0, weightKg: null, volumeLitres: null };
       cur.units = Math.round((cur.units + q) * 1000) / 1000;
       cur.value = Math.round((cur.value + q * (price.get(`${orderOf.get(l.deliveryId) ?? ''}|${l.productId}`) ?? 0)) * 100) / 100;
       if (l.weight !== null) cur.weightKg = Math.round(((cur.weightKg ?? 0) + q * Number(l.weight)) * 1000) / 1000;
+      if (l.volume !== null) cur.volumeLitres = Math.round(((cur.volumeLitres ?? 0) + q * Number(l.volume)) * 1000) / 1000;
       out.set(l.deliveryId, cur);
     }
     return out;

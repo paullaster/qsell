@@ -184,6 +184,7 @@ function AdminProductModalForm({
     template === null ? '' : String(template.lowStockThreshold),
   );
   const [weight, setWeight] = useState(template?.weight == null ? '' : String(template.weight));
+  const [volume, setVolume] = useState(template?.volumeLitres == null ? '' : String(template.volumeLitres));
   const [baseUnit, setBaseUnit] = useState<Choice | null>(() =>
     template === null
       ? null
@@ -367,6 +368,7 @@ function AdminProductModalForm({
     } else if (
       m.includes('stock') ||
       m.includes('weight') ||
+      m.includes('litres') ||
       m.includes('unit') ||
       m.includes('decimal') ||
       m.includes('whole number')
@@ -513,6 +515,7 @@ function AdminProductModalForm({
     const stock = stockQuantity.trim() === '' ? 0 : Number(stockQuantity);
     const lowThreshold = lowStockThreshold.trim() === '' ? 0 : Number(lowStockThreshold);
     const weightValue = weight.trim() === '' ? undefined : Number(weight);
+    const volumeValue = volume.trim() === '' ? undefined : Number(volume);
 
     try {
       const productPayload = {
@@ -543,6 +546,7 @@ function AdminProductModalForm({
         stockQuantity: Number.isFinite(stock) ? stock : 0,
         lowStockThreshold: Number.isFinite(lowThreshold) ? lowThreshold : 0,
         weight: weightValue !== undefined && Number.isFinite(weightValue) ? weightValue : undefined,
+        volumeLitres: volumeValue !== undefined && Number.isFinite(volumeValue) ? volumeValue : undefined,
         ...(baseUnit === null ? {} : { baseUnitId: baseUnit.id }),
         ...(unitsToSave === undefined ? {} : { packagings: unitsToSave }),
         specifications: specifications.map(({ key, value }) => ({ key, value })),
@@ -1069,6 +1073,10 @@ function AdminProductModalForm({
                       placeholder="e.g. 1.5"
                       className={`${fieldClass} font-mono`}
                     />
+                  </div>
+                  <div>
+                    <label className={labelClass}>{`Space it takes${baseUnit?.meta?.code === undefined ? '' : ` per ${baseUnit.meta.code}`} (litres)`}</label>
+                    <input type="number" step="0.1" min={0} value={volume} onChange={(e) => setVolume(e.target.value)} placeholder="e.g. 40 (1,000 litres is a cubic metre)" className={`${fieldClass} font-mono`} />
                   </div>
                 </div>
               </div>

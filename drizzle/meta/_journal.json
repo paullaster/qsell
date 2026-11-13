@@ -1212,6 +1212,13 @@
       "when": 1794491215899,
       "tag": "0172_delivery_fuel_figures",
       "breakpoints": true
+    },
+    {
+      "idx": 173,
+      "version": "7",
+      "when": 1794511736223,
+      "tag": "0173_delivery_volume_capacity",
+      "breakpoints": true
     }
   ]
 }

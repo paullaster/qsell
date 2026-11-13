@@ -4,7 +4,7 @@ import { use, useId, useState } from 'react';
 import { createVehicleAction, setVehicleActiveAction, updateVehicleAction, vehiclesScreenAction } from '@/server/domains/delivery/vehicle-actions';
 import type { VehicleView } from '@/server/domains/delivery/vehicles';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
-import { kilos } from '@/lib/delivery-vehicle';
+import { kilos, litres } from '@/lib/delivery-vehicle';
 
 type Loaded = Awaited<ReturnType<typeof vehiclesScreenAction>>;
 
@@ -14,7 +14,7 @@ export function VehiclesClient({ firstPromise }: { firstPromise: ReturnType<type
 }
 
 const limitsWords = (v: VehicleView): string => {
-  const parts = [v.maxWeightKg === null ? null : `up to ${kilos(v.maxWeightKg)}`, v.maxStops === null ? null : `${String(v.maxStops)} ${v.maxStops === 1 ? 'stop' : 'stops'} a run`].filter((p): p is string => p !== null);
+  const parts = [v.maxWeightKg === null ? null : `up to ${kilos(v.maxWeightKg)}`, v.maxVolumeLitres === null ? null : `up to ${litres(v.maxVolumeLitres)}`, v.maxStops === null ? null : `${String(v.maxStops)} ${v.maxStops === 1 ? 'stop' : 'stops'} a run`].filter((p): p is string => p !== null);
   return parts.length === 0 ? 'No limit set' : parts.join(' · ');
 };
 
@@ -63,11 +63,12 @@ function VehicleForm({ vehicle, onSaved, onError }: { vehicle?: VehicleView; onS
   const uid = useId();
   const [name, setName] = useState(vehicle?.name ?? '');
   const [weight, setWeight] = useState(vehicle?.maxWeightKg === null || vehicle === undefined ? '' : String(vehicle.maxWeightKg));
+  const [volume, setVolume] = useState(vehicle?.maxVolumeLitres === null || vehicle === undefined ? '' : String(vehicle.maxVolumeLitres));
   const [stops, setStops] = useState(vehicle?.maxStops === null || vehicle === undefined ? '' : String(vehicle.maxStops));
   const [busy, setBusy] = useState(false);
   const save = async () => {
     setBusy(true);
-    const input = { name, maxWeightKg: weight, maxStops: stops };
+    const input = { name, maxWeightKg: weight, maxVolumeLitres: volume, maxStops: stops };
     const r = await attempt(vehicle === undefined ? createVehicleAction(input) : updateVehicleAction({ ...input, id: vehicle.id, expectedVersion: vehicle.version }));
     setBusy(false);
     if (r.ok) onSaved(vehicle === undefined ? 'The vehicle is added.' : 'Saved. The limits apply to the stops put on a run from now on.');
@@ -76,7 +77,7 @@ function VehicleForm({ vehicle, onSaved, onError }: { vehicle?: VehicleView; onS
   return (
     <form
       aria-label={vehicle === undefined ? 'Add a vehicle' : `Change ${vehicle.name}`}
-      className={`${cardClass} grid grid-cols-1 gap-3 sm:grid-cols-3`}
+      className={`${cardClass} grid grid-cols-1 gap-3 sm:grid-cols-2`}
       onSubmit={(e) => {
         e.preventDefault();
         void save();
@@ -88,10 +89,13 @@ function VehicleForm({ vehicle, onSaved, onError }: { vehicle?: VehicleView; onS
       <Field id={`${uid}-w`} label="Most weight it carries (kg)" hint="Empty for no limit">
         <input id={`${uid}-w`} className={fieldClass} inputMode="decimal" value={weight} onChange={(e) => setWeight(e.target.value)} autoComplete="off" />
       </Field>
+      <Field id={`${uid}-v`} label="Most space it holds (litres)" hint="Empty for no limit. 1,000 litres is a cubic metre">
+        <input id={`${uid}-v`} className={fieldClass} inputMode="decimal" value={volume} onChange={(e) => setVolume(e.target.value)} autoComplete="off" />
+      </Field>
       <Field id={`${uid}-s`} label="Most stops on a run" hint="Empty for no limit">
         <input id={`${uid}-s`} className={fieldClass} inputMode="numeric" value={stops} onChange={(e) => setStops(e.target.value)} autoComplete="off" />
       </Field>
-      <div className="sm:col-span-3">
+      <div className="sm:col-span-2">
         <button type="submit" className={primaryClass} disabled={busy}>
           {vehicle === undefined ? 'Add the vehicle' : 'Save'}
         </button>

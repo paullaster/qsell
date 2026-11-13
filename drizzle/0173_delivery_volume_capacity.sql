@@ -1,0 +1,4 @@
+ALTER TABLE "delivery_vehicles" ADD COLUMN "max_volume_litres" numeric(12, 3);--> statement-breakpoint
+ALTER TABLE "products" ADD COLUMN "volume_litres" numeric(12, 4);--> statement-breakpoint
+ALTER TABLE "delivery_vehicles" ADD CONSTRAINT "delivery_vehicles_volume_chk" CHECK ("delivery_vehicles"."max_volume_litres" IS NULL OR ("delivery_vehicles"."max_volume_litres" > 0 AND "delivery_vehicles"."max_volume_litres" <= 1000000));--> statement-breakpoint
+ALTER TABLE "products" ADD CONSTRAINT "products_volume_chk" CHECK ("products"."volume_litres" IS NULL OR ("products"."volume_litres" > 0 AND "products"."volume_litres" <= 1000000));

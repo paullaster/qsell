@@ -882,6 +882,8 @@ export const deliveryVehicles = pgTable(
       .references(() => companySettings.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     maxWeightKg: numeric('max_weight_kg', { precision: 12, scale: 3, mode: 'number' }),
+    /** The most a run in this vehicle may fill, in litres. Null: no limit by volume. */
+    maxVolumeLitres: numeric('max_volume_litres', { precision: 12, scale: 3, mode: 'number' }),
     maxStops: integer('max_stops'),
     isActive: boolean('is_active').notNull().default(true),
     version: integer('version').notNull().default(1),
@@ -891,6 +893,7 @@ export const deliveryVehicles = pgTable(
   },
   (t) => [
     uniqueIndex('delivery_vehicles_company_name_uidx').on(t.companyId, sql`lower(${t.name})`),
+    check('delivery_vehicles_volume_chk', sql`${t.maxVolumeLitres} IS NULL OR (${t.maxVolumeLitres} > 0 AND ${t.maxVolumeLitres} <= 1000000)`),
     check('delivery_vehicles_limits_chk', sql`(${t.maxWeightKg} IS NULL OR (${t.maxWeightKg} > 0 AND ${t.maxWeightKg} <= 1000000)) AND (${t.maxStops} IS NULL OR (${t.maxStops} BETWEEN 1 AND 500))`),
   ],
 );
@@ -3799,6 +3802,8 @@ export const products = pgTable(
     isTaxInclusive: boolean('is_tax_inclusive'),
     /** Shipping weight of one base unit, in kg. */
     weight: numeric('weight', { precision: 12, scale: 4 }),
+    /** The space one base unit takes in a vehicle, in litres (1,000 litres is a cubic metre). Null: not known, counted as nothing on a run. */
+    volumeLitres: numeric('volume_litres', { precision: 12, scale: 4 }),
     /**
      * The unit stock is counted in. Rows written without one take the default unit
      * (`default_unit_id()`); the application always sets it explicitly.
@@ -3848,6 +3853,7 @@ export const products = pgTable(
       .where(sql`${t.deletedAt} is null`),
     check('products_package_only_hidden_chk', sql`NOT ${t.soldOnlyInPackages} OR NOT ${t.showOnWebShop}`),
     check('products_package_only_not_packaging_chk', sql`NOT ${t.soldOnlyInPackages} OR NOT ${t.isCheckoutPackaging}`),
+    check('products_volume_chk', sql`${t.volumeLitres} IS NULL OR (${t.volumeLitres} > 0 AND ${t.volumeLitres} <= 1000000)`),
     check('products_min_order_qty_chk', sql`${t.minOrderQty} IS NULL OR ${t.minOrderQty} > 0`),
     check('products_max_order_qty_chk', sql`${t.maxOrderQty} IS NULL OR ${t.maxOrderQty} > 0`),
     check(

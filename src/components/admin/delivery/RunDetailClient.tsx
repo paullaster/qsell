@@ -9,7 +9,7 @@ import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, car
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import type { Choice } from '@/lib/payment-options';
 import { moveStop, type RunAction, type RunStatus } from '@/lib/dispatch-run';
-import { loadWords } from '@/lib/delivery-vehicle';
+import { litres, loadWords } from '@/lib/delivery-vehicle';
 
 type Loaded = Awaited<ReturnType<typeof runAction>>;
 
@@ -90,13 +90,13 @@ function Screen({ initial }: { initial: RunView }) {
           <p className="basis-full text-xs text-fg-muted">
             {view.vehicleId === null
               ? 'No vehicle from the list is set, so nothing limits what this run carries.'
-              : `${view.vehicle ?? 'The vehicle'} takes ${loadWords({ stops: view.totals.stops, weightKg: view.totals.weightKg }, view.limits)}.`}
+              : `${view.vehicle ?? 'The vehicle'} takes ${loadWords({ stops: view.totals.stops, weightKg: view.totals.weightKg, volumeLitres: view.totals.volumeLitres }, view.limits)}.`}
           </p>
         </section>
       ) : null}
       {!view.editable && view.vehicleId !== null ? (
         <p className="text-xs text-fg-muted">
-          {view.vehicle ?? 'The vehicle'} carried {loadWords({ stops: view.totals.stops, weightKg: view.totals.weightKg }, view.limits)}.
+          {view.vehicle ?? 'The vehicle'} carried {loadWords({ stops: view.totals.stops, weightKg: view.totals.weightKg, volumeLitres: view.totals.volumeLitres }, view.limits)}.
         </p>
       ) : null}
 
@@ -117,6 +117,11 @@ function Screen({ initial }: { initial: RunView }) {
           <p className="text-xs text-fg-muted">Weight</p>
           <p className="text-lg font-bold text-fg-strong">{view.totals.weightKg === null ? 'Not known' : `${String(view.totals.weightKg)} kg`}</p>
           {view.totals.weightKg !== null && view.totals.stopsWithoutWeight > 0 ? <p className="text-xs text-fg-muted">{view.totals.stopsWithoutWeight} without a weight</p> : null}
+        </div>
+        <div>
+          <p className="text-xs text-fg-muted">Space</p>
+          <p className="text-lg font-bold text-fg-strong">{view.totals.volumeLitres === null ? 'Not known' : litres(view.totals.volumeLitres)}</p>
+          {view.totals.volumeLitres !== null && view.totals.stopsWithoutVolume > 0 ? <p className="text-xs text-fg-muted">{view.totals.stopsWithoutVolume} without a size</p> : null}
         </div>
       </section>
 

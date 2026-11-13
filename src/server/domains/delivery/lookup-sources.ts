@@ -6,7 +6,7 @@ import { ADAPTER_WORDS, COURIER_ADAPTER_IDS } from '@/server/adapters/courier/re
 import { COST_KINDS, COST_WORDS, RUNNING_KINDS } from '@/lib/delivery-cost';
 import { RIDER_KINDS, RIDER_KIND_WORDS, RIDER_STATUSES, RIDER_STATUS_WORDS } from '@/lib/delivery-rider';
 import { RUN_STATUSES, RUN_STATUS_WORDS } from '@/lib/dispatch-run';
-import { kilos } from '@/lib/delivery-vehicle';
+import { kilos, litres } from '@/lib/delivery-vehicle';
 import { DELIVERY_STATUSES, FAILURE_REASONS, STATUS_WORDS } from '@/lib/delivery-document';
 import { acceptFilters, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
 import { CHANNELS } from '@/server/domains/pricing/domain/types';
@@ -212,8 +212,8 @@ const riders = tableSource({
 });
 
 /** What a vehicle's limits say beside its name in a list. */
-const limitsLine = (maxWeightKg: unknown, maxStops: unknown): string => {
-  const parts = [typeof maxWeightKg === 'number' || typeof maxWeightKg === 'string' ? `up to ${kilos(Number(maxWeightKg))}` : null, typeof maxStops === 'number' ? `${String(maxStops)} stops` : null].filter((p): p is string => p !== null);
+const limitsLine = (maxWeightKg: unknown, maxVolumeLitres: unknown, maxStops: unknown): string => {
+  const parts = [typeof maxWeightKg === 'number' || typeof maxWeightKg === 'string' ? `up to ${kilos(Number(maxWeightKg))}` : null, typeof maxVolumeLitres === 'number' || typeof maxVolumeLitres === 'string' ? `up to ${litres(Number(maxVolumeLitres))}` : null, typeof maxStops === 'number' ? `${String(maxStops)} stops` : null].filter((p): p is string => p !== null);
   return parts.length === 0 ? 'No limit set' : parts.join(' · ');
 };
 
@@ -225,12 +225,12 @@ const vehicles = tableSource({
   id: deliveryVehicles.id,
   label: deliveryVehicles.name,
   searchColumns: [deliveryVehicles.name],
-  select: { maxWeightKg: deliveryVehicles.maxWeightKg, maxStops: deliveryVehicles.maxStops },
+  select: { maxWeightKg: deliveryVehicles.maxWeightKg, maxVolumeLitres: deliveryVehicles.maxVolumeLitres, maxStops: deliveryVehicles.maxStops },
   scope: ({ filters, companyId }) => {
     acceptFilters(filters, {});
     return [and(eq(deliveryVehicles.companyId, companyId), eq(deliveryVehicles.isActive, true)) ?? sql`false`];
   },
-  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: limitsLine(row.maxWeightKg, row.maxStops), badge: null }),
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: limitsLine(row.maxWeightKg, row.maxVolumeLitres, row.maxStops), badge: null }),
 });
 
 /** Every vehicle, stopped ones too, for the costs screen: a late repair bill still belongs to a vehicle that is no longer used. */

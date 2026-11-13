@@ -507,10 +507,42 @@ describe.skipIf(!has(url))('runs and courier shipments (database)', () => {
       expect(refused).toMatchObject({ ok: false, reason: 'not_allowed', message: expect.stringContaining('carries at most 12 kg; this run would carry 16 kg') as string });
       const after = await runView(run.id);
       expect(after.totals).toMatchObject({ stops: 1, weightKg: 10 });
-      expect(after.limits).toEqual({ maxWeightKg: 12, maxStops: null });
+      expect(after.limits).toEqual({ maxWeightKg: 12, maxVolumeLitres: null, maxStops: null });
       const roomy = await vehicle('Big lorry', { maxWeightKg: 500 });
       const other = await newRun(o.branchId, { vehicleId: roomy.id });
       expect(await c.deliveryRuns.addStop(runStaff(), other.id, second)).toMatchObject({ ok: true });
+    });
+
+    it('refuses a delivery that would fill a run beyond its vehicle\'s space, counts goods with no size as nothing, shows the totals, and lets it go on a roomier vehicle', async () => {
+      const { o, first, second } = await twoParcels([null, null]);
+      // 5 x 40 litres = 200 litres and 2 x 150 litres = 300 litres; this vehicle holds 250.
+      for (const [p, l] of [[o.a, '40'], [o.b, '150']] as const) await db.update(schema.products).set({ volumeLitres: l }).where(eq(schema.products.id, p));
+      const small = await vehicle('Boot only', { maxVolumeLitres: 250 });
+      const run = await newRun(o.branchId, { vehicleId: small.id });
+      expect(await c.deliveryRuns.addStop(runStaff(), run.id, first)).toMatchObject({ ok: true });
+      const refused = await c.deliveryRuns.addStop(runStaff(), run.id, second);
+      expect(refused).toMatchObject({ ok: false, reason: 'not_allowed', message: expect.stringContaining('holds at most 250 litres; this run would fill 500 litres') as string });
+      const after = await runView(run.id);
+      expect(after.totals).toMatchObject({ stops: 1, volumeLitres: 200, stopsWithoutVolume: 0 });
+      expect(after.limits).toEqual({ maxWeightKg: null, maxVolumeLitres: 250, maxStops: null });
+      const roomy = await vehicle('Box truck', { maxVolumeLitres: 5000 });
+      const other = await newRun(o.branchId, { vehicleId: roomy.id });
+      expect(await c.deliveryRuns.addStop(runStaff(), other.id, second)).toMatchObject({ ok: true });
+      expect((await runView(other.id)).totals).toMatchObject({ stops: 1, volumeLitres: 300 });
+      // Changing a planned run to the small vehicle is refused for the same reason, and goods with no size count as nothing.
+      expect(await c.deliveryRuns.assignVehicle(runStaff(), other.id, { vehicleId: small.id })).toMatchObject({ ok: false, message: expect.stringContaining('holds at most 250 litres') as string });
+      await db.update(schema.products).set({ volumeLitres: null }).where(eq(schema.products.id, o.b));
+      expect(await c.deliveryRuns.assignVehicle(runStaff(), other.id, { vehicleId: small.id })).toMatchObject({ ok: true });
+      expect((await runView(other.id)).totals).toMatchObject({ volumeLitres: null, stopsWithoutVolume: 1 });
+    });
+
+    it('keeps the volume limit in the register, refuses silly ones, records the change, and the database refuses them too', async () => {
+      const v = await vehicle('Spacious', { maxVolumeLitres: 1200.5 });
+      expect(v.maxVolumeLitres).toBe(1200.5);
+      for (const bad of [0, -1, 'big', 2_000_000]) expect(await c.deliveryVehicles.create(runStaff(), { name: `Bad ${code()}`, maxVolumeLitres: bad })).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect(await c.deliveryVehicles.update(runStaff(), v.id, { name: v.name, maxVolumeLitres: '', expectedVersion: v.version })).toMatchObject({ ok: true, data: { maxVolumeLitres: null } });
+      await expect(db.update(schema.deliveryVehicles).set({ maxVolumeLitres: 0 }).where(eq(schema.deliveryVehicles.id, v.id))).rejects.toThrow();
+      await expect(db.update(schema.products).set({ volumeLitres: '-3' }).where(eq(schema.products.id, (await order()).a))).rejects.toThrow();
     });
 
     it('refuses a stop beyond the most stops, counts goods without a weight as nothing, and puts no limit on a run with no vehicle from the list', async () => {

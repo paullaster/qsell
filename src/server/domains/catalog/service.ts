@@ -206,6 +206,7 @@ export class CatalogService {
     if (!Number.isFinite(costPrice) || costPrice < 0) {
       throw new SettingsError('Cost of goods is required');
     }
+    CatalogService.checkVolume(productData.volumeLitres);
 
     // The least and most that may be bought at once, and the price the pricing engine starts from. All three may be empty.
     const minOrderQty = optionalAmount(productData.minOrderQty);
@@ -429,6 +430,7 @@ export class CatalogService {
       throw new SettingsError('Cost of goods is required');
     }
     if (updates.costPrice !== undefined) updates.costPrice = nextCost;
+    CatalogService.checkVolume(updates.volumeLitres);
 
     // Quantity limits are checked together and in the unit the product will be counted in after this save.
     const nextMin =
@@ -541,6 +543,12 @@ export class CatalogService {
     void broadcastRealtime('inventory_update', { type: 'product_updated', productId: id });
     const updated = await catalog.getProductById(id);
     return updated ? toProduct(updated) : merged;
+  }
+
+  /** The space one base unit takes, in litres: empty, or more than nothing and at most a million. */
+  private static checkVolume(value: number | undefined | null): void {
+    if (value === undefined || value === null) return;
+    if (!Number.isFinite(value) || value <= 0 || value > 1_000_000) throw new SettingsError('The space one takes (litres) must be more than nothing, or left empty.');
   }
 
   private static async validatePackagingFits(

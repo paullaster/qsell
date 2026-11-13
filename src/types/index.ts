@@ -76,6 +76,8 @@ export interface Product {
   isTaxInclusive?: boolean;
   /** Shipping weight of one base unit, in kg. */
   weight?: number;
+  /** The space one base unit takes in a vehicle, in litres (1,000 litres is a cubic metre). */
+  volumeLitres?: number;
   /** The unit stock is counted in (kg for fish, pieces for a phone). */
   baseUnitId: string;
   baseUnitCode: string;

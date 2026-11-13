@@ -27,11 +27,15 @@ test.describe('delivery vehicles', () => {
       await form.getByRole('button', { name: 'Add the vehicle' }).click();
       await expect(page.getByRole('alert').filter({ hasText: 'The weight limit is more than nothing' })).toBeVisible({ timeout: 30_000 });
       await form.getByLabel('Most weight it carries (kg)').fill('25');
+      await form.getByLabel('Most space it holds (litres)').fill('big');
+      await form.getByRole('button', { name: 'Add the vehicle' }).click();
+      await expect(page.getByRole('alert').filter({ hasText: 'The volume limit is more than nothing' })).toBeVisible({ timeout: 30_000 });
+      await form.getByLabel('Most space it holds (litres)').fill('1200');
       await form.getByLabel('Most stops on a run').fill('1');
       await form.getByRole('button', { name: 'Add the vehicle' }).click();
       await expect(page.getByText('The vehicle is added.')).toBeVisible({ timeout: 30_000 });
       const row = page.getByRole('list', { name: 'Vehicle list' }).getByRole('listitem').filter({ hasText: bike });
-      await expect(row).toContainText('up to 25 kg · 1 stop a run');
+      await expect(row).toContainText('up to 25 kg · up to 1,200 litres · 1 stop a run');
       await expect(row).toContainText('In use');
 
       // The same name in another case is the same vehicle.
