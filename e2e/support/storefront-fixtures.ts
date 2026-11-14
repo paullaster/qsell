@@ -124,7 +124,7 @@ async function lunchOrders(tag: string): Promise<Record<string, string>> {
   const { getContainer } = await import('@/server/di/container');
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
   // Plenty of every part, so the orders are not held up by stock (the shop tests use the small counts for their own purpose).
-  await db.execute(sql`UPDATE products SET stock_quantity = 100 WHERE id LIKE ${`prod_pk_%_${tag}`}`);
+  await db.execute(sql`UPDATE products SET stock_quantity = 100 WHERE inventory_kind = 'inventory' AND id LIKE ${`prod_pk_%_${tag}`}`);
   const { OrderWriteService } = await import('@/server/domains/orders/write-service');
   const { OrderStages } = await import('@/server/domains/orders/stages');
   const container = getContainer();
