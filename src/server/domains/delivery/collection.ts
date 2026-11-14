@@ -28,6 +28,8 @@ export interface CollectionView {
   branch: { id: string; code: string; name: string; address: string; phone: string | null };
   attemptsLeft: number;
   readyAt: string | null;
+  /** Whole days an order has waited at the counter since it was marked ready; null unless it is ready or locked. */
+  waitingDays: number | null;
   collectedAt: string | null;
   collectedHow: 'code' | 'id_check' | null;
 }
@@ -120,6 +122,7 @@ export class OrderCollections {
       branch: { id: row.c.branchId, code: row.code, name: row.name, address, phone: row.phone },
       attemptsLeft: Math.max(0, COLLECTION_ATTEMPT_LIMIT - row.c.failedAttempts),
       readyAt: row.c.readyAt?.toISOString() ?? null,
+      waitingDays: (row.c.status === 'ready' || row.c.status === 'locked') && row.c.readyAt !== null ? Math.max(0, Math.floor((Date.now() - row.c.readyAt.getTime()) / 86_400_000)) : null,
       collectedAt: row.c.collectedAt?.toISOString() ?? null,
       collectedHow: row.c.collectedHow,
     };

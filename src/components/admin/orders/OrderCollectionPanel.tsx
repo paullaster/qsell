@@ -99,6 +99,12 @@ export function OrderCollectionPanel({ orderId, onChanged }: { orderId: string; 
         </p>
       </div>
 
+      {view.waitingDays !== null && view.waitingDays >= 1 ? (
+        <p role="note" aria-label="Left at the counter" className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-fg-strong">
+          Left at the counter for {String(view.waitingDays)} {view.waitingDays === 1 ? 'day' : 'days'}. Call the customer if it is still here after the reminders.
+        </p>
+      ) : null}
+
       {messages.length === 0 ? null : (
         <ul aria-label="Messages to the customer" className="space-y-0.5 text-xs text-fg-muted">
           {messages.map((m) => (

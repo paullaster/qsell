@@ -329,6 +329,10 @@ describe.skipIf(!has(url))('collecting an order from a branch (database)', () =>
         expect((await remindersOf()).filter((k) => !k.endsWith(':sms'))).toHaveLength(2);
         const looked = await actions.collectionOfOrderAction(w.order.id);
         expect(JSON.stringify(looked)).not.toContain(w.code);
+        // Staff see how long it has waited, and only while it is waiting.
+        expect(looked).toMatchObject({ ok: true, data: { view: { waitingDays: 9 } } });
+        await c.orderCollections.collectWithCode(staff(), w.order.id, w.code);
+        expect(await c.orderCollections.view(companyId, w.order.id)).toMatchObject({ status: 'collected', waitingDays: null });
       });
 
       it('does not remind about an order that is collected, not yet ready, or waiting under 3 days, and a reminder not yet sent is skipped once it is collected', async () => {
