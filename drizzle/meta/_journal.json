@@ -1226,6 +1226,13 @@
       "when": 1794601136157,
       "tag": "0174_package_slots_category_and_note",
       "breakpoints": true
+    },
+    {
+      "idx": 175,
+      "version": "7",
+      "when": 1794625979234,
+      "tag": "0175_package_group_orders",
+      "breakpoints": true
     }
   ]
 }

@@ -6786,6 +6786,63 @@ export const packageInstancePicks = pgTable(
   (t) => [index('package_instance_picks_instance_idx').on(t.instanceId, t.sortOrder), index('package_instance_picks_product_idx').on(t.productId)],
 );
 
+/**
+ * A group order: an organiser (a signed-in customer) shares a link, each person opens it and chooses their own serving of a package,
+ * and the organiser puts everyone's choices in their cart and pays once. The link's token is kept only as a hash.
+ */
+export const packageGroupOrders = pgTable(
+  'package_group_orders',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    /** Not a foreign key: the group's history stays if the package product goes. */
+    packageProductId: text('package_product_id').notNull(),
+    packageName: text('package_name').notNull(),
+    /** SHA-256 of the token in the link. */
+    tokenHash: text('token_hash').notNull(),
+    title: text('title').notNull().default(''),
+    organiserCustomerId: text('organiser_customer_id').notNull(),
+    organiserName: text('organiser_name').notNull(),
+    /** The date it is for (`YYYY-MM-DD`), told to the people choosing. */
+    forDate: text('for_date'),
+    /** After this nobody can add or change a choice. */
+    closesAt: timestamp('closes_at', { withTimezone: true }),
+    status: text('status').$type<'open' | 'closed' | 'cancelled'>().notNull().default('open'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('package_group_orders_token_uidx').on(t.tokenHash),
+    index('package_group_orders_organiser_idx').on(t.companyId, t.organiserCustomerId, t.createdAt),
+    check('package_group_orders_status_chk', sql`${t.status} IN ('open', 'closed', 'cancelled')`),
+  ],
+);
+
+/** One person's choice in a group order. They change or withdraw it with a secret only their own browser holds (kept as a hash). */
+export const packageGroupEntries = pgTable(
+  'package_group_entries',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    groupId: uuid('group_id')
+      .notNull()
+      .references(() => packageGroupOrders.id, { onDelete: 'cascade' }),
+    personName: text('person_name').notNull(),
+    /** The choices by slot name and part, so the entry is understood after the package changes. */
+    picks: jsonb('picks').$type<{ slotName: string; productId: string; name: string; count: number }[]>().notNull(),
+    note: text('note').notNull().default(''),
+    selectionKey: text('selection_key').notNull(),
+    secretHash: text('secret_hash').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('package_group_entries_group_idx').on(t.groupId, t.createdAt),
+    check('package_group_entries_name_chk', sql`length(btrim(${t.personName})) BETWEEN 1 AND 60`),
+  ],
+);
+
 /** How much each scope dimension counts towards a price list's specificity. Per company. */
 export const priceSpecificityWeights = pgTable(
   'price_specificity_weights',

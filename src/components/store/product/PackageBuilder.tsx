@@ -59,13 +59,17 @@ interface Props {
   /** Ask the server again what stock allows when the servings change (the shop does; a quote does not look at stock). */
   watchStock?: boolean;
   servingsLabel?: string;
+  /** One serving, not asked (a group order: each person chooses their own). */
+  fixedServings?: boolean;
+  /** Words for the note box ("Note for each serving (optional)" by default). */
+  noteLabel?: string;
 }
 
 /**
  * The step-by-step builder for a configurable package: one group of cards per slot, a live price and a button. One component for
  * the shop, the staff screens and the quote; the screen decides what pressing the button does. The server checks everything again.
  */
-export function PackageBuilder({ productName, builder, initial, money, onSubmit, submitLabel = 'Add to cart', buyLabel, watchStock = true, servingsLabel = 'Servings' }: Props) {
+export function PackageBuilder({ productName, builder, initial, money, onSubmit, submitLabel = 'Add to cart', buyLabel, watchStock = true, servingsLabel = 'Servings', fixedServings = false, noteLabel = 'Note for each serving (optional)' }: Props) {
   const pkg = builder.package;
   const [available, setAvailable] = useState<Set<string>>(() => new Set(builder.available));
   const [chosen, setChosen] = useState<Chosen>(() => startingChoices(pkg, new Set(builder.available), initial));
@@ -201,6 +205,7 @@ export function PackageBuilder({ productName, builder, initial, money, onSubmit,
         );
       })}
 
+      {fixedServings ? null : (
       <div className="flex items-center justify-between gap-3">
         <span className="text-sm font-medium text-fg-muted">{servingsLabel}</span>
         <span className="flex items-center gap-1">
@@ -209,10 +214,11 @@ export function PackageBuilder({ productName, builder, initial, money, onSubmit,
           <button type="button" aria-label="One more serving" disabled={servings >= MAX_SERVINGS} onClick={() => setServings(servings + 1)} className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-lg border border-line-strong hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"><Plus className="h-4 w-4" aria-hidden="true" /></button>
         </span>
       </div>
+      )}
 
       {pkg.allowNote ? (
         <div className="space-y-1">
-          <label htmlFor={noteId} className="text-sm font-medium text-fg-muted">Note for each serving (optional)</label>
+          <label htmlFor={noteId} className="text-sm font-medium text-fg-muted">{noteLabel}</label>
           <textarea id={noteId} rows={2} maxLength={200} value={note} onChange={(e) => setNote(e.target.value)} placeholder="For example: no pepper" className="block w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong" />
           <p className="text-xs text-fg-muted">{note.length} of 200 characters</p>
         </div>

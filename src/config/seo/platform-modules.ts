@@ -156,7 +156,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'Transfers between locations with stock tracked while it is on its way',
       'Stock counts that carry on while the shop sells',
       'Products, categories, bundles and hampers',
-      'Packages with choices inside, such as a lunch where the customer picks the fish, the starch and the vegetables, priced as a base plus a difference per choice or option by option',
+      'Packages with choices inside, such as a lunch where the customer picks the fish, the starch and the vegetables, priced as a base plus a difference per choice or option by option; a group order link where each person chooses their own and one person pays',
       'Kilograms, litres, pieces and packs with the right decimals',
       'Stock ledger with every movement recorded',
     ],

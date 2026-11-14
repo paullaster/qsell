@@ -237,3 +237,6 @@ export function resolveStoredPicksLenient(pkg: ShopPackage, stored: readonly Sto
   }
   return { picks, missing };
 }
+
+/** The choices of a stored selection as words: "Large fish, Ugali and 2 × Sukuma". */
+export const storedWords = (picks: readonly StoredPick[]): string => wordsList(picks.map((p) => (p.count > 1 ? `${String(p.count)} × ${p.name}` : p.name)));

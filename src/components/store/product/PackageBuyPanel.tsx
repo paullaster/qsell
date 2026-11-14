@@ -6,6 +6,7 @@ import type { ShopBuilder } from '@/server/domains/pricing/package-shop-service'
 import { ProductPurchase } from '@/components/store/product/ProductPurchase';
 import { ShopPackageBuilder } from '@/components/store/product/ShopPackageBuilder';
 import { PackageOrderAgain } from '@/components/store/product/PackageOrderAgain';
+import { StartGroupOrder } from '@/components/store/product/StartGroupOrder';
 
 function Choice({ product, builder }: { product: PublicProduct; builder: Promise<ShopBuilder | null> }) {
   const found = use(builder);
@@ -18,6 +19,7 @@ function Choice({ product, builder }: { product: PublicProduct; builder: Promise
     <div className="space-y-4">
       <PackageOrderAgain productId={product.id} />
       <ShopPackageBuilder productName={product.name} builder={found} />
+      <StartGroupOrder productId={product.id} />
     </div>
   );
 }
