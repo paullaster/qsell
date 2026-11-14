@@ -1683,6 +1683,11 @@ export const courierAccounts = pgTable(
     /** The unguessable part of the address the courier pushes its news to. */
     webhookKey: text('webhook_key').notNull(),
     isActive: boolean('is_active').notNull().default(true),
+    /** What the last test parcel did, kept so the card can say it: when, whether the courier booked it, whether it was cancelled again, and the words. Not a setting: it does not change the version. All empty until a test is sent. */
+    lastTestAt: timestamp('last_test_at', { withTimezone: true }),
+    lastTestBooked: boolean('last_test_booked'),
+    lastTestCancelled: boolean('last_test_cancelled'),
+    lastTestMessage: text('last_test_message'),
     version: integer('version').notNull().default(1),
     createdBy: text('created_by').notNull(),
     updatedBy: text('updated_by'),
@@ -1693,6 +1698,7 @@ export const courierAccounts = pgTable(
     uniqueIndex('courier_accounts_name_uidx').on(t.companyId, sql`lower(${t.name})`),
     uniqueIndex('courier_accounts_webhook_uidx').on(t.webhookKey),
     check('courier_accounts_adapter_chk', sql`${t.adapter} IN ('manual','http_json')`),
+    check('courier_accounts_last_test_chk', sql`(${t.lastTestAt} is null and ${t.lastTestBooked} is null and ${t.lastTestCancelled} is null and ${t.lastTestMessage} is null) or (${t.lastTestAt} is not null and ${t.lastTestBooked} is not null and ${t.lastTestCancelled} is not null and ${t.lastTestMessage} is not null and char_length(${t.lastTestMessage}) <= 500 and (${t.lastTestBooked} or not ${t.lastTestCancelled}))`),
   ],
 );
 export type CourierAccountRow = typeof courierAccounts.$inferSelect;

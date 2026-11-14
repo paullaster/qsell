@@ -31,6 +31,8 @@ export interface CourierAccountView {
   /** The address the courier pushes its news to, relative to the shop's address. */
   webhookPath: string;
   isActive: boolean;
+  /** What the last test parcel did, in words; null until one is sent. Never carries the key. */
+  lastTest: { at: string; booked: boolean; cancelled: boolean; message: string } | null;
   version: number;
 }
 
@@ -92,6 +94,7 @@ export class CourierAccounts {
       hasKey: a.secretsSealed !== null,
       webhookPath: `/api/couriers/${a.webhookKey}`,
       isActive: a.isActive,
+      lastTest: a.lastTestAt === null || a.lastTestBooked === null || a.lastTestCancelled === null || a.lastTestMessage === null ? null : { at: a.lastTestAt.toISOString(), booked: a.lastTestBooked, cancelled: a.lastTestCancelled, message: a.lastTestMessage },
       version: a.version,
     };
   }
@@ -146,6 +149,10 @@ export class CourierAccounts {
       result.cancelMessage = 'The courier gave no tracking number, so the test booking could not be cancelled. Cancel it in the courier\'s own system.';
     }
     await this.decisions.record({ companyId: actor.companyId, subject: { type: 'courier_account', id: conn.accountId }, action: 'courier.test_parcel', actor: { type: 'user', id: actor.userId }, outcome: { booked: result.booked, cancelled: result.cancelled, tracking: result.trackingNumber } });
+    // Kept on the account so the card can say what the last test did. Not a change of settings, so the version stays.
+    const after = result.cancelled ? 'It was cancelled again straight after.' : (result.cancelMessage ?? '');
+    const said = [result.message, result.booked ? after : ''].filter((t) => t !== '').join(' ').slice(0, 500);
+    await this.db.update(courierAccounts).set({ lastTestAt: new Date(), lastTestBooked: result.booked, lastTestCancelled: result.cancelled, lastTestMessage: said }).where(and(eq(courierAccounts.id, conn.accountId), eq(courierAccounts.companyId, actor.companyId)));
     return { ok: true, data: result };
   }
 

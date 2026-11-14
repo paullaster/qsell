@@ -65,12 +65,19 @@ test.describe('couriers', () => {
     const row = list.getByRole('listitem').filter({ hasText: `Swift ${tag}` });
     await expect(row).toContainText('In use');
     // A test parcel asks first, and says in words what the courier did (this address does not exist, so it is not booked); the key is never shown.
+    await expect(row.getByLabel(`Last test parcel for Swift ${tag}`)).toHaveCount(0);
     await row.getByRole('button', { name: `Send a test parcel to Swift ${tag}` }).click();
     await row.getByRole('button', { name: `Confirm: Send a test parcel to Swift ${tag}` }).click();
     const outcome = row.getByRole('status', { name: `Test parcel for Swift ${tag}` });
     await expect(outcome).toContainText('The test parcel was not booked.', { timeout: 60_000 });
     await expect(outcome).not.toContainText(KEY);
     await noHorizontalScroll(page);
+    // It is kept with the courier: after leaving the page and coming back the card still says what the last test did.
+    await open(page, '/admin/delivery/couriers', 'Couriers');
+    const kept = page.getByRole('list', { name: 'Courier list' }).getByRole('listitem').filter({ hasText: `Swift ${tag}` }).getByLabel(`Last test parcel for Swift ${tag}`);
+    await expect(kept).toContainText('Not booked');
+    await expect(kept).not.toContainText(KEY);
+    await noInnerHorizontalScroll(page);
     await row.getByRole('button', { name: `Change Swift ${tag}` }).click();
     await expect(row.getByLabel(/New key/)).toHaveValue('');
     expect(await page.content()).not.toContain(KEY);

@@ -428,6 +428,32 @@ describe.skipIf(!has(url))('couriers (database)', () => {
       script.book = () => Promise.resolve({ trackingNumber: 'SW1', trackingUrl: 'https://track.swift.test/SW1', labelUrl: 'https://swift.test/l/SW1.pdf' });
     });
 
+    it('keeps what the last test did on the courier, for the card, without changing its version or showing the key', async () => {
+      const made = await account();
+      expect((await c.courierAccounts.list(companyId)).find((a) => a.id === made.account.id)?.lastTest).toBeNull();
+      await (await accounts()).testParcel(dispatcher(), made.account.id);
+      const booked = (await c.courierAccounts.list(companyId)).find((a) => a.id === made.account.id);
+      expect(booked).toMatchObject({ version: made.account.version, lastTest: { booked: true, cancelled: true, message: expect.stringContaining('cancelled again') as string } });
+      expect(booked?.lastTest?.at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      // The latest test replaces it: a refusal reads as not booked, with the courier's words.
+      script.book = () => Promise.reject(new CourierError('The courier refused the request (401).', false));
+      await (await accounts()).testParcel(dispatcher(), made.account.id);
+      script.book = () => Promise.resolve({ trackingNumber: 'SW1', trackingUrl: 'https://track.swift.test/SW1', labelUrl: 'https://swift.test/l/SW1.pdf' });
+      const refused = (await c.courierAccounts.list(companyId)).find((a) => a.id === made.account.id);
+      expect(refused?.lastTest).toMatchObject({ booked: false, cancelled: false, message: 'The courier refused the request (401).' });
+      expect(JSON.stringify(refused)).not.toContain('plain-key-123');
+      // Booked but not cancelled is kept as that, with what to do.
+      script.cancel = () => Promise.reject(new CourierError('The courier refused the request (403).', false));
+      await (await accounts()).testParcel(dispatcher(), made.account.id);
+      script.cancel = () => Promise.resolve();
+      expect((await c.courierAccounts.list(companyId)).find((a) => a.id === made.account.id)?.lastTest).toMatchObject({ booked: true, cancelled: false, message: expect.stringContaining('Cancel it in the courier\'s own system') as string });
+      // Another company's list never carries it, and the database refuses a half-filled or impossible result.
+      expect((await c.courierAccounts.list(randomUUID())).find((a) => a.id === made.account.id)).toBeUndefined();
+      await expect(db.update(schema.courierAccounts).set({ lastTestAt: new Date(), lastTestBooked: null }).where(eq(schema.courierAccounts.id, made.account.id))).rejects.toThrow();
+      await expect(db.update(schema.courierAccounts).set({ lastTestAt: new Date(), lastTestBooked: false, lastTestCancelled: true, lastTestMessage: 'x' }).where(eq(schema.courierAccounts.id, made.account.id))).rejects.toThrow();
+      await expect(db.update(schema.courierAccounts).set({ lastTestAt: new Date(), lastTestBooked: true, lastTestCancelled: true, lastTestMessage: 'x'.repeat(501) }).where(eq(schema.courierAccounts.id, made.account.id))).rejects.toThrow();
+    });
+
     it('is refused for a courier typed in by hand, one that is not the company\'s, and one that is not found', async () => {
       const hand = await c.courierAccounts.create(dispatcher(), { name: `Hand ${code()}`, adapter: 'manual' });
       if (!hand.ok) throw new Error(hand.message);

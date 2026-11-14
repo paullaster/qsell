@@ -213,9 +213,24 @@ function CourierRow({ account, onSaved, onError }: { account: CourierAccountView
       {account.adapter === 'http_json' && account.hasKey ? (
         <InlineConfirm label={`Send a test parcel to ${account.name}`} action="Send a test parcel" confirm="Yes, send it (the courier may see it)" busy={busy} onConfirm={() => void test()} />
       ) : null}
-      {tested === null ? null : <TestResult name={account.name} result={tested} />}
+      {tested === null ? <LastTest name={account.name} last={account.lastTest} /> : <TestResult name={account.name} result={tested} />}
       {editing ? <CourierForm account={account} onSaved={onSaved} onError={onError} /> : null}
     </li>
+  );
+}
+
+const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' });
+
+/** What the last test parcel did, kept with the courier so it is still there tomorrow; nothing is shown before a first test. */
+function LastTest({ name, last }: { name: string; last: CourierAccountView['lastTest'] }) {
+  if (last === null) return null;
+  const ok = last.booked && last.cancelled;
+  const outcome = ok ? 'Booked and cancelled again' : 'Not booked';
+  const words = last.booked && !last.cancelled ? 'Booked, but not cancelled' : outcome;
+  return (
+    <p aria-label={`Last test parcel for ${name}`} className="text-xs text-fg-muted">
+      <span className={`font-semibold ${ok ? 'text-fg' : 'text-red-700 dark:text-red-300'}`}>Last test, {when(last.at)}: {words}.</span> {last.message}
+    </p>
   );
 }
 

@@ -1240,6 +1240,13 @@
       "when": 1794626567487,
       "tag": "0176_collection_reminder_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 177,
+      "version": "7",
+      "when": 1794639759256,
+      "tag": "0177_courier_last_test",
+      "breakpoints": true
     }
   ]
 }
