@@ -36,6 +36,8 @@ export interface ShopPackage {
   pricingMode: PackagePricingMode;
   shortStockMode: ShortStockMode;
   version: number;
+  /** The customer may write a note on a serving. */
+  allowNote: boolean;
   slots: ShopSlot[];
 }
 
@@ -44,6 +46,8 @@ export interface PackageLineInput {
   productId: string;
   picks: RawPick[];
   servings: number;
+  /** What the customer wrote on the serving ("no pepper"); only where the package allows it. */
+  note?: string;
 }
 
 /** Free units of each product and which products are never counted (services, non-stock items). */
@@ -59,6 +63,8 @@ export type LineCheck =
       servings: number;
       servingPrice: number;
       total: number;
+      /** The note as kept (trimmed). */
+      note: string;
       /** "Express lunch: medium fish, brown ugali and sukuma" */
       summary: string;
       /** What this line takes from stock, so the next line of the same basket sees what is left. */
@@ -67,7 +73,7 @@ export type LineCheck =
   | { ok: false; problems: string[] };
 
 /** A basket line's answer, safe to send to the browser (no internal bookkeeping). */
-export type BasketLineView = { ok: true; key: string; servings: number; servingPrice: number; total: number; summary: string } | { ok: false; problems: string[] };
+export type BasketLineView = { ok: true; key: string; servings: number; servingPrice: number; total: number; summary: string; note: string } | { ok: false; problems: string[] };
 
 const round2 = (n: number): number => Math.round((n + Number.EPSILON) * 100) / 100;
 
@@ -117,7 +123,9 @@ export function checkPackageLine(pkg: ShopPackage, line: PackageLineInput, stock
   if (!Number.isInteger(servings) || servings < 1 || servings > PACKAGE_LIMITS.servings) {
     return { ok: false, problems: [`Servings must be a whole number from 1 to ${String(PACKAGE_LIMITS.servings)}.`] };
   }
-  const selection = canonicalSelection(def, line.picks);
+  const note = (line.note ?? '').trim();
+  if (note !== '' && !pkg.allowNote) return { ok: false, problems: [`${pkg.name} does not take a note.`] };
+  const selection = canonicalSelection(def, line.picks, note);
   if (!selection.ok) return { ok: false, problems: selection.problems.map((p) => p.message) };
   const each = servingPrice(def, selection.picks, pkg.basePrice);
   if (each === null) return { ok: false, problems: ['This choice cannot be priced. Please change it.'] };
@@ -146,6 +154,7 @@ export function checkPackageLine(pkg: ShopPackage, line: PackageLineInput, stock
     servings,
     servingPrice: each,
     total: round2(each * servings),
+    note,
     summary: selectionSentence(pkg.name, selection.picks, names),
     used: take,
   };

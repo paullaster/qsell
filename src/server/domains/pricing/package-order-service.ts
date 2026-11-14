@@ -15,6 +15,8 @@ export interface PackageOrderLine {
   productId: string;
   picks: RawPick[];
   servings: number;
+  /** What the customer wrote on the serving. */
+  note?: string;
 }
 
 export interface OrderContext {
@@ -43,6 +45,8 @@ export interface PreparedPackage {
   version: number;
   servings: number;
   key: string;
+  /** What the customer wrote on the serving (empty when none). */
+  note: string;
   /** Base-plus-differences: what the choices add to the base price for one serving. Summed: null. */
   addedPerServing: number | null;
   /** Summed: the price of one serving. Base-plus-differences: null. */
@@ -103,7 +107,7 @@ export class PackageOrderService {
    * Like `prepare`, for lines whose choices a quote kept by slot name and part. A part the package no longer offers is named, so the
    * person can choose a replacement.
    */
-  async prepareStored(ctx: OrderContext, lines: readonly { index: number; productId: string; servings: number; stored: readonly StoredPick[] }[]): Promise<Prepared> {
+  async prepareStored(ctx: OrderContext, lines: readonly { index: number; productId: string; servings: number; stored: readonly StoredPick[]; note?: string }[]): Promise<Prepared> {
     if (lines.length === 0) return { ok: true, lines: [] };
     const { packages } = await this.shop.load(ctx.companyId, lines.map((l) => l.productId), true);
     const resolved: (PackageOrderLine & { index: number })[] = [];
@@ -112,7 +116,7 @@ export class PackageOrderService {
       if (pkg === undefined) return { ok: false, error: 'A package in this document is not available any more.', code: 'not_for_sale' };
       const found = resolveStoredPicks(pkg, line.stored);
       if (!found.ok) return { ok: false, error: `${pkg.name}: ${found.problems.join(' ')} Choose a replacement.`, code: 'package_choice' };
-      resolved.push({ index: line.index, productId: line.productId, servings: line.servings, picks: found.picks });
+      resolved.push({ index: line.index, productId: line.productId, servings: line.servings, picks: found.picks, ...(line.note === undefined ? {} : { note: line.note }) });
     }
     return await this.prepare({ ...ctx, staff: true }, resolved);
   }
@@ -145,7 +149,7 @@ export class PackageOrderService {
   async prepare(ctx: OrderContext, lines: readonly (PackageOrderLine & { index: number })[]): Promise<Prepared> {
     if (lines.length === 0) return { ok: true, lines: [] };
     const { packages, stock, views } = await this.shop.load(ctx.companyId, lines.map((l) => l.productId), ctx.staff === true);
-    const inputs: PackageLineInput[] = lines.map(({ productId, picks, servings }) => ({ productId, picks, servings }));
+    const inputs: PackageLineInput[] = lines.map(({ productId, picks, servings, note }) => ({ productId, picks, servings, ...(note === undefined ? {} : { note }) }));
     const everyPart = [...packages.values()].flatMap((p) => p.slots.flatMap((sl) => sl.options.map((o) => o.productId)));
     const checks = checkPackageBasket(packages, inputs, ctx.skipStock === true ? { free: new Map(), unlimited: new Set(everyPart) } : stock);
     if (ctx.forDate !== null && !/^\d{4}-\d{2}-\d{2}$/.test(ctx.forDate)) return { ok: false, error: 'The date for this order is not a valid date.', code: 'package_rule' };
@@ -179,7 +183,7 @@ export class PackageOrderService {
       const problem = preview ? null : orderingProblem(rules, now, fulfilment, total, already);
       if (problem !== null) return { ok: false, error: `${pkg.name}: ${problem}`, code: 'package_rule' };
 
-      const selection = canonicalSelection(toDefinition(view), line.picks);
+      const selection = canonicalSelection(toDefinition(view), line.picks, check.note);
       if (!selection.ok) return { ok: false, error: selection.problems[0]?.message ?? 'Please check your choices.', code: 'package_choice' };
       const picks: readonly CanonicalPick[] = selection.picks;
       const components: KitComponent[] = packageComponentDefs(picks).map((c) => {
@@ -194,6 +198,7 @@ export class PackageOrderService {
         version: pkg.version,
         servings: line.servings,
         key: check.key,
+        note: check.note,
         addedPerServing: pkg.pricingMode === 'summed' ? null : Math.round((extra + Number.EPSILON) * 100) / 100,
         summedPerServing: pkg.pricingMode === 'summed' ? check.servingPrice : null,
         costPerServing: servingCost(picks),
@@ -243,6 +248,7 @@ export class PackageOrderService {
           servingPrice: ((line.addedPerServing ?? 0) + (line.summedPerServing ?? 0)).toFixed(2),
           lineTotal: '0',
           selectionKey: line.key,
+          note: line.note,
           forDate: line.forDate,
         })
         .returning({ id: packageInstances.id });

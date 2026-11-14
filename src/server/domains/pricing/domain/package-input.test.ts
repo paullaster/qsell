@@ -32,4 +32,21 @@ describe('parsePackageInput', () => {
     expect(parsePackageInput({ ...good(), slots: Array.from({ length: 21 }, () => ({ name: 'A', minPicks: 1, maxPicks: 1, options: [] })) })).toMatchObject({ ok: false });
     expect(parsePackageInput({ ...good(), slots: [{ name: 'A', minPicks: 1, maxPicks: 1, options: Array.from({ length: 51 }, () => ({ productId: 'x', quantity: 1 })) }] })).toMatchObject({ ok: false });
   });
+
+  describe('category slots and the note setting', () => {
+    const base = { productId: 'p', pricingMode: 'base_plus_differences', allocation: 'list_price', shortStockMode: 'hide' };
+    it('reads a slot filled from a category, with what each product adds, and drops the hand-made options', () => {
+      const result = parsePackageInput({ ...base, allowNote: true, slots: [{ name: 'Vegetables', minPicks: 1, maxPicks: 2, source: 'category', categoryId: 'cat-veg', categoryDifference: 10, categoryOwnPrice: null, categoryQuantity: 0.5, options: [{ productId: 'x', quantity: 1 }] }] });
+      expect(result.ok && result.input.allowNote).toBe(true);
+      expect(result.ok && result.input.slots[0]).toMatchObject({ source: 'category', categoryId: 'cat-veg', categoryDifference: 10, categoryOwnPrice: null, categoryQuantity: 0.5, options: [] });
+    });
+    it('refuses a number that is not a number in a category slot', () => {
+      expect(parsePackageInput({ ...base, slots: [{ name: 'V', minPicks: 1, maxPicks: 1, source: 'category', categoryId: 'c', categoryDifference: 'abc' }] }).ok).toBe(false);
+    });
+    it('leaves an ordinary slot as it was, and the note setting out when it is not a yes or no', () => {
+      const result = parsePackageInput({ ...base, allowNote: 'yes', slots: [{ name: 'Fish', minPicks: 1, maxPicks: 1, options: [{ productId: 'a', quantity: 1 }] }] });
+      expect(result.ok && 'allowNote' in result.input).toBe(false);
+      expect(result.ok && result.input.slots[0]?.source).toBeUndefined();
+    });
+  });
 });

@@ -40,6 +40,8 @@ export interface PackageSlotDef {
   allowRepeats: boolean;
   /** An included slot has one option and is not asked: it is always part of a serving. */
   included: boolean;
+  /** The options are every product of a category (found when the package is read), not a list made by hand: they can be many, and carry no shares. */
+  fromCategory?: boolean;
   options: PackageOptionDef[];
 }
 
@@ -81,7 +83,8 @@ export function checkPackage(def: PackageDef, validProductIds?: ReadonlySet<stri
     else if (slot.minPicks > slot.maxPicks) out.push({ path: at, message: `${slot.name}: the least cannot be more than the most.` });
     if (slot.maxPicks > PACKAGE_LIMITS.picksPerSlot) out.push({ path: at, message: `${slot.name}: at most ${String(PACKAGE_LIMITS.picksPerSlot)} picks.` });
     if (slot.options.length === 0) out.push({ path: at, message: `${slot.name} needs at least one option.` });
-    if (slot.options.length > PACKAGE_LIMITS.optionsPerSlot) out.push({ path: at, message: `${slot.name}: at most ${String(PACKAGE_LIMITS.optionsPerSlot)} options.` });
+    if (slot.fromCategory === true && def.allocation === 'explicit') out.push({ path: at, message: `${slot.name}: shares you set cannot be used with a slot filled from a category. Split by price or by cost instead.` });
+    if (slot.fromCategory !== true && slot.options.length > PACKAGE_LIMITS.optionsPerSlot) out.push({ path: at, message: `${slot.name}: at most ${String(PACKAGE_LIMITS.optionsPerSlot)} options.` });
     if (slot.included && !(slot.options.length === 1 && slot.minPicks === 1 && slot.maxPicks === 1)) out.push({ path: at, message: `${slot.name}: an included slot has exactly one option and exactly one pick.` });
     if (slot.options.filter((o) => o.isDefault).reduce((n) => n + 1, 0) > slot.maxPicks) out.push({ path: at, message: `${slot.name}: more defaults than the most picks.` });
     const products = new Set<string>();
@@ -94,7 +97,7 @@ export function checkPackage(def: PackageDef, validProductIds?: ReadonlySet<stri
       products.add(option.productId);
       if (!(option.quantity > 0) || Math.round(option.quantity * 1000) / 1000 !== option.quantity) out.push({ path: optionAt, message: 'Each option needs a quantity above zero, with at most 3 decimals.' });
       if (def.pricingMode === 'summed' && (option.price === null || option.price < 0)) out.push({ path: optionAt, message: 'In summed pricing every option needs a price of 0 or more.' });
-      if (def.allocation === 'explicit' && !(option.weight !== null && option.weight > 0)) out.push({ path: optionAt, message: 'Give every option a share above zero.' });
+      if (def.allocation === 'explicit' && slot.fromCategory !== true && !(option.weight !== null && option.weight > 0)) out.push({ path: optionAt, message: 'Give every option a share above zero.' });
     });
   });
   return out;

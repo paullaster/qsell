@@ -117,7 +117,7 @@ export const OrderWriteService = {
       postalCode?: string;
       country: string;
     };
-    items: { productId: string; quantity: number; /** A configurable package: the choices made (ids and counts only), and `quantity` is the servings. */ package?: { picks: RawPick[] } }[];
+    items: { productId: string; quantity: number; /** A configurable package: the choices made (ids and counts only), and `quantity` is the servings. */ package?: { picks: RawPick[]; note?: string } }[];
     quotedItems?: {
       productId: string;
       quantity: number;
@@ -308,7 +308,7 @@ export const OrderWriteService = {
     const preparedPackages = new Map<number, PreparedPackage>();
     const packageContext = { companyId: saleCompanyId, customerGroupId: await getContainer().pricing.groupFor(saleCompanyId, saleCustomerId), signedIn: saleCustomerId !== null, forDate: params.delivery?.slot?.day ?? params.fulfilmentDate ?? null, now: new Date(), staff: (params.salesModule ?? 'ecommerce') !== 'ecommerce' };
     {
-      const wanted = params.items.flatMap((item, index) => (item.package === undefined ? [] : [{ index, productId: item.productId, picks: item.package.picks, servings: item.quantity }]));
+      const wanted = params.items.flatMap((item, index) => (item.package === undefined ? [] : [{ index, productId: item.productId, picks: item.package.picks, servings: item.quantity, ...(item.package.note === undefined ? {} : { note: item.package.note }) }]));
       if (wanted.length > 0) {
         const prepared = await getContainer().packageOrders.prepare(packageContext, wanted);
         if (!prepared.ok) return { success: false, error: prepared.error, code: prepared.code === 'out_of_stock' ? 'stock_short' : prepared.code };

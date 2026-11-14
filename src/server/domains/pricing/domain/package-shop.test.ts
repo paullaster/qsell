@@ -8,6 +8,7 @@ const lunch: ShopPackage = {
   pricingMode: 'base_plus_differences',
   shortStockMode: 'hide',
   version: 1,
+  allowNote: true,
   slots: [
     {
       id: 'fish', name: 'Fish', helpText: '', minPicks: 1, maxPicks: 1, allowRepeats: false, included: false,
@@ -179,5 +180,23 @@ describe('a selection kept by a quote', () => {
   it('names what the package no longer offers', () => {
     const without: ShopPackage = { ...lunch, slots: lunch.slots.map((s) => ({ ...s, options: s.options.filter((o) => o.id !== 'brown') })) };
     expect(resolveStoredPicks(without, storedPicks(lunch, raw))).toEqual({ ok: false, problems: ['Brown ugali is no longer offered in Starch.'] });
+  });
+});
+
+describe('a note on a serving', () => {
+  const choices = [['fish', 'small'], ['starch', 'ugali'], ['veg', 'sukuma']] as [string, string][];
+  const withNote = (note: string) => ({ ...line(choices), note });
+  it('is kept trimmed and makes the selection a different one', () => {
+    const plain = checkPackageLine(lunch, line(choices), plenty);
+    const noted = checkPackageLine(lunch, withNote('  no pepper  '), plenty);
+    expect(noted.ok && noted.note).toBe('no pepper');
+    expect(plain.ok && noted.ok && plain.key !== noted.key).toBe(true);
+    // The price and the sentence do not change with a note.
+    expect(plain.ok && noted.ok && plain.total === noted.total && plain.summary === noted.summary).toBe(true);
+  });
+  it('is refused where the package does not take one, and when it is too long', () => {
+    expect(checkPackageLine({ ...lunch, allowNote: false }, withNote('no pepper'), plenty)).toEqual({ ok: false, problems: ['Express lunch does not take a note.'] });
+    expect(checkPackageLine(lunch, withNote('x'.repeat(201)), plenty).ok).toBe(false);
+    expect(checkPackageLine({ ...lunch, allowNote: false }, withNote('   '), plenty).ok).toBe(true);
   });
 });

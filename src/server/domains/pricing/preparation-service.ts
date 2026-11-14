@@ -40,6 +40,7 @@ export class PreparationService {
         packageProductId: packageInstances.packageProductId,
         packageName: packageInstances.packageName,
         servings: packageInstances.servings,
+        note: packageInstances.note,
         slotName: deliverySlots.name,
         slotStartsAt: deliverySlots.startsAt,
       })

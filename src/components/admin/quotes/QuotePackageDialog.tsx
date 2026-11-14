@@ -17,13 +17,14 @@ export interface ChosenPackage {
   servings: number;
   picks: StoredPick[];
   summary: string;
+  note: string;
 }
 
 /**
  * Choosing a package for a quote with the same builder the shop uses. A new line starts from a package picked here; an existing line
  * reopens on its kept choices (a choice the package no longer offers is left empty, so a replacement can be picked).
  */
-export function QuotePackageDialog({ money, editing, onClose, onChosen }: { money: (amount: number) => string; editing?: { productId: string; servings: number; picks: StoredPick[] }; onClose: () => void; onChosen: (chosen: ChosenPackage) => void }) {
+export function QuotePackageDialog({ money, editing, onClose, onChosen }: { money: (amount: number) => string; editing?: { productId: string; servings: number; picks: StoredPick[]; note?: string }; onClose: () => void; onChosen: (chosen: ChosenPackage) => void }) {
   const [product, setProduct] = useState<Choice | null>(null);
   const productId = editing?.productId ?? product?.id ?? null;
   const [loaded, setLoaded] = useState<{ id: string; result: Loaded | 'missing' | 'failed' } | null>(null);
@@ -47,7 +48,7 @@ export function QuotePackageDialog({ money, editing, onClose, onChosen }: { mone
   const pkg = ready !== null && ready !== 'missing' && ready !== 'failed' ? ready : null;
   // Parts the package no longer offers are left out, so the person sees what is missing and chooses again.
   const kept = editing === undefined || pkg === null ? null : resolveStoredPicksLenient(pkg.package, editing.picks);
-  const initial = editing === undefined || kept === null ? undefined : { picks: kept.picks, servings: editing.servings };
+  const initial = editing === undefined || kept === null ? undefined : { picks: kept.picks, servings: editing.servings, note: editing.note ?? '' };
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-backdrop/70 p-0 sm:items-center sm:p-4" role="presentation">
@@ -71,11 +72,11 @@ export function QuotePackageDialog({ money, editing, onClose, onChosen }: { mone
             servingsLabel="Servings"
             submitLabel={editing === undefined ? 'Add to the quote' : 'Save choices'}
             {...(initial === undefined ? {} : { initial })}
-            onSubmit={(picks, servings) => {
+            onSubmit={(picks, servings, _intent, note) => {
               const kept = storedPicks(pkg.package, picks);
               // The line reads as the choices, as the server will write it.
               const summary = `${pkg.package.name}: ${wordsList(kept.map((p) => (p.count > 1 ? `${String(p.count)} × ${p.name}` : p.name)))}`;
-              onChosen({ productId: pkg.package.productId, servings, picks: kept, summary });
+              onChosen({ productId: pkg.package.productId, servings, picks: kept, summary, note });
               return Promise.resolve(null);
             }}
           />

@@ -4,7 +4,7 @@ import { use, useId, useState } from 'react';
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import { packagesScreenAction, removePackageAction, savePackageAction } from '@/server/domains/pricing/package-actions';
 import type { PackageView } from '@/server/domains/pricing/package-service';
-import { labelOfPackageChoice, minutesOfTime, PACKAGE_AUDIENCE_CHOICES, PACKAGE_PRICING_CHOICES, PACKAGE_SHORT_STOCK_CHOICES, PACKAGE_SPLIT_CHOICES, rulesWords, timeOfMinutes, WEEKDAY_NAMES } from '@/lib/package-choices';
+import { CATEGORY_SLOT_LIMIT, PACKAGE_SLOT_SOURCE_CHOICES, labelOfPackageChoice, minutesOfTime, PACKAGE_AUDIENCE_CHOICES, PACKAGE_PRICING_CHOICES, PACKAGE_SHORT_STOCK_CHOICES, PACKAGE_SPLIT_CHOICES, rulesWords, timeOfMinutes, WEEKDAY_NAMES } from '@/lib/package-choices';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
@@ -32,6 +32,12 @@ interface SlotDraft {
   maxPicks: string;
   allowRepeats: boolean;
   included: boolean;
+  /** Where the options come from: a list made by hand, or every product of a category. */
+  source: string;
+  category: Choice | null;
+  categoryDifference: string;
+  categoryOwnPrice: string;
+  categoryQuantity: string;
   options: OptionDraft[];
 }
 interface Draft {
@@ -41,6 +47,7 @@ interface Draft {
   allocation: string;
   shortStockMode: string;
   isActive: boolean;
+  allowNote: boolean;
   /** The rules of ordering, as typed (empty = no rule). Notice is in hours, closing time as HH:MM. */
   minServings: string;
   maxServings: string;
@@ -56,8 +63,8 @@ interface Draft {
 
 const newKey = (): string => globalThis.crypto.randomUUID();
 const blankOption = (): OptionDraft => ({ key: newKey(), choice: null, quantity: '1', difference: '0', ownPrice: '', isDefault: false, weight: '' });
-const blankSlot = (): SlotDraft => ({ key: newKey(), name: '', helpText: '', minPicks: '1', maxPicks: '1', allowRepeats: false, included: false, options: [blankOption()] });
-const blankDraft = (): Draft => ({ editing: false, product: null, pricingMode: 'base_plus_differences', allocation: 'list_price', shortStockMode: 'hide', isActive: true, minServings: '', maxServings: '', noticeHours: '', closesDaysBefore: '', closesAt: '', weekdays: [], dailyLimit: '', audience: 'anyone', groups: [], slots: [blankSlot()] });
+const blankSlot = (): SlotDraft => ({ key: newKey(), name: '', helpText: '', minPicks: '1', maxPicks: '1', allowRepeats: false, included: false, source: 'list', category: null, categoryDifference: '0', categoryOwnPrice: '', categoryQuantity: '1', options: [blankOption()] });
+const blankDraft = (): Draft => ({ editing: false, product: null, pricingMode: 'base_plus_differences', allocation: 'list_price', shortStockMode: 'hide', isActive: true, allowNote: false, minServings: '', maxServings: '', noticeHours: '', closesDaysBefore: '', closesAt: '', weekdays: [], dailyLimit: '', audience: 'anyone', groups: [], slots: [blankSlot()] });
 
 const draftOf = (pkg: PackageView): Draft => ({
   editing: true,
@@ -66,6 +73,7 @@ const draftOf = (pkg: PackageView): Draft => ({
   allocation: pkg.allocation,
   shortStockMode: pkg.shortStockMode,
   isActive: pkg.isActive,
+  allowNote: pkg.allowNote,
   minServings: pkg.rules.minServings === null ? '' : String(pkg.rules.minServings),
   maxServings: pkg.rules.maxServings === null ? '' : String(pkg.rules.maxServings),
   noticeHours: pkg.rules.noticeMinutes === null ? '' : String(pkg.rules.noticeMinutes / 60),
@@ -83,7 +91,12 @@ const draftOf = (pkg: PackageView): Draft => ({
     maxPicks: String(slot.maxPicks),
     allowRepeats: slot.allowRepeats,
     included: slot.included,
-    options: slot.options.map((o) => ({ key: o.id, choice: { id: o.productId, label: o.name }, quantity: String(o.quantity), difference: String(o.difference), ownPrice: o.ownPrice === null ? '' : String(o.ownPrice), isDefault: o.isDefault, weight: o.weight === null ? '' : String(o.weight) })),
+    source: slot.source,
+    category: slot.categoryId === null ? null : { id: slot.categoryId, label: slot.categoryName },
+    categoryDifference: String(slot.categoryDifference),
+    categoryOwnPrice: slot.categoryOwnPrice === null ? '' : String(slot.categoryOwnPrice),
+    categoryQuantity: String(slot.categoryQuantity),
+    options: slot.source === 'category' ? [] : slot.options.map((o) => ({ key: o.id, choice: { id: o.productId, label: o.name }, quantity: String(o.quantity), difference: String(o.difference), ownPrice: o.ownPrice === null ? '' : String(o.ownPrice), isDefault: o.isDefault, weight: o.weight === null ? '' : String(o.weight) })),
   })),
 });
 
@@ -102,6 +115,7 @@ function payloadOf(draft: Draft): unknown {
     allocation: draft.allocation,
     shortStockMode: draft.shortStockMode,
     isActive: draft.isActive,
+    allowNote: draft.allowNote,
     rules: {
       minServings: optional(draft.minServings),
       maxServings: optional(draft.maxServings),
@@ -120,6 +134,11 @@ function payloadOf(draft: Draft): unknown {
       maxPicks: Number(slot.maxPicks),
       allowRepeats: slot.allowRepeats,
       included: slot.included,
+      source: slot.source,
+      categoryId: slot.category?.id ?? null,
+      categoryDifference: Number(slot.categoryDifference === '' ? '0' : slot.categoryDifference),
+      categoryOwnPrice: optional(slot.categoryOwnPrice),
+      categoryQuantity: Number(slot.categoryQuantity === '' ? '1' : slot.categoryQuantity),
       options: slot.options.map((o) => ({ productId: o.choice?.id ?? '', quantity: Number(o.quantity), difference: Number(o.difference === '' ? '0' : o.difference), ownPrice: optional(o.ownPrice), isDefault: o.isDefault, weight: optional(o.weight) })),
     })),
   };
@@ -194,7 +213,7 @@ function Body({ initial, canManage }: { initial: PackageView[]; canManage: boole
                   {pkg.slots.map((slot) => (
                     <li key={slot.id}>
                       <span className="font-semibold">{slot.name}</span>
-                      <span className="text-fg-muted">: {picksWords(slot)} from {slot.options.map((o) => o.name).join(', ')}</span>
+                      <span className="text-fg-muted">: {picksWords(slot)} from {slot.source === 'category' ? `every product of ${slot.categoryName} (${String(slot.options.length)} now)` : slot.options.map((o) => o.name).join(', ')}</span>
                     </li>
                   ))}
                 </ul>
@@ -268,6 +287,10 @@ function Editor({ initial, onCancel, onSaved }: { initial: Draft; onCancel: () =
         <input type="checkbox" className="size-4" checked={draft.isActive} onChange={(e) => setDraft((d) => ({ ...d, isActive: e.target.checked }))} />
         In use (when off, the product sells as an ordinary product)
       </label>
+      <label className="flex min-h-10 cursor-pointer items-center gap-2 text-sm">
+        <input type="checkbox" className="size-4" checked={draft.allowNote} onChange={(e) => setDraft((d) => ({ ...d, allowNote: e.target.checked }))} />
+        Customers can write a note on each serving (for example &quot;no pepper&quot;); it is kept with the order and shown on the preparation sheet
+      </label>
 
       <fieldset className="space-y-3 rounded-lg border border-line p-3">
         <legend className="px-1 text-xs font-bold tracking-wider text-fg-subtle uppercase">Rules of ordering (leave empty for no rule)</legend>
@@ -319,6 +342,20 @@ function Editor({ initial, onCancel, onSaved }: { initial: Draft; onCancel: () =
               <label className="flex min-h-10 cursor-pointer items-center gap-2 text-sm"><input type="checkbox" className="size-4" checked={slot.allowRepeats} onChange={(e) => setSlot(slot.key, { allowRepeats: e.target.checked })} />The same option can be chosen more than once</label>
               <label className="flex min-h-10 cursor-pointer items-center gap-2 text-sm"><input type="checkbox" className="size-4" checked={slot.included} onChange={(e) => setSlot(slot.key, { included: e.target.checked, ...(e.target.checked ? { minPicks: '1', maxPicks: '1' } : {}) })} />Included, not a choice (one option, always part of it)</label>
             </div>
+            <ChoicePicker label={`Where the options of slot ${String(si + 1)} come from`} source="package-slot-sources" clearable={false} choice={{ id: slot.source, label: labelOfPackageChoice(PACKAGE_SLOT_SOURCE_CHOICES, slot.source) }} onChoice={(c) => c !== null && setSlot(slot.key, { source: c.id, ...(c.id === 'category' && slot.included ? { included: false } : {}) })} />
+            {slot.source === 'category' ? (
+              <div className="grid grid-cols-1 items-end gap-3 rounded-lg border border-line bg-surface-sunken p-3 sm:grid-cols-4">
+                <div className="sm:col-span-2"><ChoicePicker label={`Category, slot ${String(si + 1)}`} source="package-categories" choice={slot.category} onChoice={(c) => setSlot(slot.key, { category: c })} placeholder="Search categories…" required /></div>
+                <Field id={`${uid}-cq-${slot.key}`} label={`Quantity of each pick, slot ${String(si + 1)}`}><input id={`${uid}-cq-${slot.key}`} className={fieldClass} inputMode="decimal" value={slot.categoryQuantity} onChange={(e) => setSlot(slot.key, { categoryQuantity: e.target.value })} /></Field>
+                {summed ? (
+                  <Field id={`${uid}-cp-${slot.key}`} label={`Fixed price of each pick, slot ${String(si + 1)}`} hint="Empty: each product's selling price."><input id={`${uid}-cp-${slot.key}`} className={fieldClass} inputMode="decimal" value={slot.categoryOwnPrice} onChange={(e) => setSlot(slot.key, { categoryOwnPrice: e.target.value })} /></Field>
+                ) : (
+                  <Field id={`${uid}-cd-${slot.key}`} label={`Difference of each pick, slot ${String(si + 1)}`} hint="Added to the base price."><input id={`${uid}-cd-${slot.key}`} className={fieldClass} inputMode="decimal" value={slot.categoryDifference} onChange={(e) => setSlot(slot.key, { categoryDifference: e.target.value })} /></Field>
+                )}
+                <p className="text-xs text-fg-muted sm:col-span-4">Every product of the category that can be sold, is switched on and is not a kit or a package is offered (up to {CATEGORY_SLOT_LIMIT}, by name), so a new product added to the category shows up on its own.</p>
+              </div>
+            ) : (
+            <>
             <ul className="space-y-2">
               {slot.options.map((option, oi) => (
                 <li key={option.key} className="grid grid-cols-1 items-end gap-2 rounded-lg border border-line bg-surface-sunken p-3 sm:grid-cols-6">
@@ -339,8 +376,10 @@ function Editor({ initial, onCancel, onSaved }: { initial: Draft; onCancel: () =
                 </li>
               ))}
             </ul>
+            </>
+            )}
             <div className="flex flex-wrap gap-2">
-              <button type="button" className={buttonClass} disabled={slot.included} onClick={() => setSlot(slot.key, { options: [...slot.options, blankOption()] })}><Plus className="mr-1 h-4 w-4" aria-hidden="true" />Add an option</button>
+              {slot.source === 'list' ? <button type="button" className={buttonClass} disabled={slot.included} onClick={() => setSlot(slot.key, { options: [...slot.options, blankOption()] })}><Plus className="mr-1 h-4 w-4" aria-hidden="true" />Add an option</button> : null}
               <button type="button" className={buttonClass} aria-label={`Move slot ${String(si + 1)} up`} disabled={si === 0} onClick={() => setDraft((d) => ({ ...d, slots: move(d.slots, si, si - 1) }))}><ArrowUp className="h-4 w-4" aria-hidden="true" /></button>
               <button type="button" className={buttonClass} aria-label={`Move slot ${String(si + 1)} down`} disabled={si === draft.slots.length - 1} onClick={() => setDraft((d) => ({ ...d, slots: move(d.slots, si, si + 1) }))}><ArrowDown className="h-4 w-4" aria-hidden="true" /></button>
               <button type="button" className={buttonClass} aria-label={`Remove slot ${String(si + 1)}`} disabled={draft.slots.length === 1} onClick={() => setDraft((d) => ({ ...d, slots: d.slots.filter((s) => s.key !== slot.key) }))}><Trash2 className="mr-1 h-4 w-4" aria-hidden="true" />Remove slot</button>

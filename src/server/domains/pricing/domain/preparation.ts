@@ -14,6 +14,8 @@ export interface PreparationRow {
   packageProductId: string;
   packageName: string;
   servings: number;
+  /** What the customer wrote on the serving ("no pepper"); empty when none. */
+  note: string;
   /** The delivery slot the shopper chose for that day, when there is one. */
   slotName: string | null;
   slotStartsAt: string | null;
@@ -26,6 +28,7 @@ export interface PreparedSelection {
   customerName: string;
   paymentStatus: string;
   servings: number;
+  note: string;
   /** "Large fish, Brown ugali and 2 × Sukuma" */
   words: string;
   picks: PreparationRow['picks'];
@@ -88,7 +91,7 @@ export function buildSheet(rows: readonly PreparationRow[]): PreparationSheet {
     }
     pkg.servings += row.servings;
     group.servings += row.servings;
-    pkg.selections.push({ instanceId: row.instanceId, orderNumber: row.orderNumber, customerName: row.customerName, paymentStatus: row.paymentStatus, servings: row.servings, words: picksWords(row.picks), picks: [...row.picks].sort((a, b) => a.sortOrder - b.sortOrder) });
+    pkg.selections.push({ instanceId: row.instanceId, orderNumber: row.orderNumber, customerName: row.customerName, paymentStatus: row.paymentStatus, servings: row.servings, note: row.note, words: picksWords(row.picks), picks: [...row.picks].sort((a, b) => a.sortOrder - b.sortOrder) });
 
     const total = packageTotals.get(row.packageProductId) ?? { packageProductId: row.packageProductId, packageName: row.packageName, servings: 0 };
     total.servings += row.servings;

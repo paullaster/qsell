@@ -59,3 +59,11 @@ export function rulesWords(rules: { minServings: number | null; maxServings: num
   if (rules.audience === 'groups') out.push('Chosen groups only');
   return out;
 }
+
+export const PACKAGE_SLOT_SOURCE_CHOICES: PackageChoice[] = [
+  { id: 'list', label: 'A list I make, product by product' },
+  { id: 'category', label: 'Every product of a category (new ones appear by themselves)' },
+];
+
+/** The most products a slot filled from a category offers; past it the first by name are shown. */
+export const CATEGORY_SLOT_LIMIT = 100;

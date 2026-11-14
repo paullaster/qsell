@@ -72,9 +72,25 @@ export function parsePackageInput(raw: unknown): ParsedPackage {
       }
       options.push({ productId: text(option.productId, 200), quantity, difference, ownPrice, isDefault: option.isDefault === true, weight });
     }
-    slots.push({ name: text(slot.name, 80), helpText: text(slot.helpText, 200), minPicks, maxPicks, allowRepeats: slot.allowRepeats === true, included: slot.included === true, options });
+    const fromCategory = slot.source === 'category';
+    const categoryDifference = slot.categoryDifference === undefined || slot.categoryDifference === null || slot.categoryDifference === '' ? 0 : num(slot.categoryDifference);
+    const categoryOwnPrice = slot.categoryOwnPrice === undefined || slot.categoryOwnPrice === null || slot.categoryOwnPrice === '' ? null : num(slot.categoryOwnPrice);
+    const categoryQuantity = slot.categoryQuantity === undefined || slot.categoryQuantity === null || slot.categoryQuantity === '' ? 1 : num(slot.categoryQuantity);
+    if (fromCategory && (categoryDifference === null || categoryQuantity === null || (slot.categoryOwnPrice !== undefined && slot.categoryOwnPrice !== null && slot.categoryOwnPrice !== '' && categoryOwnPrice === null))) {
+      return { ok: false, error: `Slot ${String(si + 1)}: a number is not valid.` };
+    }
+    slots.push({
+      name: text(slot.name, 80),
+      helpText: text(slot.helpText, 200),
+      minPicks,
+      maxPicks,
+      allowRepeats: slot.allowRepeats === true,
+      included: slot.included === true,
+      ...(fromCategory ? { source: 'category' as const, categoryId: text(slot.categoryId, 100), categoryDifference: categoryDifference ?? 0, categoryOwnPrice, categoryQuantity: categoryQuantity ?? 1 } : {}),
+      options: fromCategory ? [] : options,
+    });
   }
   const parsed = parseRules(i.rules);
   if (!parsed.ok) return { ok: false, error: parsed.error };
-  return { ok: true, input: { productId, pricingMode, allocation, shortStockMode, isActive: i.isActive !== false, ...(parsed.rules === undefined ? {} : { rules: parsed.rules }), slots } };
+  return { ok: true, input: { productId, pricingMode, allocation, shortStockMode, isActive: i.isActive !== false, ...(typeof i.allowNote === 'boolean' ? { allowNote: i.allowNote } : {}), ...(parsed.rules === undefined ? {} : { rules: parsed.rules }), slots } };
 }

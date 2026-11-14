@@ -4851,6 +4851,8 @@ export const salesQuotes = pgTable(
     paymentMethod: text('payment_method').notNull().default('mpesa_daraja'),
     validUntil: timestamp('valid_until', { withTimezone: true }),
     customerReference: text('customer_reference'),
+    /** The date the goods or the service are needed (`YYYY-MM-DD`), when it matters: a package's notice, closing day and daily limit are counted against it when the quote becomes an order. */
+    neededOn: text('needed_on'),
     publicNotes: text('public_notes'),
     internalNotes: text('internal_notes'),
     createdBy: text('created_by'),
@@ -4858,8 +4860,6 @@ export const salesQuotes = pgTable(
     approvedAt: timestamp('approved_at', { withTimezone: true }),
     sentAt: timestamp('sent_at', { withTimezone: true }),
     /** The staff member who emailed the quote to the customer (the latest send). */
-    /** The date the goods or the service are needed (`YYYY-MM-DD`), when it matters: a package's notice, closing day and daily limit are counted against it when the quote becomes an order. */
-    neededOn: text('needed_on'),
     sentBy: text('sent_by'),
     acceptedAt: timestamp('accepted_at', { withTimezone: true }),
     rejectedAt: timestamp('rejected_at', { withTimezone: true }),
@@ -6636,6 +6636,8 @@ export const productPackages = pgTable(
     dailyLimit: integer('daily_limit'),
     /** Who may order: anyone, signed-in shoppers, or the customer groups in `package_audiences`. */
     audience: text('audience').$type<'anyone' | 'signed_in' | 'groups'>().notNull().default('anyone'),
+    /** The customer may write a short note on each serving ("no pepper"), kept with the selection and shown on the preparation sheet. */
+    allowNote: boolean('allow_note').notNull().default(false),
     createdBy: text('created_by').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -6666,10 +6668,19 @@ export const packageSlots = pgTable(
     allowRepeats: boolean('allow_repeats').notNull().default(false),
     /** Not asked: one option that is always part of a serving. */
     included: boolean('included').notNull().default(false),
+    /** `list`: the options are the rows of `package_options`. `category`: every product of the category that can be sold is an option, so a new one appears by itself. */
+    source: text('source').$type<'list' | 'category'>().notNull().default('list'),
+    categoryId: text('category_id').references(() => categories.id, { onDelete: 'restrict' }),
+    /** For a category slot: what each product adds to the base price, its own fixed price when set, and the units of it in one pick. */
+    categoryDifference: numeric('category_difference', { precision: 14, scale: 2 }).notNull().default('0'),
+    categoryOwnPrice: numeric('category_own_price', { precision: 14, scale: 2 }),
+    categoryQuantity: quantity('category_quantity').notNull().default(1),
     sortOrder: integer('sort_order').notNull().default(0),
   },
   (t) => [
     index('package_slots_package_idx').on(t.packageId, t.sortOrder),
+    index('package_slots_category_idx').on(t.categoryId),
+    check('package_slots_source_chk', sql`${t.source} IN ('list', 'category') AND (${t.source} = 'list' OR ${t.categoryId} IS NOT NULL) AND ${t.categoryQuantity} > 0`),
     check('package_slots_picks_chk', sql`${t.minPicks} >= 0 AND ${t.maxPicks} >= 1 AND ${t.minPicks} <= ${t.maxPicks} AND ${t.maxPicks} <= 50`),
     check('package_slots_name_chk', sql`length(btrim(${t.name})) > 0`),
   ],
@@ -6743,6 +6754,8 @@ export const packageInstances = pgTable(
     servingPrice: numeric('serving_price', { precision: 14, scale: 2 }).notNull(),
     lineTotal: numeric('line_total', { precision: 14, scale: 2 }).notNull(),
     selectionKey: text('selection_key').notNull(),
+    /** What the customer asked for on the serving ("no pepper"); plain text. */
+    note: text('note').notNull().default(''),
     /** The date it is for (delivery or collection), where the package needs one. */
     forDate: text('for_date'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

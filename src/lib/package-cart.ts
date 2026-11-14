@@ -18,18 +18,21 @@ export interface PackageCartLine {
   productId: string;
   picks: PackagePick[];
   servings: number;
+  /** What the customer wrote on the serving; empty when none. */
+  note: string;
 }
 
 /** The same choices in any order give the same key. */
-export function packageLineId(productId: string, picks: readonly PackagePick[]): string {
+export function packageLineId(productId: string, picks: readonly PackagePick[], note = ''): string {
   const merged = new Map<string, number>();
   for (const pick of picks) merged.set(`${pick.slotId}:${pick.optionId}`, (merged.get(`${pick.slotId}:${pick.optionId}`) ?? 0) + pick.count);
-  return `${productId}#${[...merged.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([k, n]) => `${k}:${String(n)}`).join('|')}`;
+  return `${productId}#${[...merged.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([k, n]) => `${k}:${String(n)}`).join('|')}${note.trim() === '' ? '' : `#${note.trim()}`}`;
 }
 
-export function packageLine(productId: string, picks: readonly PackagePick[], servings: number): PackageCartLine {
+export function packageLine(productId: string, picks: readonly PackagePick[], servings: number, note = ''): PackageCartLine {
+  const cleanNote = note.trim().slice(0, 200);
   const clean = picks.filter((p) => p.count > 0).map((p) => ({ slotId: p.slotId, optionId: p.optionId, count: p.count }));
-  return { id: packageLineId(productId, clean), productId, picks: clean, servings: Math.min(MAX_SERVINGS, Math.max(1, Math.floor(servings))) };
+  return { id: packageLineId(productId, clean, cleanNote), productId, picks: clean, note: cleanNote, servings: Math.min(MAX_SERVINGS, Math.max(1, Math.floor(servings))) };
 }
 
 /** Adds a line; equal choices join the line already there (servings add up, up to the most). Pure. */
@@ -71,7 +74,7 @@ export function parsePackageCart(raw: string | null): PackageCartLine[] {
         if (isRecord(p) && typeof p.slotId === 'string' && typeof p.optionId === 'string' && typeof p.count === 'number' && Number.isInteger(p.count) && p.count > 0) picks.push({ slotId: p.slotId, optionId: p.optionId, count: p.count });
       }
       if (entry.productId.length === 0 || entry.productId.length > 100 || !Number.isFinite(entry.servings)) continue;
-      const line = packageLine(entry.productId, picks, entry.servings);
+      const line = packageLine(entry.productId, picks, entry.servings, typeof entry.note === 'string' ? entry.note : '');
       if (!out.some((l) => l.id === line.id)) out.push(line);
     }
     return out;
@@ -80,4 +83,4 @@ export function parsePackageCart(raw: string | null): PackageCartLine[] {
   }
 }
 
-export const serializePackageCart = (lines: readonly PackageCartLine[]): string => JSON.stringify(lines.map(({ productId, picks, servings }) => ({ productId, picks, servings })));
+export const serializePackageCart = (lines: readonly PackageCartLine[]): string => JSON.stringify(lines.map(({ productId, picks, servings, note }) => ({ productId, picks, servings, ...(note === '' ? {} : { note }) })));

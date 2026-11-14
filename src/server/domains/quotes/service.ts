@@ -163,7 +163,7 @@ export interface QuoteInput {
     /** A free gift the quote added. Gifts are worked out again on every save, so these are dropped. */
     isGift?: boolean;
     /** A configurable package: the choices made (by slot name and part); `quantity` is the servings. The price is always worked out from the package. */
-    package?: { picks: StoredPick[]; /** What the line read like when it was chosen (for the screen only; the server works its own out). */ summary?: string };
+    package?: { picks: StoredPick[]; /** What the customer asked for on the serving ("no pepper"), where the package allows it. */ note?: string; /** What the line read like when it was chosen (for the screen only; the server works its own out). */ summary?: string };
   }[];
 }
 
@@ -972,7 +972,7 @@ export class SalesQuoteService {
     // the shelves), and the price is always worked out from the package, never typed.
     const preparedPackages = new Map<number, PreparedPackage>();
     {
-      const wanted = input.lines.flatMap((line, index) => (line.package === undefined ? [] : [{ index, productId: line.productId, servings: line.quantity, stored: line.package.picks }]));
+      const wanted = input.lines.flatMap((line, index) => (line.package === undefined ? [] : [{ index, productId: line.productId, servings: line.quantity, stored: line.package.picks, ...(line.package.note === undefined ? {} : { note: line.package.note }) }]));
       if (wanted.length > 0) {
         const { packageOrders, pricing } = getContainer();
         if (wanted.some((w) => !Number.isInteger(w.servings) || w.servings < 1)) throw new Error('A package is quoted in whole servings.');
@@ -1359,7 +1359,7 @@ export class SalesQuoteService {
         ...trace,
         guard: verdict.lines[i]!,
         ...(kit === undefined ? {} : { quotedAsKit: { kitId: kit.id, name: l.description } }),
-        ...(chosen === undefined ? {} : { quotedAsPackage: { productId: chosen.productId, name: chosen.name, version: chosen.version, key: chosen.key, servings: chosen.servings, picks: chosen.stored } }),
+        ...(chosen === undefined ? {} : { quotedAsPackage: { productId: chosen.productId, name: chosen.name, version: chosen.version, key: chosen.key, servings: chosen.servings, ...(chosen.note === '' ? {} : { note: chosen.note }), picks: chosen.stored } }),
       };
     });
     // What the discounts gave, kept on the quote so converting it records their use.
@@ -1797,7 +1797,7 @@ export class SalesQuoteService {
     const orderLines = mergeLinesForOrder(quote.lines);
     // Package lines: the quote's choices and price stand, found again by slot name and part. A part the package no longer offers stops
     // the conversion and is named, so the quote can be changed.
-    const packageLines = orderLines.flatMap((line, index) => (line.priceTrace?.quotedAsPackage === undefined || line.productId === null ? [] : [{ index, productId: line.productId, stored: line.priceTrace.quotedAsPackage.picks }]));
+    const packageLines = orderLines.flatMap((line, index) => (line.priceTrace?.quotedAsPackage === undefined || line.productId === null ? [] : [{ index, productId: line.productId, stored: line.priceTrace.quotedAsPackage.picks, note: line.priceTrace.quotedAsPackage.note ?? '' }]));
     const resolved = await getContainer().packageOrders.resolve((await getContainer().companySettings.ensureSeeded()).id, packageLines);
     if (!resolved.ok) throw new Error(resolved.error);
     const items = orderLines.map((line, index) => {
@@ -1806,7 +1806,7 @@ export class SalesQuoteService {
       return {
         productId: line.productId ?? '',
         quantity: num(line.quantity),
-        ...(picks === undefined ? {} : { package: { picks } }),
+        ...(picks === undefined ? {} : { package: { picks, ...(packageLines[at]?.note === undefined || packageLines[at]?.note === '' ? {} : { note: packageLines[at]?.note }) } }),
       };
     });
     if (items.some((line) => !line.productId))

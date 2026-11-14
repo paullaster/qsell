@@ -24,7 +24,7 @@ export function parsePackageLine(raw: unknown): PackageLineInput | null {
     if (slotId === null || optionId === null || typeof count !== 'number' || !Number.isFinite(count)) continue;
     picks.push({ slotId, optionId, count });
   }
-  return { productId, servings, picks };
+  return { productId, servings, picks, ...(typeof raw.note === 'string' && raw.note.trim() !== '' ? { note: raw.note.slice(0, PACKAGE_LIMITS.note + 1) } : {}) };
 }
 
 /** A basket's package lines, at most twenty; lines that cannot be read are dropped. */

@@ -1,9 +1,10 @@
 'use server';
 
+import { auth } from '@/auth';
 import { getContainer } from '@/server/di/container';
 import { parsePackageLine, parsePackageLines, parseServings } from './domain/package-shop-input';
 import type { BasketLineView } from './domain/package-shop';
-import type { ShopBuilder } from './package-shop-service';
+import type { OrderAgainOption, ShopBuilder } from './package-shop-service';
 
 export type ShopResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -42,6 +43,20 @@ export async function checkPackageBasketAction(raw: unknown): Promise<ShopResult
   if (lines.length === 0) return { ok: true, data: [] };
   try {
     return { ok: true, data: await getContainer().packageShop.basket(await company(), lines) };
+  } catch (error) {
+    return failed(error);
+  }
+}
+
+
+/** A signed-in shopper: their own earlier selections of this package, ready to order again today (a signed-out visitor has none). */
+export async function packageOrderAgainAction(productId: unknown): Promise<ShopResult<OrderAgainOption[]>> {
+  if (typeof productId !== 'string' || productId.length === 0 || productId.length > 100) return { ok: true, data: [] };
+  try {
+    const session = await auth();
+    const customerId = session?.user.customerStoreId ?? null;
+    if (customerId === null) return { ok: true, data: [] };
+    return { ok: true, data: await getContainer().packageShop.previous(await company(), customerId, productId) };
   } catch (error) {
     return failed(error);
   }

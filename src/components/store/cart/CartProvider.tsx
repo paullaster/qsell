@@ -226,7 +226,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       return {};
     }
     try {
-      const result = await checkPackageBasketAction(next.map(({ productId, picks, servings }) => ({ productId, picks, servings })));
+      const result = await checkPackageBasketAction(next.map(({ productId, picks, servings, note }) => ({ productId, picks, servings, ...(note === '' ? {} : { note }) })));
       if (!result.ok) return null;
       const byId: Record<string, BasketLineView> = {};
       next.forEach((line, index) => {

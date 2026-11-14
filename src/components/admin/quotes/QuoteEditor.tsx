@@ -215,7 +215,7 @@ export function QuoteEditor({
       quantity: chosen.servings,
       priceMode: 'catalog' as const,
       discountPercent: at === null ? 0 : (input.lines[at]?.discountPercent ?? 0),
-      package: { picks: chosen.picks, summary: chosen.summary },
+      package: { picks: chosen.picks, summary: chosen.summary, ...(chosen.note === '' ? {} : { note: chosen.note }) },
       sectionId: at === null ? null : (input.lines[at]?.sectionId ?? null),
     };
     if (at === null) setField('lines', [...input.lines, line]);
@@ -575,6 +575,7 @@ export function QuoteEditor({
                     <div className="flex items-start justify-between gap-2">
                       <div className="font-medium text-fg-strong">
                         {line.package === undefined ? entry.product?.name : (line.package.summary ?? entry.product?.name)}
+                        {line.package?.note === undefined ? null : <div className="text-xs font-normal text-fg-muted">Note: {line.package.note}</div>}
                         {line.package === undefined ? null : (
                           <button type="button" onClick={() => setPackageDialog({ index })} className="ml-2 min-h-8 cursor-pointer text-xs font-semibold text-indigo-500 hover:underline">
                             Change choices
@@ -913,7 +914,7 @@ export function QuoteEditor({
           money={(amount) => money(amount, input.currency)}
           {...(packageDialog.index === null || input.lines[packageDialog.index]?.package === undefined
             ? {}
-            : { editing: { productId: input.lines[packageDialog.index].productId, servings: input.lines[packageDialog.index].quantity, picks: input.lines[packageDialog.index].package?.picks ?? [] } })}
+            : { editing: { productId: input.lines[packageDialog.index].productId, servings: input.lines[packageDialog.index].quantity, picks: input.lines[packageDialog.index].package?.picks ?? [], note: input.lines[packageDialog.index].package?.note ?? '' } })}
           onClose={() => setPackageDialog(null)}
           onChosen={choosePackage}
         />

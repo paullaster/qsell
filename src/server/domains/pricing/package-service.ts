@@ -1,9 +1,10 @@
 import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { customerGroups, packageAudiences, packageOptions, packageSlots, productKitComponents, productKits, productPackages, products } from '@/server/db/drizzle/schema';
+import { categories, customerGroups, packageAudiences, packageOptions, packageSlots, productKitComponents, productKits, productPackages, products } from '@/server/db/drizzle/schema';
 import type { Actor } from '@/server/kernel/context';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { ReasonCodes, ReasonInput } from '@/server/kernel/reason-codes/service';
+import { CATEGORY_SLOT_LIMIT } from '@/lib/package-choices';
 import { PricingConfigError } from './config-service';
 import type { KitAllocation } from './domain/kits';
 import { belowCostWhenCheapest, cheapestSelection, checkPackage, servingPrice, type PackageDef, type PackagePricingMode, type ShortStockMode } from './domain/packages';
@@ -42,6 +43,14 @@ export interface PackageSlotView {
   maxPicks: number;
   allowRepeats: boolean;
   included: boolean;
+  /** `category`: every product of the category that can be sold is an option (so a new one appears by itself), found when the package is read. */
+  source: 'list' | 'category';
+  categoryId: string | null;
+  categoryName: string;
+  /** For a category slot: what each product adds, its own fixed price when set, and the units in one pick. */
+  categoryDifference: number;
+  categoryOwnPrice: number | null;
+  categoryQuantity: number;
   options: PackageOptionView[];
 }
 
@@ -90,6 +99,8 @@ export interface PackageView {
   version: number;
   slots: PackageSlotView[];
   rules: PackageRules;
+  /** The customer may write a note on each serving. */
+  allowNote: boolean;
   /** The price of the cheapest valid selection (the "from" price), and whether it sells for less than it costs. */
   from: { price: number | null; cost: number; belowCost: boolean };
   /** Options that cannot be chosen now (switched off or deleted). */
@@ -104,6 +115,8 @@ export interface PackageInput {
   isActive?: boolean;
   /** Left out, the rules stay as they are (a new package starts with none). */
   rules?: PackageRules;
+  /** Left out, the setting stays as it is (off for a new package). */
+  allowNote?: boolean;
   slots: {
     name: string;
     helpText?: string;
@@ -111,6 +124,11 @@ export interface PackageInput {
     maxPicks: number;
     allowRepeats?: boolean;
     included?: boolean;
+    source?: 'list' | 'category';
+    categoryId?: string | null;
+    categoryDifference?: number;
+    categoryOwnPrice?: number | null;
+    categoryQuantity?: number;
     options: { productId: string; quantity: number; difference?: number; ownPrice?: number | null; isDefault?: boolean; weight?: number | null }[];
   }[];
 }
@@ -128,6 +146,7 @@ export function toDefinition(view: Pick<PackageView, 'productId' | 'pricingMode'
       maxPicks: slot.maxPicks,
       allowRepeats: slot.allowRepeats,
       included: slot.included,
+      fromCategory: slot.source === 'category',
       options: slot.options.map((o) => ({
         id: o.id,
         productId: o.productId,
@@ -156,6 +175,22 @@ const ruleColumns = (rules: PackageRules | undefined) =>
         audience: rules.audience,
       };
 
+
+/** The id of the option a category slot makes of a product: stable, so a selection made today is understood tomorrow. */
+export const categoryOptionId = (productId: string): string => `cat:${productId}`;
+
+interface CategoryProduct {
+  id: string;
+  name: string;
+  sku: string;
+  price: string | null;
+  cost: string;
+  stock: number;
+  reserved: number;
+  kind: string;
+  categoryId: string | null;
+}
+
 /** Everything an administrator does with configurable packages. Each change needs a reason and is logged. */
 export class PackageConfigService {
   constructor(
@@ -166,6 +201,30 @@ export class PackageConfigService {
 
   private why(companyId: string, reason: Why) {
     return this.reasons.require(companyId, reason, 'pricing_configuration');
+  }
+
+  /** The products each category slot offers, in one query for all the categories: sold, switched on, not packaging, not a kit or a package, not the package itself. */
+  private async categoryProducts(categoryIds: readonly string[], exclude: ReadonlySet<string>): Promise<Map<string, CategoryProduct[]>> {
+    const out = new Map<string, CategoryProduct[]>();
+    const ids = [...new Set(categoryIds)];
+    if (ids.length === 0) return out;
+    const [rows, kitRows, packageRows] = await Promise.all([
+      this.db
+        .select({ id: products.id, name: products.name, sku: products.sku, price: products.price, cost: products.costPrice, stock: products.stockQuantity, reserved: products.reservedQuantity, kind: products.inventoryKind, categoryId: products.categoryId })
+        .from(products)
+        .where(and(inArray(products.categoryId, ids), eq(products.isActive, true), eq(products.isSellable, true), eq(products.isCheckoutPackaging, false), isNull(products.deletedAt)))
+        .orderBy(asc(products.name)),
+      this.db.select({ productId: productKits.productId }).from(productKits),
+      this.db.select({ productId: productPackages.productId }).from(productPackages),
+    ]);
+    const blocked = new Set([...exclude, ...kitRows.map((k) => k.productId), ...packageRows.map((p) => p.productId)]);
+    for (const row of rows) {
+      if (row.categoryId === null || blocked.has(row.id)) continue;
+      const list = out.get(row.categoryId) ?? [];
+      if (list.length < CATEGORY_SLOT_LIMIT) list.push(row);
+      out.set(row.categoryId, list);
+    }
+    return out;
   }
 
   async list(companyId: string, onlyProductId?: string | readonly string[]): Promise<PackageView[]> {
@@ -220,6 +279,12 @@ export class PackageConfigService {
             .orderBy(asc(packageOptions.sortOrder)),
     ]);
     const byProduct = new Map(packageProducts.map((p) => [p.id, p]));
+    const categoryIds = slots.flatMap((sl) => (sl.source === 'category' && sl.categoryId !== null ? [sl.categoryId] : []));
+    const [byCategory, categoryNames] = await Promise.all([
+      this.categoryProducts(categoryIds, new Set(packages.map((p) => p.productId))),
+      categoryIds.length === 0 ? Promise.resolve([]) : this.db.select({ id: categories.id, name: categories.name }).from(categories).where(inArray(categories.id, [...new Set(categoryIds)])),
+    ]);
+    const categoryName = new Map(categoryNames.map((c) => [c.id, c.name]));
     return packages.map((pkg) => {
       const mySlots = slots.filter((s) => s.packageId === pkg.id).map((slot): PackageSlotView => ({
         id: slot.id,
@@ -229,7 +294,30 @@ export class PackageConfigService {
         maxPicks: slot.maxPicks,
         allowRepeats: slot.allowRepeats,
         included: slot.included,
-        options: options
+        source: slot.source,
+        categoryId: slot.categoryId,
+        categoryName: slot.categoryId === null ? '' : (categoryName.get(slot.categoryId) ?? ''),
+        categoryDifference: Number(slot.categoryDifference),
+        categoryOwnPrice: slot.categoryOwnPrice === null ? null : Number(slot.categoryOwnPrice),
+        categoryQuantity: Number(slot.categoryQuantity),
+        options: slot.source === 'category'
+          ? (slot.categoryId === null ? [] : (byCategory.get(slot.categoryId) ?? [])).map((p): PackageOptionView => ({
+              id: categoryOptionId(p.id),
+              productId: p.id,
+              name: p.name,
+              sku: p.sku,
+              quantity: Number(slot.categoryQuantity),
+              difference: Number(slot.categoryDifference),
+              ownPrice: slot.categoryOwnPrice === null ? null : Number(slot.categoryOwnPrice),
+              isDefault: false,
+              weight: null,
+              productPrice: p.price === null ? null : Number(p.price),
+              cost: Number(p.cost),
+              stock: p.stock - p.reserved,
+              managed: p.kind === 'inventory',
+              unavailable: false,
+            }))
+          : options
           .filter((o) => o.slotId === slot.id)
           .map((o): PackageOptionView => ({
             id: o.id,
@@ -265,6 +353,7 @@ export class PackageConfigService {
         shortStockMode: pkg.shortStockMode,
         isActive: pkg.isActive,
         version: pkg.version,
+        allowNote: pkg.allowNote,
         rules: {
           minServings: pkg.minServings,
           maxServings: pkg.maxServings,
@@ -324,6 +413,24 @@ export class PackageConfigService {
           .from(products)
           .where(and(inArray(products.id, optionIds), isNull(products.deletedAt)));
     const known = new Map(optionProducts.map((p) => [p.id, p]));
+    // Category slots: the category must exist and offer something that can be sold; its products stand in for options when the package is checked.
+    const categorySlots = input.slots.filter((slot) => slot.source === 'category');
+    for (const slot of categorySlots) {
+      if (slot.categoryId === null || slot.categoryId === undefined || slot.categoryId === '') problems.push({ path: 'slots', message: `${slot.name || 'A slot'}: choose the category it takes its options from.` });
+      if (slot.categoryQuantity !== undefined && !(slot.categoryQuantity > 0)) problems.push({ path: 'slots', message: `${slot.name || 'A slot'}: the quantity of each pick must be above zero.` });
+    }
+    const wantedCategories = categorySlots.flatMap((slot) => (slot.categoryId === null || slot.categoryId === undefined || slot.categoryId === '' ? [] : [slot.categoryId]));
+    const existingCategories = wantedCategories.length === 0 ? [] : await this.db.select({ id: categories.id, name: categories.name }).from(categories).where(inArray(categories.id, [...new Set(wantedCategories)]));
+    const categoryExists = new Map(existingCategories.map((c) => [c.id, c.name]));
+    for (const slot of categorySlots) {
+      if (slot.categoryId !== null && slot.categoryId !== undefined && slot.categoryId !== '' && !categoryExists.has(slot.categoryId)) problems.push({ path: 'slots', message: `${slot.name || 'A slot'}: that category does not exist.` });
+    }
+    const categoryItems = await this.categoryProducts(wantedCategories, new Set([input.productId]));
+    for (const items of categoryItems.values()) for (const item of items) known.set(item.id, { id: item.id, name: item.name, price: item.price, cost: item.cost, sellable: true });
+    for (const slot of categorySlots) {
+      const found = slot.categoryId === null || slot.categoryId === undefined ? [] : (categoryItems.get(slot.categoryId) ?? []);
+      if (found.length === 0 && categoryExists.has(slot.categoryId ?? '')) problems.push({ path: 'slots', message: `${slot.name || 'A slot'}: the category ${categoryExists.get(slot.categoryId ?? '') ?? ''} has no product that can be sold in a package.` });
+    }
     for (const id of optionIds) {
       const found = known.get(id);
       if (found !== undefined && !found.sellable) problems.push({ path: 'slots', message: `${found.name} is not sold to customers, so a package cannot offer it.` });
@@ -340,7 +447,8 @@ export class PackageConfigService {
         maxPicks: slot.maxPicks,
         allowRepeats: slot.allowRepeats === true,
         included: slot.included === true,
-        options: slot.options.map((o, oi) => {
+        fromCategory: slot.source === 'category',
+        options: (slot.source === 'category' ? (categoryItems.get(slot.categoryId ?? '') ?? []).map((item) => ({ productId: item.id, quantity: slot.categoryQuantity ?? 1, difference: slot.categoryDifference ?? 0, ownPrice: slot.categoryOwnPrice ?? undefined, isDefault: false, weight: null as number | null })) : slot.options).map((o, oi) => {
           const product = known.get(o.productId);
           const productPrice = product?.price === null || product === undefined ? null : Number(product.price);
           return {
@@ -375,7 +483,7 @@ export class PackageConfigService {
       if (before === undefined) {
         const [row] = await tx
           .insert(productPackages)
-          .values({ companyId, productId: input.productId, pricingMode: input.pricingMode, allocation: input.allocation, shortStockMode: input.shortStockMode, isActive: input.isActive ?? true, ...ruleColumns(input.rules), createdBy: actor.id ?? 'system' })
+          .values({ companyId, productId: input.productId, pricingMode: input.pricingMode, allocation: input.allocation, shortStockMode: input.shortStockMode, isActive: input.isActive ?? true, ...ruleColumns(input.rules), ...(input.allowNote === undefined ? {} : { allowNote: input.allowNote }), createdBy: actor.id ?? 'system' })
           .returning({ id: productPackages.id });
         if (row === undefined) throw new Error('the package was not saved');
         packageId = row.id;
@@ -383,7 +491,7 @@ export class PackageConfigService {
         packageId = before.id;
         await tx
           .update(productPackages)
-          .set({ pricingMode: input.pricingMode, allocation: input.allocation, shortStockMode: input.shortStockMode, isActive: input.isActive ?? true, ...ruleColumns(input.rules), version: before.version + 1, updatedAt: new Date() })
+          .set({ pricingMode: input.pricingMode, allocation: input.allocation, shortStockMode: input.shortStockMode, isActive: input.isActive ?? true, ...ruleColumns(input.rules), ...(input.allowNote === undefined ? {} : { allowNote: input.allowNote }), version: before.version + 1, updatedAt: new Date() })
           .where(eq(productPackages.id, packageId));
         // Slots go with their options. Orders and quotes keep their own copy of what was chosen, so nothing sold is touched.
         await tx.delete(packageSlots).where(eq(packageSlots.packageId, packageId));
@@ -395,9 +503,24 @@ export class PackageConfigService {
       for (const [si, slot] of input.slots.entries()) {
         const [row] = await tx
           .insert(packageSlots)
-          .values({ packageId, name: slot.name.trim(), helpText: (slot.helpText ?? '').trim(), minPicks: slot.minPicks, maxPicks: slot.maxPicks, allowRepeats: slot.allowRepeats === true, included: slot.included === true, sortOrder: si })
+          .values({
+            packageId,
+            name: slot.name.trim(),
+            helpText: (slot.helpText ?? '').trim(),
+            minPicks: slot.minPicks,
+            maxPicks: slot.maxPicks,
+            allowRepeats: slot.allowRepeats === true,
+            included: slot.included === true,
+            source: slot.source === 'category' ? 'category' : 'list',
+            categoryId: slot.source === 'category' ? (slot.categoryId ?? null) : null,
+            categoryDifference: (slot.categoryDifference ?? 0).toFixed(2),
+            categoryOwnPrice: slot.categoryOwnPrice === null || slot.categoryOwnPrice === undefined ? null : slot.categoryOwnPrice.toFixed(2),
+            categoryQuantity: slot.categoryQuantity ?? 1,
+            sortOrder: si,
+          })
           .returning({ id: packageSlots.id });
         if (row === undefined) throw new Error('a slot was not saved');
+        if (slot.source === 'category' || slot.options.length === 0) continue;
         await tx.insert(packageOptions).values(
           slot.options.map((o, oi) => ({
             slotId: row.id,
@@ -427,6 +550,7 @@ export class PackageConfigService {
             slots: input.slots.length,
             options: input.slots.reduce((n, s) => n + s.options.length, 0),
             isActive: input.isActive ?? true,
+            ...(input.allowNote === undefined ? {} : { allowNote: input.allowNote }),
             ...(input.rules === undefined ? {} : { rules: input.rules }),
           },
         },

@@ -84,7 +84,7 @@ export function quoteFormOf(quote: SalesQuote, newId: () => string): QuoteInput 
         discountPercent: Number(line.discountPercent),
         fromTemplate: line.fromTemplate,
         fromSectionTemplate: line.fromSectionTemplate,
-        ...(line.priceTrace?.quotedAsPackage === undefined ? {} : { package: { picks: line.priceTrace.quotedAsPackage.picks, summary: line.description }, quantity: Number(line.quantity) }),
+        ...(line.priceTrace?.quotedAsPackage === undefined ? {} : { package: { picks: line.priceTrace.quotedAsPackage.picks, summary: line.description, ...(line.priceTrace.quotedAsPackage.note === undefined ? {} : { note: line.priceTrace.quotedAsPackage.note }) }, quantity: Number(line.quantity) }),
       })),
   };
 }

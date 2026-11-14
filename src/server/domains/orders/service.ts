@@ -34,7 +34,7 @@ export class OrdersService {
       postalCode?: string;
       country: string;
     };
-    items: { productId: string; quantity: number; package?: { picks: { slotId: string; optionId: string; count: number }[] } }[];
+    items: { productId: string; quantity: number; package?: { picks: { slotId: string; optionId: string; count: number }[]; note?: string } }[];
     paymentMethod: PaymentProvider;
     couponCodes?: string[];
     delivery?: DeliveryInput;

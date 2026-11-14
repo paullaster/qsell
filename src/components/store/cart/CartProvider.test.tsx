@@ -118,8 +118,8 @@ describe('CartProvider as a guest', () => {
 });
 
 describe('CartProvider with packages', () => {
-  const okAnswer = (servings: number) => ({ ok: true, key: 'k', servings, servingPrice: 500, total: 500 * servings, summary: 'Express lunch: Small fish' });
-  const line = (optionId: string, servings = 1) => ({ id: `lunch#fish:${optionId}:1`, productId: 'lunch', picks: [{ slotId: 'fish', optionId, count: 1 }], servings });
+  const okAnswer = (servings: number) => ({ ok: true, key: 'k', servings, servingPrice: 500, total: 500 * servings, summary: 'Express lunch: Small fish', note: '' });
+  const line = (optionId: string, servings = 1) => ({ id: `lunch#fish:${optionId}:1`, productId: 'lunch', picks: [{ slotId: 'fish', optionId, count: 1 }], note: '', servings });
   const holder: { cart: ReturnType<typeof useCart> | null } = { cart: null };
   function PackageProbe() {
     const cart = useCart();

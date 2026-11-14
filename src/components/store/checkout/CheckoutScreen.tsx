@@ -118,7 +118,7 @@ export function CheckoutScreen({ cartHandoff }: { cartHandoff?: string }) {
         ...data,
         items: [
           ...cart.lines.map((line) => ({ productId: line.product.id, quantity: line.quantity })),
-          ...cart.packages.map((line) => ({ productId: line.productId, quantity: line.servings, package: { picks: line.picks } })),
+          ...cart.packages.map((line) => ({ productId: line.productId, quantity: line.servings, package: { picks: line.picks, ...(line.note === '' ? {} : { note: line.note }) } })),
         ],
       });
       if (!result.ok) {
@@ -246,7 +246,7 @@ export function CheckoutScreen({ cartHandoff }: { cartHandoff?: string }) {
   // Package lines as the shop priced them; one the shop refuses stops the order here, with the reason, before anything is paid.
   const priced = cart.packages.flatMap((line) => {
     const check = cart.packageChecks[line.id];
-    return check?.ok === true ? [{ id: line.id, productId: line.productId, picks: line.picks, servings: line.servings, summary: check.summary, total: check.total }] : [];
+    return check?.ok === true ? [{ id: line.id, productId: line.productId, picks: line.picks, note: line.note, servings: line.servings, summary: check.summary, total: check.total }] : [];
   });
   const refused = cart.packages.flatMap((line) => {
     const check = cart.packageChecks[line.id];

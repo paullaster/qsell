@@ -55,6 +55,7 @@ export function PackageCartLines({ onNavigate }: { onNavigate?: () => void }) {
               <h3 className="text-sm font-semibold text-fg-strong">
                 {check?.ok === true ? check.summary : <Link href={productHref({ id: line.productId })} onClick={onNavigate} className="hover:underline">A package you chose</Link>}
               </h3>
+              {line.note === '' ? null : <p className="text-xs text-fg-muted" data-testid="package-line-note">Note: {line.note}</p>}
               {check === undefined ? <p className="text-xs text-fg-muted" role="status">Checking price and stock…</p> : null}
               {check?.ok === true ? (
                 <p className="font-mono text-sm font-bold text-fg-strong">

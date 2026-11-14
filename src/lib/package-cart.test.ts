@@ -40,4 +40,15 @@ describe('package lines of the cart', () => {
     for (const bad of [null, '', 'x', '{}', '[1,"a"]', JSON.stringify([{ productId: 'p', servings: 'x', picks: [] }])]) expect(parsePackageCart(bad)).toEqual([]);
     expect(parsePackageCart(JSON.stringify([{ productId: 'p', servings: 1, picks: [{ slotId: 's', optionId: 'o', count: -1 }, { slotId: 's', optionId: 'o', count: 1.5 }] }]))[0]?.picks).toEqual([]);
   });
+
+  it('keeps a note with the line, so the same choices with another note are another line', () => {
+    const plain = packageLine('lunch', [pick('fish', 'small')], 1);
+    const noted = packageLine('lunch', [pick('fish', 'small')], 1, '  no pepper ');
+    expect(noted.note).toBe('no pepper');
+    expect(noted.id).not.toBe(plain.id);
+    expect(addPackageLine([plain], noted)).toHaveLength(2);
+    expect(addPackageLine([noted], packageLine('lunch', [pick('fish', 'small')], 2, 'no pepper'))[0]?.servings).toBe(3);
+    expect(parsePackageCart(serializePackageCart([plain, noted]))).toEqual([plain, noted]);
+    expect(packageLine('lunch', [], 1, 'x'.repeat(500)).note).toHaveLength(200);
+  });
 });

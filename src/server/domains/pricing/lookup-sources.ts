@@ -1,6 +1,6 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { customerGroups, products } from '@/server/db/drizzle/schema';
-import { PACKAGE_AUDIENCE_CHOICES, PACKAGE_PRICING_CHOICES, PACKAGE_SHORT_STOCK_CHOICES, PACKAGE_SPLIT_CHOICES, type PackageChoice } from '@/lib/package-choices';
+import { categories, customerGroups, products } from '@/server/db/drizzle/schema';
+import { PACKAGE_AUDIENCE_CHOICES, PACKAGE_PRICING_CHOICES, PACKAGE_SLOT_SOURCE_CHOICES, PACKAGE_SHORT_STOCK_CHOICES, PACKAGE_SPLIT_CHOICES, type PackageChoice } from '@/lib/package-choices';
 import { acceptFilters, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
 
 const fixed = (key: string, choices: readonly PackageChoice[]): LookupSource =>
@@ -63,6 +63,22 @@ const quotePackages = tableSource({
   toOption: (row) => ({ id: String(row.id), label: String(row.label), description: String(row.sku), badge: null }),
 });
 
+/** The categories a package slot can take its options from. */
+const packageCategories = tableSource({
+  key: 'package-categories',
+  permission: 'pricing:read',
+  table: categories,
+  id: categories.id,
+  label: categories.name,
+  searchColumns: [categories.name],
+  select: {},
+  scope: ({ filters }) => {
+    acceptFilters(filters, {});
+    return [eq(categories.isActive, true)];
+  },
+  toOption: (row) => ({ id: String(row.id), label: String(row.label), description: null, badge: null }),
+});
+
 /** The customer groups a package can be limited to. */
 const packageCustomerGroups = tableSource({
   key: 'package-customer-groups',
@@ -84,6 +100,8 @@ export const PRICING_LOOKUP_SOURCES: LookupSource[] = [
   fixed('package-short-stock-modes', PACKAGE_SHORT_STOCK_CHOICES),
   fixed('package-split-methods', PACKAGE_SPLIT_CHOICES),
   fixed('package-audiences', PACKAGE_AUDIENCE_CHOICES),
+  fixed('package-slot-sources', PACKAGE_SLOT_SOURCE_CHOICES),
+  packageCategories,
   packageCustomerGroups,
   quotePackages,
   packageProducts,

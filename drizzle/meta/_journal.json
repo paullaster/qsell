@@ -1219,6 +1219,13 @@
       "when": 1794511736223,
       "tag": "0173_delivery_volume_capacity",
       "breakpoints": true
+    },
+    {
+      "idx": 174,
+      "version": "7",
+      "when": 1794601136157,
+      "tag": "0174_package_slots_category_and_note",
+      "breakpoints": true
     }
   ]
 }

@@ -55,7 +55,7 @@ export async function previewShopBasket(rawItems: readonly BasketItem[], custome
   if (sellable.length !== items.length || sellable.length === 0) return { ok: false, error: 'Something in your basket is no longer for sale. Please look at your basket again.' };
   // Package lines: the choices are checked as the order will check them (the audience and ordering rules are left to the order itself).
   const preparedPackages = new Map<number, PreparedPackage>();
-  const wanted = items.flatMap((item, index) => (item.package === undefined ? [] : [{ index, productId: item.productId, picks: item.package.picks, servings: item.quantity }]));
+  const wanted = items.flatMap((item, index) => (item.package === undefined ? [] : [{ index, productId: item.productId, picks: item.package.picks, servings: item.quantity, ...(item.package.note === undefined ? {} : { note: item.package.note }) }]));
   if (wanted.length > 0) {
     const prepared = await packageOrders.prepare({ companyId: company.id, customerGroupId: await pricing.groupFor(company.id, customerId), signedIn: customerId !== null, forDate: null, now: new Date(), previewOnly: true }, wanted);
     if (!prepared.ok) return { ok: false, error: prepared.error };

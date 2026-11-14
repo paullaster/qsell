@@ -109,7 +109,8 @@ For a business that makes what it sells to order (meals, catering, assembled set
 - **Under the totals**, grouped by **delivery time** (earliest first, orders with no time last) and by package: every order's own choices as "9 × Large fish and Ugali", with the order number, the customer, and the payment state when it is not paid. Identical choices on different orders stay as separate lines, because each has its own order to prepare for.
 - A **cancelled order is not on the sheet**; if its servings were counted before, the totals drop by them at once. One sheet shows up to 2,000 selections and says so when there are more.
 - **Print** prints only the sheet (the menu and top bar are left out) so it can be pinned in the kitchen. The screen works on a phone.
-- **Not built yet**: the customer's note on a serving ("no pepper") appears on the sheet when notes are added (guide 05, later slice); a per-package filter and a count of what is already made.
+- A **customer's note** on a serving ("no pepper", where the package takes notes) is printed under its selection in amber, so it cannot be missed.
+- **Not built yet**: a per-package filter and a count of what is already made.
 
 ### Sub-Module 3: Customers (`/admin/customers`)
 - **Customer Directory**: Tabular list showing Account Code, Customer Name, Account Type (`Cash` or `Credit`), Phone, Email, City, Balance Owed, and Status (`Active`, `Suspended`).
@@ -216,6 +217,7 @@ For a business that makes what it sells to order (meals, catering, assembled set
 ### Packages on a Quote
 - A package line reads as its choices ("Express lunch: Large fish, Ugali and Sukuma") in the editor, the PDF and the email. The server works out the price, the tax (each chosen part at its own rate, like a kit) and the cost (what the chosen parts cost); the margin and the price floor use those figures.
 - The quote keeps the choices by the slot's name and the part, not by internal ids. A package changed after the quote was made does not stop the quote being understood; if a chosen part is no longer offered, **converting the quote stops and names it** ("Large fish is no longer offered in Fish"), the quote can be reopened, the part replaced and saved again. Stock is not looked at when quoting; it is looked at, with the package's ordering rules (servings, notice, closing time, days, daily limit, who may order) and the date in **Needed On**, when the quote becomes an order. The quote's price stands even if the package's base price has moved.
+- A **note** can be written on a package line of a quote when the package takes notes; it is kept with the line and goes on to the order and the preparation sheet.
 - Two lines of one package with different choices stay two lines, also on the order; the exact selection of each is saved with the order for the preparation sheet.
 
 ### Stage Immutability & Reversals

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Check, Minus, Plus, ShoppingCart, Zap } from 'lucide-react';
 import { checkPackageLine, optionsToShow, type ShopOption, type ShopPackage, type ShopSlot } from '@/server/domains/pricing/domain/package-shop';
 import { packageBuilderAction } from '@/server/domains/pricing/package-shop-actions';
@@ -49,10 +49,10 @@ interface Props {
   productName: string;
   builder: { package: ShopPackage; available: string[] };
   /** Opening on choices already made (editing a cart line or a quote line). */
-  initial?: { picks: readonly PackagePick[]; servings: number };
+  initial?: { picks: readonly PackagePick[]; servings: number; note?: string };
   money: (amount: number) => string;
   /** Takes the choices; returns the problem in words, or null when they were accepted. `intent` is `buy` for the second button. */
-  onSubmit: (picks: PackagePick[], servings: number, intent: 'add' | 'buy') => Promise<string | null>;
+  onSubmit: (picks: PackagePick[], servings: number, intent: 'add' | 'buy', note: string) => Promise<string | null>;
   submitLabel?: string;
   /** The second button ("Buy now"); none when left out. */
   buyLabel?: string;
@@ -70,6 +70,8 @@ export function PackageBuilder({ productName, builder, initial, money, onSubmit,
   const [available, setAvailable] = useState<Set<string>>(() => new Set(builder.available));
   const [chosen, setChosen] = useState<Chosen>(() => startingChoices(pkg, new Set(builder.available), initial));
   const [servings, setServings] = useState(initial?.servings ?? 1);
+  const [note, setNote] = useState(initial?.note ?? '');
+  const noteId = useId();
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [announce, setAnnounce] = useState('');
@@ -94,9 +96,9 @@ export function PackageBuilder({ productName, builder, initial, money, onSubmit,
   // The same rules the server runs, over what is available now: options out of stock count as sold out, so the shopper hears why before pressing Add.
   const checked = useMemo(() => {
     const unlimited = new Set(pkg.slots.flatMap((s) => s.options.filter((o) => available.has(o.id)).map((o) => o.productId)));
-    return checkPackageLine(pkg, { productId: pkg.productId, picks, servings }, { free: new Map(), unlimited });
+    return checkPackageLine(pkg, { productId: pkg.productId, picks, servings, note: pkg.allowNote ? note : '' }, { free: new Map(), unlimited });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- picks is derived from chosen
-  }, [pkg, chosen, servings, available]);
+  }, [pkg, chosen, servings, available, note]);
 
   const toggle = (slot: ShopSlot, option: ShopOption) => {
     setProblem(null);
@@ -129,7 +131,7 @@ export function PackageBuilder({ productName, builder, initial, money, onSubmit,
     if (!checked.ok) return;
     setBusy(true);
     setProblem(null);
-    const answer = await onSubmit(picks, servings, intent);
+    const answer = await onSubmit(picks, servings, intent, pkg.allowNote ? note.trim() : '');
     setBusy(false);
     if (answer !== null) setProblem(answer);
   };
@@ -207,6 +209,14 @@ export function PackageBuilder({ productName, builder, initial, money, onSubmit,
           <button type="button" aria-label="One more serving" disabled={servings >= MAX_SERVINGS} onClick={() => setServings(servings + 1)} className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-lg border border-line-strong hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"><Plus className="h-4 w-4" aria-hidden="true" /></button>
         </span>
       </div>
+
+      {pkg.allowNote ? (
+        <div className="space-y-1">
+          <label htmlFor={noteId} className="text-sm font-medium text-fg-muted">Note for each serving (optional)</label>
+          <textarea id={noteId} rows={2} maxLength={200} value={note} onChange={(e) => setNote(e.target.value)} placeholder="For example: no pepper" className="block w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong" />
+          <p className="text-xs text-fg-muted">{note.length} of 200 characters</p>
+        </div>
+      ) : null}
 
       <div className="rounded-xl border border-line bg-surface p-4" aria-live="polite">
         {checked.ok ? (

@@ -1,9 +1,10 @@
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, or } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { products } from '@/server/db/drizzle/schema';
+import { orders, packageInstancePicks, packageInstances, products } from '@/server/db/drizzle/schema';
 import type { StockAvailability } from '@/server/domains/stock/availability';
 import type { StockSettingsService } from '@/server/domains/stock/settings';
-import { checkPackageBasket, packageAvailable, type BasketLineView, type LineStock, type PackageLineInput, type ShopPackage } from './domain/package-shop';
+import { checkPackageBasket, checkPackageLine, packageAvailable, resolveStoredPicks, type BasketLineView, type LineStock, type PackageLineInput, type ShopPackage } from './domain/package-shop';
+import type { RawPick } from './domain/packages';
 import { type PackageConfigService, type PackageView } from './package-service';
 
 
@@ -16,6 +17,19 @@ export interface ShopBuilder {
 }
 
 const MAX_BASKET_PACKAGES = 20;
+
+/** An earlier selection of a signed-in shopper, as it can be ordered again today. */
+export interface OrderAgainOption {
+  servings: number;
+  note: string;
+  /** "Express lunch: Large fish, Brown ugali and Sukuma", with today's replacements applied. */
+  summary: string;
+  /** Today's option ids. */
+  picks: RawPick[];
+  /** Parts that are sold out today and were swapped for the nearest available option of the same slot. */
+  replaced: { was: string; now: string }[];
+  total: number;
+}
 
 /**
  * What the web shop shows and checks for configurable packages. The browser sends ids and counts; every price, quantity and stock
@@ -87,6 +101,65 @@ export class PackageShopService {
     return { package: pkg, available: pkg.slots.flatMap((slot) => slot.options.map((o) => o.id)), offered: true };
   }
 
+  /**
+   * The shopper's own earlier selections of this package, newest first and each only once, ready to order again: found again by slot name
+   * and part, checked against today's package and stock, and a part that is sold out is replaced by the first option of its slot
+   * that is available (and said so). A selection that cannot be made today is left out.
+   */
+  async previous(companyId: string, customerId: string, productId: string, limit = 3): Promise<OrderAgainOption[]> {
+    const { packages, stock } = await this.load(companyId, [productId]);
+    const pkg = packages.get(productId);
+    if (pkg === undefined) return [];
+    const rows = await this.db
+      .select({ id: packageInstances.id, servings: packageInstances.servings, note: packageInstances.note, key: packageInstances.selectionKey })
+      .from(packageInstances)
+      .innerJoin(orders, and(eq(orders.id, packageInstances.documentId), eq(packageInstances.documentType, 'order')))
+      .where(and(eq(packageInstances.companyId, companyId), eq(packageInstances.packageProductId, productId), or(eq(orders.userId, customerId), eq(orders.tradeCustomerId, customerId))))
+      .orderBy(desc(packageInstances.createdAt))
+      .limit(20);
+    if (rows.length === 0) return [];
+    const picks = await this.db.select().from(packageInstancePicks).where(inArray(packageInstancePicks.instanceId, rows.map((r) => r.id)));
+    const free = (optionProductId: string, quantity: number, servings: number): boolean => stock.unlimited.has(optionProductId) || (stock.free.get(optionProductId) ?? 0) + 1e-9 >= quantity * servings;
+    const seen = new Set<string>();
+    const out: OrderAgainOption[] = [];
+    for (const row of rows) {
+      const stored = picks.filter((p) => p.instanceId === row.id).sort((a, b) => a.sortOrder - b.sortOrder);
+      const chosen: RawPick[] = [];
+      const replaced: { was: string; now: string }[] = [];
+      let possible = true;
+      for (const pick of stored) {
+        const slot = pkg.slots.find((s) => s.name.trim().toLowerCase() === pick.slotName.trim().toLowerCase());
+        if (slot === undefined) {
+          possible = false;
+          break;
+        }
+        const taken = new Set(chosen.filter((c) => c.slotId === slot.id).map((c) => c.optionId));
+        const same = resolveStoredPicks(pkg, [{ slotName: pick.slotName, productId: pick.productId, name: pick.productName, count: pick.count }]);
+        const option = same.ok ? slot.options.find((o) => o.id === same.picks[0]?.optionId) : undefined;
+        if (option !== undefined && free(option.productId, option.quantity * pick.count, row.servings)) {
+          chosen.push({ slotId: slot.id, optionId: option.id, count: pick.count });
+          continue;
+        }
+        // Sold out (or no longer offered): the first option of the slot that is available stands in, and the shopper is told.
+        const stand = slot.options.find((o) => !taken.has(o.id) && o.id !== option?.id && free(o.productId, o.quantity * pick.count, row.servings));
+        if (stand === undefined) {
+          possible = false;
+          break;
+        }
+        chosen.push({ slotId: slot.id, optionId: stand.id, count: pick.count });
+        replaced.push({ was: pick.productName, now: stand.name });
+      }
+      if (!possible) continue;
+      const note = pkg.allowNote ? row.note : '';
+      const checked = checkPackageLine(pkg, { productId, picks: chosen, servings: row.servings, note }, stock);
+      if (!checked.ok || seen.has(checked.key)) continue;
+      seen.add(checked.key);
+      out.push({ servings: row.servings, note: checked.note, summary: checked.summary, picks: chosen, replaced, total: checked.total });
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
   /** Whether each of these products is a package the shop offers (the page decides between the plain purchase panel and the builder). */
   async offers(companyId: string, productId: string): Promise<boolean> {
     return (await this.load(companyId, [productId])).packages.has(productId);
@@ -96,7 +169,7 @@ export class PackageShopService {
   async basket(companyId: string, lines: readonly PackageLineInput[]): Promise<BasketLineView[]> {
     const clipped = lines.slice(0, MAX_BASKET_PACKAGES);
     const { packages, stock } = await this.load(companyId, clipped.map((l) => l.productId));
-    return checkPackageBasket(packages, clipped, stock).map((r) => (r.ok ? { ok: true, key: r.key, servings: r.servings, servingPrice: r.servingPrice, total: r.total, summary: r.summary } : r));
+    return checkPackageBasket(packages, clipped, stock).map((r) => (r.ok ? { ok: true, key: r.key, servings: r.servings, servingPrice: r.servingPrice, total: r.total, summary: r.summary, note: r.note } : r));
   }
 }
 
@@ -109,6 +182,7 @@ export function toShopPackage(view: PackageView): ShopPackage {
     pricingMode: view.pricingMode,
     shortStockMode: view.shortStockMode,
     version: view.version,
+    allowNote: view.allowNote,
     slots: view.slots.map((slot) => ({
       id: slot.id,
       name: slot.name,

@@ -11,6 +11,7 @@ const row = (over: Partial<PreparationRow> & { n: string }): PreparationRow => (
   packageProductId: 'lunch',
   packageName: 'Express lunch',
   servings: 1,
+  note: '',
   slotName: null,
   slotStartsAt: null,
   picks: [pick('Fish', 'medium', 'Medium fish', 1, 1, 0), pick('Starch', 'ugali', 'Ugali', 1, 1, 1)],
@@ -21,6 +22,14 @@ describe('the choices as words', () => {
   it('reads in the order the package asks, with a count when it is more than one', () => {
     expect(picksWords([pick('Veg', 'k', 'Sukuma', 2, 1, 2), pick('Fish', 'f', 'Large fish', 1, 1, 0), pick('Starch', 'u', 'Brown ugali', 1, 1, 1)])).toBe('Large fish, Brown ugali and 2 × Sukuma');
     expect(picksWords([])).toBe('');
+  });
+});
+
+describe('a note on a selection', () => {
+  it('stays with its own selection on the sheet, and selections with other notes stay separate lines', () => {
+    const sheet = buildSheet([row({ n: '1', note: 'no pepper' }), row({ n: '2' })]);
+    const lines = sheet.groups[0]?.packages[0]?.selections ?? [];
+    expect(lines.map((l) => [l.orderNumber, l.note])).toEqual([['ORD-1', 'no pepper'], ['ORD-2', '']]);
   });
 });
 

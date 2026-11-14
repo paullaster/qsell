@@ -5,6 +5,7 @@ import type { PublicProduct } from '@/types/index';
 import type { ShopBuilder } from '@/server/domains/pricing/package-shop-service';
 import { ProductPurchase } from '@/components/store/product/ProductPurchase';
 import { ShopPackageBuilder } from '@/components/store/product/ShopPackageBuilder';
+import { PackageOrderAgain } from '@/components/store/product/PackageOrderAgain';
 
 function Choice({ product, builder }: { product: PublicProduct; builder: Promise<ShopBuilder | null> }) {
   const found = use(builder);
@@ -13,7 +14,12 @@ function Choice({ product, builder }: { product: PublicProduct; builder: Promise
   if (!found.offered) {
     return <p role="status" className="rounded-xl border border-line bg-surface p-4 text-sm font-medium text-fg-muted">{product.name} is not available right now. Please check back soon.</p>;
   }
-  return <ShopPackageBuilder productName={product.name} builder={found} />;
+  return (
+    <div className="space-y-4">
+      <PackageOrderAgain productId={product.id} />
+      <ShopPackageBuilder productName={product.name} builder={found} />
+    </div>
+  );
 }
 
 /**

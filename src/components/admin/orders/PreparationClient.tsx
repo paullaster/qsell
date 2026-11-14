@@ -99,6 +99,7 @@ function Body({ today, initial }: { today: string; initial: PreparationView }) {
                         <span className="font-semibold text-fg-strong">{s.servings} × {s.words}</span>
                         <span className="text-xs text-fg-muted">{s.orderNumber} · {s.customerName}{s.paymentStatus === 'paid' ? '' : ` · ${s.paymentStatus}`}</span>
                       </div>
+                      {s.note === '' ? null : <p className="text-sm font-medium text-amber-700 dark:text-amber-300" data-testid="preparation-note">Note: {s.note}</p>}
                     </li>
                   ))}
                 </ul>

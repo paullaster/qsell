@@ -42,7 +42,7 @@ export interface CheckoutSubmission {
 interface CheckoutFormProps {
   lines: CartLine[];
   /** Package lines in the cart: the choices (sent to the server) and what the shop priced them at. */
-  packages?: { id: string; productId: string; picks: { slotId: string; optionId: string; count: number }[]; servings: number; summary: string; total: number }[];
+  packages?: { id: string; productId: string; picks: { slotId: string; optionId: string; count: number }[]; note?: string; servings: number; summary: string; total: number }[];
   defaultCountry: string;
   submitting: boolean;
   /** Why the last attempt failed, in words for the shopper. */
@@ -191,7 +191,7 @@ export function CheckoutForm({ lines, packages = [], defaultCountry, submitting,
   const totals = { ...cartTotals(lines), totalAmount: cartTotals(lines).totalAmount + packageSum };
   const items: BasketItem[] = [
     ...lines.map((l) => ({ productId: l.product.id, quantity: l.quantity })),
-    ...packages.map((p) => ({ productId: p.productId, quantity: p.servings, package: { picks: p.picks } })),
+    ...packages.map((p) => ({ productId: p.productId, quantity: p.servings, package: { picks: p.picks, ...(p.note === undefined || p.note === '' ? {} : { note: p.note }) } })),
   ];
   const delivery = useShopDelivery({ items, county: countyOrState, town: city, area, country, couponCodes });
   const basketPhase = useShopBasket({ items, couponCodes, paymentMethod: chosenMethod });
