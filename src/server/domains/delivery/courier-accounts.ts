@@ -3,7 +3,8 @@ import { and, asc, eq } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { courierAccounts, type CourierAccountRow } from '@/server/db/drizzle/schema';
 import { checkHttpSettings, type HttpCourierSettings } from '@/lib/courier-http';
-import { ADAPTER_WORDS, isAdapterId, type CourierAdapterId } from '@/server/adapters/courier/registry';
+import { ADAPTER_WORDS, courierAdapter, isAdapterId, type CourierAdapterId } from '@/server/adapters/courier/registry';
+import { CourierError, type CourierPort } from '@/server/adapters/courier/port';
 import { decryptCredentials, encryptCredentials } from '@/server/domains/payments/crypto';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { DocActor, DocRefusal, DocResult } from './documents';
@@ -43,6 +44,19 @@ export interface Connection {
   webhookSecret: string | null;
 }
 
+/** What a test parcel did, in words that are safe to show: nothing of the courier's own error text, and never the key. */
+export interface TestParcelResult {
+  booked: boolean;
+  /** The courier's answer, or why the booking did not work. */
+  message: string;
+  trackingNumber: string | null;
+  trackingUrl: string | null;
+  labelUrl: string | null;
+  /** Whether the test booking was taken back with the courier straight after. */
+  cancelled: boolean;
+  cancelMessage: string | null;
+}
+
 class Refused extends Error {
   constructor(readonly refusal: { ok: false; reason: DocRefusal; message: string }) {
     super(refusal.message);
@@ -57,6 +71,7 @@ export class CourierAccounts {
   constructor(
     private readonly db: DrizzleDb,
     private readonly decisions: DecisionLog,
+    private readonly adapterFor: (c: Connection) => CourierPort = (c) => courierAdapter(c.adapter, c.settings === null || c.key === null ? undefined : { settings: c.settings, key: c.key }),
   ) {}
 
   private view(a: CourierAccountRow): CourierAccountView {
@@ -100,6 +115,38 @@ export class CourierAccounts {
     if (!UUID.test(accountId)) return null;
     const [a] = await this.db.select().from(courierAccounts).where(and(eq(courierAccounts.id, accountId), eq(courierAccounts.companyId, companyId)));
     return a === undefined ? null : this.open(a);
+  }
+
+  /**
+   * Books one parcel that is plainly marked as a test with the courier's own system, to find out whether the address, the key and the mapping
+   * of its answers work before a customer's parcel depends on them, then asks the courier to cancel it. It creates no delivery and costs
+   * nothing here, but the courier may still see (and, if it charges for bookings, count) the booking, which is why the screen asks first.
+   * The answer is data either way: a courier that refuses or cannot be reached is a finding, not an error.
+   */
+  async testParcel(actor: DocActor, accountId: string, tag: string = randomBytes(3).toString('hex').toUpperCase()): Promise<DocResult<TestParcelResult>> {
+    const conn = await this.connectionFor(actor.companyId, accountId);
+    if (conn === null) return fail('not_allowed', 'This courier\'s connection is not complete: check its address and key, then try again.');
+    if (conn.adapter === 'manual') return fail('not_allowed', 'A courier typed in by hand has no system to test.');
+    const port = this.adapterFor(conn);
+    let result: TestParcelResult;
+    try {
+      const booked = await port.book({ deliveryNumber: `TEST-${tag}`, courierName: conn.name, trackingNumber: null, recipientName: 'TEST PARCEL - DO NOT COLLECT', recipientPhone: null, destination: 'Test booking from the shop, please ignore', parcels: 1 });
+      result = { booked: true, message: booked.trackingNumber === null ? 'The courier accepted the booking.' : `The courier accepted the booking and gave tracking number ${booked.trackingNumber}.`, trackingNumber: booked.trackingNumber, trackingUrl: booked.trackingUrl, labelUrl: booked.labelUrl, cancelled: false, cancelMessage: null };
+    } catch (e) {
+      result = { booked: false, message: e instanceof CourierError ? e.message : 'The courier could not be reached.', trackingNumber: null, trackingUrl: null, labelUrl: null, cancelled: false, cancelMessage: null };
+    }
+    if (result.booked && result.trackingNumber !== null) {
+      try {
+        await port.cancel(result.trackingNumber);
+        result.cancelled = true;
+      } catch (e) {
+        result.cancelMessage = `The test booking could not be cancelled${e instanceof CourierError ? ` (${e.message})` : ''}. Cancel it in the courier's own system.`;
+      }
+    } else if (result.booked) {
+      result.cancelMessage = 'The courier gave no tracking number, so the test booking could not be cancelled. Cancel it in the courier\'s own system.';
+    }
+    await this.decisions.record({ companyId: actor.companyId, subject: { type: 'courier_account', id: conn.accountId }, action: 'courier.test_parcel', actor: { type: 'user', id: actor.userId }, outcome: { booked: result.booked, cancelled: result.cancelled, tracking: result.trackingNumber } });
+    return { ok: true, data: result };
   }
 
   /** The connection a pushed message names: found by the unguessable key in its address. */

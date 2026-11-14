@@ -427,7 +427,8 @@ graph TD
 4. The system books the parcel with the courier within a minute. If the courier cannot be reached it tries again after 2, 4, 8, 16 and 32 minutes, then shows the failure on the delivery and the board; **Try the courier again** tries at once. A courier being down never holds up a dispatch.
 5. The system asks the courier about the parcel while it is on the road (every 15 minutes at first, then less often); **Ask the courier now** does it at once. News the courier sends to the address is accepted only if correctly signed.
 6. When the courier reports *delivered*, the delivery is completed with who signed and a link to the proof. A problem reported by the courier becomes a failed attempt. A cancelled delivery is cancelled with the courier by the system.
-7. To stop using a courier, click **Stop using** and confirm; **Make a new secret** replaces the signing secret (the old one stops working).
+7. To check the connection before a customer's parcel depends on it, click **Send a test parcel** on a connected courier's card and confirm (the courier may see the booking, and may count it if it charges for bookings). The system books one parcel marked *TEST PARCEL - DO NOT COLLECT* with the courier's own system, shows what the courier answered (the tracking number, its tracking page and label when it gives them, or the plain reason it refused or could not be reached), and asks the courier to cancel it straight after. If the cancellation does not work the card says so, and the test booking is cancelled in the courier's own system. No delivery is created, and the key is never shown. The button is not offered for a courier typed in by hand or one with no key.
+8. To stop using a courier, click **Stop using** and confirm; **Make a new secret** replaces the signing secret (the old one stops working).
 
 ### Action 8: Recording Fuel and Other Running Costs
 1. Open `/admin/delivery/costs`. In **Fuel and vehicle costs** choose **What kind of cost**, type **How much (KSh)** and **What it was for**, and optionally pick the **Vehicle it was for** and the **Run it was for**. (Choosing a run that went out in a listed vehicle fills in the vehicle for you.) For fuel, also type the **Litres bought** and the **Kilometres driven on them** if you know them: the report then shows each vehicle's kilometres to the litre and fuel cost of a kilometre.
@@ -514,6 +515,7 @@ Under `/admin/delivery/invoicing`, the business configures one of two fiscal mod
 - Calls to a courier go only to secure (https) public addresses; the courier's own error text is never shown to staff, only a plain reason.
 - A booking that fails because the courier refused the request fails at once; one that fails because the courier could not be reached is retried. The same piece of news from a courier (pushed or asked) counts once.
 - Cancelling a delivery cancels its parcel with the courier; a parcel never booked is simply closed.
+- A test parcel creates no delivery and is written in the decision log (who, when, whether it was booked and cancelled; never the key). It needs the same permission as changing the courier. A courier that refuses it or cannot be reached is a finding shown on the card, not an error.
 
 ### Costs, Pay and Courier Invoices
 - Costs are never edited or deleted; a mistake is taken back by an opposite entry with a reason, once. A cost taken back cannot be matched to a courier invoice.

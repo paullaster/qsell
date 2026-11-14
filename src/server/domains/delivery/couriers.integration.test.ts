@@ -370,4 +370,72 @@ describe.skipIf(!has(url))('couriers (database)', () => {
     expect(await c.courierShipments.news(dispatcher(), ready.deliveryId, { state: 'delivered', receivedBy: 'Mama' })).toMatchObject({ ok: true });
     expect(await sync().run()).toMatchObject({ polled: 0 });
   });
+
+  describe('a test parcel', () => {
+    const asked: string[] = [];
+    const accounts = async () => {
+      const { CourierAccounts } = await import('./courier-accounts');
+      return new CourierAccounts(db, c.decisionLog, () => ({
+        id: 'http_json',
+        book: (r) => {
+          asked.push(r.deliveryNumber);
+          return script.book();
+        },
+        track: () => script.track(),
+        cancel: (t: string) => {
+          script.cancelled.push(t);
+          return script.cancel();
+        },
+      }));
+    };
+
+    it('books a parcel marked as a test, takes it back at once, creates no delivery, and is written in the decision log without the key', async () => {
+      const made = await account();
+      const before = (await db.select({ id: schema.deliveries.id }).from(schema.deliveries).where(eq(schema.deliveries.companyId, companyId))).length;
+      script.cancelled = [];
+      const r = await (await accounts()).testParcel(dispatcher(), made.account.id, 'ABC123');
+      expect(r).toMatchObject({ ok: true, data: { booked: true, trackingNumber: 'SW1', cancelled: true, cancelMessage: null, trackingUrl: 'https://track.swift.test/SW1' } });
+      expect(asked.at(-1)).toBe('TEST-ABC123');
+      expect(script.cancelled).toEqual(['SW1']);
+      expect((await db.select({ id: schema.deliveries.id }).from(schema.deliveries).where(eq(schema.deliveries.companyId, companyId))).length).toBe(before);
+      const log = JSON.stringify(await db.select().from(schema.decisionLog).where(and(eq(schema.decisionLog.subjectId, made.account.id), eq(schema.decisionLog.action, 'courier.test_parcel'))));
+      expect(log).toContain('"booked":true');
+      expect(log).not.toContain('plain-key-123');
+    });
+
+    it('says in words when the courier refuses or cannot be reached, and tries no cancellation', async () => {
+      const made = await account();
+      script.cancelled = [];
+      script.book = () => Promise.reject(new CourierError('The courier refused the request (401).', false));
+      expect(await (await accounts()).testParcel(dispatcher(), made.account.id)).toMatchObject({ ok: true, data: { booked: false, message: 'The courier refused the request (401).', cancelled: false, trackingNumber: null } });
+      script.book = () => Promise.reject(new Error('socket hang up with secret internals'));
+      const odd = await (await accounts()).testParcel(dispatcher(), made.account.id);
+      expect(odd).toMatchObject({ ok: true, data: { booked: false, message: 'The courier could not be reached.' } });
+      expect(script.cancelled).toEqual([]);
+      script.book = () => Promise.resolve({ trackingNumber: 'SW1', trackingUrl: 'https://track.swift.test/SW1', labelUrl: 'https://swift.test/l/SW1.pdf' });
+    });
+
+    it('says so when the booking worked but could not be cancelled, so the person cancels it with the courier', async () => {
+      const made = await account();
+      script.cancel = () => Promise.reject(new CourierError('The courier refused the request (403).', false));
+      const r = await (await accounts()).testParcel(dispatcher(), made.account.id);
+      expect(r).toMatchObject({ ok: true, data: { booked: true, cancelled: false } });
+      expect(r.ok && r.data.cancelMessage).toContain('Cancel it in the courier\'s own system');
+      script.cancel = () => Promise.resolve();
+      script.book = () => Promise.resolve({ trackingNumber: null, trackingUrl: null, labelUrl: null });
+      const none = await (await accounts()).testParcel(dispatcher(), made.account.id);
+      expect(none.ok && none.data.cancelMessage).toContain('gave no tracking number');
+      script.book = () => Promise.resolve({ trackingNumber: 'SW1', trackingUrl: 'https://track.swift.test/SW1', labelUrl: 'https://swift.test/l/SW1.pdf' });
+    });
+
+    it('is refused for a courier typed in by hand, one that is not the company\'s, and one that is not found', async () => {
+      const hand = await c.courierAccounts.create(dispatcher(), { name: `Hand ${code()}`, adapter: 'manual' });
+      if (!hand.ok) throw new Error(hand.message);
+      expect(await (await accounts()).testParcel(dispatcher(), hand.data.account.id)).toMatchObject({ ok: false, reason: 'not_allowed', message: 'A courier typed in by hand has no system to test.' });
+      const made = await account();
+      expect(await (await accounts()).testParcel({ ...dispatcher(), companyId: randomUUID() }, made.account.id)).toMatchObject({ ok: false, reason: 'not_allowed' });
+      expect(await (await accounts()).testParcel(dispatcher(), randomUUID())).toMatchObject({ ok: false, reason: 'not_allowed' });
+      expect(await (await accounts()).testParcel(dispatcher(), 'nope')).toMatchObject({ ok: false });
+    });
+  });
 });

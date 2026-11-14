@@ -1,8 +1,8 @@
 'use client';
 
 import { use, useId, useState } from 'react';
-import { createCourierAction, couriersScreenAction, renewCourierSecretAction, setCourierActiveAction, updateCourierAction } from '@/server/domains/delivery/courier-actions';
-import type { CourierAccountView } from '@/server/domains/delivery/courier-accounts';
+import { createCourierAction, couriersScreenAction, renewCourierSecretAction, setCourierActiveAction, testCourierParcelAction, updateCourierAction } from '@/server/domains/delivery/courier-actions';
+import type { CourierAccountView, TestParcelResult } from '@/server/domains/delivery/courier-accounts';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
@@ -160,11 +160,19 @@ function CourierForm({ account, onSaved, onError }: { account?: CourierAccountVi
 function CourierRow({ account, onSaved, onError }: { account: CourierAccountView; onSaved: (text: string, reveal: Reveal) => void; onError: (text: string) => void }) {
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [tested, setTested] = useState<TestParcelResult | null>(null);
   const toggle = async () => {
     setBusy(true);
     const r = await attempt(setCourierActiveAction({ id: account.id, isActive: !account.isActive, expectedVersion: account.version }));
     setBusy(false);
     if (r.ok) onSaved(account.isActive ? 'The courier is stopped. It is no longer offered for new parcels; parcels already with it are still followed.' : 'The courier is offered again.', null);
+    else onError(r.error);
+  };
+  const test = async () => {
+    setBusy(true);
+    const r = await attempt(testCourierParcelAction({ id: account.id }));
+    setBusy(false);
+    if (r.ok) setTested(r.data);
     else onError(r.error);
   };
   const renew = async () => {
@@ -202,7 +210,24 @@ function CourierRow({ account, onSaved, onError }: { account: CourierAccountView
         )}
         {account.adapter === 'http_json' ? <InlineConfirm label={`Make a new secret for ${account.name}`} action="New secret" confirm="Yes, make a new one" busy={busy} onConfirm={() => void renew()} /> : null}
       </div>
+      {account.adapter === 'http_json' && account.hasKey ? (
+        <InlineConfirm label={`Send a test parcel to ${account.name}`} action="Send a test parcel" confirm="Yes, send it (the courier may see it)" busy={busy} onConfirm={() => void test()} />
+      ) : null}
+      {tested === null ? null : <TestResult name={account.name} result={tested} />}
       {editing ? <CourierForm account={account} onSaved={onSaved} onError={onError} /> : null}
     </li>
+  );
+}
+
+/** What a test parcel did: shown in place so the person sees it, and stays until the page is left. */
+function TestResult({ name, result }: { name: string; result: TestParcelResult }) {
+  return (
+    <div role="status" aria-label={`Test parcel for ${name}`} className="space-y-1 rounded-lg border border-line bg-surface p-3 text-sm">
+      <p className={`font-semibold ${result.booked ? 'text-fg-strong' : 'text-red-700 dark:text-red-300'}`}>{result.booked ? 'The test parcel was booked.' : 'The test parcel was not booked.'}</p>
+      <p className="text-fg-muted">{result.message}</p>
+      {result.trackingUrl === null ? null : <p className="break-all text-xs text-fg-muted">Tracking page: {result.trackingUrl}</p>}
+      {result.labelUrl === null ? null : <p className="break-all text-xs text-fg-muted">Label: {result.labelUrl}</p>}
+      {result.booked ? <p className="text-fg-muted">{result.cancelled ? 'It was cancelled again straight after.' : (result.cancelMessage ?? '')}</p> : null}
+    </div>
   );
 }

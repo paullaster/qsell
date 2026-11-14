@@ -38,6 +38,11 @@ export async function setCourierActiveAction(raw: unknown) {
   }, PATHS);
 }
 
+/** Books a parcel marked as a test with the courier's own system, then cancels it, and says what happened. */
+export async function testCourierParcelAction(raw: unknown) {
+  return await runDelivery('couriers:manage', async (ctx) => dataOf(await getContainer().courierAccounts.testParcel({ companyId: ctx.companyId, userId: ctx.userId }, idOf(objectOf(raw).id, 'courier'))), PATHS);
+}
+
 export async function renewCourierSecretAction(raw: unknown) {
   return await runDelivery('couriers:manage', async (ctx) => dataOf(await getContainer().courierAccounts.newWebhookSecret({ companyId: ctx.companyId, userId: ctx.userId }, idOf(objectOf(raw).id, 'courier'))), PATHS);
 }
