@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TEXT_KIND_CHOICES, isMessageKind, kindForStep, messageContent, messageKey, minutesToClock, quietEndsAt, readQuietHours, readTextKinds, reasonForCustomer, textContent, MESSAGE_KINDS, type MessageFacts } from './delivery-messages';
+import { DEFAULT_REMINDERS, TEXT_KIND_CHOICES, readReminders, isMessageKind, kindForStep, messageContent, messageKey, minutesToClock, quietEndsAt, readQuietHours, readTextKinds, reasonForCustomer, textContent, MESSAGE_KINDS, type MessageFacts } from './delivery-messages';
 
 const facts: MessageFacts = { tradingName: 'Test Traders', firstName: 'Wanjiru', orderNumber: 'ORD-77', deliveryNumber: 'DLV-26-0000000007', trackUrl: 'https://shop.example.test/track/abc', courierName: null, receivedBy: null,
   handoverCode: null, reasonCode: null, triesLeft: null, collection: null };
@@ -180,5 +180,16 @@ describe('ready to collect', () => {
   it('never carries the code in any other message, and says nothing of a code when it has none', () => {
     for (const kind of MESSAGE_KINDS.filter((k) => k !== 'ready_for_collection' && k !== 'collection_reminder')) expect(textContent(kind, at)).not.toContain('ABC-DEF');
     expect(textContent('ready_for_collection', facts)).not.toMatch(/code/i);
+  });
+});
+
+describe('reminder settings as typed', () => {
+  it('takes whole days, the last optional and later than the first, and says why in words when not', () => {
+    expect(readReminders(true, 3, 6)).toEqual({ ok: true, reminders: { enabled: true, firstDays: 3, secondDays: 6 } });
+    expect(readReminders(false, ' 2 ', '')).toEqual({ ok: true, reminders: { enabled: false, firstDays: 2, secondDays: null } });
+    expect(readReminders(true, 30, 60)).toMatchObject({ ok: true });
+    for (const first of [0, 31, 2.5, 'x', '', null, undefined, '1e1', -1]) expect(readReminders(true, first, '')).toMatchObject({ ok: false, error: expect.stringContaining('1 to 30') as string });
+    for (const second of [3, 2, 61, 'later', 4.5]) expect(readReminders(true, 3, second)).toMatchObject({ ok: false, error: expect.stringContaining('later than the first') as string });
+    expect(DEFAULT_REMINDERS).toEqual({ enabled: true, firstDays: 3, secondDays: 6 });
   });
 });

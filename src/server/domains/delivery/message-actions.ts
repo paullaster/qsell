@@ -28,3 +28,11 @@ export async function setCustomerTextsAction(raw: unknown) {
     return dataOf(await getContainer().deliveryTextSettings.set({ companyId: ctx.companyId, userId: ctx.userId }, { enabled: i.enabled, kinds: i.kinds, quietFrom: i.quietFrom, quietUntil: i.quietUntil, expectedVersion: i.expectedVersion }));
   }, PATHS);
 }
+
+/** Reminders for an order left at the counter: whether, and after how many days. */
+export async function setCollectionRemindersAction(raw: unknown) {
+  return await runDelivery('deliveries:manage', async (ctx) => {
+    const i = objectOf(raw);
+    return dataOf(await getContainer().deliveryTextSettings.setReminders({ companyId: ctx.companyId, userId: ctx.userId }, { enabled: i.enabled, firstDays: i.firstDays, secondDays: i.secondDays, expectedVersion: i.expectedVersion }));
+  }, PATHS);
+}

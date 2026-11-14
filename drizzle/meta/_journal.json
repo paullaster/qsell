@@ -1233,6 +1233,13 @@
       "when": 1794625979234,
       "tag": "0175_package_group_orders",
       "breakpoints": true
+    },
+    {
+      "idx": 176,
+      "version": "7",
+      "when": 1794626567487,
+      "tag": "0176_collection_reminder_settings",
+      "breakpoints": true
     }
   ]
 }

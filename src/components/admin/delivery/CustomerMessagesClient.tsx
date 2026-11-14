@@ -2,7 +2,7 @@
 
 import { use, useId, useState } from 'react';
 import Link from 'next/link';
-import { setCustomerTextsAction, type customerMessagesAction } from '@/server/domains/delivery/message-actions';
+import { setCollectionRemindersAction, setCustomerTextsAction, type customerMessagesAction } from '@/server/domains/delivery/message-actions';
 import { LoadFailed, Message, PageHeader, attempt, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
 import { TEXT_KIND_CHOICES, minutesToClock, type MessageKind } from '@/lib/delivery-messages';
 
@@ -33,7 +33,66 @@ function Body({ initial }: { initial: Data }) {
         }}
         onError={(text) => setNotice({ kind: 'error', text })}
       />
+      <RemindersForm
+        key={`reminders-${String(data.settings.version)}`}
+        data={data}
+        onSaved={(settings) => {
+          setData({ ...data, settings });
+          setNotice({ kind: 'ok', text: settings.reminders.enabled ? 'Saved. Customers who leave an order at the counter are reminded.' : 'Saved. Customers are no longer reminded about orders left at the counter.' });
+        }}
+        onError={(text) => setNotice({ kind: 'error', text })}
+      />
     </div>
+  );
+}
+
+function RemindersForm({ data, onSaved, onError }: { data: Data; onSaved: (settings: Data['settings']) => void; onError: (text: string) => void }) {
+  const uid = useId();
+  const saved = data.settings.reminders;
+  const [enabled, setEnabled] = useState(saved.enabled);
+  const [first, setFirst] = useState(String(saved.firstDays));
+  const [second, setSecond] = useState(saved.secondDays === null ? '' : String(saved.secondDays));
+  const [busy, setBusy] = useState(false);
+  const unchanged = enabled === saved.enabled && first === String(saved.firstDays) && second === (saved.secondDays === null ? '' : String(saved.secondDays));
+  const save = async () => {
+    setBusy(true);
+    const r = await attempt(setCollectionRemindersAction({ enabled, firstDays: first, secondDays: second, expectedVersion: data.settings.version }));
+    setBusy(false);
+    if (r.ok) onSaved(r.data);
+    else onError(r.error);
+  };
+  return (
+    <form
+      aria-label="Reminders for orders left at the counter"
+      // The server says what is wrong in words; the browser's own bubble would hide that.
+      noValidate
+      className={`${cardClass} space-y-4`}
+      onSubmit={(e) => {
+        e.preventDefault();
+        void save();
+      }}
+    >
+      <h3 className="text-sm font-bold text-fg-strong">Remind customers who have not collected</h3>
+      <p className="text-xs text-fg-muted">For an order packed and waiting at a branch. The reminder is emailed, and also texted when texting is on and “Ready to collect” is ticked above. It carries the branch and the collection code, and stops as soon as the order is collected or cancelled.</p>
+      <label htmlFor={`${uid}-on`} className="flex min-h-11 cursor-pointer items-center gap-3 text-sm text-fg">
+        <input id={`${uid}-on`} type="checkbox" className="h-5 w-5 accent-indigo-600" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+        Send reminders
+      </label>
+      <fieldset className="grid gap-3 sm:grid-cols-2" disabled={!enabled}>
+        <legend className="sr-only">When reminders go</legend>
+        <label htmlFor={`${uid}-first`} className="block text-xs font-semibold text-fg">
+          First reminder after (days)
+          <input id={`${uid}-first`} type="number" inputMode="numeric" min={1} max={30} className={`${fieldClass} mt-1`} value={first} onChange={(e) => setFirst(e.target.value)} />
+        </label>
+        <label htmlFor={`${uid}-second`} className="block text-xs font-semibold text-fg">
+          Last reminder after (days, empty for only one)
+          <input id={`${uid}-second`} type="number" inputMode="numeric" min={2} max={60} className={`${fieldClass} mt-1`} value={second} onChange={(e) => setSecond(e.target.value)} />
+        </label>
+      </fieldset>
+      <button type="submit" className={primaryClass} disabled={busy || unchanged}>
+        {busy ? 'Saving…' : 'Save the reminders'}
+      </button>
+    </form>
   );
 }
 

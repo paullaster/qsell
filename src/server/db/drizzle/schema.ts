@@ -11786,11 +11786,16 @@ export const deliveryTextSettings = pgTable(
     /** Minutes after midnight (business time) between which texts are held for the morning; both empty means texts go at any hour. */
     quietFromMinute: integer('quiet_from_minute'),
     quietUntilMinute: integer('quiet_until_minute'),
+    /** Reminders for an order left at the counter after it was marked ready: whether, the day of the first, and the day of the second (empty: no second). Mail goes whatever the texting setting is. */
+    collectionRemindersOn: boolean('collection_reminders_on').notNull().default(true),
+    collectionReminderFirstDays: integer('collection_reminder_first_days').notNull().default(3),
+    collectionReminderSecondDays: integer('collection_reminder_second_days').default(6),
     version: integer('version').notNull().default(1),
     updatedBy: text('updated_by'),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [check('delivery_text_settings_kinds_chk', sql`${t.kinds} <@ ARRAY['out_for_delivery','delivered','part_delivered','attempt_failed','returned','slot_not_kept','ready_for_collection']::text[]`),
+    check('delivery_text_settings_reminder_days_chk', sql`${t.collectionReminderFirstDays} between 1 and 30 and (${t.collectionReminderSecondDays} is null or (${t.collectionReminderSecondDays} > ${t.collectionReminderFirstDays} and ${t.collectionReminderSecondDays} <= 60))`),
     check('delivery_text_settings_quiet_chk', sql`(${t.quietFromMinute} is null and ${t.quietUntilMinute} is null) or (${t.quietFromMinute} between 0 and 1439 and ${t.quietUntilMinute} between 0 and 1439 and ${t.quietFromMinute} <> ${t.quietUntilMinute})`),
 ],
 );

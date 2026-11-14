@@ -53,5 +53,37 @@ test.describe('customer messages', () => {
     await again.getByLabel('Also text customers').uncheck();
     await again.getByRole('button', { name: 'Save' }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Customers are no longer texted' })).toBeVisible({ timeout: 30_000 });
+
+    // Reminders for an order left at the counter: nonsense days are refused in words, good ones are kept, and the defaults are put back.
+    const reminders = page.getByRole('form', { name: 'Reminders for orders left at the counter' });
+    await expect(reminders.getByLabel('Send reminders')).toBeChecked();
+    await expect(reminders.getByLabel('First reminder after (days)')).toHaveValue('3');
+    await expect(reminders.getByLabel(/^Last reminder after/)).toHaveValue('6');
+    await reminders.getByLabel('First reminder after (days)').fill('0');
+    await reminders.getByRole('button', { name: 'Save the reminders' }).click();
+    await expect(page.getByRole('alert').filter({ hasText: 'whole number from 1 to 30' })).toBeVisible({ timeout: 30_000 });
+    await reminders.getByLabel('First reminder after (days)').fill('5');
+    await reminders.getByLabel(/^Last reminder after/).fill('4');
+    await reminders.getByRole('button', { name: 'Save the reminders' }).click();
+    await expect(page.getByRole('alert').filter({ hasText: 'must come later than the first' })).toBeVisible({ timeout: 30_000 });
+    await reminders.getByLabel(/^Last reminder after/).fill('');
+    await reminders.getByRole('button', { name: 'Save the reminders' }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Customers who leave an order at the counter are reminded' })).toBeVisible({ timeout: 30_000 });
+    await open(page, '/admin/delivery/messages', 'Customer messages');
+    const kept = page.getByRole('form', { name: 'Reminders for orders left at the counter' });
+    await expect(kept.getByLabel('First reminder after (days)')).toHaveValue('5');
+    await expect(kept.getByLabel(/^Last reminder after/)).toHaveValue('');
+    await noInnerHorizontalScroll(page);
+    await noHorizontalScroll(page);
+    await kept.getByLabel('Send reminders').uncheck();
+    await expect(kept.getByLabel('First reminder after (days)')).toBeDisabled();
+    await kept.getByRole('button', { name: 'Save the reminders' }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'no longer reminded' })).toBeVisible({ timeout: 30_000 });
+    const back = page.getByRole('form', { name: 'Reminders for orders left at the counter' });
+    await back.getByLabel('Send reminders').check();
+    await back.getByLabel('First reminder after (days)').fill('3');
+    await back.getByLabel(/^Last reminder after/).fill('6');
+    await back.getByRole('button', { name: 'Save the reminders' }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Customers who leave an order at the counter are reminded' })).toBeVisible({ timeout: 30_000 });
   });
 });

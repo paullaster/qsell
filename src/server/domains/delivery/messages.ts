@@ -20,8 +20,6 @@ type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
 /** A message is tried this many times, with a longer wait each time, and then left as failed for a person to see. */
 const MAX_TRIES = 5;
-/** An order ready for collection and still sitting there is reminded about after these many days (the last one is the final reminder). */
-export const REMINDER_DAYS = [3, 6] as const;
 const LEASE_MINUTES = 10;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -187,8 +185,8 @@ export class DeliveryMessages {
     if (row.status === 'collected' || row.status === 'cancelled') throw new MessageNotNeeded('The order is no longer waiting to be collected.');
     const opened = decryptCredentials(row.sealed);
     if (typeof opened?.code !== 'string') throw new Error('The collection code could not be read.');
-    const stage = /:collection_reminder:(\d+)(:sms)?$/.exec(m.messageKey);
-    const reminder = m.kind === 'collection_reminder' ? { waitingDays: Math.max(1, Math.floor(((m.createdAt.getTime()) - (row.readyAt?.getTime() ?? m.createdAt.getTime())) / 86_400_000)), lastReminder: Number(stage?.[1] ?? 0) >= REMINDER_DAYS.length } : {};
+    const stage = /:collection_reminder:(\d+)(:last)?(:sms)?$/.exec(m.messageKey);
+    const reminder = m.kind === 'collection_reminder' ? { waitingDays: Math.max(1, Math.floor(((m.createdAt.getTime()) - (row.readyAt?.getTime() ?? m.createdAt.getTime())) / 86_400_000)), lastReminder: stage?.[2] === ':last' } : {};
     const facts: MessageFacts = {
       tradingName,
       firstName: row.customerName.trim().split(/\s+/)[0] ?? '',

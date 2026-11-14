@@ -209,6 +209,32 @@ export function readQuietHours(from: unknown, until: unknown): QuietHoursInput {
   return { ok: true, quiet: { from: f, until: u } };
 }
 
+export interface CollectionReminders {
+  enabled: boolean;
+  /** Whole days after the order was marked ready. */
+  firstDays: number;
+  /** Whole days after it was marked ready, for the last reminder; null when there is only one. */
+  secondDays: number | null;
+}
+export const DEFAULT_REMINDERS: CollectionReminders = { enabled: true, firstDays: 3, secondDays: 6 };
+export type RemindersInput = { ok: true; reminders: CollectionReminders } | { ok: false; error: string };
+
+const wholeDays = (v: unknown): number | null => {
+  if (typeof v === 'number') return Number.isInteger(v) ? v : null;
+  return typeof v === 'string' && /^\d{1,3}$/.test(v.trim()) ? Number(v.trim()) : null;
+};
+
+/** The reminder settings as typed: a first reminder of 1 to 30 days, and an optional last one later than it, up to 60 days. Empty for the last one means there is only one reminder. */
+export function readReminders(enabled: unknown, first: unknown, second: unknown): RemindersInput {
+  const firstDays = wholeDays(first);
+  if (firstDays === null || firstDays < 1 || firstDays > 30) return { ok: false, error: 'Give the days before the first reminder as a whole number from 1 to 30.' };
+  const blank = second === undefined || second === null || (typeof second === 'string' && second.trim() === '');
+  if (blank) return { ok: true, reminders: { enabled: enabled === true, firstDays, secondDays: null } };
+  const secondDays = wholeDays(second);
+  if (secondDays === null || secondDays <= firstDays || secondDays > 60) return { ok: false, error: 'The last reminder must come later than the first, at most 60 days after the order was ready. Leave it empty to send only one.' };
+  return { ok: true, reminders: { enabled: enabled === true, firstDays, secondDays } };
+}
+
 /** When a text due `now` may go, if `now` falls in the quiet hours (the next time they end, on the minute); null when it may go now. */
 export function quietEndsAt(now: Date, quiet: QuietHours | null, timeZone: string): Date | null {
   if (quiet === null) return null;

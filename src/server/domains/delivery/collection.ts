@@ -1,13 +1,14 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, deliveryMessages, orderCollections, orders } from '@/server/db/drizzle/schema';
+import { branches, deliveryMessages, deliveryTextSettings, orderCollections, orders } from '@/server/db/drizzle/schema';
 import { COLLECTION_ATTEMPT_LIMIT, generateCollectionCode, isWellFormedCollectionCode, normalizeCollectionCode } from '@/lib/collection-code';
 import { decryptCredentials, encryptCredentials, fingerprintSecret } from '@/server/domains/payments/crypto';
 import { OrderStages } from '@/server/domains/orders/stages';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { orderReadinessProblem } from './order-readiness';
-import { REMINDER_DAYS, type DeliveryMessages } from './messages';
+import { DEFAULT_REMINDERS } from '@/lib/delivery-messages';
+import type { DeliveryMessages } from './messages';
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
@@ -248,32 +249,51 @@ export class OrderCollections {
   }
 
   /**
-   * Orders that have sat ready at the counter for 3 days, and then 6, get a reminder (once each: the message key carries the stage, so a
-   * repeated or overlapping scan queues nothing new). A scan that was down for days queues only the latest stage that is due. An order
-   * that is collected, cancelled or has had both reminders drops out of the search. Returns how many reminders were queued.
+   * Orders that have sat ready at the counter past the days their company chose (3, and then 6, unless changed or turned off) get a
+   * reminder, once for each stage: the message key carries the stage, so a repeated or overlapping scan queues nothing new, and a scan
+   * that was down for days queues only the latest stage that is due. An order that is collected, cancelled or has had its last
+   * reminder drops out of the search. Returns how many reminders were queued.
    */
   async remindUncollected(now: Date = new Date(), limit = 200): Promise<number> {
-    const first = new Date(now.getTime() - REMINDER_DAYS[0] * 86_400_000);
+    const first = sql`coalesce(${deliveryTextSettings.collectionReminderFirstDays}, ${DEFAULT_REMINDERS.firstDays})`;
+    const stages = sql`case when ${deliveryTextSettings.companyId} is null then 2 when ${deliveryTextSettings.collectionReminderSecondDays} is null then 1 else 2 end`;
     const candidates = await this.db
-      .select({ orderId: orderCollections.orderId, companyId: orderCollections.companyId, readyAt: orderCollections.readyAt })
+      .select({
+        orderId: orderCollections.orderId,
+        companyId: orderCollections.companyId,
+        readyAt: orderCollections.readyAt,
+        first: sql<number>`${first}::int`,
+        second: sql<number | null>`case when ${deliveryTextSettings.companyId} is null then ${DEFAULT_REMINDERS.secondDays ?? 0}::int else ${deliveryTextSettings.collectionReminderSecondDays} end`,
+      })
       .from(orderCollections)
-      .where(and(inArray(orderCollections.status, ['ready', 'locked']), lte(orderCollections.readyAt, first), sql`not exists (select 1 from ${deliveryMessages} m where m.company_id = ${orderCollections.companyId} and m.message_key = ${orderCollections.orderId} || ':collection_reminder:' || ${String(REMINDER_DAYS.length)})`))
+      .leftJoin(deliveryTextSettings, eq(deliveryTextSettings.companyId, orderCollections.companyId))
+      .where(
+        and(
+          inArray(orderCollections.status, ['ready', 'locked']),
+          sql`coalesce(${deliveryTextSettings.collectionRemindersOn}, true)`,
+          lte(orderCollections.readyAt, sql`${now.toISOString()}::timestamptz - make_interval(days => ${first})`),
+          // Not when the last stage has already been queued.
+          sql`coalesce((select max((substring(m.message_key from ':collection_reminder:([0-9]+)'))::int) from ${deliveryMessages} m where m.company_id = ${orderCollections.companyId} and m.order_id = ${orderCollections.orderId} and m.kind = 'collection_reminder'), 0) < ${stages}`,
+        ),
+      )
       .orderBy(orderCollections.readyAt)
       .limit(limit);
     let queued = 0;
     for (const c of candidates) {
       if (c.readyAt === null || this.messages === null) continue;
       const waited = (now.getTime() - c.readyAt.getTime()) / 86_400_000;
-      const stage = REMINDER_DAYS.filter((d) => waited >= d).length;
+      const last = c.second === null ? 1 : 2;
+      const reachedFirst = waited >= c.first;
+      const stage = c.second !== null && waited >= c.second ? 2 : Number(reachedFirst);
       if (stage === 0) continue;
       const messages = this.messages;
       const made = await this.db.transaction(async (tx) => {
         // Look again under the lock: it may have been collected since the search.
         const [row] = await tx.select({ status: orderCollections.status }).from(orderCollections).where(and(eq(orderCollections.orderId, c.orderId), eq(orderCollections.companyId, c.companyId))).for('update');
         if (row === undefined || (row.status !== 'ready' && row.status !== 'locked')) return false;
-        const key = `${c.orderId}:collection_reminder:${String(stage)}`;
-        const [had] = await tx.select({ id: deliveryMessages.id }).from(deliveryMessages).where(and(eq(deliveryMessages.companyId, c.companyId), eq(deliveryMessages.messageKey, key)));
-        if (had !== undefined) return false;
+        const [had] = await tx.select({ n: sql<number>`coalesce(max((substring(${deliveryMessages.messageKey} from ':collection_reminder:([0-9]+)'))::int), 0)` }).from(deliveryMessages).where(and(eq(deliveryMessages.companyId, c.companyId), eq(deliveryMessages.orderId, c.orderId), eq(deliveryMessages.kind, 'collection_reminder')));
+        if ((had?.n ?? 0) >= stage) return false;
+        const key = `${c.orderId}:collection_reminder:${String(stage)}${stage === last ? ':last' : ''}`;
         await messages.enqueueIn(tx, { companyId: c.companyId, orderId: c.orderId, deliveryId: null, kind: 'collection_reminder', key, textAs: 'ready_for_collection' });
         return true;
       });
