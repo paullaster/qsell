@@ -1009,3 +1009,9 @@ No migration. `CollectionView` gains `waitingDays`: whole days since the order w
 
 **Verified.** Database: 9 days after the reminders, and null once collected. Browser: no note on an order just marked ready. Not built: the same flag in the orders list, and a filter for orders left too long.
 
+## 75. The reminder has its own text choice (2026-11-14)
+
+Migration 0178 lets `delivery_text_settings.kinds` hold `collection_reminder` (check and column default changed) and, by hand, adds it to every company that already texted "Ready to collect", so nothing changes for them. The reminder no longer follows "Ready to collect": `TEXT_KIND_CHOICES` lists "Reminder for an order left at the counter" (on by default), `readTextKinds` accepts it, and the `textAs` option of `enqueueIn` is gone. Mail is unchanged.
+
+**Verified.** Unit: the choice is accepted and ordered. Database: with only Ready to collect ticked the reminder is mailed and not texted; with only the reminder ticked it is mailed and texted. Browser: the choice is saved and kept.
+

@@ -297,7 +297,7 @@ export class OrderCollections {
         const [had] = await tx.select({ n: sql<number>`coalesce(max((substring(${deliveryMessages.messageKey} from ':collection_reminder:([0-9]+)'))::int), 0)` }).from(deliveryMessages).where(and(eq(deliveryMessages.companyId, c.companyId), eq(deliveryMessages.orderId, c.orderId), eq(deliveryMessages.kind, 'collection_reminder')));
         if ((had?.n ?? 0) >= stage) return false;
         const key = `${c.orderId}:collection_reminder:${String(stage)}${stage === last ? ':last' : ''}`;
-        await messages.enqueueIn(tx, { companyId: c.companyId, orderId: c.orderId, deliveryId: null, kind: 'collection_reminder', key, textAs: 'ready_for_collection' });
+        await messages.enqueueIn(tx, { companyId: c.companyId, orderId: c.orderId, deliveryId: null, kind: 'collection_reminder', key });
         return true;
       });
       if (made) queued += 1;

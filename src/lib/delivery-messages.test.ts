@@ -103,8 +103,9 @@ describe('customer text messages', () => {
     expect(readTextKinds([])).toEqual({ ok: true, kinds: [] });
     expect(readTextKinds(['nonsense']).ok).toBe(false);
     expect(readTextKinds('delivered').ok).toBe(false);
-    expect(readTextKinds(['collection_reminder']).ok).toBe(false);
-    expect(TEXT_KIND_CHOICES.map((c) => c.kind)).toEqual(MESSAGE_KINDS.filter((k) => k !== 'collection_reminder'));
+    // The reminder is a choice of its own, listed after the first message about collecting.
+    expect(readTextKinds(['collection_reminder', 'ready_for_collection'])).toEqual({ ok: true, kinds: ['ready_for_collection', 'collection_reminder'] });
+    expect(TEXT_KIND_CHOICES.map((c) => c.kind)).toEqual([...MESSAGE_KINDS]);
   });
 });
 

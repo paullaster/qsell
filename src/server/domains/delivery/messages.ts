@@ -72,7 +72,7 @@ export class DeliveryMessages {
    * company has turned texting on for this kind of message, the same message is also queued by text to the customer's number, as its own
    * row (the key ends in `:sms`), so a mail that fails never holds back the text, or the other way round.
    */
-  async enqueueIn(tx: Tx, input: { companyId: string; orderId: string; deliveryId: string | null; kind: MessageKind; key: string; /** The text choice that decides whether this is also texted, when it is not the kind itself (the reminder follows "Ready to collect"). */ textAs?: MessageKind }): Promise<void> {
+  async enqueueIn(tx: Tx, input: { companyId: string; orderId: string; deliveryId: string | null; kind: MessageKind; key: string }): Promise<void> {
     const [order] = await tx.select({ email: orders.customerEmail, phone: orders.customerPhone }).from(orders).where(eq(orders.id, input.orderId));
     const address = order?.email.trim().toLowerCase() ?? '';
     const usable = EMAIL.test(address);
@@ -82,7 +82,7 @@ export class DeliveryMessages {
       .onConflictDoNothing();
     if (this.texting === null) return;
     const settings = await this.texting.settings.get(input.companyId, tx);
-    if (!settings.enabled || !settings.kinds.includes(input.textAs ?? input.kind)) return;
+    if (!settings.enabled || !settings.kinds.includes(input.kind)) return;
     const phone = internationalPhone(order?.phone);
     await tx
       .insert(deliveryMessages)

@@ -129,7 +129,8 @@ export const TEXT_KIND_CHOICES: readonly { kind: MessageKind; label: string; hin
   { kind: 'attempt_failed', label: 'Could not deliver', hint: 'Says why, and how many tries are left.', onByDefault: true },
   { kind: 'returned', label: 'Coming back to us', hint: 'Says the order is being returned.', onByDefault: false },
   { kind: 'slot_not_kept', label: 'Delivery time not kept', hint: 'Says the chosen time could not be held.', onByDefault: false },
-  { kind: 'ready_for_collection', label: 'Ready to collect', hint: 'For orders collected from a branch: says where, and carries the collection code to show at the counter. Also covers a new code and the reminder for an order not yet collected.', onByDefault: true },
+  { kind: 'ready_for_collection', label: 'Ready to collect', hint: 'For orders collected from a branch: says where, and carries the collection code to show at the counter. Also covers a new code.', onByDefault: true },
+  { kind: 'collection_reminder', label: 'Reminder for an order left at the counter', hint: 'Says how long the order has waited and carries the collection code. Mail is always sent when reminders are on; this adds a text.', onByDefault: true },
 ];
 
 export type TextKindsInput = { ok: true; kinds: MessageKind[] } | { ok: false; error: string };
@@ -139,7 +140,7 @@ export function readTextKinds(raw: unknown): TextKindsInput {
   if (!Array.isArray(raw)) return { ok: false, error: 'Choose which messages are also texted.' };
   const wanted = new Set<string>();
   for (const k of raw) {
-    // Only the choices on the screen: a message that follows another (the reminder) is not a choice of its own.
+    // Only the choices on the screen.
     if (!isMessageKind(k) || !TEXT_KIND_CHOICES.some((c) => c.kind === k)) return { ok: false, error: 'One of the messages chosen is not one we send.' };
     wanted.add(k);
   }

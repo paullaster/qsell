@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { and, eq, inArray } from 'drizzle-orm';
 import { has } from '@/lib/values';
+import type { MessageKind } from '@/lib/delivery-messages';
 import { COLLECTION_ATTEMPT_LIMIT, normalizeCollectionCode } from '@/lib/collection-code';
 import type * as mod_server_di_container from '@/server/di/container';
 import type * as mod_server_db_drizzle_client from '@/server/db/drizzle/client';
@@ -217,9 +218,9 @@ describe.skipIf(!has(url))('collecting an order from a branch (database)', () =>
           sender: () => Promise.resolve({ send: (m: { to: string; text: string }) => { texted.push(m); return Promise.resolve({ providerMessageId: null }); } }),
         });
       };
-      const setTexts = async (enabled: boolean) => {
+      const setTexts = async (enabled: boolean, kinds: MessageKind[] = ['ready_for_collection', 'collection_reminder']) => {
         const now = await c.deliveryTextSettings.get(companyId);
-        return await c.deliveryTextSettings.set({ companyId, userId: 'counter-1' }, { enabled, kinds: ['ready_for_collection'], expectedVersion: now.version });
+        return await c.deliveryTextSettings.set({ companyId, userId: 'counter-1' }, { enabled, kinds, expectedVersion: now.version });
       };
       const messagesOf = async (orderId: string) => (await db.select().from(schema.deliveryMessages).where(eq(schema.deliveryMessages.orderId, orderId))).map((m) => `${m.kind}:${m.channel}:${m.status}`).sort();
       beforeEach(() => {
@@ -333,6 +334,23 @@ describe.skipIf(!has(url))('collecting an order from a branch (database)', () =>
         expect(looked).toMatchObject({ ok: true, data: { view: { waitingDays: 9 } } });
         await c.orderCollections.collectWithCode(staff(), w.order.id, w.code);
         expect(await c.orderCollections.view(companyId, w.order.id)).toMatchObject({ status: 'collected', waitingDays: null });
+      });
+
+      it('texts the reminder only when its own text choice is ticked, whatever Ready to collect says', async () => {
+        await setTexts(true, ['ready_for_collection']);
+        const w = await waiting();
+        await c.orderCollections.markReady(staff(), w.order.id);
+        await db.update(schema.orderCollections).set({ readyAt: new Date(Date.now() - 4 * 86_400_000) }).where(eq(schema.orderCollections.orderId, w.order.id));
+        await c.orderCollections.remindUncollected();
+        expect(await messagesOf(w.order.id)).toEqual(['collection_reminder:email:queued', 'ready_for_collection:email:queued', 'ready_for_collection:sms:queued']);
+        await (await flusher()).flush(500);
+        await setTexts(true, ['collection_reminder']);
+        const x = await waiting();
+        await c.orderCollections.markReady(staff(), x.order.id);
+        await db.update(schema.orderCollections).set({ readyAt: new Date(Date.now() - 4 * 86_400_000) }).where(eq(schema.orderCollections.orderId, x.order.id));
+        await c.orderCollections.remindUncollected();
+        expect(await messagesOf(x.order.id)).toEqual(['collection_reminder:email:queued', 'collection_reminder:sms:queued', 'ready_for_collection:email:queued']);
+        await (await flusher()).flush(500);
       });
 
       it('does not remind about an order that is collected, not yet ready, or waiting under 3 days, and a reminder not yet sent is skipped once it is collected', async () => {
