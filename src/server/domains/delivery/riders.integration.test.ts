@@ -400,6 +400,12 @@ describe.skipIf(!has(url))('riders (database)', () => {
       await c.deliveryVehicles.setActive(dispatcher(), usual.id, { isActive: false, expectedVersion: usual.version });
       const after = await c.deliveryRuns.create(dispatcher(), { branchId, runDate: today(), riderId: made.data.id });
       expect(after.ok && (await get(after.data.id))).toMatchObject({ vehicleId: null, vehicle: null });
+      // And it is said in words, and kept in the decision log; a run that got the vehicle, or was given one by the office, says nothing.
+      expect(after.ok && after.data.vehicleNote).toMatch(/usual vehicle is stopped.*no vehicle yet/);
+      expect(plain.ok && plain.data.vehicleNote).toBeNull();
+      expect(chosen.ok && chosen.data.vehicleNote).toBeNull();
+      const said = await db.select().from(schema.decisionLog).where(and(eq(schema.decisionLog.subjectId, after.ok ? after.data.id : ''), eq(schema.decisionLog.action, 'run.usual_vehicle_not_used')));
+      expect(said).toHaveLength(1);
     });
   });
 
@@ -469,8 +475,14 @@ describe.skipIf(!has(url))('riders (database)', () => {
       const c2 = await riderWith(stoppedVan.id);
       const following = await make({});
       await c.deliveryVehicles.setActive(dispatcher(), stoppedVan.id, { isActive: false, expectedVersion: stoppedVan.version });
-      expect(await c.deliveryRuns.assignRider(dispatcher(), following, { riderId: c2 })).toMatchObject({ ok: true });
+      const skipped = await c.deliveryRuns.assignRider(dispatcher(), following, { riderId: c2 });
+      expect(skipped).toMatchObject({ ok: true, data: { vehicleNote: expect.stringMatching(/usual vehicle is stopped.*keeps .*Bike/) as string } });
       expect(await vehicleOf(following)).toEqual({ vehicleId: bike.id, vehicle: bike.name });
+      const noted = await db.select().from(schema.decisionLog).where(and(eq(schema.decisionLog.subjectId, following), eq(schema.decisionLog.action, 'run.rider_changed')));
+      expect(noted.map((l) => l.reasonText)).toEqual([expect.stringContaining('usual vehicle not used') as string]);
+      // Says nothing when nothing was skipped: the office's own choice, a rider with no usual vehicle, the same rider.
+      expect(await c.deliveryRuns.assignRider(dispatcher(), chosen, { riderId: a })).toMatchObject({ ok: true, data: { vehicleNote: null } });
+      expect(await c.deliveryRuns.assignRider(dispatcher(), toPlain, { riderId: plain })).toMatchObject({ ok: true, data: { vehicleNote: null } });
     });
 
     it('keeps the vehicle when the new rider\'s usual one could not carry what is already on the run', async () => {
@@ -484,7 +496,7 @@ describe.skipIf(!has(url))('riders (database)', () => {
       if (!run.ok) throw new Error(run.message);
       expect(await c.deliveryRuns.addStop(dispatcher(), run.data.id, ready.deliveryId)).toMatchObject({ ok: true });
       // 3 x 10 kg is more than the small vehicle takes: the rider changes, the vehicle stays.
-      expect(await c.deliveryRuns.assignRider(dispatcher(), run.data.id, { riderId: b })).toMatchObject({ ok: true, data: { vehicleId: bike.id } });
+      expect(await c.deliveryRuns.assignRider(dispatcher(), run.data.id, { riderId: b })).toMatchObject({ ok: true, data: { vehicleId: bike.id, vehicleNote: expect.stringMatching(/Small.*cannot take what is already on the run.*carries at most 12 kg/) as string } });
     });
   });
 

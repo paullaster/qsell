@@ -158,6 +158,18 @@ test.describe('delivery vehicles', () => {
       await expect(page.getByText('The run is with the new rider.')).toBeVisible({ timeout: 30_000 });
       await expect(page.getByText(new RegExp(`${other} · ${second} ·`))).toBeVisible({ timeout: 30_000 });
       await noHorizontalScroll(page);
+
+      // The first rider's usual vehicle is then stopped; giving the run back to them cannot bring it, and the screen says so in words rather than doing nothing.
+      await open(page, '/admin/delivery/vehicles', 'Vehicles');
+      const first = page.getByRole('list', { name: 'Vehicle list' }).getByRole('listitem').filter({ hasText: vehicle });
+      await first.getByRole('button', { name: 'Stop using' }).click();
+      await expect(page.getByText(`${vehicle} is stopped.`)).toBeVisible({ timeout: 30_000 });
+      await open(page, '/admin/delivery/dispatch', 'Dispatch board');
+      await followLink(page.getByRole('region', { name: 'Runs to do' }).getByRole('link', { name: runNumber }), page, /\/admin\/delivery\/runs\//, page.getByRole('heading', { name: new RegExp(`^Run ${runNumber}`), level: 2 }));
+      await pick(page, page.getByRole('combobox', { name: 'Give the run to another rider' }), name, new RegExp(name));
+      await page.getByRole('button', { name: 'Give the run', exact: true }).click();
+      await expect(page.getByText(new RegExp(`${name}'s usual vehicle is stopped.*keeps ${second}`))).toBeVisible({ timeout: 30_000 });
+      await noHorizontalScroll(page);
     } finally {
       // This test switched own-account riders on; other specs expect the default (staff only), so it is put back.
       riderTool('reset', tag);

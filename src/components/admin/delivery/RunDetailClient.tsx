@@ -44,8 +44,8 @@ function Screen({ initial }: { initial: RunView }) {
       setNotice({ kind: 'error', text: result.error });
       return;
     }
-    setView(result.data);
-    setNotice({ kind: 'ok', text: done });
+    setView({ ...result.data, vehicleNote: null });
+    setNotice({ kind: 'ok', text: result.data.vehicleNote === null || result.data.vehicleNote === undefined ? done : `${done} ${result.data.vehicleNote}` });
     after?.();
   };
 

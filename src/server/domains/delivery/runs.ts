@@ -49,6 +49,8 @@ export interface RunView {
   /** The fleet vehicle chosen from the register, and what it may carry; null when the vehicle was only typed in or none was given. */
   vehicleId: string | null;
   limits: VehicleLimits | null;
+  /** Said once, in the answer to giving the run to another rider, when their usual vehicle was not put on the run and why; null otherwise and never kept. */
+  vehicleNote?: string | null;
   notes: string | null;
   status: RunStatus;
   statusWords: string;
@@ -147,12 +149,12 @@ export class DeliveryRuns {
     return riderName === null ? fail('bad_input', 'Say who the rider is.') : { ok: true, data: { riderId: null, riderName, usualVehicleId: null } };
   }
 
-  async create(actor: DocActor, input: { branchId?: unknown; runDate?: unknown; riderId?: unknown; riderName?: unknown; vehicle?: unknown; vehicleId?: unknown; notes?: unknown }): Promise<DocResult<{ id: string; number: string; vehicle: string | null }>> {
+  async create(actor: DocActor, input: { branchId?: unknown; runDate?: unknown; riderId?: unknown; riderName?: unknown; vehicle?: unknown; vehicleId?: unknown; notes?: unknown }): Promise<DocResult<{ id: string; number: string; vehicle: string | null; vehicleNote: string | null }>> {
     const runDate = typeof input.runDate === 'string' && DATE.test(input.runDate) && !Number.isNaN(Date.parse(input.runDate)) ? input.runDate : null;
     if (runDate === null) return fail('bad_input', 'Choose the day of the run.');
     if (typeof input.branchId !== 'string' || input.branchId === '') return fail('bad_input', 'Choose the branch the run leaves from.');
     const branchId = input.branchId;
-    return await this.db.transaction(async (tx): Promise<DocResult<{ id: string; number: string; vehicle: string | null }>> => {
+    return await this.db.transaction(async (tx): Promise<DocResult<{ id: string; number: string; vehicle: string | null; vehicleNote: string | null }>> => {
       const [branch] = await tx.select({ id: branches.id }).from(branches).where(and(eq(branches.id, branchId), eq(branches.companyId, actor.companyId), eq(branches.isActive, true)));
       if (branch === undefined) return fail('not_found', 'That branch could not be found.');
       const who = await this.riderFor(tx, actor.companyId, input);
@@ -166,7 +168,9 @@ export class DeliveryRuns {
       const { number } = await this.numbering.assign('delivery_run', { companyId: actor.companyId, date: businessDate(), document: { kind: 'delivery_run', id } }, tx);
       await tx.insert(deliveryRuns).values({ id, companyId: actor.companyId, number, branchId, runDate, riderName, riderId, vehicle: chosen.data.name, vehicleId: chosen.data.id, notes: text(input.notes, 300), createdBy: actor.userId });
       await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_run', id }, action: 'run.created', actor: { type: 'user', id: actor.userId }, to: 'planned', reason: { text: `${riderName}, ${runDate}` } }, tx);
-      return { ok: true, data: { id, number, vehicle: chosen.data.name } };
+      const skipped = !asked && who.data.usualVehicleId !== null && chosen.data.id === null;
+      if (skipped) await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_run', id }, action: 'run.usual_vehicle_not_used', actor: { type: 'user', id: actor.userId }, reason: { text: `${riderName}'s usual vehicle is stopped or no longer in the list` } }, tx);
+      return { ok: true, data: { id, number, vehicle: chosen.data.name, vehicleNote: skipped ? `${riderName}'s usual vehicle is stopped or no longer in the list, so the run has no vehicle yet. Choose one for it.` : null } };
     });
   }
 
@@ -217,10 +221,12 @@ export class DeliveryRuns {
       if ('ok' in run) return run;
       const who = await this.riderFor(tx, actor.companyId, input);
       if (!who.ok) return who;
-      const vehicle = await this.vehicleToCarryOver(tx, actor.companyId, run, who.data);
+      const carried = await this.vehicleToCarryOver(tx, actor.companyId, run, who.data);
+      const vehicle = carried.use;
+      const note = carried.skipped === null ? null : `${who.data.riderName}'s usual vehicle ${carried.skipped}, so the run keeps ${run.vehicle ?? 'no vehicle'}. Choose a vehicle for it if it needs one.`;
       await tx.update(deliveryRuns).set({ riderId: who.data.riderId, riderName: who.data.riderName, ...(vehicle === null ? {} : { vehicle: vehicle.name, vehicleId: vehicle.id }), version: run.version + 1, updatedAt: new Date() }).where(eq(deliveryRuns.id, runId));
-      await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_run', id: runId }, action: 'run.rider_changed', actor: { type: 'user', id: actor.userId }, reason: { text: `${run.riderName} to ${who.data.riderName}${vehicle === null ? '' : `; vehicle ${run.vehicle ?? 'none'} to ${vehicle.name}`}` } }, tx);
-      return { ok: true, data: await this.viewIn(tx, actor.companyId, runId) };
+      await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_run', id: runId }, action: 'run.rider_changed', actor: { type: 'user', id: actor.userId }, reason: { text: `${run.riderName} to ${who.data.riderName}${vehicle === null ? '' : `; vehicle ${run.vehicle ?? 'none'} to ${vehicle.name}`}${note === null ? '' : `; usual vehicle not used: ${carried.skipped ?? ''}`}` } }, tx);
+      return { ok: true, data: { ...(await this.viewIn(tx, actor.companyId, runId)), vehicleNote: note } };
     });
   }
 
@@ -229,17 +235,19 @@ export class DeliveryRuns {
    * previous rider's usual one (so it was only following the rider, not chosen or typed by the office). Never when the new rider has none,
    * when theirs is stopped, when it would be overloaded by what is already on the run, or when the office chose another: those stay as they are.
    */
-  private async vehicleToCarryOver(tx: Tx, companyId: string, run: { id: string; riderId: string | null; vehicleId: string | null; vehicle: string | null }, next: { riderId: string | null; usualVehicleId: string | null }): Promise<{ id: string; name: string } | null> {
-    if (next.usualVehicleId === null || next.riderId === run.riderId || run.vehicleId === next.usualVehicleId) return null;
+  private async vehicleToCarryOver(tx: Tx, companyId: string, run: { id: string; riderId: string | null; vehicleId: string | null; vehicle: string | null }, next: { riderId: string | null; usualVehicleId: string | null }): Promise<{ use: { id: string; name: string } | null; skipped: string | null }> {
+    const none = { use: null, skipped: null };
+    if (next.usualVehicleId === null || next.riderId === run.riderId || run.vehicleId === next.usualVehicleId) return none;
     let followsRider = run.vehicleId === null && run.vehicle === null;
     if (!followsRider && run.vehicleId !== null && run.riderId !== null) {
       const [previous] = await tx.select({ vehicleId: deliveryRiders.vehicleId }).from(deliveryRiders).where(and(eq(deliveryRiders.id, run.riderId), eq(deliveryRiders.companyId, companyId)));
       followsRider = previous?.vehicleId === run.vehicleId;
     }
-    if (!followsRider) return null;
+    if (!followsRider) return none;
     const usable = await this.vehicles.usable(tx, companyId, next.usualVehicleId);
-    if (usable === null) return null;
-    return (await this.overload(tx, { id: run.id, vehicleId: usable.id }, companyId, null)) === null ? { id: usable.id, name: usable.name } : null;
+    if (usable === null) return { use: null, skipped: 'is stopped or no longer in the list' };
+    const tooMuch = await this.overload(tx, { id: run.id, vehicleId: usable.id }, companyId, null);
+    return tooMuch === null ? { use: { id: usable.id, name: usable.name }, skipped: null } : { use: null, skipped: `(${usable.name}) cannot take what is already on the run: ${tooMuch}` };
   }
 
   /** Locks a run and checks the version and that it can still be edited. */
