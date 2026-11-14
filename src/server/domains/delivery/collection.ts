@@ -1,7 +1,7 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, orderCollections, orders } from '@/server/db/drizzle/schema';
+import { branches, deliveryMessages, orderCollections, orders } from '@/server/db/drizzle/schema';
 import { COLLECTION_ATTEMPT_LIMIT, generateCollectionCode, isWellFormedCollectionCode, normalizeCollectionCode } from '@/lib/collection-code';
 import { decryptCredentials, encryptCredentials, fingerprintSecret } from '@/server/domains/payments/crypto';
 import { OrderStages } from '@/server/domains/orders/stages';
@@ -235,6 +235,14 @@ export class OrderCollections {
         .where(eq(orderCollections.orderId, orderId));
       await OrderStages.moveIn(tx, orderId, 'delivery_attempted', 'entered', { actor: { type: 'user', id: actor.userId }, message: 'A new collection code was given', detail: { by: actor.userId } });
       await this.decisions.record({ companyId: actor.companyId, subject: { type: 'order', id: orderId }, action: 'delivery.collection_code_reissued', actor: { type: 'user', id: actor.userId }, from: row.status, to: row.status === 'locked' ? 'waiting' : row.status, reason: { text: reason } }, tx);
+      // A customer who was already told the order is ready holds a code that no longer works: send the new one. Before that, the first
+      // message carries whatever the code is when it goes, so there is nothing to correct.
+      if (row.readyAt !== null && this.messages !== null) {
+        const [counted] = await tx.select({ n: sql<number>`count(*)::int` }).from(deliveryMessages).where(and(eq(deliveryMessages.orderId, orderId), eq(deliveryMessages.kind, 'ready_for_collection'), eq(deliveryMessages.channel, 'email')));
+        // Anything not yet sent would carry the new code too, so it is replaced rather than sent twice.
+        await tx.update(deliveryMessages).set({ status: 'skipped', lastError: 'A newer message with the new code replaces it.' }).where(and(eq(deliveryMessages.orderId, orderId), eq(deliveryMessages.kind, 'ready_for_collection'), inArray(deliveryMessages.status, ['queued', 'failed'])));
+        await this.messages.enqueueIn(tx, { companyId: actor.companyId, orderId, deliveryId: null, kind: 'ready_for_collection', key: `${orderId}:ready_for_collection:${String(counted?.n ?? 1)}` });
+      }
       return { ok: true as const, code, view: await this.requireView(tx, actor.companyId, orderId) };
     });
   }

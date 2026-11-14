@@ -139,6 +139,17 @@ describe('quiet hours for texts', () => {
 
 describe('ready to collect', () => {
   const at = { ...facts, collection: { branchName: 'Westlands Branch', code: 'ABC-DEF' } };
+  it('says a new code replaces the old one when the code was renewed, and says nothing of the sort the first time', () => {
+    const renewed = { ...facts, collection: { branchName: 'Westlands Branch', code: 'XYZ-123', renewed: true } };
+    const m = messageContent('ready_for_collection', renewed);
+    expect(m.heading).toBe('Your new collection code');
+    expect(m.body).toContain('no longer works');
+    expect(m.details).toContainEqual(['Collection code', 'XYZ-123']);
+    const t = textContent('ready_for_collection', renewed);
+    expect(t).toMatch(/new collection code: XYZ-123\. The old one no longer works/);
+    expect(t.endsWith(facts.trackUrl)).toBe(true);
+    expect(messageContent('ready_for_collection', at).body).not.toContain('no longer works');
+  });
   it('names the branch and carries the collection code in the mail and the text, and the text stays short with the link last', () => {
     const m = messageContent('ready_for_collection', at);
     expect(m.subject).toContain('ready to collect');

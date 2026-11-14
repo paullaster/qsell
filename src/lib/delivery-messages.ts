@@ -47,7 +47,7 @@ export interface MessageFacts {
   /** How many tries are left, when a delivery failed and can be tried again. */
   triesLeft: number | null;
   /** For an order collected from a branch: where, and the code to show at the counter (as the customer reads it). Null for a delivery. */
-  collection: { branchName: string; code: string } | null;
+  collection: { branchName: string; code: string; /** True when this is a new code sent after the first one, so the old one no longer works. */ renewed?: boolean } | null;
 }
 
 export interface MessageContent {
@@ -96,10 +96,10 @@ export function messageContent(kind: MessageKind, f: MessageFacts): MessageConte
     case 'ready_for_collection': {
       const at = f.collection;
       return {
-        subject: `Your order ${f.orderNumber} is ready to collect · ${store}`,
-        heading: 'Your order is ready to collect',
+        subject: at?.renewed === true ? `A new collection code for order ${f.orderNumber} · ${store}` : `Your order ${f.orderNumber} is ready to collect · ${store}`,
+        heading: at?.renewed === true ? 'Your new collection code' : 'Your order is ready to collect',
         greeting,
-        body: `Your order is packed and waiting for you${at === null ? '' : ` at ${at.branchName}`}. Show the collection code below at the counter, and only there: whoever has the code can collect the order.`,
+        body: at?.renewed === true ? `You have a new collection code for your order at ${at.branchName}. The code we sent before no longer works. Show this one at the counter, and only there: whoever has the code can collect the order.` : `Your order is packed and waiting for you${at === null ? '' : ` at ${at.branchName}`}. Show the collection code below at the counter, and only there: whoever has the code can collect the order.`,
         details: at === null ? [['Order', f.orderNumber]] : [['Order', f.orderNumber], ['Collect from', at.branchName], ['Collection code', at.code]],
         cta: 'See my order',
       };
@@ -154,6 +154,7 @@ export function textContent(kind: MessageKind, f: MessageFacts): string {
       case 'attempt_failed':
         return `${hello} we could not deliver your ${shop}${order}: ${reasonForCustomer(f.reasonCode)}.${f.triesLeft !== null && f.triesLeft > 0 ? ` We will try again (${String(f.triesLeft)} ${f.triesLeft === 1 ? 'try' : 'tries'} left).` : ''} ${link}`;
       case 'ready_for_collection':
+        if (f.collection?.renewed === true) return `${hello} your ${shop}${order} has a new collection code: ${f.collection.code}. The old one no longer works. Show it at ${f.collection.branchName}, and only there. ${link}`;
         return `${hello} your ${shop}${order} is ready to collect${f.collection === null ? '' : ` at ${f.collection.branchName}`}.${f.collection === null ? '' : ` Show code ${f.collection.code} at the counter, and only there.`} ${link}`;
       case 'returned':
         return `${hello} we could not deliver your ${shop}${order} and it is coming back to us. ${link}`;

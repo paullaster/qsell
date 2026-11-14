@@ -271,6 +271,40 @@ describe.skipIf(!has(url))('collecting an order from a branch (database)', () =>
         expect(texted.filter((t) => t.text.includes(w.order.orderNumber))).toHaveLength(0);
         expect(await messagesOf(w.order.id)).toEqual(['ready_for_collection:email:skipped', 'ready_for_collection:sms:skipped']);
       });
+
+      it('sends the new code when a code is reissued after the customer was told, and says the old one no longer works', async () => {
+        await setTexts(true);
+        const w = await waiting();
+        await c.orderCollections.markReady(staff(), w.order.id);
+        await (await flusher()).flush(500);
+        sentMail.length = 0;
+        texted.length = 0;
+        const fresh = await c.orderCollections.reissue(staff(), w.order.id, 'The customer lost the code');
+        if (!fresh.ok) throw new Error('not reissued');
+        await c.orderCollections.reissue(staff(), w.order.id, 'Lost it again, second time');
+        const keys = (await db.select().from(schema.deliveryMessages).where(eq(schema.deliveryMessages.orderId, w.order.id))).map((m) => m.messageKey).sort();
+        expect(keys).toEqual([`${w.order.id}:ready_for_collection:0`, `${w.order.id}:ready_for_collection:0:sms`, `${w.order.id}:ready_for_collection:1`, `${w.order.id}:ready_for_collection:1:sms`, `${w.order.id}:ready_for_collection:2`, `${w.order.id}:ready_for_collection:2:sms`].sort());
+        await (await flusher()).flush(500);
+        // The first reissue's message was still waiting when the second came, so it is replaced; only the latest code is ever sent.
+        expect(texted).toHaveLength(1);
+        expect(texted[0]?.text).toMatch(/new collection code: [A-Z0-9]{3}-[A-Z0-9]{3}\. The old one no longer works/);
+        expect(texted[0]?.text).not.toContain(`${w.code.slice(0, 3)}-${w.code.slice(3)}`);
+        expect(sentMail).toHaveLength(1);
+        expect(sentMail[0]?.text).toContain('no longer works');
+      });
+
+      it('sends nothing extra when a code is reissued before the customer was told, and the first message then carries the new code', async () => {
+        await setTexts(false);
+        const w = await waiting();
+        const fresh = await c.orderCollections.reissue(staff(), w.order.id, 'The customer lost the code');
+        if (!fresh.ok) throw new Error('not reissued');
+        expect(await messagesOf(w.order.id)).toEqual([]);
+        await c.orderCollections.markReady(staff(), w.order.id);
+        await (await flusher()).flush(500);
+        expect(sentMail).toHaveLength(1);
+        expect(sentMail[0]?.text).toContain(`${fresh.code.slice(0, 3)}-${fresh.code.slice(3)}`);
+        expect(sentMail[0]?.text).not.toContain('no longer works');
+      });
     });
 
     it('is marked ready, then handed over once to whoever shows the code, however it is typed, and the order is then delivered', async () => {

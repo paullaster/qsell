@@ -196,7 +196,7 @@ export class DeliveryMessages {
       handoverCode: null,
       reasonCode: null,
       triesLeft: null,
-      collection: { branchName: row.branch, code: showCollectionCode(opened.code) },
+      collection: { branchName: row.branch, code: showCollectionCode(opened.code), renewed: !/:ready_for_collection:0(:sms)?$/.test(m.messageKey) },
     };
     return { facts, orderNumber: row.orderNumber };
   }
