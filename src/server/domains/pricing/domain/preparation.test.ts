@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSheet, picksWords, type PreparationRow } from './preparation';
+import { buildSheet, parseDay, picksWords, type PreparationRow } from './preparation';
 
 const pick = (slotName: string, productId: string, productName: string, count = 1, quantity = 1, sortOrder = 0) => ({ slotName, productId, productName, count, quantity, sortOrder });
 const row = (over: Partial<PreparationRow> & { n: string }): PreparationRow => ({
@@ -76,5 +76,16 @@ describe('the sheet for a day', () => {
 
   it('is empty for no selections', () => {
     expect(buildSheet([])).toEqual({ groups: [], totals: { packages: [], parts: [], servings: 0 }, orders: 0 });
+  });
+});
+
+describe('the day the browser asks for', () => {
+  it('accepts a real calendar day, and none for the orders without a date', () => {
+    expect(parseDay('2026-11-20')).toEqual({ ok: true, day: '2026-11-20' });
+    expect(parseDay('none')).toEqual({ ok: true, day: null });
+  });
+
+  it('refuses anything else, including days that do not exist', () => {
+    for (const raw of ['2026-02-30', '2026-13-01', '20-11-2026', '', 5, null, undefined, '2026-11-20; drop']) expect(parseDay(raw)).toEqual({ ok: false });
   });
 });

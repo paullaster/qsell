@@ -5,7 +5,7 @@
  *   tsx e2e/support/storefront-fixtures.ts product <tag>                    a new product for sale with no reviews, named "Reviewed <tag>"
  *   tsx e2e/support/storefront-fixtures.ts limited-product <tag> <min> <max> a product for sale that may be bought only <min> to <max> at a time, named "Limited <tag>"
  *   tsx e2e/support/storefront-fixtures.ts package <tag>                    a configurable package "Express lunch <tag>" (fish, starch, vegetables) with its parts; brown ugali has no stock
- *   tsx e2e/support/storefront-fixtures.ts package-orders <tag>             that package with three orders for one day ten days ahead, one of them cancelled
+ *   tsx e2e/support/storefront-fixtures.ts package-orders <tag>             that package with three orders for one day (its own, 10 to 400 days ahead), one of them cancelled
  *   tsx e2e/support/storefront-fixtures.ts category-lunch <tag> [email]      a lunch with vegetables from a category and a note on each serving; that shopper has ordered it once
  *   tsx e2e/support/storefront-fixtures.ts set-stock <product id> <quantity>   sets a product's stock (to make a checkout run short)
  *   tsx e2e/support/storefront-fixtures.ts order-stages <order number>        the stages an order has been through, in order, and its current stage
@@ -131,7 +131,10 @@ async function lunchOrders(tag: string): Promise<Record<string, string>> {
   const company = await container.companySettings.ensureSeeded();
   const branch = await container.branches.getDefault(company.id);
   if (branch === null) throw new Error('e2e fixture: the company has no default branch');
-  const day = new Date(Date.now() + 10 * 86_400_000).toISOString().slice(0, 10);
+  // A day of its own for each run (from 10 to 400 days ahead), so two runs on one database never share a sheet.
+  let spread = 7;
+  for (let i = 0; i < tag.length; i += 1) spread = (spread * 31 + tag.charCodeAt(i)) % 391;
+  const day = new Date(Date.now() + (10 + spread) * 86_400_000).toISOString().slice(0, 10);
   const stored = (fishId: string, fish: string) => [
     { slotName: 'Fish', productId: fishId, name: fish, count: 1 },
     { slotName: 'Starch', productId: made.ugaliId ?? '', name: 'Ugali', count: 1 },
@@ -388,7 +391,7 @@ export function makeLunchPackage(tag: string): Record<'name' | 'slug' | 'small' 
   return { name: get('name'), slug: get('slug'), small: get('small'), large: get('large'), ugali: get('ugali'), brown: get('brown'), sukuma: get('sukuma'), cabbage: get('cabbage'), id: get('id'), ugaliId: get('ugaliId') };
 }
 
-/** The lunch package with three orders for a day ten days ahead (3 + 9 servings kept, 4 cancelled). */
+/** The lunch package with three orders for a day of its own, 10 to 400 days ahead (3 + 9 servings kept, 4 cancelled). */
 export function makeLunchOrders(tag: string): ReturnType<typeof makeLunchPackage> & { day: string } {
   const made = storefrontTool('package-orders', tag);
   const get = (key: string): string => made[key] ?? '';

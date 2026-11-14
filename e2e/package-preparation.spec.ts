@@ -11,7 +11,7 @@ test.describe('the preparation sheet', () => {
     await open(page, '/admin/orders/preparation', 'Preparation sheet');
     // Move to the day with the orders; the days that have orders are offered too.
     await expect(page.getByRole('navigation', { name: 'Days with orders' })).toBeVisible({ timeout: 60_000 });
-    await page.getByLabel('Day').fill(made.day);
+    await page.getByLabel('Day', { exact: true }).fill(made.day);
     const sheet = page.getByTestId('preparation-sheet');
     await expect(sheet).toContainText('Totals', { timeout: 60_000 });
 
@@ -35,7 +35,7 @@ test.describe('the preparation sheet', () => {
     await noInnerHorizontalScroll(page);
 
     // A day with nothing says so.
-    await page.getByLabel('Day').fill('2031-01-05');
+    await page.getByLabel('Day', { exact: true }).fill('2031-01-05');
     await expect(sheet).toContainText('Nothing to prepare for this day', { timeout: 30_000 });
   });
 });

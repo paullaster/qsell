@@ -122,3 +122,13 @@ export function buildSheet(rows: readonly PreparationRow[]): PreparationSheet {
     orders: new Set(rows.map((r) => r.orderId)).size,
   };
 }
+
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** A valid calendar day (or `none` for the orders that have no date), or not valid. The browser's word is only ever a date. */
+export function parseDay(raw: unknown): { ok: true; day: string | null } | { ok: false } {
+  if (raw === 'none') return { ok: true, day: null };
+  if (typeof raw !== 'string' || !DAY.test(raw)) return { ok: false };
+  const parsed = new Date(`${raw}T00:00:00Z`);
+  return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== raw ? { ok: false } : { ok: true, day: raw };
+}
