@@ -1,7 +1,7 @@
 import type { DeliveryAction } from './delivery-document';
 
 /** The messages a customer gets as their delivery moves. Pure: the words and the rules; the sending is the server's. */
-export const MESSAGE_KINDS = ['out_for_delivery', 'delivered', 'part_delivered', 'attempt_failed', 'returned', 'slot_not_kept', 'ready_for_collection'] as const;
+export const MESSAGE_KINDS = ['out_for_delivery', 'delivered', 'part_delivered', 'attempt_failed', 'returned', 'slot_not_kept', 'ready_for_collection', 'collection_reminder'] as const;
 export type MessageKind = (typeof MESSAGE_KINDS)[number];
 export const isMessageKind = (value: unknown): value is MessageKind => typeof value === 'string' && (MESSAGE_KINDS as readonly string[]).includes(value);
 
@@ -14,7 +14,7 @@ export function kindForStep(action: DeliveryAction, whole: boolean): MessageKind
 const SENT_BY_STEP: Partial<Record<DeliveryAction, MessageKind>> = { dispatch: 'out_for_delivery', fail_attempt: 'attempt_failed', return: 'returned' };
 
 /** What each message is, for the shop's own list of what was sent. */
-export const KIND_WORDS: Record<MessageKind, string> = { out_for_delivery: 'On its way', delivered: 'Delivered', part_delivered: 'Part delivered', attempt_failed: 'Could not deliver', returned: 'Coming back to us', slot_not_kept: 'Chosen time not kept', ready_for_collection: 'Ready to collect' };
+export const KIND_WORDS: Record<MessageKind, string> = { out_for_delivery: 'On its way', delivered: 'Delivered', part_delivered: 'Part delivered', attempt_failed: 'Could not deliver', returned: 'Coming back to us', slot_not_kept: 'Chosen time not kept', ready_for_collection: 'Ready to collect', collection_reminder: 'Still waiting to be collected' };
 
 /** One message for one thing that happened, however often the step is retried: the same key is the same message. */
 export const messageKey = (deliveryId: string, kind: MessageKind, attempt: number): string => `${deliveryId}:${kind}:${String(attempt)}`;
@@ -47,7 +47,7 @@ export interface MessageFacts {
   /** How many tries are left, when a delivery failed and can be tried again. */
   triesLeft: number | null;
   /** For an order collected from a branch: where, and the code to show at the counter (as the customer reads it). Null for a delivery. */
-  collection: { branchName: string; code: string; /** True when this is a new code sent after the first one, so the old one no longer works. */ renewed?: boolean } | null;
+  collection: { branchName: string; code: string; /** True when this is a new code sent after the first one, so the old one no longer works. */ renewed?: boolean; /** For the reminder: whole days the order has been waiting. */ waitingDays?: number; /** The last reminder we send. */ lastReminder?: boolean } | null;
 }
 
 export interface MessageContent {
@@ -104,6 +104,18 @@ export function messageContent(kind: MessageKind, f: MessageFacts): MessageConte
         cta: 'See my order',
       };
     }
+    case 'collection_reminder': {
+      const at = f.collection;
+      const days = at?.waitingDays ?? 0;
+      return {
+        subject: `Your order ${f.orderNumber} is still waiting for you · ${store}`,
+        heading: 'Your order is still waiting for you',
+        greeting,
+        body: `Your order has been packed and waiting${at === null ? '' : ` at ${at.branchName}`} for ${String(days)} ${days === 1 ? 'day' : 'days'}. Please come and collect it${at?.lastReminder === true ? ', as this is the last reminder we will send' : ''}. Show the collection code below at the counter, and only there: whoever has the code can collect the order.`,
+        details: at === null ? [['Order', f.orderNumber]] : [['Order', f.orderNumber], ['Collect from', at.branchName], ['Collection code', at.code]],
+        cta: 'See my order',
+      };
+    }
     case 'returned':
       return { subject: `Your order ${f.orderNumber} is coming back to us · ${store}`, heading: 'We could not deliver, and it is coming back to us', greeting, body: 'We were not able to deliver your order and it is being returned to us. Please contact us so we can arrange another delivery or put it right.', details: base, cta: 'See my delivery' };
   }
@@ -117,7 +129,7 @@ export const TEXT_KIND_CHOICES: readonly { kind: MessageKind; label: string; hin
   { kind: 'attempt_failed', label: 'Could not deliver', hint: 'Says why, and how many tries are left.', onByDefault: true },
   { kind: 'returned', label: 'Coming back to us', hint: 'Says the order is being returned.', onByDefault: false },
   { kind: 'slot_not_kept', label: 'Delivery time not kept', hint: 'Says the chosen time could not be held.', onByDefault: false },
-  { kind: 'ready_for_collection', label: 'Ready to collect', hint: 'For orders collected from a branch: says where, and carries the collection code to show at the counter.', onByDefault: true },
+  { kind: 'ready_for_collection', label: 'Ready to collect', hint: 'For orders collected from a branch: says where, and carries the collection code to show at the counter. Also covers a new code and the reminder for an order not yet collected.', onByDefault: true },
 ];
 
 export type TextKindsInput = { ok: true; kinds: MessageKind[] } | { ok: false; error: string };
@@ -127,10 +139,11 @@ export function readTextKinds(raw: unknown): TextKindsInput {
   if (!Array.isArray(raw)) return { ok: false, error: 'Choose which messages are also texted.' };
   const wanted = new Set<string>();
   for (const k of raw) {
-    if (!isMessageKind(k)) return { ok: false, error: 'One of the messages chosen is not one we send.' };
+    // Only the choices on the screen: a message that follows another (the reminder) is not a choice of its own.
+    if (!isMessageKind(k) || !TEXT_KIND_CHOICES.some((c) => c.kind === k)) return { ok: false, error: 'One of the messages chosen is not one we send.' };
     wanted.add(k);
   }
-  return { ok: true, kinds: MESSAGE_KINDS.filter((k) => wanted.has(k)) };
+  return { ok: true, kinds: TEXT_KIND_CHOICES.map((c) => c.kind).filter((k) => wanted.has(k)) };
 }
 
 /**
@@ -156,6 +169,8 @@ export function textContent(kind: MessageKind, f: MessageFacts): string {
       case 'ready_for_collection':
         if (f.collection?.renewed === true) return `${hello} your ${shop}${order} has a new collection code: ${f.collection.code}. The old one no longer works. Show it at ${f.collection.branchName}, and only there. ${link}`;
         return `${hello} your ${shop}${order} is ready to collect${f.collection === null ? '' : ` at ${f.collection.branchName}`}.${f.collection === null ? '' : ` Show code ${f.collection.code} at the counter, and only there.`} ${link}`;
+      case 'collection_reminder':
+        return `${hello} your ${shop}${order} is still waiting${f.collection === null ? '' : ` at ${f.collection.branchName}`}.${f.collection === null ? '' : ` Show code ${f.collection.code} at the counter, and only there.`} ${link}`;
       case 'returned':
         return `${hello} we could not deliver your ${shop}${order} and it is coming back to us. ${link}`;
       case 'slot_not_kept':

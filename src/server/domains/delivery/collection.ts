@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { branches, deliveryMessages, orderCollections, orders } from '@/server/db/drizzle/schema';
 import { COLLECTION_ATTEMPT_LIMIT, generateCollectionCode, isWellFormedCollectionCode, normalizeCollectionCode } from '@/lib/collection-code';
@@ -7,7 +7,7 @@ import { decryptCredentials, encryptCredentials, fingerprintSecret } from '@/ser
 import { OrderStages } from '@/server/domains/orders/stages';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { orderReadinessProblem } from './order-readiness';
-import type { DeliveryMessages } from './messages';
+import { REMINDER_DAYS, type DeliveryMessages } from './messages';
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
@@ -245,6 +245,41 @@ export class OrderCollections {
       }
       return { ok: true as const, code, view: await this.requireView(tx, actor.companyId, orderId) };
     });
+  }
+
+  /**
+   * Orders that have sat ready at the counter for 3 days, and then 6, get a reminder (once each: the message key carries the stage, so a
+   * repeated or overlapping scan queues nothing new). A scan that was down for days queues only the latest stage that is due. An order
+   * that is collected, cancelled or has had both reminders drops out of the search. Returns how many reminders were queued.
+   */
+  async remindUncollected(now: Date = new Date(), limit = 200): Promise<number> {
+    const first = new Date(now.getTime() - REMINDER_DAYS[0] * 86_400_000);
+    const candidates = await this.db
+      .select({ orderId: orderCollections.orderId, companyId: orderCollections.companyId, readyAt: orderCollections.readyAt })
+      .from(orderCollections)
+      .where(and(inArray(orderCollections.status, ['ready', 'locked']), lte(orderCollections.readyAt, first), sql`not exists (select 1 from ${deliveryMessages} m where m.company_id = ${orderCollections.companyId} and m.message_key = ${orderCollections.orderId} || ':collection_reminder:' || ${String(REMINDER_DAYS.length)})`))
+      .orderBy(orderCollections.readyAt)
+      .limit(limit);
+    let queued = 0;
+    for (const c of candidates) {
+      if (c.readyAt === null || this.messages === null) continue;
+      const waited = (now.getTime() - c.readyAt.getTime()) / 86_400_000;
+      const stage = REMINDER_DAYS.filter((d) => waited >= d).length;
+      if (stage === 0) continue;
+      const messages = this.messages;
+      const made = await this.db.transaction(async (tx) => {
+        // Look again under the lock: it may have been collected since the search.
+        const [row] = await tx.select({ status: orderCollections.status }).from(orderCollections).where(and(eq(orderCollections.orderId, c.orderId), eq(orderCollections.companyId, c.companyId))).for('update');
+        if (row === undefined || (row.status !== 'ready' && row.status !== 'locked')) return false;
+        const key = `${c.orderId}:collection_reminder:${String(stage)}`;
+        const [had] = await tx.select({ id: deliveryMessages.id }).from(deliveryMessages).where(and(eq(deliveryMessages.companyId, c.companyId), eq(deliveryMessages.messageKey, key)));
+        if (had !== undefined) return false;
+        await messages.enqueueIn(tx, { companyId: c.companyId, orderId: c.orderId, deliveryId: null, kind: 'collection_reminder', key, textAs: 'ready_for_collection' });
+        return true;
+      });
+      if (made) queued += 1;
+    }
+    return queued;
   }
 
   private statusProblem(status: CollectionStatus): CollectionOutcome | null {

@@ -76,6 +76,12 @@ export const providerSendOperation = async (payload: { operationId: string }) =>
 export const deliveryMessagesSweep = async (_payload: unknown, helpers: JobHelpers) => {
   const sent = await getContainer().deliveryMessages.flush(50);
   if (sent > 0) helpers.logger.info(`Delivery messages sent: ${String(sent)}`);
+  // Orders left at the counter for days are reminded about; a failure here never stops the sending above.
+  const reminded = await getContainer().orderCollections.remindUncollected().catch((error: unknown) => {
+    helpers.logger.error(`Collection reminders: ${String(error)}`);
+    return 0;
+  });
+  if (reminded > 0) helpers.logger.info(`Collection reminders queued: ${String(reminded)}`);
 };
 
 /** A mail to a shopper about their order (placed, payment received). A failure is thrown so the worker tries again later. */

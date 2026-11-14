@@ -20,6 +20,8 @@ type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
 /** A message is tried this many times, with a longer wait each time, and then left as failed for a person to see. */
 const MAX_TRIES = 5;
+/** An order ready for collection and still sitting there is reminded about after these many days (the last one is the final reminder). */
+export const REMINDER_DAYS = [3, 6] as const;
 const LEASE_MINUTES = 10;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -72,7 +74,7 @@ export class DeliveryMessages {
    * company has turned texting on for this kind of message, the same message is also queued by text to the customer's number, as its own
    * row (the key ends in `:sms`), so a mail that fails never holds back the text, or the other way round.
    */
-  async enqueueIn(tx: Tx, input: { companyId: string; orderId: string; deliveryId: string | null; kind: MessageKind; key: string }): Promise<void> {
+  async enqueueIn(tx: Tx, input: { companyId: string; orderId: string; deliveryId: string | null; kind: MessageKind; key: string; /** The text choice that decides whether this is also texted, when it is not the kind itself (the reminder follows "Ready to collect"). */ textAs?: MessageKind }): Promise<void> {
     const [order] = await tx.select({ email: orders.customerEmail, phone: orders.customerPhone }).from(orders).where(eq(orders.id, input.orderId));
     const address = order?.email.trim().toLowerCase() ?? '';
     const usable = EMAIL.test(address);
@@ -82,7 +84,7 @@ export class DeliveryMessages {
       .onConflictDoNothing();
     if (this.texting === null) return;
     const settings = await this.texting.settings.get(input.companyId, tx);
-    if (!settings.enabled || !settings.kinds.includes(input.kind)) return;
+    if (!settings.enabled || !settings.kinds.includes(input.textAs ?? input.kind)) return;
     const phone = internationalPhone(order?.phone);
     await tx
       .insert(deliveryMessages)
@@ -176,7 +178,7 @@ export class DeliveryMessages {
    */
   private async collectionFacts(m: typeof deliveryMessages.$inferSelect, tradingName: string, url: string): Promise<{ facts: MessageFacts; orderNumber: string }> {
     const [row] = await this.db
-      .select({ status: orderCollections.status, sealed: orderCollections.codeSealed, branch: branches.name, orderNumber: orders.orderNumber, customerName: orders.customerName })
+      .select({ status: orderCollections.status, readyAt: orderCollections.readyAt, sealed: orderCollections.codeSealed, branch: branches.name, orderNumber: orders.orderNumber, customerName: orders.customerName })
       .from(orderCollections)
       .innerJoin(orders, eq(orders.id, orderCollections.orderId))
       .innerJoin(branches, eq(branches.id, orderCollections.branchId))
@@ -185,6 +187,8 @@ export class DeliveryMessages {
     if (row.status === 'collected' || row.status === 'cancelled') throw new MessageNotNeeded('The order is no longer waiting to be collected.');
     const opened = decryptCredentials(row.sealed);
     if (typeof opened?.code !== 'string') throw new Error('The collection code could not be read.');
+    const stage = /:collection_reminder:(\d+)(:sms)?$/.exec(m.messageKey);
+    const reminder = m.kind === 'collection_reminder' ? { waitingDays: Math.max(1, Math.floor(((m.createdAt.getTime()) - (row.readyAt?.getTime() ?? m.createdAt.getTime())) / 86_400_000)), lastReminder: Number(stage?.[1] ?? 0) >= REMINDER_DAYS.length } : {};
     const facts: MessageFacts = {
       tradingName,
       firstName: row.customerName.trim().split(/\s+/)[0] ?? '',
@@ -196,7 +200,7 @@ export class DeliveryMessages {
       handoverCode: null,
       reasonCode: null,
       triesLeft: null,
-      collection: { branchName: row.branch, code: showCollectionCode(opened.code), renewed: !/:ready_for_collection:0(:sms)?$/.test(m.messageKey) },
+      collection: { branchName: row.branch, code: showCollectionCode(opened.code), renewed: m.kind === 'ready_for_collection' && !/:ready_for_collection:0(:sms)?$/.test(m.messageKey), ...reminder },
     };
     return { facts, orderNumber: row.orderNumber };
   }
@@ -219,7 +223,7 @@ export class DeliveryMessages {
     const base = resolvePublicBaseUrl(settings.publicBaseUrl);
     // With the link turned off the message still goes, pointing at the shop's own "Track my order".
     const url = token === null ? `${base}/` : `${base}/track/${token}`;
-    const { facts, orderNumber } = kind === 'ready_for_collection' ? await this.collectionFacts(m, settings.tradingName, url) : await this.deliveryFacts(m, kind, settings.tradingName, url);
+    const { facts, orderNumber } = kind === 'ready_for_collection' || kind === 'collection_reminder' ? await this.collectionFacts(m, settings.tradingName, url) : await this.deliveryFacts(m, kind, settings.tradingName, url);
     const content = messageContent(kind, facts);
     if (m.channel === 'sms') {
       const sender = await this.texting?.sender(m.companyId);
@@ -241,7 +245,7 @@ export class DeliveryMessages {
 
   /** Staff: what was sent to the customer about collecting their order (a collected order has no delivery to hang these on). */
   async forCollection(companyId: string, orderId: string): Promise<MessageView[]> {
-    const rows = await this.db.select().from(deliveryMessages).where(and(eq(deliveryMessages.companyId, companyId), eq(deliveryMessages.orderId, orderId), eq(deliveryMessages.kind, 'ready_for_collection'))).orderBy(desc(deliveryMessages.createdAt)).limit(20);
+    const rows = await this.db.select().from(deliveryMessages).where(and(eq(deliveryMessages.companyId, companyId), eq(deliveryMessages.orderId, orderId), inArray(deliveryMessages.kind, ['ready_for_collection', 'collection_reminder']))).orderBy(desc(deliveryMessages.createdAt)).limit(20);
     return rows.map(viewOfMessage);
   }
 }

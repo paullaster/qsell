@@ -103,7 +103,8 @@ describe('customer text messages', () => {
     expect(readTextKinds([])).toEqual({ ok: true, kinds: [] });
     expect(readTextKinds(['nonsense']).ok).toBe(false);
     expect(readTextKinds('delivered').ok).toBe(false);
-    expect(TEXT_KIND_CHOICES.map((c) => c.kind)).toEqual([...MESSAGE_KINDS]);
+    expect(readTextKinds(['collection_reminder']).ok).toBe(false);
+    expect(TEXT_KIND_CHOICES.map((c) => c.kind)).toEqual(MESSAGE_KINDS.filter((k) => k !== 'collection_reminder'));
   });
 });
 
@@ -139,6 +140,20 @@ describe('quiet hours for texts', () => {
 
 describe('ready to collect', () => {
   const at = { ...facts, collection: { branchName: 'Westlands Branch', code: 'ABC-DEF' } };
+  it('the reminder says how long the order has waited, names the branch and carries the code, and the last one says so', () => {
+    const wait = { ...facts, collection: { branchName: 'Westlands Branch', code: 'ABC-DEF', waitingDays: 3 } };
+    const m = messageContent('collection_reminder', wait);
+    expect(m.heading).toBe('Your order is still waiting for you');
+    expect(m.body).toContain('for 3 days');
+    expect(m.body).not.toContain('last reminder');
+    expect(m.details).toContainEqual(['Collection code', 'ABC-DEF']);
+    expect(messageContent('collection_reminder', { ...wait, collection: { ...wait.collection, waitingDays: 1 } }).body).toContain('for 1 day.');
+    expect(messageContent('collection_reminder', { ...wait, collection: { ...wait.collection, lastReminder: true } }).body).toContain('last reminder');
+    const t = textContent('collection_reminder', wait);
+    expect(t).toMatch(/still waiting at Westlands Branch\. Show code ABC-DEF at the counter/);
+    expect(t.endsWith(facts.trackUrl)).toBe(true);
+  });
+
   it('says a new code replaces the old one when the code was renewed, and says nothing of the sort the first time', () => {
     const renewed = { ...facts, collection: { branchName: 'Westlands Branch', code: 'XYZ-123', renewed: true } };
     const m = messageContent('ready_for_collection', renewed);
@@ -163,7 +178,7 @@ describe('ready to collect', () => {
     expect(textContent('ready_for_collection', { ...at, tradingName: 'A Very Long Trading Name Indeed '.repeat(8) }).length).toBeLessThanOrEqual(306);
   });
   it('never carries the code in any other message, and says nothing of a code when it has none', () => {
-    for (const kind of MESSAGE_KINDS.filter((k) => k !== 'ready_for_collection')) expect(textContent(kind, at)).not.toContain('ABC-DEF');
+    for (const kind of MESSAGE_KINDS.filter((k) => k !== 'ready_for_collection' && k !== 'collection_reminder')) expect(textContent(kind, at)).not.toContain('ABC-DEF');
     expect(textContent('ready_for_collection', facts)).not.toMatch(/code/i);
   });
 });
