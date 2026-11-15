@@ -19,4 +19,12 @@ describe('reading basket lines from the browser', () => {
     expect(readBasketItems('nope')).toBeNull();
     expect(readBasketItems(Array.from({ length: 150 }, () => ({ productId: 'a', quantity: 1 })), 100)).toHaveLength(100);
   });
+  it('reads the group a package line came from only when it is an id', () => {
+    const group = '3f2a9c1e-5b7d-4e0a-9c11-0a1b2c3d4e5f';
+    const line = (groupId: unknown) => readBasketItem({ productId: 'p', quantity: 2, package: { picks: [{ slotId: 's', optionId: 'o', count: 1 }], groupId } });
+    expect(line(group)?.package?.groupId).toBe(group);
+    expect(line('x')?.package?.groupId).toBeUndefined();
+    expect(line(5)?.package?.groupId).toBeUndefined();
+    expect(line(undefined)?.package).toEqual({ picks: [{ slotId: 's', optionId: 'o', count: 1 }] });
+  });
 });

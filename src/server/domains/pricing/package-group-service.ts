@@ -1,10 +1,11 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { packageGroupEntries, packageGroupOrders } from '@/server/db/drizzle/schema';
 import { cleanDay, cleanPersonName, cleanTitle, groupAcceptsChoices, groupCartLines, groupClosedReason, MAX_GROUP_ENTRIES } from '@/lib/group-order';
 import { storedWords, type StoredPick } from './domain/package-shop';
 import type { RawPick } from './domain/packages';
+import { decryptCredentials, encryptCredentials } from '@/server/domains/payments/crypto';
 import type { PackageOrderService } from './package-order-service';
 import type { PackageShopService, ShopBuilder } from './package-shop-service';
 
@@ -34,6 +35,8 @@ export interface GroupView {
   accepts: boolean;
   closedReason: string | null;
   isOrganiser: boolean;
+  /** The order the organiser placed from this group, once they have. */
+  order: { number: string; orderedAt: string } | null;
   /** How many people have chosen. Only the organiser is shown who, and what. */
   entryCount: number;
   entries: GroupEntryView[];
@@ -41,9 +44,24 @@ export interface GroupView {
   builder: ShopBuilder | null;
 }
 
+/** An open transaction, as the order's own writer passes it. */
+type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
+
+/** The link sealed under the data key, or null when it cannot be (the group still works; it just cannot be reopened from the account). */
+function sealLink(token: string) {
+  try {
+    return encryptCredentials({ token });
+  } catch (error) {
+    console.error('[group order] the link could not be sealed', error);
+    return null;
+  }
+}
+
 export type Outcome<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 
 export interface GroupCart {
+  /** The group, so the cart lines can be tied back to it when the order is placed. */
+  groupId: string;
   /** What to put in the organiser's cart: today's option ids, with how many servings and the people behind each line. */
   lines: { picks: RawPick[]; servings: number; note: string; people: string[] }[];
   /** People whose choice cannot be made today, with why; the organiser sorts these out with them. */
@@ -82,7 +100,7 @@ export class PackageGroupService {
     const token = randomBytes(24).toString('base64url');
     const [row] = await this.db
       .insert(packageGroupOrders)
-      .values({ companyId, packageProductId: input.productId, packageName: builder.package.name, tokenHash: sha256(token), title: cleanTitle(input.title), organiserCustomerId: organiser.customerId, organiserName: cleanPersonName(organiser.name) === '' ? 'The organiser' : cleanPersonName(organiser.name), forDate, closesAt })
+      .values({ companyId, packageProductId: input.productId, packageName: builder.package.name, tokenHash: sha256(token), tokenSealed: sealLink(token), title: cleanTitle(input.title), organiserCustomerId: organiser.customerId, organiserName: cleanPersonName(organiser.name) === '' ? 'The organiser' : cleanPersonName(organiser.name), forDate, closesAt })
       .returning({ id: packageGroupOrders.id });
     if (row === undefined) throw new Error('the group order was not saved');
     return { ok: true, token, id: row.id };
@@ -115,6 +133,7 @@ export class PackageGroupService {
       accepts: closedReason === null,
       closedReason,
       isOrganiser,
+      order: group.orderId === null || group.orderedAt === null ? null : { number: group.orderNumber ?? '', orderedAt: group.orderedAt.toISOString() },
       entryCount: entries.length,
       entries: isOrganiser ? entries.map((e) => ({ id: e.id, personName: e.personName, words: storedWords(e.picks), note: e.note })) : [],
       builder: closedReason === null ? builder : null,
@@ -196,6 +215,7 @@ export class PackageGroupService {
     const group = await this.find(token);
     if (group?.organiserCustomerId !== organiserCustomerId) return { ok: false, error: 'This group order is not yours.' };
     if (group.status === 'cancelled') return { ok: false, error: 'A cancelled group order cannot be opened again.' };
+    if (group.orderId !== null && status !== 'closed') return { ok: false, error: 'This group order has already been ordered.' };
     await this.db.update(packageGroupOrders).set({ status, updatedAt: this.clock() }).where(eq(packageGroupOrders.id, group.id));
     return { ok: true };
   }
@@ -208,6 +228,7 @@ export class PackageGroupService {
     const group = await this.find(token);
     if (group?.organiserCustomerId !== organiserCustomerId) return { ok: false, error: 'This group order is not yours.' };
     if (group.status === 'cancelled') return { ok: false, error: 'This group order was cancelled.' };
+    if (group.orderId !== null) return { ok: false, error: `This group order has already been ordered (order ${group.orderNumber ?? ''}).` };
     const entries = await this.db.select().from(packageGroupEntries).where(eq(packageGroupEntries.groupId, group.id)).orderBy(packageGroupEntries.createdAt);
     if (entries.length === 0) return { ok: false, error: 'Nobody has chosen yet.' };
     const problems: GroupCart['problems'] = [];
@@ -219,17 +240,92 @@ export class PackageGroupService {
     }
     await this.db.update(packageGroupOrders).set({ status: 'closed', updatedAt: this.clock() }).where(eq(packageGroupOrders.id, group.id));
     const lines = groupCartLines(usable).map((l) => ({ picks: l.picks, servings: l.servings, note: l.note, people: l.people }));
-    return { ok: true, cart: { lines, problems } };
+    return { ok: true, cart: { groupId: group.id, lines, problems } };
   }
 
-  /** The organiser's own groups, newest first. */
-  async mine(companyId: string, organiserCustomerId: string, limit = 20): Promise<{ title: string; packageName: string; status: string; createdAt: string }[]> {
+  /**
+   * The organiser has placed an order with lines from these groups: each of their own groups that is not cancelled and not yet ordered
+   * is tied to the order (in the order's own transaction). A group that is not theirs, or not found, is ignored: the order stands.
+   */
+  async tieToOrder(tx: Tx, input: { companyId: string; customerId: string; groupIds: readonly string[]; orderId: string; orderNumber: string }): Promise<void> {
+    if (input.groupIds.length === 0) return;
+    await tx
+      .update(packageGroupOrders)
+      .set({ orderId: input.orderId, orderNumber: input.orderNumber, orderedAt: this.clock(), status: 'closed', updatedAt: this.clock() })
+      .where(
+        and(
+          inArray(packageGroupOrders.id, [...input.groupIds]),
+          eq(packageGroupOrders.companyId, input.companyId),
+          eq(packageGroupOrders.organiserCustomerId, input.customerId),
+          ne(packageGroupOrders.status, 'cancelled'),
+          isNull(packageGroupOrders.orderId),
+        ),
+      );
+  }
+
+  /** The organiser's own groups, newest first, with how many have chosen, the order if there is one, and the link when it was kept. */
+  async mine(companyId: string, organiserCustomerId: string, limit = 50): Promise<MyGroup[]> {
     const rows = await this.db
-      .select({ title: packageGroupOrders.title, packageName: packageGroupOrders.packageName, status: packageGroupOrders.status, createdAt: packageGroupOrders.createdAt })
+      .select({
+        id: packageGroupOrders.id,
+        title: packageGroupOrders.title,
+        packageName: packageGroupOrders.packageName,
+        status: packageGroupOrders.status,
+        forDate: packageGroupOrders.forDate,
+        closesAt: packageGroupOrders.closesAt,
+        orderId: packageGroupOrders.orderId,
+        orderNumber: packageGroupOrders.orderNumber,
+        tokenSealed: packageGroupOrders.tokenSealed,
+        createdAt: packageGroupOrders.createdAt,
+        people: sql<string>`(select count(*) from package_group_entries e where e.group_id = package_group_orders.id)`,
+      })
       .from(packageGroupOrders)
       .where(and(eq(packageGroupOrders.companyId, companyId), eq(packageGroupOrders.organiserCustomerId, organiserCustomerId)))
       .orderBy(desc(packageGroupOrders.createdAt))
-      .limit(limit);
-    return rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() }));
+      .limit(Math.min(Math.max(1, Math.floor(limit)), 100));
+    const now = this.clock();
+    return rows.map((r) => {
+      let token: string | null = null;
+      try {
+        const opened = decryptCredentials(r.tokenSealed);
+        token = typeof opened?.token === 'string' ? opened.token : null;
+      } catch (error) {
+        console.error('[group order] a link could not be opened', error);
+      }
+      const ordered = r.orderId !== null;
+      return {
+        id: r.id,
+        title: r.title,
+        packageName: r.packageName,
+        forDate: r.forDate,
+        people: Number(r.people),
+        state: stateOf(ordered, r.status, groupAcceptsChoices({ status: r.status, closesAt: r.closesAt }, now)),
+        orderNumber: r.orderNumber,
+        orderId: r.orderId,
+        token,
+        createdAt: r.createdAt.toISOString(),
+      };
+    });
   }
+}
+
+/** Where a group stands, for the organiser's list. */
+function stateOf(ordered: boolean, status: 'open' | 'closed' | 'cancelled', accepting: boolean): MyGroup['state'] {
+  if (ordered) return 'ordered';
+  if (status === 'cancelled') return 'cancelled';
+  return accepting ? 'open' : 'closed';
+}
+
+export interface MyGroup {
+  id: string;
+  title: string;
+  packageName: string;
+  forDate: string | null;
+  people: number;
+  state: 'open' | 'closed' | 'ordered' | 'cancelled';
+  orderNumber: string | null;
+  orderId: string | null;
+  /** The link to open the group again; null for a group made before links were kept. */
+  token: string | null;
+  createdAt: string;
 }

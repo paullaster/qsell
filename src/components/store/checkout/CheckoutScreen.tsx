@@ -118,7 +118,7 @@ export function CheckoutScreen({ cartHandoff }: { cartHandoff?: string }) {
         ...data,
         items: [
           ...cart.lines.map((line) => ({ productId: line.product.id, quantity: line.quantity })),
-          ...cart.packages.map((line) => ({ productId: line.productId, quantity: line.servings, package: { picks: line.picks, ...(line.note === '' ? {} : { note: line.note }) } })),
+          ...cart.packages.map((line) => ({ productId: line.productId, quantity: line.servings, package: { picks: line.picks, ...(line.note === '' ? {} : { note: line.note }), ...(line.groupId === undefined ? {} : { groupId: line.groupId }) } })),
         ],
       });
       if (!result.ok) {

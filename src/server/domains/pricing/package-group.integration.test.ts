@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import type { getContainer } from '@/server/di/container';
@@ -232,7 +232,7 @@ describe.skipIf(url === undefined || url === '')('group orders (database)', () =
       customerEmail: `go-${randomUUID()}@pkg.test`,
       customerPhone: '0700000000',
       shippingAddress: { street: '1 Rd', city: 'Nairobi', countyOrState: 'Nairobi', country: 'KE' },
-      items: result.cart.lines.map((l) => ({ productId: p.lunch, quantity: l.servings, package: { picks: l.picks, ...(l.note === '' ? {} : { note: l.note }) } })),
+      items: result.cart.lines.map((l) => ({ productId: p.lunch, quantity: l.servings, package: { picks: l.picks, ...(l.note === '' ? {} : { note: l.note }), groupId: result.cart.groupId } })),
       currency: 'KES',
       paymentMethod: 'mpesa_daraja',
     });
@@ -241,6 +241,46 @@ describe.skipIf(url === undefined || url === '')('group orders (database)', () =
     expect(placed.order?.totalAmount).toBeCloseTo(1550, 1);
     const instances = await db.select().from(schema.packageInstances).where(eq(schema.packageInstances.documentId, placed.order?.id ?? ''));
     expect(instances.map((i) => [i.servings, i.note]).sort()).toEqual([[1, 'no pepper'], [2, '']]);
+    // The group is tied to the order the organiser placed, and cannot be ordered or opened again.
+    const after = await c.packageGroups.view(token, me.id);
+    expect(after?.order).toMatchObject({ number: placed.order?.orderNumber });
+    expect(after?.status).toBe('closed');
+    expect(await c.packageGroups.forCart(token, me.id)).toMatchObject({ ok: false });
+    expect(await c.packageGroups.setStatus(token, me.id, 'open')).toEqual({ ok: false, error: 'This group order has already been ordered.' });
+    expect((await c.packageGroups.mine(companyId, me.id))[0]).toMatchObject({ state: 'ordered', orderId: placed.order?.id, orderNumber: placed.order?.orderNumber });
+  });
+
+  it('ties a group only to an order placed by its own organiser, and never a cancelled one', async () => {
+    const { p, pick } = await lunch();
+    const me = await customer();
+    const stranger = await customer();
+    const mine = await start(p.lunch, me);
+    const cancelled = await start(p.lunch, me);
+    await added(mine.token, 'Amina', [pick(0, p.fish), pick(1, p.rice)]);
+    await added(cancelled.token, 'Brian', [pick(0, p.fish), pick(1, p.rice)]);
+    expect(await c.packageGroups.setStatus(cancelled.token, me.id, 'cancelled')).toEqual({ ok: true });
+    const place = async (who: { id: string }, groupIds: string[]) =>
+      await write.createOrder({
+        branchId,
+        userId: who.id,
+        customerId: who.id,
+        orderNumber: `PGO-${randomUUID()}`,
+        customerName: 'Buyer',
+        customerEmail: `b-${randomUUID()}@pkg.test`,
+        customerPhone: '0700000000',
+        shippingAddress: { street: '1 Rd', city: 'Nairobi', countyOrState: 'Nairobi', country: 'KE' },
+        items: groupIds.map((groupId) => ({ productId: p.lunch, quantity: 1, package: { picks: [pick(0, p.fish), pick(1, p.rice)], groupId } })),
+        currency: 'KES',
+        paymentMethod: 'mpesa_daraja',
+      });
+    // Someone else's order naming the group, a cancelled group, and a made-up one: the orders stand, nothing is tied.
+    expect((await place(stranger, [mine.id])).success).toBe(true);
+    expect((await place(me, [cancelled.id, randomUUID()])).success).toBe(true);
+    expect((await c.packageGroups.view(mine.token, me.id))?.order).toBeNull();
+    expect((await c.packageGroups.view(cancelled.token, me.id))?.order).toBeNull();
+    // The organiser's own order ties it.
+    const own = await place(me, [mine.id]);
+    expect((await c.packageGroups.view(mine.token, me.id))?.order?.number).toBe(own.order?.orderNumber);
   });
 
   it('names a person whose choice can no longer be made, rather than dropping it', async () => {
@@ -262,13 +302,41 @@ describe.skipIf(url === undefined || url === '')('group orders (database)', () =
     expect(await c.packageGroups.forCart('y'.repeat(32), me.id)).toEqual({ ok: false, error: 'This group order is not yours.' });
   });
 
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('lists the organiser\'s own groups, newest first', async () => {
-    const { p } = await lunch();
+    vi.stubEnv('DATA_ENCRYPTION_KEY', Buffer.alloc(32, 7).toString('base64'));
+    const { p, pick } = await lunch();
     const me = await customer();
     await start(p.lunch, me, { title: 'Monday' });
     await start(p.lunch, me, { title: 'Tuesday' });
     const mine = await c.packageGroups.mine(companyId, me.id);
     expect(mine.map((g) => g.title)).toEqual(['Tuesday', 'Monday']);
+    expect(mine.map((g) => [g.state, g.people, g.orderId])).toEqual([['open', 0, null], ['open', 0, null]]);
+    // How many people have chosen is counted for each group on its own.
+    const counted = await start(p.lunch, me, { title: 'Counted' });
+    await added(counted.token, 'Amina', [pick(0, p.fish), pick(1, p.rice)]);
+    await added(counted.token, 'Brian', [pick(0, p.fish), pick(1, p.rice)]);
+    expect((await c.packageGroups.mine(companyId, me.id)).map((g) => [g.title, g.people])).toEqual([['Counted', 2], ['Tuesday', 0], ['Monday', 0]]);
+    // The link was kept sealed, and opens the group again; it is never stored as it is.
+    const link = mine[0]?.token;
+    expect(link).toMatch(/^[A-Za-z0-9_-]{32}$/);
+    expect((await c.packageGroups.view(link ?? '', me.id))?.title).toBe('Tuesday');
+    const [row] = await db.select().from(schema.packageGroupOrders).where(eq(schema.packageGroupOrders.id, mine[0]?.id ?? ''));
+    expect(JSON.stringify(row?.tokenSealed)).not.toContain(link ?? 'x');
     expect(await c.packageGroups.mine(companyId, (await customer()).id)).toEqual([]);
+  });
+
+  it('still starts a group when the link cannot be sealed, and says the link was not kept', async () => {
+    vi.stubEnv('DATA_ENCRYPTION_KEY', '');
+    vi.stubEnv('DATA_ENCRYPTION_KEY_FILE', '');
+    vi.stubEnv('PAYMENT_DATA_KEY', '');
+    const { p } = await lunch();
+    const me = await customer();
+    const made = await start(p.lunch, me, { title: 'No key' });
+    expect((await c.packageGroups.view(made.token, me.id))?.title).toBe('No key');
+    expect((await c.packageGroups.mine(companyId, me.id))[0]).toMatchObject({ title: 'No key', token: null });
   });
 });

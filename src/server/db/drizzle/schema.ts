@@ -6820,6 +6820,12 @@ export const packageGroupOrders = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    /** The link sealed under the data key, so the organiser can open the group again from their account. Null if it could not be sealed. */
+    tokenSealed: jsonb('token_sealed').$type<EncryptedCredentialsBlob>(),
+    /** The order the organiser placed from this group (not a foreign key: the group's history stays with the order's). */
+    orderId: text('order_id'),
+    orderNumber: text('order_number'),
+    orderedAt: timestamp('ordered_at', { withTimezone: true }),
     uniqueIndex('package_group_orders_token_uidx').on(t.tokenHash),
     index('package_group_orders_organiser_idx').on(t.companyId, t.organiserCustomerId, t.createdAt),
     check('package_group_orders_status_chk', sql`${t.status} IN ('open', 'closed', 'cancelled')`),

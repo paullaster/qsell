@@ -52,3 +52,25 @@ describe('package lines of the cart', () => {
     expect(packageLine('lunch', [], 1, 'x'.repeat(500)).note).toHaveLength(200);
   });
 });
+
+describe('a line that came from a group order', () => {
+  const group = '3f2a9c1e-5b7d-4e0a-9c11-0a1b2c3d4e5f';
+  it('keeps the group it came from, through the browser\'s storage', () => {
+    const line = packageLine('lunch', [pick('fish', 'small')], 2, '', group);
+    expect(line.groupId).toBe(group);
+    expect(parsePackageCart(serializePackageCart([line]))[0]?.groupId).toBe(group);
+    expect(packageLine('lunch', [pick('fish', 'small')], 1).groupId).toBeUndefined();
+  });
+  it('drops a group id that is not an id, so nothing odd is kept or sent', () => {
+    expect(packageLine('lunch', [pick('fish', 'small')], 1, '', 'not-an-id').groupId).toBeUndefined();
+    expect(parsePackageCart(JSON.stringify([{ productId: 'lunch', picks: [pick('fish', 'small')], servings: 1, groupId: '<script>' }]))[0]?.groupId).toBeUndefined();
+  });
+  it('does not change which lines are the same, and an equal line joins it and keeps the group', () => {
+    const own = packageLine('lunch', [pick('fish', 'small')], 1);
+    const fromGroup = packageLine('lunch', [pick('fish', 'small')], 2, '', group);
+    expect(fromGroup.id).toBe(own.id);
+    const joined = addPackageLine([own], fromGroup);
+    expect(joined).toHaveLength(1);
+    expect(joined[0]).toMatchObject({ servings: 3, groupId: group });
+  });
+});

@@ -207,7 +207,7 @@ function Organiser({ token, view, onChanged }: { token: string; view: GroupView;
     }
     const failed: string[] = r.data.problems.map((p) => `${p.person}: ${p.message}`);
     for (const line of r.data.lines) {
-      const answer = await cart.addPackage(packageLine(view.productId, line.picks, line.servings, line.note));
+      const answer = await cart.addPackage(packageLine(view.productId, line.picks, line.servings, line.note, r.data.groupId));
       if (!answer.ok) failed.push(`${line.people.join(', ')}: ${answer.problems[0] ?? 'could not be added.'}`);
     }
     setBusy(false);
@@ -243,11 +243,16 @@ function Organiser({ token, view, onChanged }: { token: string; view: GroupView;
         </ul>
       </div>
 
+      {view.order === null ? null : (
+        <p role="status" className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300" data-testid="group-ordered">
+          You ordered this group{view.order.number === '' ? '' : ` as order ${view.order.number}`}. <Link href="/profile/orders" className="font-semibold underline">See my orders</Link>
+        </p>
+      )}
       <div className="flex flex-wrap gap-2">
-        <button type="button" disabled={busy || view.entryCount === 0 || view.status === 'cancelled'} onClick={() => void toCart()} className="min-h-11 cursor-pointer rounded-lg bg-indigo-600 px-4 text-sm font-bold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50">Put everyone&apos;s lunch in my cart</button>
-        {view.status === 'open' ? <button type="button" disabled={busy} onClick={() => void act(setGroupStatusAction(token, 'closed'), 'The group order is closed.')} className="min-h-11 cursor-pointer rounded-lg border border-line-strong bg-surface-sunken px-4 text-sm font-semibold text-fg-strong hover:bg-hover disabled:opacity-50">Stop taking choices</button> : null}
-        {view.status === 'closed' ? <button type="button" disabled={busy} onClick={() => void act(setGroupStatusAction(token, 'open'), 'The group order is open again.')} className="min-h-11 cursor-pointer rounded-lg border border-line-strong bg-surface-sunken px-4 text-sm font-semibold text-fg-strong hover:bg-hover disabled:opacity-50">Take choices again</button> : null}
-        {view.status === 'cancelled' ? null : <InlineConfirm label="Cancel this group order" action="Cancel group order" confirm="Yes, cancel it" busy={busy} onConfirm={() => void act(setGroupStatusAction(token, 'cancelled'), 'The group order was cancelled.')} />}
+        <button type="button" disabled={busy || view.entryCount === 0 || view.status === 'cancelled' || view.order !== null} onClick={() => void toCart()} className="min-h-11 cursor-pointer rounded-lg bg-indigo-600 px-4 text-sm font-bold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50">Put everyone&apos;s lunch in my cart</button>
+        {view.order === null && view.status === 'open' ? <button type="button" disabled={busy} onClick={() => void act(setGroupStatusAction(token, 'closed'), 'The group order is closed.')} className="min-h-11 cursor-pointer rounded-lg border border-line-strong bg-surface-sunken px-4 text-sm font-semibold text-fg-strong hover:bg-hover disabled:opacity-50">Stop taking choices</button> : null}
+        {view.order === null && view.status === 'closed' ? <button type="button" disabled={busy} onClick={() => void act(setGroupStatusAction(token, 'open'), 'The group order is open again.')} className="min-h-11 cursor-pointer rounded-lg border border-line-strong bg-surface-sunken px-4 text-sm font-semibold text-fg-strong hover:bg-hover disabled:opacity-50">Take choices again</button> : null}
+        {view.status === 'cancelled' || view.order !== null ? null : <InlineConfirm label="Cancel this group order" action="Cancel group order" confirm="Yes, cancel it" busy={busy} onConfirm={() => void act(setGroupStatusAction(token, 'cancelled'), 'The group order was cancelled.')} />}
         {cart.packages.length === 0 ? null : <Link href="/checkout" className="inline-flex min-h-11 items-center rounded-lg border border-line-strong px-4 text-sm font-semibold text-fg-strong hover:bg-hover">Go to checkout</Link>}
       </div>
       {notice === null ? null : (

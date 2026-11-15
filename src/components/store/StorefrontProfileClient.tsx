@@ -18,6 +18,7 @@ import {
   Menu,
   X,
   Star,
+  Users,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { logoutAction } from '@/server/domains/auth/actions';
@@ -267,6 +268,17 @@ export function StorefrontProfileClient({ sessionPromise }: StorefrontProfileCli
             <div>
               <p className="font-medium text-fg-strong">My Orders</p>
               <p className="text-sm text-fg-muted">Track & view order history</p>
+            </div>
+          </Link>
+
+          <Link
+            href="/profile/groups"
+            className="flex items-center gap-3 rounded-xl border border-line bg-surface-raised p-4 transition-colors hover:border-indigo-500 hover:bg-indigo-50/50"
+          >
+            <Users className="h-5 w-5 text-emerald-400" />
+            <div>
+              <p className="font-medium text-fg-strong">My group orders</p>
+              <p className="text-sm text-fg-muted">Lunches you are collecting for a group</p>
             </div>
           </Link>
 

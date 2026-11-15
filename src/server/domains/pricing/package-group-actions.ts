@@ -7,7 +7,7 @@ import { getContainer } from '@/server/di/container';
 import { clientAddress, waitMessage } from '@/lib/rate-limit';
 import { isWellFormedGroupToken } from '@/lib/group-order';
 import { parsePackageLine } from './domain/package-shop-input';
-import type { GroupCart, GroupView } from './package-group-service';
+import type { GroupCart, GroupView, MyGroup } from './package-group-service';
 import type { ShopResult } from './package-shop-actions';
 
 const fail = (error: unknown): { ok: false; error: string } => {
@@ -147,6 +147,18 @@ export async function groupToCartAction(token: unknown): Promise<ShopResult<Grou
   try {
     const done = await getContainer().packageGroups.forCart(token, who.customerId);
     return done.ok ? { ok: true, data: done.cart } : { ok: false, error: done.error };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+/** The signed-in organiser's own group orders (newest first) with their state, the order if any, and the link where it was kept. */
+export async function myGroupsAction(): Promise<ShopResult<MyGroup[]> | { ok: false; error: string; signIn: true }> {
+  const who = await organiser();
+  if (who === null) return { ok: false, error: 'Please sign in to see your group orders.', signIn: true };
+  try {
+    const company = await getContainer().companySettings.ensureSeeded();
+    return { ok: true, data: await getContainer().packageGroups.mine(company.id, who.customerId) };
   } catch (error) {
     return fail(error);
   }

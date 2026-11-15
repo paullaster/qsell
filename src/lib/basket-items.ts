@@ -4,7 +4,7 @@ import { isRecord } from '@/lib/values';
 export interface BasketItem {
   productId: string;
   quantity: number;
-  package?: { picks: { slotId: string; optionId: string; count: number }[]; /** What the customer wrote on the serving. */ note?: string };
+  package?: { picks: { slotId: string; optionId: string; count: number }[]; /** What the customer wrote on the serving. */ note?: string; /** The group order the line came from; the server ties the order to it only if the buyer organised it. */ groupId?: string };
 }
 
 const MAX_PICKS = 1000;
@@ -22,7 +22,8 @@ export function readBasketItem(raw: unknown, maxQuantity = 1_000_000): BasketIte
     picks.push({ slotId: pick.slotId, optionId: pick.optionId, count: pick.count });
   }
   const note = typeof raw.package.note === 'string' && raw.package.note.trim() !== '' ? raw.package.note.slice(0, 201) : undefined;
-  return { productId: raw.productId, quantity: raw.quantity, package: { picks, ...(note === undefined ? {} : { note }) } };
+  const groupId = typeof raw.package.groupId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw.package.groupId) ? raw.package.groupId : undefined;
+  return { productId: raw.productId, quantity: raw.quantity, package: { picks, ...(note === undefined ? {} : { note }), ...(groupId === undefined ? {} : { groupId }) } };
 }
 
 /** Reads a list of basket lines: at most `max`, and null when any line cannot be read. */

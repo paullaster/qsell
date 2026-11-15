@@ -117,7 +117,7 @@ export const OrderWriteService = {
       postalCode?: string;
       country: string;
     };
-    items: { productId: string; quantity: number; /** A configurable package: the choices made (ids and counts only), and `quantity` is the servings. */ package?: { picks: RawPick[]; note?: string } }[];
+    items: { productId: string; quantity: number; /** A configurable package: the choices made (ids and counts only), and `quantity` is the servings. */ package?: { picks: RawPick[]; note?: string; groupId?: string } }[];
     quotedItems?: {
       productId: string;
       quantity: number;
@@ -864,6 +864,9 @@ export const OrderWriteService = {
             const lines = [...preparedPackages.values()];
             await getContainer().packageOrders.record(tx, packageContext, saved.id, lines);
             await getContainer().packageOrders.priceInstances(tx, saved.id, packageTotals);
+            // A group order's organiser has now paid for it (placed it): the group is tied to this order. Only the organiser's own group counts.
+            const groupIds = [...new Set(params.items.flatMap((item) => (item.package?.groupId === undefined ? [] : [item.package.groupId])))];
+            if (groupIds.length > 0 && saleCustomerId !== null) await getContainer().packageGroups.tieToOrder(tx, { companyId: company.id, customerId: saleCustomerId, groupIds, orderId: saved.id, orderNumber: saved.orderNumber });
           }
           // What the discounts used is recorded in the same transaction as the order.
           if (discountApplications.length > 0)

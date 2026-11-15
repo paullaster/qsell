@@ -92,6 +92,36 @@ test.describe('a group order', () => {
     } finally {
       await late.close();
     }
+
+    // The organiser pays once. The order is placed first (a payment cannot finish in the test shop), and the group is tied to it.
+    await page.goto('/checkout');
+    await expect(page.getByRole('heading', { name: 'Checkout', level: 1 })).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId('summary-package')).toHaveCount(2, { timeout: 60_000 });
+    // The form is drawn for a guest first and then for the signed-in organiser (whose name and phone are already there).
+    await expect(page.getByRole('region', { name: 'Your details' })).not.toContainText('Sign in to use your saved details', { timeout: 60_000 });
+    await page.getByLabel('Street, building or office').fill('1 Moi Avenue');
+    await page.getByLabel('City or town').fill('Nairobi');
+    await page.getByLabel('County or region').fill('Nairobi');
+    await page.getByLabel(/number to pay from$/).fill('0733 555 778');
+    await page.getByRole('button', { name: /^Pay / }).click();
+    await expect(page.getByRole('region', { name: 'Payment not completed' }).or(page.getByRole('region', { name: 'Waiting for payment' }))).toBeVisible({ timeout: 90_000 });
+
+    await page.goto(link);
+    await expect(page.getByTestId('group-ordered')).toContainText('You ordered this group', { timeout: 60_000 });
+    await expect(page.getByRole('button', { name: /Put everyone.s lunch in my cart/ })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Take choices again' })).toHaveCount(0);
+
+    // "My group orders" lists it as ordered, with the order, and the way back into the group.
+    await page.goto('/profile/groups');
+    await expect(page.getByRole('heading', { name: 'My group orders', level: 1 })).toBeVisible({ timeout: 60_000 });
+    const row = page.getByTestId('my-group').filter({ hasText: 'Friday team lunch' });
+    await expect(row).toHaveCount(1, { timeout: 60_000 });
+    await expect(row).toContainText('Ordered');
+    await expect(row).toContainText('3 people have chosen');
+    await expect(row.getByRole('link', { name: /^Order / })).toBeVisible();
+    await noHorizontalScroll(page);
+    await row.getByRole('link', { name: 'Open this group' }).click();
+    await expect(page.getByRole('heading', { level: 1, name: 'Friday team lunch' })).toBeVisible({ timeout: 60_000 });
   });
 
   test('a link that is not one of ours is not found', async ({ page }) => {
