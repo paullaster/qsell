@@ -431,6 +431,9 @@ export interface CustomerAddress {
   countyOrState: string;
   postalCode?: string;
   country: string;
+  /** The place on the map chosen for this address, when there is one (both or neither). */
+  latitude?: number | null;
+  longitude?: number | null;
   isDefault: boolean;
 }
 

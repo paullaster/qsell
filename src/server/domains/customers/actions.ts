@@ -21,6 +21,8 @@ function mapAddress(row: CustomerAddressRow): CustomerAddress {
     countyOrState: row.countyOrState,
     postalCode: row.postalCode || undefined,
     country: row.country,
+    latitude: row.latitude === null ? null : Number(row.latitude),
+    longitude: row.longitude === null ? null : Number(row.longitude),
     isDefault: row.isDefault,
   };
 }

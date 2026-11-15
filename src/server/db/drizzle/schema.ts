@@ -3302,11 +3302,15 @@ export const customerAddresses = pgTable(
     countyOrState: text('county_or_state').notNull(),
     postalCode: text('postal_code'),
     country: text('country').notNull(),
+    /** The place on the map the shopper chose for this address (a dropped pin, a searched place or the device's location); both empty when they only wrote it. */
+    latitude: numeric('latitude', { precision: 9, scale: 6 }),
+    longitude: numeric('longitude', { precision: 9, scale: 6 }),
     isDefault: boolean('is_default').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    check('customer_addresses_pin_chk', sql`(${t.latitude} is null and ${t.longitude} is null) or (${t.latitude} is not null and ${t.longitude} is not null and ${t.latitude} between -90 and 90 and ${t.longitude} between -180 and 180)`),
     index('customer_addresses_customer_idx').on(t.customerId),
     uniqueIndex('customer_addresses_one_default_uidx')
       .on(t.customerId)
@@ -6816,16 +6820,16 @@ export const packageGroupOrders = pgTable(
     /** After this nobody can add or change a choice. */
     closesAt: timestamp('closes_at', { withTimezone: true }),
     status: text('status').$type<'open' | 'closed' | 'cancelled'>().notNull().default('open'),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [
     /** The link sealed under the data key, so the organiser can open the group again from their account. Null if it could not be sealed. */
     tokenSealed: jsonb('token_sealed').$type<EncryptedCredentialsBlob>(),
     /** The order the organiser placed from this group (not a foreign key: the group's history stays with the order's). */
     orderId: text('order_id'),
     orderNumber: text('order_number'),
     orderedAt: timestamp('ordered_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
     uniqueIndex('package_group_orders_token_uidx').on(t.tokenHash),
     index('package_group_orders_organiser_idx').on(t.companyId, t.organiserCustomerId, t.createdAt),
     check('package_group_orders_status_chk', sql`${t.status} IN ('open', 'closed', 'cancelled')`),

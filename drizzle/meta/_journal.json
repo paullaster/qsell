@@ -1261,6 +1261,13 @@
       "when": 1794717124256,
       "tag": "0179_package_group_order_link",
       "breakpoints": true
+    },
+    {
+      "idx": 180,
+      "version": "7",
+      "when": 1794718633985,
+      "tag": "0180_customer_address_pin",
+      "breakpoints": true
     }
   ]
 }
