@@ -8,6 +8,8 @@ const addAddress = vi.fn();
 const updateAddress = vi.fn();
 const deleteAddress = vi.fn();
 const setDefaultAddress = vi.fn();
+const forOrder = vi.fn();
+const tokenFor = vi.fn();
 
 vi.mock('@/auth', () => ({ auth: (...args: unknown[]) => auth(...args) as unknown }));
 vi.mock('@/server/domains/access-control/guard', () => ({
@@ -27,6 +29,8 @@ vi.mock('@/server/di/container', () => ({
   getContainer: () => ({
     companySettings: { ensureSeeded: () => Promise.resolve({ id: 'co-1' }) },
     orders: { pageForOwner, getById },
+    trackedOrders: { forOrder },
+    trackingLinks: { tokenFor },
     customers: {
       ensureStorefrontCustomer: () =>
         Promise.resolve({
@@ -156,6 +160,44 @@ describe('one order', () => {
     const missing = await actions.myOrderAction('nope');
     expect(theirs).toEqual(missing);
     expect(theirs).toMatchObject({ ok: false, code: 'ORDER_NOT_FOUND' });
+  });
+});
+
+describe('where my order is', () => {
+  const base = { id: 'o1', orderNumber: 'SO-1', userId: 'acct-1', tradeCustomerId: null };
+  it('asks the shopper to sign in, and says not found for someone else’s order exactly as for a missing one', async () => {
+    auth.mockResolvedValue(null);
+    expect(await actions.myOrderTrackingAction('o1')).toMatchObject({ ok: false, code: 'SIGN_IN' });
+    signedIn();
+    getById.mockResolvedValue({ ...base, userId: 'someone-else' });
+    const theirs = await actions.myOrderTrackingAction('o1');
+    getById.mockResolvedValue(null);
+    expect(theirs).toEqual(await actions.myOrderTrackingAction('nope'));
+    expect(theirs).toMatchObject({ ok: false, code: 'ORDER_NOT_FOUND' });
+    expect(forOrder).not.toHaveBeenCalled();
+    expect(tokenFor).not.toHaveBeenCalled();
+  });
+  it('says nothing for an order with no delivery to follow', async () => {
+    signedIn();
+    getById.mockResolvedValue(base);
+    forOrder.mockResolvedValue(null);
+    expect(await actions.myOrderTrackingAction('o1')).toEqual({ ok: true, data: null });
+  });
+  it('gives a delivery in the customer’s words with the page that follows it, and no address, phone or code', async () => {
+    signedIn();
+    getById.mockResolvedValue(base);
+    forOrder.mockResolvedValue({ storeName: 'Shop', orderNumber: 'SO-1', placedAt: '2026-11-15T08:00:00Z', kind: 'delivery', state: 'in_progress', waiting: [], collection: null, deliveries: [{ number: 'DLV-1', status: 'out_for_delivery', items: [], courier: null, receivedBy: null, deliveredAt: null, failedAttempts: 0, handoverCode: '4821', canReschedule: false, scheduledFor: null, window: { start: '2026-11-16T10:00:00Z', end: '2026-11-16T12:00:00Z' } }] });
+    tokenFor.mockResolvedValue('tok123');
+    const answer = await actions.myOrderTrackingAction('o1');
+    expect(answer).toMatchObject({ ok: true, data: { kind: 'delivery', headline: 'Your order is on its way to you', link: expect.stringContaining('/track/tok123') as string, deliveries: [{ number: 'DLV-1', words: 'On its way', window: { start: '2026-11-16T10:00:00Z' } }] } });
+    expect(JSON.stringify(answer)).not.toContain('4821');
+  });
+  it('words an order to be collected, and leaves out the link when it has been turned off', async () => {
+    signedIn();
+    getById.mockResolvedValue(base);
+    forOrder.mockResolvedValue({ storeName: 'Shop', orderNumber: 'SO-1', placedAt: '2026-11-15T08:00:00Z', kind: 'collection', state: 'not_started', waiting: [], deliveries: [], collection: { branchName: 'Westlands Branch', status: 'ready' } });
+    tokenFor.mockResolvedValue(null);
+    expect(await actions.myOrderTrackingAction('o1')).toMatchObject({ ok: true, data: { kind: 'collection', headline: 'Your order is ready to collect', detail: expect.stringContaining('Westlands Branch') as string, deliveries: [], link: null } });
   });
 });
 

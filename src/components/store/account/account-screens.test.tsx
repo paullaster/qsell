@@ -149,6 +149,20 @@ describe('one order', () => {
     expect(screen.getByText('Cable')).toBeTruthy();
     expect(screen.getByText('1 Rd, Nairobi, Nairobi, Kenya')).toBeTruthy();
   });
+  it('shows where the delivery stands, with its promised time and the page that follows it, and nothing when there is none', async () => {
+    const tracking = Promise.resolve({ ok: true as const, data: { headline: 'Your order is on its way to you', detail: null, kind: 'delivery' as const, link: 'https://shop.test/track/abc', deliveries: [{ number: 'DLV-1', words: 'On its way', window: { start: '2026-11-16T07:00:00Z', end: '2026-11-16T09:00:00Z' }, receivedBy: null }] } });
+    await inSuspense(<OrderDetailClient result={Promise.resolve({ ok: true, data: order(1) })} tracking={tracking} />);
+    const section = await screen.findByRole('region', { name: 'Where your order is' });
+    expect(section.textContent).toContain('Your order is on its way to you');
+    expect(section.textContent).toContain('DLV-1: On its way');
+    expect(section.textContent).toContain('Promised:');
+    expect(screen.getByRole('link', { name: 'Follow this delivery' }).getAttribute('href')).toBe('https://shop.test/track/abc');
+  });
+  it('draws no delivery section when there is no delivery to follow or it could not be read', async () => {
+    await inSuspense(<OrderDetailClient result={Promise.resolve({ ok: true, data: order(1) })} tracking={Promise.resolve({ ok: true, data: null })} />);
+    expect(await screen.findByText('Order SO-1')).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Where your order is' })).toBeNull();
+  });
   it('shows a failure as an alert', async () => {
     await inSuspense(
       <OrderDetailClient result={Promise.resolve({ ok: false, error: 'Could not load' })} />,

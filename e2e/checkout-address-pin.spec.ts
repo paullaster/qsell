@@ -79,6 +79,18 @@ test.describe('the address follows the place chosen at checkout', () => {
       expect(kept.destination).toContain('-1.2921');
       expect(kept.destination).toContain('36.8219');
 
+      // Their order page says where the delivery stands and has the page that follows it, and shows where it goes.
+      await page.goto('/profile/orders');
+      const mine = page.getByRole('list', { name: 'Your orders' });
+      await expect(mine.getByRole('listitem').first()).toBeVisible({ timeout: 60_000 });
+      await mine.getByRole('link').first().click();
+      await expect(page.getByRole('heading', { name: `Order ${orderNumber ?? ''}`, level: 2, exact: true })).toBeVisible({ timeout: 60_000 });
+      const progress = page.getByRole('region', { name: 'Where your order is' });
+      await expect(progress).toContainText('We are getting your order ready', { timeout: 30_000 });
+      await expect(progress.getByRole('link', { name: 'Follow this delivery' })).toHaveAttribute('href', /\/track\/[A-Za-z0-9_-]+$/);
+      await expect(page.getByRole('region', { name: 'Delivery address' })).toContainText(pinned);
+      await noHorizontalScroll(page);
+
       // It is in their book now, with its place, so it can be chosen next time.
       await page.goto('/profile/addresses');
       await expect(page.getByRole('heading', { name: 'My addresses', level: 1 })).toBeVisible({ timeout: 60_000 });
