@@ -1031,3 +1031,9 @@ Found while checking what each party is told the destination is. The rider's scr
 
 **Verified.** Database: the booking the courier receives contains the order's street. Not changed: the courier's own test parcel (it has a fixed test address).
 
+## 78. A pin far from the written area is refused (2026-11-15)
+
+`DeliveryPlans.plan`, which both the shop's quote and order placement go through, now refuses (`pin_far_from_address`) when there is a pin and a written area and the two are more than `PIN_ADDRESS_LIMIT_KM` (30) apart. The area is placed with its estate and then without it (`placeAddress`), and the nearer answer counts, so an estate the map does not know is never held against the shopper. When the area cannot be placed (the built-in map places no addresses) nothing is claimed and the order goes ahead as before. The message names the area and the distance and says to move the pin or change the address. Because the quote refuses too, the checkout shows it in the delivery section and will not place the order; the order service refuses it again whatever the browser sent.
+
+**Verified.** Database: a pin in Nairobi with Nairobi written is accepted; with Kisumu written it is refused in words naming the area and about 2xx km; an unknown estate in the right town is accepted; an area the map cannot place, a pin alone and words alone are accepted; the shop's quote gives the same words. Not verified in the browser: the test shop's map places no addresses, so only the unit-and-database level covers it. A written area that is wrong but near the pin (under 30 km) is not caught, and a map service that is down lets the order through.
+

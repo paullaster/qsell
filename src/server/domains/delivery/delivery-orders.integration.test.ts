@@ -239,6 +239,37 @@ describe.skipIf(!has(url))('delivery for orders (database)', () => {
       expect(r.quote.amount).toBe(180);
     });
 
+    it('refuses a pin that is far from the area written beside it, in words, and says nothing when the two agree or the area cannot be placed', async () => {
+      const a = await branch(NAIROBI);
+      const p = await product();
+      await stock(a, p, 5);
+      await flatFor([a], 180);
+      const places: Record<string, { latitude: number; longitude: number }> = { 'Westlands, Nairobi, Nairobi': { latitude: -1.2676, longitude: 36.8108 }, 'Nairobi, Nairobi': { latitude: -1.2864, longitude: 36.8172 }, 'Milimani, Kisumu, Kisumu': { latitude: -0.0917, longitude: 34.768 }, 'Kisumu, Kisumu': { latitude: -0.0917, longitude: 34.768 } };
+      const search = vi.spyOn(c.geo, 'searchPlaces').mockImplementation((query: string) => {
+        const point = places[query];
+        return Promise.resolve({ value: point === undefined ? [] : [{ id: query, label: query, secondary: null, point }], degraded: false, provider: 'test' });
+      });
+      try {
+        const lines = [{ productId: p, quantity: 1 }];
+        const here = { latitude: -1.2921, longitude: 36.8219 };
+        // A pin in Nairobi with Nairobi written: fine. The same pin with Kisumu written: refused, naming both.
+        expect(await plan(lines, { pin: here, address: { county: 'Nairobi', town: 'Nairobi', area: 'Westlands' } })).toMatchObject({ ok: true });
+        const mismatch = await plan(lines, { pin: here, address: { county: 'Kisumu', town: 'Kisumu', area: 'Milimani' } });
+        expect(mismatch).toMatchObject({ ok: false, reason: 'pin_far_from_address', message: expect.stringContaining('Milimani, Kisumu, Kisumu') as string });
+        if (!mismatch.ok) expect(mismatch.message).toMatch(/about 2\d\d km/);
+        // An estate the map does not know does not count against the shopper when the town is where the pin is.
+        expect(await plan(lines, { pin: here, address: { county: 'Nairobi', town: 'Nairobi', area: 'Some New Estate' } })).toMatchObject({ ok: true });
+        // An area the map cannot place at all: nothing is claimed.
+        expect(await plan(lines, { pin: here, address: { county: 'Nowhere', town: 'Nowhere' } })).toMatchObject({ ok: true });
+        // Only a pin, or only words: nothing to disagree with.
+        expect(await plan(lines, { pin: here })).toMatchObject({ ok: true });
+        // The shop's quote says it in the same words, so the shopper sees it before paying.
+        expect(await shop.shopQuoteDeliveryAction({ method: 'own_fleet', pin: here, address: { county: 'Kisumu', town: 'Kisumu', area: 'Milimani' }, items: [{ productId: p, quantity: 1 }] })).toMatchObject({ ok: false, error: expect.stringContaining('Move the pin') as string });
+      } finally {
+        search.mockRestore();
+      }
+    });
+
     it('says why when no policy applies to the branch it chose', async () => {
       const a = await branch(NAIROBI);
       const p = await product();
