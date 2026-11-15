@@ -126,6 +126,8 @@ export interface DeliveryView {
   statusWords: string;
   branch: { id: string; name: string };
   destination: DestinationRecord;
+  /** The street or building the customer wrote for the order, which the rider and the courier are given first. */
+  street: string | null;
   recipientName: string | null;
   recipientPhone: string | null;
   notes: string | null;
@@ -417,16 +419,32 @@ export class DeliveryDocuments {
     return await this.step(actor, id, 'cancel', expectedVersion, () => Promise.resolve({ set: { closedAt: new Date() }, note: reason, reasonCode: 'cancelled' }));
   }
 
-  /** Corrections that do not change the state: who receives it and any note, until it goes out. */
-  async amend(actor: DocActor, id: string, input: { recipientName?: unknown; recipientPhone?: unknown; notes?: unknown }, expectedVersion?: number): Promise<DocResult<DeliveryView>> {
+  /**
+   * Corrections that do not change the state, until it goes out: who receives it, any note, and the street or building the order was
+   * written with. The street is only words: the place and the charge were worked out for the pin and the area, and stay as they were.
+   */
+  async amend(actor: DocActor, id: string, input: { recipientName?: unknown; recipientPhone?: unknown; notes?: unknown; street?: unknown }, expectedVersion?: number): Promise<DocResult<DeliveryView>> {
     return await this.db.transaction(async (tx): Promise<DocResult<DeliveryView>> => {
       const [row] = await tx.select().from(deliveries).where(and(eq(deliveries.id, id), eq(deliveries.companyId, actor.companyId))).for('update');
       if (row === undefined) return fail('not_found', 'That delivery could not be found.');
       if (expectedVersion !== undefined && expectedVersion !== row.version) return fail('conflict', 'Someone else changed this delivery while you were looking. Reload it to see their change.');
       if (row.status === 'out_for_delivery' || isOver(row.status)) return fail('not_allowed', 'A delivery that has gone out, or is finished, cannot be changed.');
       const next = { recipientName: text(input.recipientName, 120), recipientPhone: text(input.recipientPhone, 40), notes: text(input.notes, 300) };
+      // The street is changed only when it is sent: an amend that leaves it out leaves it as it was.
+      let street: { from: string | null; to: string } | null = null;
+      if (input.street !== undefined) {
+        const to = text(input.street, 200);
+        if (to === null || to.length < 3) return fail('bad_input', 'Write the street or building the delivery goes to, at least three letters.');
+        const [placed] = await tx.select({ address: orders.shippingAddress }).from(orders).where(eq(orders.id, row.orderId)).for('update');
+        if (placed === undefined) return fail('not_found', 'The order of this delivery could not be found.');
+        const from = typeof placed.address.street === 'string' ? placed.address.street.trim() : null;
+        if (from !== to) {
+          await tx.update(orders).set({ shippingAddress: { ...placed.address, street: to }, updatedAt: new Date() }).where(eq(orders.id, row.orderId));
+          street = { from, to };
+        }
+      }
       await tx.update(deliveries).set({ ...next, version: row.version + 1, updatedAt: new Date() }).where(eq(deliveries.id, id));
-      await this.event(tx, id, 'amend', actor, row.status, row.status, { detail: { recipientName: next.recipientName, recipientPhone: next.recipientPhone } });
+      await this.event(tx, id, 'amend', actor, row.status, row.status, { detail: { recipientName: next.recipientName, recipientPhone: next.recipientPhone, ...(street === null ? {} : { streetFrom: street.from, streetTo: street.to }) } });
       return { ok: true, data: await this.viewIn(tx, actor.companyId, id) };
     });
   }
@@ -721,7 +739,7 @@ export class DeliveryDocuments {
   private async viewIn(db: Tx | DrizzleDb, companyId: string, id: string, nullable: true): Promise<DeliveryView | null>;
   private async viewIn(db: Tx | DrizzleDb, companyId: string, id: string, nullable = false): Promise<DeliveryView | null> {
     const [row] = await db
-      .select({ d: deliveries, orderNumber: orders.orderNumber, customerName: orders.customerName, branchName: branches.name })
+      .select({ d: deliveries, orderNumber: orders.orderNumber, customerName: orders.customerName, address: orders.shippingAddress, branchName: branches.name })
       .from(deliveries)
       .innerJoin(orders, eq(orders.id, deliveries.orderId))
       .innerJoin(branches, eq(branches.id, deliveries.branchId))
@@ -767,6 +785,7 @@ export class DeliveryDocuments {
       statusWords: STATUS_WORDS[d.status],
       branch: { id: d.branchId, name: row.branchName },
       destination: d.destination,
+      street: typeof row.address.street === 'string' && row.address.street.trim() !== '' ? row.address.street.trim() : null,
       recipientName: d.recipientName,
       recipientPhone: d.recipientPhone,
       notes: d.notes,

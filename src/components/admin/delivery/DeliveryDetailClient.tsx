@@ -71,7 +71,7 @@ export function DeliveryDetailClient({ viewPromise, canFulfil, extras }: { viewP
 
 function whereTo(view: DeliveryView): string {
   const a = view.destination.address;
-  const words = a === null ? '' : [a.area, a.town, a.county].filter((p): p is string => p !== null && p !== '').join(', ');
+  const words = [view.street, a?.area, a?.town, a?.county].filter((p): p is string => typeof p === 'string' && p !== '').join(', ');
   const pin = view.destination.pin === null ? '' : `Pin ${String(view.destination.pin.latitude)}, ${String(view.destination.pin.longitude)}`;
   return [words, pin].filter((p) => p !== '').join(' · ');
 }
@@ -92,6 +92,7 @@ function DeliveryScreen({ initial, canFulfil, initialExtras }: { initial: Delive
   const [tracking, setTracking] = useState(initial.trackingNumber ?? '');
   const [courierAccount, setCourierAccount] = useState<Choice | null>(null);
   const [failure, setFailure] = useState<Choice | null>(null);
+  const [street, setStreet] = useState(initial.street ?? '');
   const [recipientName, setRecipientName] = useState(initial.recipientName ?? '');
   const [recipientPhone, setRecipientPhone] = useState(initial.recipientPhone ?? '');
   const [notes, setNotes] = useState(initial.notes ?? '');
@@ -175,14 +176,19 @@ function DeliveryScreen({ initial, canFulfil, initialExtras }: { initial: Delive
         {view.receivedBy === null ? null : <p className="text-sm text-fg-muted">Received by {view.receivedBy}{view.deliveredAt === null ? '' : ` on ${when(view.deliveredAt)}`}</p>}
         {editable ? (
           <details className="text-sm">
-            <summary className="min-h-10 cursor-pointer py-2 font-semibold text-indigo-500">Change who receives it, or the note</summary>
+            <summary className="min-h-10 cursor-pointer py-2 font-semibold text-indigo-500">Change the street, who receives it, or the note</summary>
             <form
               className="grid grid-cols-1 gap-3 pt-2 sm:grid-cols-2"
               onSubmit={(event) => {
                 event.preventDefault();
-                void run('amend', { recipientName, recipientPhone, notes }, 'The details are changed.');
+                void run('amend', { ...(street.trim() === (view.street ?? '') ? {} : { street }), recipientName, recipientPhone, notes }, 'The details are changed.');
               }}
             >
+              <div className="sm:col-span-2">
+                <Field id={`${uid}-st`} label="Street or building" hint="Only the words are changed. The place on the map and the charge stay as they were; for another place, cancel this delivery and place the order again.">
+                  <input id={`${uid}-st`} value={street} onChange={(e) => setStreet(e.target.value)} maxLength={200} className={fieldClass} autoComplete="off" />
+                </Field>
+              </div>
               <Field id={`${uid}-rn`} label="Who receives it">
                 <input id={`${uid}-rn`} value={recipientName} onChange={(e) => setRecipientName(e.target.value)} maxLength={120} className={fieldClass} autoComplete="off" />
               </Field>

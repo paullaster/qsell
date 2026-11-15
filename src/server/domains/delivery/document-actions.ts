@@ -136,7 +136,7 @@ export async function deliveryStepAction(raw: unknown) {
         case 'receive_return':
           return dataOf(await docs.receiveReturn(actor, id, { lines: i.lines, note: i.note }));
         case 'amend':
-          return dataOf(await docs.amend(actor, id, { recipientName: i.recipientName, recipientPhone: i.recipientPhone, notes: i.notes }, version));
+          return dataOf(await docs.amend(actor, id, { recipientName: i.recipientName, recipientPhone: i.recipientPhone, notes: i.notes, ...(i.street === undefined ? {} : { street: i.street }) }, version));
         default:
           throw new DeliveryError('That step is not one this delivery has.', 'BAD_INPUT');
       }

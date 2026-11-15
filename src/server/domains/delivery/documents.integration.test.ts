@@ -372,6 +372,30 @@ describe.skipIf(!has(url))('deliveries of an order (database)', () => {
       expect(log[0]).toMatchObject({ reasonText: 'Customer asked us to wait' });
     });
 
+    it('corrects the street the order was written with, and nothing else about where it goes, until it goes out', async () => {
+      const o = await order();
+      const id = await made(o);
+      const addressOf = async () => (await db.select({ a: schema.orders.shippingAddress }).from(schema.orders).where(eq(schema.orders.id, o.id)))[0]?.a;
+      // The street is shown with the delivery, as the rider and the courier are given it.
+      expect(await c.deliveryDocuments.get(companyId, id)).toMatchObject({ street: '1 Test Rd' });
+      // Left out, it is left alone; too short, it is refused in words and nothing else changes.
+      expect(await c.deliveryDocuments.amend(staff(), id, { notes: 'Ring twice' })).toMatchObject({ ok: true, data: { street: '1 Test Rd', notes: 'Ring twice' } });
+      expect(await c.deliveryDocuments.amend(staff(), id, { street: ' x ', notes: 'Should not be kept' })).toMatchObject({ ok: false, reason: 'bad_input', message: expect.stringContaining('street or building') as string });
+      expect((await c.deliveryDocuments.get(companyId, id))?.notes).toBe('Ring twice');
+      // Corrected: the order carries it, the town and country are untouched, the place and charge are not recalculated, and the history says from what to what.
+      const before = (await c.deliveryDocuments.get(companyId, id))?.destination;
+      expect(await c.deliveryDocuments.amend(staff(), id, { street: '  14B Test Rd, Gate 2 ' })).toMatchObject({ ok: true, data: { street: '14B Test Rd, Gate 2' } });
+      expect(await addressOf()).toMatchObject({ street: '14B Test Rd, Gate 2', city: 'Nairobi', countyOrState: 'Nairobi', country: 'KE' });
+      expect((await c.deliveryDocuments.get(companyId, id))?.destination).toEqual(before);
+      const events = await db.select().from(schema.deliveryEvents).where(eq(schema.deliveryEvents.deliveryId, id));
+      expect(events.some((e) => e.action === 'amend' && (e.detail as { streetFrom?: string; streetTo?: string }).streetFrom === '1 Test Rd' && (e.detail as { streetTo?: string }).streetTo === '14B Test Rd, Gate 2')).toBe(true);
+      // The same street again changes nothing in the history's detail; after it goes out it cannot be changed.
+      await toReady(id);
+      await goOut(id);
+      expect(await c.deliveryDocuments.amend(staff(), id, { street: 'Somewhere else' })).toMatchObject({ ok: false, reason: 'not_allowed' });
+      expect((await addressOf())?.street).toBe('14B Test Rd, Gate 2');
+    });
+
     it('changes who receives it, and the note, until it goes out and not after', async () => {
       const o = await order();
       const id = await made(o);

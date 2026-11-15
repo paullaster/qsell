@@ -9,7 +9,7 @@ const company: CompanyProfile = { legalName: 'Test Traders Ltd', tradingName: 'T
 const view = (over: Partial<DeliveryView> = {}): DeliveryView => ({
     id: 'd1', number: 'DLV-26-0000000007', orderId: 'o1', orderNumber: 'ORD-77', customerName: 'Wanjiru Buyer', method: 'own_fleet', status: 'ready', statusWords: 'Ready', branch: { id: 'b1', name: 'Westlands Branch' },
     destination: { pin: null, address: { area: 'Westlands', town: 'Nairobi', county: 'Nairobi' }, positionFrom: 'address', approximate: true },
-    recipientName: null, recipientPhone: null, notes: 'Gate code 4411', courierName: null, trackingNumber: null, receivedBy: null, failedAttempts: 0, version: 3, createdAt: '2026-11-03T09:00:00Z', releasedAt: null, dispatchedAt: null, deliveredAt: null,
+    street: null, recipientName: null, recipientPhone: null, notes: 'Gate code 4411', courierName: null, trackingNumber: null, receivedBy: null, failedAttempts: 0, version: 3, createdAt: '2026-11-03T09:00:00Z', releasedAt: null, dispatchedAt: null, deliveredAt: null,
     lines: [{ id: 'l1', productId: 'p1', productName: 'Salt 500g', sku: 'SALT-500', quantity: 5, picked: 4, delivered: 0, issued: 0, back: null }, { id: 'l2', productId: 'p2', productName: 'Rice 5kg', sku: 'RICE-5', quantity: 2, picked: 0, delivered: 0, issued: 0, back: null }],
     events: [], attempts: [], hasCode: false, scheduledFor: null, door: null, actions: [], ...over,
   });
