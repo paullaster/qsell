@@ -99,13 +99,15 @@ export class CourierSync {
   private async book(s: DeliveryShipmentRow, conn: Connection | null, now: Date): Promise<keyof SyncResult> {
     if (conn === null || conn.adapter === 'manual') return await this.failed(s, 'book_failed', 'The courier\'s connection is not complete. Check its address and key.', false, now);
     const [d] = await this.db
-      .select({ number: deliveries.number, destination: deliveries.destination, recipientName: deliveries.recipientName, recipientPhone: deliveries.recipientPhone, customerName: orders.customerName, customerPhone: orders.customerPhone })
+      .select({ number: deliveries.number, destination: deliveries.destination, recipientName: deliveries.recipientName, recipientPhone: deliveries.recipientPhone, customerName: orders.customerName, customerPhone: orders.customerPhone, address: orders.shippingAddress })
       .from(deliveries)
       .innerJoin(orders, eq(orders.id, deliveries.orderId))
       .where(eq(deliveries.id, s.deliveryId));
     if (d === undefined) return await this.failed(s, 'book_failed', 'The delivery could not be found.', false, now);
     const a = d.destination.address;
-    const place = [a?.area, a?.town, a?.county].filter((x): x is string => typeof x === 'string' && x.trim() !== '').join(', ');
+    // The street the customer wrote leads, as it does on the rider's screen and the delivery note; without it the courier has only an area to go to.
+    const street = typeof d.address.street === 'string' ? d.address.street : null;
+    const place = [street, a?.area, a?.town, a?.county].filter((x): x is string => typeof x === 'string' && x.trim() !== '').join(', ');
     const pin = d.destination.pin === null ? '' : ` (${String(d.destination.pin.latitude)}, ${String(d.destination.pin.longitude)})`;
     try {
       const booked = await this.adapterFor(conn).book({ deliveryNumber: d.number, courierName: conn.name, trackingNumber: s.trackingNumber, recipientName: d.recipientName ?? d.customerName, recipientPhone: d.recipientPhone ?? d.customerPhone, destination: `${place}${pin}`.trim() === '' ? 'See the pin' : `${place}${pin}`.trim(), parcels: 1 });

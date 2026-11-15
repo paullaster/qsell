@@ -1025,3 +1025,9 @@ At checkout `useShopDelivery` takes `onPin` and reports `chosen` (the shopper ch
 
 **Verified.** Unit: the helpers (place, same address, six places, save decision). Database: the place stored to six places, half or off-earth places dropped, kept through a relabel, replaced, dropped when the words change, refused by the database when half there or off the earth. Browser: a shopper with a saved address uses their location, the saved address is no longer selected, the written address is not the saved one, the street is asked for, the order carries the written address and the place, the book then holds it, and choosing it again brings the pin back and choosing the written-only one removes it. Not verified: the written address filling itself from the map service's name for the place (the test shop's map service names nothing, so the browser run goes through the "cannot be named, write the street" path). Not built: a guest's address is not kept; the account's Addresses screen does not let a shopper drop a pin on a saved address; the rider's app is not told the new place is a saved one.
 
+## 77. The courier is told the street (2026-11-15)
+
+Found while checking what each party is told the destination is. The rider's screen and the delivery note lead with the street the customer wrote, then area, town and county; the booking sent to a connected courier (`CourierSync`) had only area, town, county and the pin, so a courier with no street could be sent to a whole estate. The booking now leads with the order's street as the others do.
+
+**Verified.** Database: the booking the courier receives contains the order's street. Not changed: the courier's own test parcel (it has a fixed test address).
+

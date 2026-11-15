@@ -48,18 +48,20 @@ describe.skipIf(!has(url))('couriers (database)', () => {
   const at = (minutes: number) => new Date(clockNow.getTime() + minutes * 60_000);
 
   /** What the courier's system does, as the test sets it up. */
-  const script: { book: () => ReturnType<CourierPort['book']>; track: () => ReturnType<CourierPort['track']>; cancel: () => Promise<void>; booked: number; cancelled: string[] } = {
+  const script: { book: () => ReturnType<CourierPort['book']>; track: () => ReturnType<CourierPort['track']>; cancel: () => Promise<void>; booked: number; cancelled: string[]; lastDestination: string } = {
     book: () => Promise.resolve({ trackingNumber: 'SW1', trackingUrl: 'https://track.swift.test/SW1', labelUrl: 'https://swift.test/l/SW1.pdf' }),
     track: () => Promise.resolve(null),
     cancel: () => Promise.resolve(),
     booked: 0,
     cancelled: [],
+    lastDestination: '',
   };
   const sync = () =>
     new CourierSync(db, c.courierAccounts, c.courierShipments, c.deliveryDocuments, () => clockNow, () => ({
       id: 'http_json',
-      book: () => {
+      book: (input) => {
         script.booked += 1;
+        script.lastDestination = input.destination;
         return script.book();
       },
       track: () => script.track(),
@@ -230,6 +232,8 @@ describe.skipIf(!has(url))('couriers (database)', () => {
     expect(before).toMatchObject({ courierName: a.name, accountId: a.id, adapter: 'http_json', syncState: 'book_pending', trackingNumber: null });
     expect(await statusOf(sent.deliveryId)).toBe('out_for_delivery');
     expect(await sync().run()).toMatchObject({ booked: 1 });
+    // The courier is told the street the customer wrote, not only the area.
+    expect(script.lastDestination).toContain('1 Test Rd');
     const booked = await shipmentOf(sent.deliveryId);
     expect(booked).toMatchObject({ trackingNumber: 'SW1', trackingUrl: 'https://track.swift.test/SW1', labelUrl: 'https://swift.test/l/SW1.pdf', syncState: 'idle', syncTries: 0, syncError: null });
     expect((await c.deliveryDocuments.get(companyId, sent.deliveryId))?.trackingNumber).toBe('SW1');
