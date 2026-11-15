@@ -1037,3 +1037,9 @@ Found while checking what each party is told the destination is. The rider's scr
 
 **Verified.** Database: a pin in Nairobi with Nairobi written is accepted; with Kisumu written it is refused in words naming the area and about 2xx km; an unknown estate in the right town is accepted; an area the map cannot place, a pin alone and words alone are accepted; the shop's quote gives the same words. Not verified in the browser: the test shop's map places no addresses, so only the unit-and-database level covers it. A written area that is wrong but near the pin (under 30 km) is not caught, and a map service that is down lets the order through.
 
+## 79. A saved address can be given a place on the map (2026-11-15)
+
+No migration (the columns are 0180's). The shopper's *My addresses* form has a *Place on the map* group: *Use my current location* reads the device's position (six places), *Remove the place* clears it, and the card says "Place on the map saved". `AddressFields` carries `latitude` and `longitude`; `readAddress` accepts both numbers on the earth or neither and refuses anything else in words (the browser is not trusted). Changing the street, town or county in the form drops the place at once, with a note, and the service drops a place that comes back unchanged beside new words (`pinAfterChange`), so a place can only come from a fresh choice. Choosing such an address at checkout restores the place (see §76), so the charge is exact and the rider is sent to the spot.
+
+**Verified.** Unit: the place is kept to six places or none, and half a place, a place off the earth, text and NaN are refused. Database: the same place beside the same words is kept, beside new words dropped, a new place replaces it. Browser: an address gets a place from the device, the card says so, and editing the street removes it. Not built: dropping a pin on a map or searching a place by name on this screen; naming the place from the map service to fill the words.
+

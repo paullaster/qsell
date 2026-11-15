@@ -69,7 +69,12 @@ function changesWords(existing: CustomerAddressRow, input: Partial<CustomerAddre
 
 /** The pin an address has after a change: the one given with it, none when the words changed without one, otherwise the one it had. */
 function pinAfterChange(existing: CustomerAddressRow, input: Partial<CustomerAddressInput>): { latitude?: string | null; longitude?: string | null } {
-  if (input.latitude !== undefined || input.longitude !== undefined) return pinColumns(input.latitude, input.longitude);
+  if (input.latitude !== undefined || input.longitude !== undefined) {
+    const given = pinColumns(input.latitude, input.longitude);
+    // The place sent back unchanged beside new words is the old place, which no longer says where the address is.
+    const unchanged = given.latitude !== null && given.latitude === existing.latitude && given.longitude === existing.longitude;
+    return unchanged && changesWords(existing, input) ? { latitude: null, longitude: null } : given;
+  }
   return changesWords(existing, input) ? { latitude: null, longitude: null } : {};
 }
 

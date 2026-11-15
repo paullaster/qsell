@@ -64,6 +64,17 @@ describe.skipIf(url === '')('saved address with its place on the map (database)'
     expect(cleared).toMatchObject({ latitude: null, longitude: null });
   });
 
+  it('does not keep a place that is sent back unchanged beside new words, as the My addresses screen does, but keeps it beside the same words', async () => {
+    const id = await customer();
+    const first = await c.customers.addAddress(id, { ...base, latitude: -1.2921, longitude: 36.8219 });
+    const same = await c.customers.updateAddress(id, first.id, { ...base, label: 'Renamed', latitude: -1.2921, longitude: 36.8219 });
+    expect(same).toMatchObject({ label: 'Renamed', latitude: '-1.292100', longitude: '36.821900' });
+    const moved = await c.customers.updateAddress(id, first.id, { ...base, street: '99 Elsewhere Road', latitude: -1.2921, longitude: 36.8219 });
+    expect(moved).toMatchObject({ street: '99 Elsewhere Road', latitude: null, longitude: null });
+    const repinned = await c.customers.updateAddress(id, first.id, { ...base, street: '5 New Place', latitude: -1.3, longitude: 36.78 });
+    expect(repinned).toMatchObject({ street: '5 New Place', latitude: '-1.300000', longitude: '36.780000' });
+  });
+
   it('is refused by the database when a place is half there or off the earth', async () => {
     const id = await customer();
     const row = await c.customers.addAddress(id, base);
