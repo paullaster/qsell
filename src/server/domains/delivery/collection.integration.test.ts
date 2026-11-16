@@ -399,6 +399,35 @@ describe.skipIf(!has(url))('collecting an order from a branch (database)', () =>
         expect(other.ok && other.data.rows.some((r) => r.leftAtCounterDays !== undefined)).toBe(false);
       });
 
+      it('lets staff remind the customer now: only for an order left a day or more, once a day, as a message of its own that leaves the automatic stages alone, and logs who', async () => {
+        const day = 86_400_000;
+        const w = await waiting();
+        const queued = async () => (await db.select().from(schema.deliveryMessages).where(and(eq(schema.deliveryMessages.orderId, w.order.id), eq(schema.deliveryMessages.kind, 'collection_reminder')))).filter((m) => m.channel === 'email');
+        expect(await c.orderCollections.remindNow(staff(), w.order.id)).toMatchObject({ ok: false, reason: 'not_collectable' });
+        await c.orderCollections.markReady(staff(), w.order.id);
+        expect(await c.orderCollections.remindNow(staff(), w.order.id)).toMatchObject({ ok: false, reason: 'bad_input', message: expect.stringContaining('less than a day') as string });
+        await db.update(schema.orderCollections).set({ readyAt: new Date(Date.now() - 4 * day) }).where(eq(schema.orderCollections.orderId, w.order.id));
+        expect(await c.orderCollections.remindNow({ companyId: randomUUID(), userId: 'x' }, w.order.id)).toMatchObject({ ok: false, reason: 'not_found' });
+        expect(await c.orderCollections.remindNow(staff(), w.order.id)).toMatchObject({ ok: true });
+        const first = await queued();
+        expect(first).toHaveLength(1);
+        expect(first[0]?.messageKey).toContain(':collection_reminder:manual:1');
+        // Twice at once, or again the same day: one message, and a refusal in words.
+        const again = await Promise.all([c.orderCollections.remindNow(staff(), w.order.id), c.orderCollections.remindNow(staff(), w.order.id)]);
+        expect(again.every((r) => !r.ok && r.reason === 'bad_input')).toBe(true);
+        expect(await queued()).toHaveLength(1);
+        // The next day another may go, with the next number.
+        expect(await c.orderCollections.remindNow(staff(), w.order.id, new Date(Date.now() + day + 60_000))).toMatchObject({ ok: true });
+        expect((await queued()).map((m) => m.messageKey.split(':manual:')[1]).sort()).toEqual(['1', '2']);
+        // The automatic reminders still have their own stages.
+        await c.orderCollections.remindUncollected();
+        expect((await queued()).some((m) => /:collection_reminder:1(:last)?$/.test(m.messageKey))).toBe(true);
+        const log = await db.select().from(schema.decisionLog).where(and(eq(schema.decisionLog.subjectId, w.order.id), eq(schema.decisionLog.action, 'delivery.collection_reminder_sent_by_staff')));
+        expect(log).toHaveLength(2);
+        expect(await c.orderCollections.collectWithCode(staff(), w.order.id, w.code)).toMatchObject({ ok: true });
+        expect(await c.orderCollections.remindNow(staff(), w.order.id)).toMatchObject({ ok: false, reason: 'already_collected' });
+      });
+
       it('narrows the staff list to orders left at the counter for N days or more, paged on the server, and ignores a made-up choice', async () => {
         const day = 86_400_000;
         const mark = async (w: Awaited<ReturnType<typeof waiting>>, daysAgo: number) => {

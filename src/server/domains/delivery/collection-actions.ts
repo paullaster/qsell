@@ -57,6 +57,19 @@ export async function markReadyForCollectionAction(orderId: unknown) {
   );
 }
 
+/** Staff: remind the customer now that the order is still at the counter (once a day at most). */
+export async function remindCollectionCustomerAction(orderId: unknown) {
+  return await runDelivery(
+    'deliveries:handover',
+    async (ctx) => {
+      const view = viewOf(await getContainer().orderCollections.remindNow({ companyId: ctx.companyId, userId: ctx.userId }, idOfOrder(orderId)));
+      void getContainer().deliveryMessages.flush(5).catch((e: unknown) => console.error('[delivery.messages] flush', e));
+      return view;
+    },
+    PATHS,
+  );
+}
+
 /** The customer shows their code; the person at the counter types it. */
 export async function collectOrderWithCodeAction(raw: unknown) {
   return await runDelivery(

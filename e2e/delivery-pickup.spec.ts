@@ -170,10 +170,29 @@ test.describe('collecting an order from a branch', () => {
       // Just marked ready: nothing to flag yet.
       deliveryTool('collection-ready', orderNumber, '0');
       await expect(await find()).not.toContainText('At counter');
+      // A reminder cannot go before it has waited a day, and says so.
+      await openOrder(page, orderNumber);
+      const early = page.getByRole('region', { name: 'Collection' });
+      await early.getByRole('button', { name: 'Remind the customer now' }).click();
+      await expect(early.getByRole('alert')).toContainText('less than a day', { timeout: 30_000 });
       // Three days later: the list says so, in words.
       deliveryTool('collection-ready', orderNumber, '3');
       const row = await find();
       await expect(row).toContainText('At counter 3 days', { timeout: 30_000 });
+      // Staff can remind the customer now, once a day: the second press is refused in words and no second message is listed.
+      await openOrder(page, orderNumber);
+      const panel = page.getByRole('region', { name: 'Collection' });
+      await panel.getByRole('button', { name: 'Remind the customer now' }).click();
+      await expect(panel.getByText('The customer is being reminded.')).toBeVisible({ timeout: 30_000 });
+      await expect(panel.getByRole('list', { name: 'Messages to the customer' })).toContainText('Still waiting to be collected (email)', { timeout: 30_000 });
+      // At three days the automatic reminder may be listed too, so what is checked is that the refused press adds nothing.
+      const listed = panel.getByRole('list', { name: 'Messages to the customer' }).getByText(/Still waiting to be collected \(email\)/);
+      const before = await listed.count();
+      await panel.getByRole('button', { name: 'Remind the customer now' }).click();
+      await expect(panel.getByRole('alert')).toContainText('already reminded', { timeout: 30_000 });
+      await expect(listed).toHaveCount(before);
+      await noHorizontalScroll(page);
+      await find();
       // The list can be narrowed to what has waited long enough: three days is kept at "3 or more", dropped at "7 or more".
       const wait = page.getByRole('combobox', { name: 'Waiting at the counter' });
       const orderRow = () => page.locator('tr, li').filter({ hasText: orderNumber }).filter({ has: page.getByRole('button', { name: /Manage/ }) });

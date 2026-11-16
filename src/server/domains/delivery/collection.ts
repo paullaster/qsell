@@ -271,6 +271,32 @@ export class OrderCollections {
   }
 
   /**
+   * Staff: remind the customer now that the order is still at the counter, without waiting for the next automatic reminder. Only for an
+   * order that is ready or locked; once a day at most for an order, so a double press or a busy counter cannot flood the customer. It
+   * is a message of its own (the key says "manual"), so it does not use up or move the automatic reminder stages, and the decision log
+   * records who sent it.
+   */
+  async remindNow(actor: CollectionActor, orderId: string, now: Date = new Date()): Promise<CollectionOutcome> {
+    if (this.messages === null) return fail('not_collectable', 'Messages to customers are not set up.');
+    const messages = this.messages;
+    return await this.db.transaction(async (tx): Promise<CollectionOutcome> => {
+      const [row] = await tx.select({ status: orderCollections.status, readyAt: orderCollections.readyAt }).from(orderCollections).where(and(eq(orderCollections.orderId, orderId), eq(orderCollections.companyId, actor.companyId))).for('update');
+      if (row === undefined) return fail('not_found', 'That order is not waiting to be collected.');
+      if (row.status === 'collected') return fail('already_collected', 'This order has already been collected.');
+      if ((row.status !== 'ready' && row.status !== 'locked') || row.readyAt === null) return fail('not_collectable', 'Only an order that is ready at the counter can be reminded. Mark it ready first.');
+      if (waitedDays(row.readyAt, now) < 1) return fail('bad_input', 'This order was marked ready less than a day ago. A reminder can go once it has waited a day.');
+      const [had] = await tx
+        .select({ n: sql<number>`count(*)::int`, last: sql<Date | null>`max(${deliveryMessages.createdAt})` })
+        .from(deliveryMessages)
+        .where(and(eq(deliveryMessages.companyId, actor.companyId), eq(deliveryMessages.orderId, orderId), eq(deliveryMessages.kind, 'collection_reminder'), eq(deliveryMessages.channel, 'email'), sql`${deliveryMessages.messageKey} like '%:collection_reminder:manual:%'`));
+      if (had?.last != null && now.getTime() - new Date(had.last).getTime() < 86_400_000) return fail('bad_input', 'The customer was already reminded in the last day. Try again tomorrow, or call them.');
+      await messages.enqueueIn(tx, { companyId: actor.companyId, orderId, deliveryId: null, kind: 'collection_reminder', key: `${orderId}:collection_reminder:manual:${String((had?.n ?? 0) + 1)}` });
+      await this.decisions.record({ companyId: actor.companyId, subject: { type: 'order', id: orderId }, action: 'delivery.collection_reminder_sent_by_staff', actor: { type: 'user', id: actor.userId }, reason: { code: 'staff_reminder' } }, tx);
+      return { ok: true, view: await this.requireView(tx, actor.companyId, orderId) };
+    });
+  }
+
+  /**
    * Orders that have sat ready at the counter past the days their company chose (3, and then 6, unless changed or turned off) get a
    * reminder, once for each stage: the message key carries the stage, so a repeated or overlapping scan queues nothing new, and a scan
    * that was down for days queues only the latest stage that is due. An order that is collected, cancelled or has had its last

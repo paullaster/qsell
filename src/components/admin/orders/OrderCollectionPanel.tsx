@@ -7,6 +7,7 @@ import {
   collectOrderWithCodeAction,
   collectionOfOrderAction,
   markReadyForCollectionAction,
+  remindCollectionCustomerAction,
   reissueCollectionCodeAction,
 } from '@/server/domains/delivery/collection-actions';
 import type { CollectionView } from '@/server/domains/delivery/collection';
@@ -170,6 +171,12 @@ export function OrderCollectionPanel({ orderId, onChanged }: { orderId: string; 
               </button>
             </div>
           </form>
+
+          {view.status === 'ready' || view.status === 'locked' ? (
+            <button type="button" className={buttonClass} disabled={busy} onClick={() => void run(remindCollectionCustomerAction(orderId), 'The customer is being reminded.')}>
+              Remind the customer now
+            </button>
+          ) : null}
 
           <details className="text-xs">
             <summary className="min-h-10 cursor-pointer py-2 font-semibold text-indigo-500">The customer has no code, or it is locked</summary>
