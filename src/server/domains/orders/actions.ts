@@ -7,7 +7,7 @@ import { proveOrder } from './order-proof';
 import { resubmitOrderForApproval } from './approval';
 import { getContainer } from '@/server/di/container';
 import type { Order, OrderStatus } from '@/types/index';
-import { ORDER_STATUSES } from '@/lib/order-admin';
+import { ORDER_STATUSES, counterWaitDays } from '@/lib/order-admin';
 
 export async function listOrdersAction(): Promise<Order[]> {
   await requirePermission('orders:read');
@@ -15,7 +15,7 @@ export async function listOrdersAction(): Promise<Order[]> {
 }
 
 /** One page of orders for the admin screen, newest first: search by text and narrow by status. Failures come back as data. */
-export async function ordersPageAction(input: { query?: string; status?: string | null; cursor?: string | null }): Promise<
+export async function ordersPageAction(input: { query?: string; status?: string | null; counter?: string | null; cursor?: string | null }): Promise<
   { ok: true; data: { rows: Order[]; nextCursor: string | null } } | { ok: false; error: string }
 > {
   try {
@@ -26,7 +26,7 @@ export async function ordersPageAction(input: { query?: string; status?: string 
   const status = typeof input.status === 'string' && (ORDER_STATUSES as readonly string[]).includes(input.status) ? (input.status as OrderStatus) : null;
   try {
     const c = getContainer();
-    const page = await c.orders.page({ query: input.query, status, cursor: input.cursor });
+    const page = await c.orders.page({ query: input.query, status, leftAtCounterDays: counterWaitDays(input.counter), cursor: input.cursor });
     // Orders left at the counter are flagged on the list, read for the whole page in one query.
     const company = await c.companySettings.ensureSeeded();
     const left = await c.orderCollections.leftAtCounter(company.id, page.rows.map((o) => o.id));

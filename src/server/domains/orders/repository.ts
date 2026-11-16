@@ -2,7 +2,7 @@ import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { decodeCursor, encodeCursor } from '@/server/domains/lookups/request';
 import { matching } from '@/server/domains/settings/paging';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { orders, orderItems, type OrderRow } from '@/server/db/drizzle/schema';
+import { orders, orderItems, orderCollections, type OrderRow } from '@/server/db/drizzle/schema';
 import type { Order, OrderItem, OrderStatus, PaymentStatus, PaymentProvider } from '@/types/index';
 import { OrderStages, type StageActor } from './stages';
 import type { StageSource } from '@/lib/order-stages';
@@ -58,6 +58,12 @@ export function mapOrderRow(row: OrderRow, items: OrderItem[]): Order {
 }
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
+
+/** Orders to be collected that were marked ready at least this many whole days ago and are still at the counter (ready or locked). */
+function leftAtCounterFor(days: number) {
+  const whole = Math.max(1, Math.floor(days));
+  return sql`exists (select 1 from ${orderCollections} oc where oc.order_id = ${orders.id} and oc.status in ('ready','locked') and oc.ready_at <= now() - make_interval(days => ${whole}))`;
+}
 
 export class OrderRepository {
   constructor(private readonly db: DrizzleDb) {}
@@ -180,7 +186,7 @@ export class OrderRepository {
    * One page of orders, newest first, narrowed by text (order number, customer, phone, email, tracking) and by status. The place to
    * start the next page is the database's own text for the time of the last order, so no microsecond is lost; their items are read in one query.
    */
-  async page(input: { query?: string; status?: OrderStatus | null; cursor?: string | null; limit?: number }): Promise<{ rows: Order[]; nextCursor: string | null }> {
+  async page(input: { query?: string; status?: OrderStatus | null; leftAtCounterDays?: number | null; cursor?: string | null; limit?: number }): Promise<{ rows: Order[]; nextCursor: string | null }> {
     const limit = Math.min(Math.max(input.limit ?? 25, 1), 100);
     const after = typeof input.cursor === 'string' && input.cursor !== '' ? decodeCursor(input.cursor) : null;
     const text = (input.query ?? '').trim().slice(0, 100);
@@ -190,6 +196,7 @@ export class OrderRepository {
       .where(
         and(
           input.status == null ? undefined : eq(orders.status, input.status),
+          input.leftAtCounterDays == null ? undefined : leftAtCounterFor(input.leftAtCounterDays),
           matching(text, [orders.orderNumber, orders.customerName, orders.customerPhone, orders.paymentPhone, orders.customerEmail, orders.trackingNumber]),
           after === null ? undefined : sql`(${orders.createdAt}, ${orders.id}) < (${after.k}::timestamptz, ${after.id})`,
         ),

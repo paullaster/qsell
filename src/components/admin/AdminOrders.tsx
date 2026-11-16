@@ -51,11 +51,12 @@ export function AdminOrders({ firstPage, companyPromise, canEditProductsPromise,
 
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<Choice | null>(null);
+  const [counter, setCounter] = useState<Choice | null>(null);
   const query = useDebouncedValue(search.trim());
-  const list = usePagedList<Order, { query: string; status: string | null }>({
+  const list = usePagedList<Order, { query: string; status: string | null; counter: string | null }>({
     load: (filters, cursor) =>
-      ordersPageAction({ query: filters.query, status: filters.status, cursor }),
-    filters: { query, status: status?.id ?? null },
+      ordersPageAction({ query: filters.query, status: filters.status, counter: filters.counter, cursor }),
+    filters: { query, status: status?.id ?? null, counter: counter?.id ?? null },
     initialPage: first,
   });
 
@@ -189,6 +190,15 @@ export function AdminOrders({ firstPage, companyPromise, canEditProductsPromise,
             choice={status}
             onChoice={setStatus}
             placeholder="All statuses"
+          />
+        </div>
+        <div className="w-full sm:w-64">
+          <ChoicePicker
+            label="Waiting at the counter"
+            source="order-counter-waits"
+            choice={counter}
+            onChoice={setCounter}
+            placeholder="Any wait"
           />
         </div>
       </div>

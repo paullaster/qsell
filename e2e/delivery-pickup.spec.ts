@@ -174,6 +174,16 @@ test.describe('collecting an order from a branch', () => {
       deliveryTool('collection-ready', orderNumber, '3');
       const row = await find();
       await expect(row).toContainText('At counter 3 days', { timeout: 30_000 });
+      // The list can be narrowed to what has waited long enough: three days is kept at "3 or more", dropped at "7 or more".
+      const wait = page.getByRole('combobox', { name: 'Waiting at the counter' });
+      const orderRow = () => page.locator('tr, li').filter({ hasText: orderNumber }).filter({ has: page.getByRole('button', { name: /Manage/ }) });
+      await clickUntilVisible(wait, page.getByRole('option', { name: 'At the counter 3 days or more' }));
+      await page.getByRole('option', { name: 'At the counter 3 days or more' }).click();
+      await expect(orderRow().first()).toBeVisible({ timeout: 30_000 });
+      await clickUntilVisible(wait, page.getByRole('option', { name: 'At the counter 7 days or more' }));
+      await page.getByRole('option', { name: 'At the counter 7 days or more' }).click();
+      await expect(orderRow()).toHaveCount(0, { timeout: 30_000 });
+      await expect(page.getByText('No orders match the current filter criteria.').first()).toBeVisible();
       await noHorizontalScroll(page);
       await noInnerHorizontalScroll(page);
     } finally {

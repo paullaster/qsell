@@ -1,5 +1,5 @@
 import { and, eq, isNull } from 'drizzle-orm';
-import { FULFILMENT_STATUSES, STATUS_FILTERS } from '@/lib/order-admin';
+import { COUNTER_WAIT_FILTERS, FULFILMENT_STATUSES, STATUS_FILTERS } from '@/lib/order-admin';
 import { drizzleDb } from '@/server/db/drizzle/client';
 import {
   currencies,
@@ -279,6 +279,16 @@ const orderStatuses = staticSource({
   },
 });
 
+/** How long an order may have waited at the counter, to narrow the admin orders list by. */
+const orderCounterWaits = staticSource({
+  key: 'order-counter-waits',
+  permission: 'orders:read',
+  items: ({ filters }) => {
+    acceptFilters(filters, {});
+    return COUNTER_WAIT_FILTERS.map((f) => ({ id: f.id, label: f.label, description: null }));
+  },
+});
+
 /** The states a person can move an order to by hand. */
 const orderFulfilmentStatuses = staticSource({
   key: 'order-fulfilment-statuses',
@@ -315,6 +325,7 @@ const SOURCES: ReadonlyMap<string, LookupSource> = registry(
     quoteStatuses,
     templateStatuses,
     orderStatuses,
+    orderCounterWaits,
     orderFulfilmentStatuses,
     inventoryKinds,
     ...PAYMENT_LOOKUP_SOURCES,

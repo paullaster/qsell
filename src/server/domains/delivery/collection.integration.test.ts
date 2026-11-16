@@ -399,6 +399,42 @@ describe.skipIf(!has(url))('collecting an order from a branch (database)', () =>
         expect(other.ok && other.data.rows.some((r) => r.leftAtCounterDays !== undefined)).toBe(false);
       });
 
+      it('narrows the staff list to orders left at the counter for N days or more, paged on the server, and ignores a made-up choice', async () => {
+        const day = 86_400_000;
+        const mark = async (w: Awaited<ReturnType<typeof waiting>>, daysAgo: number) => {
+          await c.orderCollections.markReady(staff(), w.order.id);
+          await db.update(schema.orderCollections).set({ readyAt: new Date(Date.now() - daysAgo * day - 60_000) }).where(eq(schema.orderCollections.orderId, w.order.id));
+        };
+        const two = await waiting();
+        const five = await waiting();
+        const nine = await waiting();
+        const notReady = await waiting();
+        const gone = await waiting();
+        await mark(two, 2);
+        await mark(five, 5);
+        await mark(nine, 9);
+        await mark(gone, 8);
+        await c.orderCollections.collectWithCode(staff(), gone.order.id, gone.code);
+        const mine = new Set([two, five, nine, notReady, gone].map((w) => w.order.id));
+        const idsAt = async (counter: string | null) => {
+          const out: string[] = [];
+          let cursor: string | null = null;
+          do {
+            const page = await actions2.ordersPageAction({ counter, cursor });
+            if (!page.ok) throw new Error(page.error);
+            out.push(...page.data.rows.map((r) => r.id).filter((id) => mine.has(id)));
+            cursor = page.data.nextCursor;
+          } while (cursor !== null);
+          return new Set(out);
+        };
+        const actions2 = await import('@/server/domains/orders/actions');
+        expect(await idsAt('1')).toEqual(new Set([two.order.id, five.order.id, nine.order.id]));
+        expect(await idsAt('3')).toEqual(new Set([five.order.id, nine.order.id]));
+        expect(await idsAt('7')).toEqual(new Set([nine.order.id]));
+        expect((await idsAt('banana')).size).toBe(5);
+        expect((await idsAt(null)).size).toBe(5);
+      });
+
       describe('the company chooses the reminders', () => {
         const setReminders = async (enabled: boolean, firstDays: unknown, secondDays: unknown) => {
           const now = await c.deliveryTextSettings.get(companyId);
