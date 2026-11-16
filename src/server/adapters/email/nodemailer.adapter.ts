@@ -11,7 +11,8 @@ export class ConsoleEmailAdapter implements EmailPort {
     const id = `console_${Date.now()}`;
     console.warn('[ConsoleEmailAdapter] Outbound email', {
       id,
-      to: message.to.replace(/^(.).+(@.+)$/, '$1…$2'),
+      to: [message.to, ...(message.toMore ?? [])].map((address) => address.replace(/^(.).+(@.+)$/, '$1…$2')),
+      copies: (message.cc?.length ?? 0) + (message.bcc?.length ?? 0),
       subject: message.subject,
       provider: this.name,
       delivery: 'not_sent',
@@ -51,6 +52,20 @@ function refusedSender(error: unknown): boolean {
   const response = typeof failure.response === 'string' ? failure.response : '';
   return [501, 550, 553, 554].includes(code) && /sender|from address|not owned|spoof|not permitted|not allowed to send|authenticated user/i.test(response);
 }
+
+/** Every address a message is delivered to, each once (case ignored). */
+export function everyone(message: Pick<EmailMessage, 'to' | 'toMore' | 'cc' | 'bcc'>): string[] {
+  const seen = new Set<string>();
+  return [message.to, ...(message.toMore ?? []), ...(message.cc ?? []), ...(message.bcc ?? [])].filter((address) => {
+    const key = address.trim().toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** A single address stays a plain string (what the server has always been given); several are a list. */
+const oneOrMany = (addresses: string[]): string | string[] => (addresses.length === 1 ? (addresses[0] ?? '') : addresses);
 
 type Sendable = Pick<nodemailer.Transporter, 'sendMail'>;
 
@@ -98,8 +113,11 @@ export class NodemailerSmtpAdapter implements EmailPort {
         from: resolved.from,
         ...(resolved.sender === null ? {} : { sender: resolved.sender }),
         ...(resolved.replyTo === null ? {} : { replyTo: resolved.replyTo }),
-        envelope: { from: resolved.envelopeFrom, to: message.to },
-        to: message.to,
+        // Everyone written to, copied or blind-copied is in the envelope; the headers show only To and Cc.
+        envelope: { from: resolved.envelopeFrom, to: everyone(message) },
+        to: oneOrMany([message.to, ...(message.toMore ?? [])]),
+        ...(message.cc === undefined || message.cc.length === 0 ? {} : { cc: [...message.cc] }),
+        ...(message.bcc === undefined || message.bcc.length === 0 ? {} : { bcc: [...message.bcc] }),
         subject: message.subject,
         text: message.text,
         html: message.html,

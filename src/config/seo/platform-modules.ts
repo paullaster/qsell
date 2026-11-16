@@ -345,6 +345,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'Tax Compliance',
       'Order Targets',
       'SMS Providers',
+      'Email Routing',
     ],
   },
   {

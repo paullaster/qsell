@@ -6,6 +6,7 @@ import { getContainer } from '@/server/di/container';
 import { clientAddress, waitMessage } from '@/lib/rate-limit';
 import { parseQuoteRequest } from './domain/package-quote-input';
 import type { ShopResult } from './package-shop-actions';
+import type { MyQuoteRequest } from './package-quote-request-service';
 
 const company = async (): Promise<string> => (await getContainer().companySettings.ensureSeeded()).id;
 
@@ -43,5 +44,18 @@ export async function quoteContactAction(): Promise<ShopResult<{ name: string; e
   } catch (error) {
     console.error('[packages] quote contact', error);
     return { ok: true, data: null };
+  }
+}
+
+/** The signed-in shopper's own quote requests (newest first) with where each stands; a guest is asked to sign in. */
+export async function myQuoteRequestsAction(): Promise<ShopResult<MyQuoteRequest[]> | { ok: false; error: string; signIn: true }> {
+  const session = await auth();
+  const customerId = session?.user.customerStoreId ?? null;
+  if (customerId === null) return { ok: false, error: 'Please sign in to see your quote requests.', signIn: true };
+  try {
+    return { ok: true, data: await getContainer().packageQuoteRequests.mine(await company(), customerId) };
+  } catch (error) {
+    console.error('[packages] my quote requests', error);
+    return { ok: false, error: 'We could not load your quote requests. Please try again.' };
   }
 }

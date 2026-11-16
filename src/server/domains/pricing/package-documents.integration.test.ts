@@ -148,7 +148,7 @@ describe.skipIf(url === undefined || url === '')('a package sold by every docume
       it('sells a package for the same price, the same tax and the same parts as every other type', async () => {
         const { p, picks } = await lunch();
         const sold = await adapters()[type].sell({ productId: p.lunch, servings: 3, picks: picks('large') });
-        expect(sold.ok).toBe(true);
+        expect(sold.ok, JSON.stringify(sold)).toBe(true);
         if (!sold.ok) return;
         // 650 + 120 for the large fish, three servings; only the fish carries tax.
         expect(sold.total).toBeCloseTo(770 * 3, 1);

@@ -555,6 +555,12 @@ export const PERMISSIONS = {
     category: 'Company & Settings',
     description: 'Manage number series and which series numbers each document',
   },
+  'email_routing:manage': {
+    resource: 'email_routing',
+    action: 'manage',
+    category: 'Company & Settings',
+    description: 'Choose who receives the business emails (quotes and web shop orders), who is copied, where replies go, and which business emails a quote shows',
+  },
   'gl_accounts:read': {
     resource: 'gl_accounts',
     action: 'read',

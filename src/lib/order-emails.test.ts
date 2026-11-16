@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { orderEmailContent, usableEmail, type OrderEmailFacts } from './order-emails';
+import { orderEmailContent, staffOrderEmailContent, usableEmail, type OrderEmailFacts } from './order-emails';
 
 const facts: OrderEmailFacts = { tradingName: 'Acme', customerName: 'Amina Wanjiru', orderNumber: 'SO-26-000001', lines: [{ name: 'Tea', quantity: '2', amount: 'KES 200.00' }], subtotal: 'KES 200.00', tax: 'KES 0.00', shipping: 'KES 150.00', total: 'KES 350.00', paymentWords: 'M-Pesa', reference: 'QWE123', payLater: null, trackUrl: 'https://x.test/track/t' };
 
@@ -30,5 +30,25 @@ describe('order emails', () => {
     expect(usableEmail(' A@B.co ')).toBe('a@b.co');
     expect(usableEmail('')).toBeNull();
     expect(usableEmail('nope')).toBeNull();
+  });
+});
+
+describe('the alert to staff about a web shop order', () => {
+  const staffFacts = { ...facts, customerEmail: 'amina@customer.test', customerPhone: '0711222333' };
+  it('says who placed it, how to reach them, what and how much, and whether it waits for payment', () => {
+    const c = staffOrderEmailContent('placed', staffFacts);
+    expect(c.subject).toBe('New web shop order SO-26-000001 from Amina Wanjiru');
+    expect(c.body).toContain('Waiting for payment');
+    expect(c.details).toContainEqual(['Phone', '0711222333']);
+    expect(c.details).toContainEqual(['2 × Tea', 'KES 200.00']);
+    expect(staffOrderEmailContent('placed', { ...staffFacts, payLater: 'door' }).body).toContain('paid at the door');
+    expect(staffOrderEmailContent('placed', { ...staffFacts, payLater: 'account' }).body).toContain('customer\'s account');
+  });
+  it('says an order was paid with its reference, and leaves out contact details that are not there', () => {
+    const c = staffOrderEmailContent('paid', { ...staffFacts, customerEmail: null, customerPhone: '', customerName: '' });
+    expect(c.subject).toBe('Order SO-26-000001 is paid (KES 350.00)');
+    expect(c.details).toContainEqual(['Payment reference', 'QWE123']);
+    expect(c.details.some(([k]) => k === 'Email' || k === 'Phone')).toBe(false);
+    expect(c.body).toContain('A shopper paid');
   });
 });

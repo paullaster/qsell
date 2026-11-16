@@ -1352,6 +1352,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'sms:manage',
       },
       {
+        id: 'settings-email-routing',
+        title: 'Email Routing',
+        name: 'settings-email-routing',
+        href: '/admin/settings/email-routing',
+        description: 'Who receives quote and web shop order emails, who is copied, where replies go, and which business emails a quote shows',
+        icon: 'Mail',
+        permission: 'email_routing:manage',
+      },
+      {
         id: 'settings-document-numbering',
         title: 'Document Numbering',
         name: 'settings-document-numbering',

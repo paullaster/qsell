@@ -98,14 +98,14 @@ describe('placing an order paid by a phone prompt', () => {
     expect(hit).not.toHaveBeenCalledWith('payment_prompt_ip', expect.anything());
   });
 
-  it('queues the mail that says the order is held, only when there is an address to write to', async () => {
+  it('queues the mails about an order that is held (who is written to is decided when they are sent, so an order with no email address still tells the team)', async () => {
     createCheckout.mockResolvedValue({ id: 'o1', orderNumber: 'SO-1', customerEmail: 'a@x.co', customerPhone: '0711111111' });
     await actions.placeOrderAction(form({ paymentMethod: 'pay_on_delivery' }));
     expect(enqueueOrderEmail).toHaveBeenCalledWith('o1', 'placed');
     enqueueOrderEmail.mockClear();
     createCheckout.mockResolvedValue({ id: 'o2', orderNumber: 'SO-2', customerEmail: '', customerPhone: '0711111111' });
     await actions.placeOrderAction(form({ paymentMethod: 'pay_on_delivery' }));
-    expect(enqueueOrderEmail).not.toHaveBeenCalled();
+    expect(enqueueOrderEmail).toHaveBeenCalledWith('o2', 'placed');
   });
 
   it('limits how many orders one address and one phone can place', async () => {

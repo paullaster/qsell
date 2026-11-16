@@ -21,6 +21,7 @@ import { PackageShopService } from '@/server/domains/pricing/package-shop-servic
 import { PackageOrderService } from '@/server/domains/pricing/package-order-service';
 import { PreparationService } from '@/server/domains/pricing/preparation-service';
 import { PackageGroupService } from '@/server/domains/pricing/package-group-service';
+import { EmailRouteService } from '@/server/domains/email-routing/email-route-service';
 import { PackageQuoteRequestService } from '@/server/domains/pricing/package-quote-request-service';
 import { PriceGuardConfigService } from '@/server/domains/pricing/guard-config-service';
 import type { EmailPort, InvoicePdfPort } from '@/server/ports/communications';
@@ -379,6 +380,7 @@ export interface AppContainer {
   kits: KitService;
   kitConfig: KitConfigService;
   packageConfig: PackageConfigService;
+  emailRoutes: EmailRouteService;
   packageShop: PackageShopService;
   packageOrders: PackageOrderService;
   preparation: PreparationService;
@@ -598,6 +600,7 @@ export function getContainer(): AppContainer {
   const loyalty = new LoyaltyService(drizzleDb, decisionLog, reasonCodes, finance.fx);
   const giftCards = new GiftCardService(drizzleDb, decisionLog, reasonCodes, finance.fx);
   const packageConfig = new PackageConfigService(drizzleDb, decisionLog, reasonCodes);
+  const emailRoutes = new EmailRouteService(drizzleDb, decisionLog, reasonCodes, companySettings);
   const packageShop = new PackageShopService(drizzleDb, packageConfig, deliveryServices.stockSettings, deliveryServices.stockAvailability);
   const packageOrders = new PackageOrderService(drizzleDb, packageShop);
   const preparation = new PreparationService(drizzleDb);
@@ -773,6 +776,7 @@ export function getContainer(): AppContainer {
     kits,
     kitConfig: new KitConfigService(drizzleDb, decisionLog, reasonCodes, kits),
     packageConfig,
+    emailRoutes,
     packageShop,
     packageOrders,
     preparation,

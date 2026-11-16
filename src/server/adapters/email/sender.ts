@@ -70,11 +70,27 @@ export function formatAddress(name: string, address: string): string {
 
 const same = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase();
 
-export function resolveSender(config: SenderConfig, message: { sender?: MessageSender; replyTo?: string }): ResolvedSender {
+/** The real addresses of a Reply-To given as one address or many, each once (case ignored), in the order given. */
+export function replyToList(value: string | readonly string[] | undefined): string[] {
+  const given: readonly string[] = typeof value === 'string' ? [value] : (value ?? []);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const address of given) {
+    if (!isDeliverableAddress(address)) continue;
+    const trimmed = address.trim();
+    if (seen.has(trimmed.toLowerCase())) continue;
+    seen.add(trimmed.toLowerCase());
+    out.push(trimmed);
+  }
+  return out;
+}
+
+export function resolveSender(config: SenderConfig, message: { sender?: MessageSender; replyTo?: string | readonly string[] }): ResolvedSender {
   const businessAddress = isDeliverableAddress(message.sender?.address) ? message.sender.address.trim() : null;
   const businessName = cleanDisplayName(message.sender?.name);
   const name = businessName === '' ? cleanDisplayName(config.fromName) : businessName;
-  const requestedReplyTo = isDeliverableAddress(message.replyTo) ? message.replyTo.trim() : null;
+  const requested = replyToList(message.replyTo);
+  const requestedReplyTo = requested.length === 0 ? null : requested.join(', ');
 
   if (config.policy === 'business' && businessAddress !== null) {
     return {
@@ -85,11 +101,14 @@ export function resolveSender(config: SenderConfig, message: { sender?: MessageS
     };
   }
 
-  const replyTo = requestedReplyTo ?? businessAddress;
+  // The mailbox is where the mail is sent from, so asking replies to go to it too says nothing; the other addresses stay.
+  const fallback = businessAddress === null ? [] : [businessAddress];
+  const wanted = requested.length > 0 ? requested : fallback;
+  const replyTo = wanted.filter((address) => !same(address, config.mailbox));
   return {
     from: formatAddress(name, config.mailbox),
     sender: null,
-    replyTo: replyTo !== null && same(replyTo, config.mailbox) ? null : replyTo,
+    replyTo: replyTo.length === 0 ? null : replyTo.join(', '),
     envelopeFrom: config.mailbox,
   };
 }

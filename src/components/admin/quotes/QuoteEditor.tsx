@@ -1,5 +1,6 @@
 'use client';
 
+import { QuoteContactsField } from './QuoteContactsField';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useCustomerCreated } from '@/components/admin/customer-created';
 import { useProductUpdated } from '@/components/admin/product-updated';
@@ -791,6 +792,7 @@ export function QuoteEditor({
                 className="mt-1 block w-full rounded-lg border border-line bg-surface px-3 py-2 text-fg-strong"
               />
             </label>
+            <QuoteContactsField value={input.contactEmails} onChange={(next) => setField('contactEmails', next)} />
             <label className="text-sm font-medium text-fg">
               Internal notes
               <textarea

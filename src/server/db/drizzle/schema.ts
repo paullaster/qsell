@@ -4623,6 +4623,27 @@ export const reconciliationLogs = pgTable(
 );
 
 /** Per-company gross-margin approval floor for sales quotes. */
+/**
+ * Who each business mail is written to, copied, blind-copied and answered by, and which business emails a quote shows, per point
+ * (see docs/architecture/email-routing.md). The config is read through the pure `readRouteConfig`, never trusted as stored.
+ */
+export const emailRoutes = pgTable(
+  'email_routes',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    point: text('point').notNull(),
+    config: jsonb('config').$type<Record<string, unknown>>().notNull().default({}),
+    version: integer('version').notNull().default(1),
+    updatedBy: text('updated_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('email_routes_company_point_uidx').on(t.companyId, t.point)],
+);
+
 export const salesQuoteSettings = pgTable('sales_quote_settings', {
   companyId: uuid('company_id')
     .primaryKey()
@@ -4865,6 +4886,8 @@ export const salesQuotes = pgTable(
     neededOn: text('needed_on'),
     publicNotes: text('public_notes'),
     internalNotes: text('internal_notes'),
+    /** The business emails this quote shows, chosen on the quote (a list of email-routing sources); null means the default for its flow. */
+    contactEmails: jsonb('contact_emails').$type<Record<string, unknown>[] | null>(),
     createdBy: text('created_by'),
     approvedBy: text('approved_by'),
     approvedAt: timestamp('approved_at', { withTimezone: true }),

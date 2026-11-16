@@ -12,6 +12,8 @@ import type { Product } from '@/types/index';
 import { listTradeCustomersAction } from '@/server/domains/customers/master-actions';
 import type { KitAllocation } from '@/server/domains/pricing/domain/kits';
 import { SalesQuoteService, type QuoteInput, type QuoteTemplateInput } from './service';
+import { readSources } from '@/server/domains/email-routing/email-routes';
+import type { LabelledSource } from '@/server/domains/email-routing/email-route-service';
 import { SectionTemplateService } from './section-template-service';
 
 /** Product ids are text keys (`prod_<uuid>`), not bare UUIDs; this only keeps absurd input from reaching the lookup. */
@@ -120,6 +122,14 @@ export async function getSalesQuoteEditorDataAction() {
   // slow to open, and nothing on the screen shows them.
   const slim = products.filter((p) => p.soldOnlyInPackages !== true).map(toCatalogueProduct);
   return { products: slim, settings, kits };
+}
+
+/** The words and addresses for a quote's own list of business emails, so the editor can show who they are. The list is untrusted. */
+export async function describeQuoteContactsAction(raw: unknown): Promise<LabelledSource[]> {
+  await requirePermission('quotes:read');
+  const sources = readSources(raw);
+  if (sources.length === 0) return [];
+  return await getContainer().emailRoutes.describe((await getContainer().companySettings.ensureSeeded()).id, sources);
 }
 
 /** One page of the quote templates list; the request is untrusted. */

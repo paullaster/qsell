@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import type { getContainer } from '@/server/di/container';
@@ -245,6 +245,123 @@ describe.skipIf(url === undefined || url === '')('packages sold by quote request
       const [after] = await db.select().from(schema.salesQuotes).where(eq(schema.salesQuotes.id, full.id));
       expect(after?.source).toBe('shop');
       expect(after?.status).toBe('converted');
+    });
+  });
+
+  describe('my quote requests', () => {
+    it('lists the shopper\'s own requests with where each stands, and nobody else\'s, and not quotes staff made', async () => {
+      const q = await lunch('quote');
+      const holder = await customer();
+      const stranger = await customer();
+      const made = await ask(q.p.lunch, q.picks, { neededOn: '2099-06-01' }, holder?.id ?? null);
+      if (!made.ok) throw new Error(made.error);
+      await ask(q.p.lunch, q.picks, {}, stranger?.id ?? null);
+      // A quote staff made for the same customer is not a request the shopper made.
+      const staffMade = await quotes.create(actor.id, { customerId: holder?.id ?? null, customerName: 'Account Holder', customerEmail: 'h@x.test', currency: 'KES', paymentMethod: 'mpesa_daraja', discountPercent: 0, shippingFee: 0, sections: [], lines: [{ productId: q.p.small, quantity: 1, unitPrice: 100, discountPercent: 0 }] });
+      const mine = await c.packageQuoteRequests.mine(companyId, holder?.id ?? '');
+      expect(mine.map((m) => m.quoteNumber)).toEqual([made.quoteNumber]);
+      expect(mine.map((m) => m.quoteNumber)).not.toContain(staffMade.quoteNumber);
+      expect(mine[0]).toMatchObject({ state: 'preparing', neededOn: '2099-06-01', orderId: null });
+      expect(mine[0]?.lines[0]).toContain('12 ×');
+      expect(mine[0]?.total).toBeCloseTo(12 * 620, 1);
+      // Once staff send it and the customer accepts, the shopper sees that.
+      await db.update(schema.salesQuotes).set({ status: 'sent' }).where(eq(schema.salesQuotes.quoteNumber, made.quoteNumber));
+      expect((await c.packageQuoteRequests.mine(companyId, holder?.id ?? ''))[0]?.state).toBe('sent');
+      expect(await c.packageQuoteRequests.mine(companyId, randomUUID())).toEqual([]);
+    });
+  });
+
+  describe('the mails about a request', () => {
+    it('writes to the shopper and to the staff, once each, with what was asked for', async () => {
+      const { sendQuoteRequestEmail } = await import('@/server/domains/quotes/quote-request-emails');
+      await db.update(schema.companySettings).set({ email: `shop-${randomUUID().slice(0, 6)}@company.test` }).where(eq(schema.companySettings.id, companyId));
+      const q = await lunch('quote');
+      const email = `mails-${randomUUID().slice(0, 6)}@pkg.test`;
+      const made = await ask(q.p.lunch, q.picks, { email, message: 'Office party of 12' });
+      if (!made.ok) throw new Error(made.error);
+      const [row] = await db.select().from(schema.salesQuotes).where(eq(schema.salesQuotes.quoteNumber, made.quoteNumber));
+      const send = vi.spyOn(c.email, 'send').mockResolvedValue({ ok: true } as never);
+      try {
+        expect(await sendQuoteRequestEmail(row?.id ?? '', 'shopper')).toBe('sent');
+        expect(await sendQuoteRequestEmail(row?.id ?? '', 'staff')).toBe('sent');
+        const [toShopper, toStaff] = send.mock.calls.map((call) => call[0]);
+        expect(toShopper?.to).toBe(email);
+        expect(toShopper?.subject).toContain(made.quoteNumber);
+        expect(toShopper?.text).toContain('Quote lunch');
+        expect(toStaff?.to).toContain('@company.test');
+        expect(toStaff?.text).toContain('Office party of 12');
+        expect(toStaff?.text).toContain('/admin/quotes');
+      } finally {
+        send.mockRestore();
+      }
+    });
+
+    it('goes to the people set up in Email routing, with copies and reply addresses, and not at all when switched off', async () => {
+      const { sendQuoteRequestEmail } = await import('@/server/domains/quotes/quote-request-emails');
+      const person = async (name: string) => {
+        const [row] = await db.insert(schema.users).values({ email: `${name}-${randomUUID().slice(0, 6)}@acme.test`, passwordHash: 'x', name, role: 'manager' }).returning();
+        if (row === undefined) throw new Error('no user');
+        return row;
+      };
+      const a = await person('alpha');
+      const b = await person('bravo');
+      await db.update(schema.companySettings).set({ email: 'info@company.test' }).where(eq(schema.companySettings.id, companyId));
+      await c.emailRoutes.save(companyId, 'shop_quote_request_staff', { enabled: true, to: [{ kind: 'staff', userId: a.id }, { kind: 'staff', userId: b.id }], cc: [{ kind: 'company' }], bcc: [{ kind: 'address', address: 'audit@acme.test' }], replyTo: [{ kind: 'customer' }] }, actor, reason);
+      const q = await lunch('quote');
+      const made = await ask(q.p.lunch, q.picks, { email: 'asker@customer.test' });
+      if (!made.ok) throw new Error(made.error);
+      const [row] = await db.select().from(schema.salesQuotes).where(eq(schema.salesQuotes.quoteNumber, made.quoteNumber));
+      const send = vi.spyOn(c.email, 'send').mockResolvedValue({ ok: true } as never);
+      try {
+        expect(await sendQuoteRequestEmail(row?.id ?? '', 'staff')).toBe('sent');
+        expect(send.mock.calls[0]?.[0]).toMatchObject({ to: a.email, toMore: [b.email], cc: ['info@company.test'], bcc: ['audit@acme.test'], replyTo: ['asker@customer.test'] });
+        await c.emailRoutes.save(companyId, 'shop_quote_request_customer', { enabled: false }, actor, reason);
+        expect(await sendQuoteRequestEmail(row?.id ?? '', 'shopper')).toBe('off');
+        expect(send).toHaveBeenCalledTimes(1);
+      } finally {
+        send.mockRestore();
+        await c.emailRoutes.reset(companyId, 'shop_quote_request_staff', actor, reason);
+        await c.emailRoutes.reset(companyId, 'shop_quote_request_customer', actor, reason);
+      }
+    });
+
+    it('says there is nobody to write to when the shopper left only a phone, and writes only about quotes from the shop', async () => {
+      const { sendQuoteRequestEmail } = await import('@/server/domains/quotes/quote-request-emails');
+      const q = await lunch('quote');
+      const made = await ask(q.p.lunch, q.picks, { email: '', phone: '0712345678' });
+      if (!made.ok) throw new Error(made.error);
+      const [row] = await db.select().from(schema.salesQuotes).where(eq(schema.salesQuotes.quoteNumber, made.quoteNumber));
+      expect(await sendQuoteRequestEmail(row?.id ?? '', 'shopper')).toBe('no_address');
+      expect(await sendQuoteRequestEmail(row?.id ?? '', 'nonsense')).toBe('gone');
+      await db.update(schema.salesQuotes).set({ source: 'staff' }).where(eq(schema.salesQuotes.id, row?.id ?? ''));
+      expect(await sendQuoteRequestEmail(row?.id ?? '', 'staff')).toBe('gone');
+    });
+
+    it('queues the staff alert and the shopper confirmation for every request (who they go to is decided when they are sent)', async () => {
+      const queued: string[] = [];
+      const service = new (await import('./package-quote-request-service')).PackageQuoteRequestService(db, c.packageShop, c.packageOrders, quotes, (id) => {
+        queued.push(id);
+        return Promise.resolve();
+      });
+      const q = await lunch('quote');
+      const line = { productId: q.p.lunch, picks: q.picks as never, servings: 3 };
+      const base = { line, name: 'Mail Test', email: '', phone: '0712345678', neededOn: '', message: '' };
+      expect((await service.request(companyId, null, base)).ok).toBe(true);
+      expect((await service.request(companyId, null, { ...base, email: `q-${randomUUID().slice(0, 6)}@pkg.test` })).ok).toBe(true);
+      expect(queued).toHaveLength(2);
+    });
+
+    it('does not fail the request when the mails cannot be queued', async () => {
+      const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      try {
+        const service = new (await import('./package-quote-request-service')).PackageQuoteRequestService(db, c.packageShop, c.packageOrders, quotes, () => Promise.reject(new Error('queue is down')));
+        const q = await lunch('quote');
+        const made = await service.request(companyId, null, { line: { productId: q.p.lunch, picks: q.picks, servings: 2 }, name: 'Queue Down', email: 'down@pkg.test', phone: '', neededOn: '', message: '' });
+        expect(made.ok).toBe(true);
+        expect(log).toHaveBeenCalled();
+      } finally {
+        log.mockRestore();
+      }
     });
   });
 });

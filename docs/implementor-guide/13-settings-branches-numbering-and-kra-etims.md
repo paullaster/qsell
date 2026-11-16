@@ -124,6 +124,18 @@ Every client sends text messages through their own SMS provider, so the provider
 
 The keys are sealed when saved, are never shown again (not in the list, not when the connection is opened to change it) and are used only at the moment a message is sent. Which fields are secret is part of each provider's definition. Nothing is sent by the test except a fixed sentence naming the business (*Test message from …: your SMS provider is connected.*), so the button cannot be used to send anything else; the number typed is not kept, and the same connection can be tested once every half minute. A client whose provider is not in the list needs a new adapter built (a development task, not a setting); the screen and everything that sends messages stay as they are.
 
+### 7b. Email Routing (`/admin/settings/email-routing`)
+Who each business email goes to, and which business emails a quote shows. Behind its own permission (**Email routing**, in the *Company & Settings* group); without it the screen is not in the menu and its pickers refuse.
+
+- **Two lists of cards.** *Emails* (nine places the system writes a mail) and *Business emails shown on quotes* (two lists printed on quote documents). Each card says what it is, whether it is **On/Off**, whether it is **As built in** or **Changed**, and who it goes to now (To, Cc, Bcc, Replies).
+- **The emails**: *Web shop quote request, alert to staff*; *Web shop quote request, confirmation to the shopper*; *Quote sent to the customer* (the email staff send with Send via Email, for quotes made by staff and for requests from the web shop); *Web shop order placed* and *paid*, each to the shopper; and **new**, *Web shop order placed* and *paid, alert to staff*, which are **off until you choose who is told**.
+- **Built in** (what happens until you change a card): the quote alert goes to the company email in Company Setup; the shopper's mails go to the shopper; the quote email goes to the customer with replies to the company email; the two order alerts to staff are off; quotes show the company email.
+- **To, Cc, Bcc, Replies go to (Reply-To)**: each is a list of people; you can add several to each. A person is added by saying **where to find the address**: *A staff member* (pick from active staff accounts; their account email is used and follows any change to it), *The company email* (the address in Company Setup), *A support channel* (an email channel added in Company Setup, Support, for example "Sales desk"), *The customer*, *The staff member who sends it* (whoever pressed Send), *The staff member who made the quote*, or *An address I type* for a one-off. Because it points to where the address lives, changing the company email or a person's email needs no change here.
+- **Rules**: an address written to twice is written to once (To wins over Cc, Cc over Bcc); a person who has no active account, a channel that is no longer an email channel, or a customer with no email is skipped and the card shows a warning; a mail that is **On** needs at least one person in *Sent to*; if nobody can be found when it is sent, nothing is sent and the log says why. A list holds at most 20 people.
+- **Replies**: *Replies go to* sets the Reply-To of the email, several addresses allowed, so a customer who presses Reply writes to the right people. Replies are not captured inside the system yet (that comes with the CRM).
+- **Business emails shown on quotes**: the "Questions? Contact …" emails printed on the quote PDF, the public quote page and the quote email, one list for quotes staff make and one for quotes asked for on the web shop. Empty means the company email. A single quote can have its own list: in the quote editor, **Business contacts shown on this quote** (add people; *Use the company's default contacts* goes back).
+- **Changing a card**: press **Change**, edit the lists, choose a **reason**, **Save**. It applies to the next email. **Put back as built in** (asks first) removes your changes. Every change is recorded with who, when and why.
+
 ### 7. Tax Compliance & KRA eTIMS (`/admin/settings/tax-compliance`)
 The comprehensive regulatory suite divided into five sub-screens:
 1. **Tax Classification (`.../classification`)**: Maps company tax categories to official KRA eTIMS tax codes:
@@ -185,6 +197,9 @@ The comprehensive regulatory suite divided into five sub-screens:
 ---
 
 ## 6. Step-by-Step User Actions (Down to the Last Click)
+
+### Action 00: Telling the right people about quote requests and web shop orders
+1. Open **Settings, Email Routing**. 2. On *Web shop quote request: alert to staff* press **Change**, add the sales people under *Sent to* (**A staff member**), the sales desk channel under *Copied*, and the sales manager under *Blind-copied*; set *Replies go to* the sales desk so a customer reply reaches them. Choose a reason and **Save**. 3. Do the same for *Quote sent to the customer* (for example copy **The staff member who sends it** so the sender keeps a copy). 4. Switch on *Web shop order placed, alert to staff* and choose who is told. 5. Place a test web shop order and a test quote request and check each person received it.
 
 ### Action 0: Connecting the Client's SMS Provider
 1. Open *Settings and configuration > SMS Providers*. (Needs the SMS permission; without it the entry is not shown.)

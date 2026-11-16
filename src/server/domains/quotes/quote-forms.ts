@@ -1,3 +1,4 @@
+import { readSources } from '@/server/domains/email-routing/email-routes';
 import type { StoredPick } from '@/server/domains/pricing/domain/package-shop';
 import type { QuoteInput, SalesQuote } from './service';
 import type { TotalsLine } from './totals';
@@ -21,6 +22,7 @@ export function blankQuoteForm(now: Date): QuoteInput {
     validUntil: new Date(now.getTime() + 30 * 86_400_000).toISOString().slice(0, 10),
     customerReference: '',
     neededOn: '',
+    contactEmails: null,
     publicNotes: '',
     internalNotes: '',
     discountPercent: 0,
@@ -64,6 +66,7 @@ export function quoteFormOf(quote: SalesQuote, newId: () => string): QuoteInput 
     validUntil: quote.validUntil === null ? null : quote.validUntil.toISOString().slice(0, 10),
     customerReference: quote.customerReference,
     neededOn: quote.neededOn,
+    contactEmails: quote.contactEmails === null ? null : readSources(quote.contactEmails),
     publicNotes: quote.publicNotes,
     internalNotes: quote.internalNotes,
     discountPercent: Number(quote.quoteDiscountPercent),

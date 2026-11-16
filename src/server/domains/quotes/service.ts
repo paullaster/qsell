@@ -1,4 +1,5 @@
 import { packageOnlyRefusal } from '@/lib/package-only';
+import { addressing, readSources, type RouteSource } from '@/server/domains/email-routing/email-routes';
 import { has, required } from '@/lib/values';
 import { basketQuantityProblems } from '@/lib/quantity-limits';
 import { effectiveStandardPrice } from '@/lib/standard-price';
@@ -119,6 +120,8 @@ export interface QuoteInput {
   customerReference?: string | null;
   /** The date it is needed (`YYYY-MM-DD`); packages with ordering rules are checked against it when the quote becomes an order. */
   neededOn?: string | null;
+  /** The business emails this quote shows, as a list of email-routing sources; null or none means the company's default for its kind of quote. */
+  contactEmails?: RouteSource[] | null;
   /** Where the quote comes from; kept when it is first made and never changed by an edit. A shopper's request is `shop`. */
   source?: 'staff' | 'shop';
   publicNotes?: string | null;
@@ -266,6 +269,13 @@ export interface SalesQuoteTemplate extends SalesQuoteTemplateRow {
   lines: (typeof salesQuoteTemplateLines.$inferSelect)[];
   sections: (typeof salesQuoteTemplateSections.$inferSelect)[];
   events: (typeof salesQuoteTemplateEvents.$inferSelect)[];
+}
+
+/** What the quote keeps of its own list of business emails: only real sources, and none at all means the default (null); left out, it stays as it was. */
+function contactEmailsOf(raw: RouteSource[] | null | undefined): RouteSource[] | null | undefined {
+  if (raw === undefined) return undefined;
+  const kept = raw === null ? [] : readSources(raw);
+  return kept.length === 0 ? null : kept;
 }
 
 const UUID_TEXT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -1420,6 +1430,7 @@ export class SalesQuoteService {
       companyId,
       branchId: branch.id,
       customerId: input.customerId || null,
+      contactEmails: contactEmailsOf(input.contactEmails),
       templateId: sourceTemplate?.id ?? null,
       templateName: sourceTemplate?.name ?? null,
       quoteNumber: existingNumber ?? '',
@@ -1902,7 +1913,6 @@ export class SalesQuoteService {
   async send(userId: string, id: string) {
     const quote = await this.get(id);
     if (!quote) throw new Error('Quote not found.');
-    if (!quote.customerEmail) throw new Error('Add a customer email before sending this quote.');
     if (!['draft', 'approved'].includes(quote.status))
       throw new Error('Only draft or approved quotes can be sent.');
     if (quote.approvalStatus === 'pending')
@@ -1919,6 +1929,13 @@ export class SalesQuoteService {
       getContainer().companySettings.getProfile(),
       getContainer().companySettings.ensureSeeded(),
     ]);
+    // Who it is written to, copied, blind-copied and answered by is the company's own setting (Settings, Email routing); with none, it goes to the customer.
+    const route = await getContainer().emailRoutes.resolve(companySettings.id, 'quote_sent', {
+      customerEmail: quote.customerEmail,
+      actorUserId: UUID_TEXT.test(userId) ? userId : null,
+      ownerUserId: quote.createdBy !== null && UUID_TEXT.test(quote.createdBy) ? quote.createdBy : null,
+    });
+    if (!route.send) throw new Error(route.reason === 'This email is switched off.' ? 'Emailing quotes is switched off in Settings, Email routing.' : 'Add a customer email before sending this quote.');
     const token = randomBytes(32).toString('hex');
     const baseUrl =
       companySettings.publicBaseUrl?.replace(/\/$/, '') ||
@@ -1926,13 +1943,14 @@ export class SalesQuoteService {
       process.env.NEXTAUTH_URL?.replace(/\/$/, '') ||
       '';
     const acceptUrl = baseUrl ? `${baseUrl}/quote/${token}` : '';
-    const pdf = await this.renderPdf(quote, company);
-    const html = `<div style="font-family:Arial,sans-serif;color:#111827"><h2>${escapeHtml(company.tradingName)}</h2><p>Your quotation <strong>${escapeHtml(quote.quoteNumber)}</strong> totals ${escapeHtml(quote.currency)} ${num(quote.totalAmount).toFixed(2)}.</p>${quote.validUntil ? `<p>Valid until ${quote.validUntil.toLocaleDateString()}.</p>` : ''}${quote.publicNotes ? `<p>${escapeHtml(quote.publicNotes)}</p>` : ''}${acceptUrl ? `<p><a href="${acceptUrl}">Review and respond to this quote</a></p>` : ''}<p>This proforma quotation is not a tax invoice and does not confirm receipt of funds.</p></div>`;
+    const contacts = await this.contactsOf(quote);
+    const pdf = await this.renderPdf(quote, company, contacts);
+    const html = `<div style="font-family:Arial,sans-serif;color:#111827"><h2>${escapeHtml(company.tradingName)}</h2><p>Your quotation <strong>${escapeHtml(quote.quoteNumber)}</strong> totals ${escapeHtml(quote.currency)} ${num(quote.totalAmount).toFixed(2)}.</p>${quote.validUntil ? `<p>Valid until ${quote.validUntil.toLocaleDateString()}.</p>` : ''}${quote.publicNotes ? `<p>${escapeHtml(quote.publicNotes)}</p>` : ''}${acceptUrl ? `<p><a href="${acceptUrl}">Review and respond to this quote</a></p>` : ''}${contacts.length === 0 ? '' : `<p>Questions? Contact ${escapeHtml(contacts.join(', '))}.</p>`}<p>This proforma quotation is not a tax invoice and does not confirm receipt of funds.</p></div>`;
     const sent = await getContainer().email.send({
-      to: quote.customerEmail,
+      ...addressing(route),
       subject: `${company.tradingName} quotation ${quote.quoteNumber}`,
       html,
-      text: `Your quotation ${quote.quoteNumber} totals ${quote.currency} ${num(quote.totalAmount).toFixed(2)}.${acceptUrl ? ` Review and respond: ${acceptUrl}` : ''}`,
+      text: `Your quotation ${quote.quoteNumber} totals ${quote.currency} ${num(quote.totalAmount).toFixed(2)}.${acceptUrl ? ` Review and respond: ${acceptUrl}` : ''}${contacts.length === 0 ? '' : ` Questions? Contact ${contacts.join(', ')}.`}`,
       sender: { name: company.tradingName, address: company.email },
       attachments: [
         { filename: `${quote.quoteNumber}.pdf`, content: pdf, contentType: 'application/pdf' },
@@ -1949,7 +1967,9 @@ export class SalesQuoteService {
       })
       .where(eq(salesQuotes.id, id));
     await this.event(id, 'sent', userId, {
-      recipient: quote.customerEmail,
+      recipient: route.to.join(', '),
+      ...(route.cc.length === 0 ? {} : { cc: route.cc.join(', ') }),
+      ...(route.bcc.length === 0 ? {} : { bcc: route.bcc.join(', ') }),
       messageId: sent.messageId ?? null,
     });
     return this.get(id);
@@ -1959,7 +1979,7 @@ export class SalesQuoteService {
     const quote = await this.get(id);
     if (!quote) throw new Error('Quote not found.');
     const company = await getContainer().companySettings.getProfile();
-    const pdf = await this.renderPdf(quote, company);
+    const pdf = await this.renderPdf(quote, company, await this.contactsOf(quote));
     // A quote only has a proforma, which is never signed. It still goes through the signing
     // service so the log records that it was considered and why it was not signed. Not
     // awaited: the PDF must not wait on bookkeeping.
@@ -1969,7 +1989,13 @@ export class SalesQuoteService {
     return { filename: `${quote.quoteNumber}.pdf`, pdfBase64: pdf.toString('base64') };
   }
 
-  private async renderPdf(quote: SalesQuote, company: CompanyProfile) {
+  /** The business emails the customer is told to write to: the company's choice for this kind of quote (Settings, Email routing), or the quote's own. */
+  private async contactsOf(quote: { source: string; contactEmails: unknown; createdBy: string | null; customerEmail: string | null }): Promise<string[]> {
+    return await getContainer().emailRoutes.quoteContacts((await getContainer().companySettings.ensureSeeded()).id, quote);
+  }
+
+  private async renderPdf(quote: SalesQuote, profile: CompanyProfile, contacts: string[]) {
+    const company = contacts.length === 0 ? profile : { ...profile, email: contacts.join(', ') };
     return getContainer().invoicePdf.generate({
       documentType: 'sales_quote',
       invoiceNumber: quote.quoteNumber,
@@ -2073,6 +2099,7 @@ export class SalesQuoteService {
     const sections = rawSections;
     const lines = rawLines;
     const company = await getContainer().companySettings.getProfile();
+    const contacts = await this.contactsOf(quote);
     return {
       quoteNumber: quote.quoteNumber,
       status: quote.status,
@@ -2095,7 +2122,8 @@ export class SalesQuoteService {
       sections,
       company: {
         tradingName: company.tradingName,
-        email: company.email,
+        // The emails the company chose to show on this kind of quote (or this quote's own), as a list the page prints.
+        email: contacts.length === 0 ? company.email : contacts.join(', '),
         phone: company.phone,
         logoUrl: company.logoUrl,
       },

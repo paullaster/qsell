@@ -86,11 +86,21 @@ export const deliveryMessagesSweep = async (_payload: unknown, helpers: JobHelpe
 
 /** A mail to a shopper about their order (placed, payment received). A failure is thrown so the worker tries again later. */
 export const shopOrderEmail = async (payload: unknown, helpers: JobHelpers) => {
-  const { orderId, kind } = (payload ?? {}) as { orderId?: unknown; kind?: unknown };
+  const { orderId, kind, audience } = (payload ?? {}) as { orderId?: unknown; kind?: unknown; audience?: unknown };
   if (typeof orderId !== 'string' || typeof kind !== 'string') return;
   const { sendOrderEmail } = await import('@/server/domains/orders/order-emails');
-  const outcome = await sendOrderEmail(orderId, kind);
-  helpers.logger.info(`Order mail ${kind} for ${orderId}: ${outcome}`);
+  const to = audience === 'staff' ? 'staff' : 'customer';
+  const outcome = await sendOrderEmail(orderId, kind, to);
+  helpers.logger.info(`Order mail ${kind} (${to}) for ${orderId}: ${outcome}`);
+};
+
+/** A mail about a quote a shopper asked for (the confirmation, or the alert to the staff). A failure is thrown so the worker tries again later. */
+export const shopQuoteRequestEmail = async (payload: unknown, helpers: JobHelpers) => {
+  const { quoteId, kind } = (payload ?? {}) as { quoteId?: unknown; kind?: unknown };
+  if (typeof quoteId !== 'string' || typeof kind !== 'string') return;
+  const { sendQuoteRequestEmail } = await import('@/server/domains/quotes/quote-request-emails');
+  const outcome = await sendQuoteRequestEmail(quoteId, kind);
+  helpers.logger.info(`Quote request mail ${kind} for ${quoteId}: ${outcome}`);
 };
 
 /** Looks for carts left behind and queues one reminder for each. */
@@ -546,6 +556,7 @@ export const tasks = {
   'provider-sweep': providerSweep,
   'delivery-messages-sweep': deliveryMessagesSweep,
   'shop-order-email': shopOrderEmail,
+  'shop-quote-request-email': shopQuoteRequestEmail,
   'shop-cart-reminder-sweep': shopCartReminderSweep,
   'shop-cart-reminder': shopCartReminder,
   'newsletter-slice': newsletterSlice,

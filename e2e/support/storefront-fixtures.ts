@@ -78,7 +78,7 @@ async function limitedProduct(tag: string, min: string, max: string): Promise<Re
 }
 
 /** An "Express lunch" package: fish in two sizes, a starch that only packages sell (brown ugali has none left) and two vegetables. */
-async function lunchPackage(tag: string): Promise<Record<string, string>> {
+async function lunchPackage(tag: string, mode?: string): Promise<Record<string, string>> {
   const { getContainer } = await import('@/server/di/container');
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
   const { products } = await import('@/server/db/drizzle/schema');
@@ -106,6 +106,7 @@ async function lunchPackage(tag: string): Promise<Record<string, string>> {
       pricingMode: 'base_plus_differences',
       allocation: 'list_price',
       shortStockMode: 'hide',
+      ...(mode === 'quote' || mode === 'either' ? { orderMode: mode } : {}),
       slots: [
         { name: 'Fish', minPicks: 1, maxPicks: 1, options: [{ productId: small, quantity: 1 }, { productId: large, quantity: 1, difference: 120, isDefault: true }] },
         { name: 'Starch', minPicks: 1, maxPicks: 1, options: [{ productId: ugali, quantity: 1, isDefault: true }, { productId: brown, quantity: 1, difference: 30 }] },
@@ -349,7 +350,7 @@ async function main(): Promise<void> {
   if (command === 'reviewer' && a !== undefined && b !== undefined) result = await reviewer(a, b);
   else if (command === 'product' && a !== undefined) result = await product(a);
   else if (command === 'limited-product' && a !== undefined && b !== undefined && process.argv[5] !== undefined) result = await limitedProduct(a, b, process.argv[5]);
-  else if (command === 'package' && a !== undefined) result = await lunchPackage(a);
+  else if (command === 'package' && a !== undefined) result = await lunchPackage(a, b);
   else if (command === 'package-orders' && a !== undefined) result = await lunchOrders(a);
   else if (command === 'category-lunch' && a !== undefined) result = await categoryLunch(a, b);
   else if (command === 'packaging' && a !== undefined) result = await packaging(a);
@@ -385,8 +386,8 @@ export function makeLimitedProduct(tag: string, min: number, max: number): { nam
 }
 
 /** A configurable "Express lunch" package with its parts; the names and the page address are returned. */
-export function makeLunchPackage(tag: string): Record<'name' | 'slug' | 'small' | 'large' | 'ugali' | 'brown' | 'sukuma' | 'cabbage' | 'id' | 'ugaliId', string> {
-  const made = storefrontTool('package', tag);
+export function makeLunchPackage(tag: string, mode?: 'quote' | 'either'): Record<'name' | 'slug' | 'small' | 'large' | 'ugali' | 'brown' | 'sukuma' | 'cabbage' | 'id' | 'ugaliId', string> {
+  const made = mode === undefined ? storefrontTool('package', tag) : storefrontTool('package', tag, mode);
   const get = (key: string): string => made[key] ?? '';
   return { name: get('name'), slug: get('slug'), small: get('small'), large: get('large'), ugali: get('ugali'), brown: get('brown'), sukuma: get('sukuma'), cabbage: get('cabbage'), id: get('id'), ugaliId: get('ugaliId') };
 }
