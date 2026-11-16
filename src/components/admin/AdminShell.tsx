@@ -105,9 +105,9 @@ export function AdminShell({
           moduleLabels={moduleLabels}
         />
 
-        <div className="flex min-w-0 flex-1 flex-col lg:pl-72">
+        <div className="flex min-w-0 flex-1 flex-col lg:pl-72 print:pl-0">
           <header
-            className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-line bg-surface/95 px-4 backdrop-blur-md sm:px-6"
+            className="sticky top-0 z-30 flex h-16 items-center print:hidden gap-3 border-b border-line bg-surface/95 px-4 backdrop-blur-md sm:px-6"
             data-user-menu
           >
             <button

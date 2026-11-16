@@ -40,7 +40,16 @@ export interface CustomerAddressInput {
   countyOrState: string;
   postalCode?: string | null;
   country: string;
+  /** The place on the map for this address: both or neither. Left out when the address is only written. */
+  latitude?: number | null;
+  longitude?: number | null;
   isDefault?: boolean;
+}
+
+/** The pin as stored: both numbers rounded to the 6 places the column keeps, or both empty (also when one is missing or out of range). */
+export function pinColumns(latitude: number | null | undefined, longitude: number | null | undefined): { latitude: string | null; longitude: string | null } {
+  const ok = typeof latitude === 'number' && typeof longitude === 'number' && Number.isFinite(latitude) && Number.isFinite(longitude) && Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180;
+  return ok ? { latitude: latitude.toFixed(6), longitude: longitude.toFixed(6) } : { latitude: null, longitude: null };
 }
 
 function num(value: string | number | null | undefined): number {
@@ -50,6 +59,23 @@ function num(value: string | number | null | undefined): number {
 
 function money(value: number): string {
   return value.toFixed(2);
+}
+
+/** Whether a change writes the street, town or region differently, so a pin kept from before would point somewhere else. */
+function changesWords(existing: CustomerAddressRow, input: Partial<CustomerAddressInput>): boolean {
+  const differs = (next: string | undefined, now: string): boolean => next !== undefined && next.trim().toLowerCase() !== now.trim().toLowerCase();
+  return differs(input.street, existing.street) || differs(input.city, existing.city) || differs(input.countyOrState, existing.countyOrState);
+}
+
+/** The pin an address has after a change: the one given with it, none when the words changed without one, otherwise the one it had. */
+function pinAfterChange(existing: CustomerAddressRow, input: Partial<CustomerAddressInput>): { latitude?: string | null; longitude?: string | null } {
+  if (input.latitude !== undefined || input.longitude !== undefined) {
+    const given = pinColumns(input.latitude, input.longitude);
+    // The place sent back unchanged beside new words is the old place, which no longer says where the address is.
+    const unchanged = given.latitude !== null && given.latitude === existing.latitude && given.longitude === existing.longitude;
+    return unchanged && changesWords(existing, input) ? { latitude: null, longitude: null } : given;
+  }
+  return changesWords(existing, input) ? { latitude: null, longitude: null } : {};
 }
 
 export class CustomerMasterService {
@@ -309,6 +335,7 @@ export class CustomerMasterService {
         countyOrState: input.countyOrState.trim(),
         postalCode: emptyToNull(input.postalCode?.trim()),
         country: orElse(input.country.trim(), 'Kenya'),
+        ...pinColumns(input.latitude, input.longitude),
         isDefault: makeDefault,
       })
       .returning();
@@ -356,6 +383,8 @@ export class CustomerMasterService {
         postalCode:
           input.postalCode !== undefined ? emptyToNull(input.postalCode?.trim()) : existing.postalCode,
         country: input.country !== undefined ? input.country.trim() : existing.country,
+        // A pin given with the change replaces the old one; the words of the address changing without one drops the old pin, which no longer says where it is.
+        ...pinAfterChange(existing, input),
         isDefault: input.isDefault === true ? true : existing.isDefault,
         updatedAt: new Date(),
       })

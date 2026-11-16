@@ -68,3 +68,39 @@ export function orderEmailContent(kind: OrderEmailKind, f: OrderEmailFacts): Ord
     details: [['Order', f.orderNumber], ['Payment', f.paymentWords], ...lines, ...money],
   };
 }
+
+export interface StaffOrderEmailFacts extends OrderEmailFacts {
+  customerEmail: string | null;
+  customerPhone: string | null;
+}
+
+/** The alert to the company's own people that a web shop order was placed or paid: who, how to reach them, what and how much. */
+export function staffOrderEmailContent(kind: OrderEmailKind, f: StaffOrderEmailFacts): OrderEmailContent {
+  const lines: [string, string][] = f.lines.map((l) => [`${l.quantity} × ${l.name}`, l.amount]);
+  const who = f.customerName.trim() === '' ? 'A shopper' : f.customerName.trim();
+  const contact: [string, string][] = [
+    ['Customer', who],
+    ...(f.customerEmail === null || f.customerEmail === '' ? [] : ([['Email', f.customerEmail]] as [string, string][])),
+    ...(f.customerPhone === null || f.customerPhone === '' ? [] : ([['Phone', f.customerPhone]] as [string, string][])),
+  ];
+  if (kind === 'paid') {
+    return {
+      subject: `Order ${f.orderNumber} is paid (${f.total})`,
+      heading: 'An order was paid',
+      greeting: 'Hello,',
+      body: `${who} paid for order ${f.orderNumber} on the web shop. It is ready to be prepared.`,
+      cta: 'Open Customer Orders',
+      details: [['Order', f.orderNumber], ...contact, ['Paid by', f.paymentWords], ...(f.reference === null ? [] : ([['Payment reference', f.reference]] as [string, string][])), ...lines, ['Total', f.total]],
+    };
+  }
+  const paymentWords = { door: 'To be paid at the door.', account: 'On the customer\'s account.' };
+  const payment = f.payLater === null ? 'Waiting for payment.' : paymentWords[f.payLater];
+  return {
+    subject: `New web shop order ${f.orderNumber} from ${who}`,
+    heading: 'A new order was placed',
+    greeting: 'Hello,',
+    body: `${who} placed order ${f.orderNumber} on the web shop. ${payment}`,
+    cta: 'Open Customer Orders',
+    details: [['Order', f.orderNumber], ...contact, ['Payment', f.paymentWords], ...lines, ['Total', f.total]],
+  };
+}

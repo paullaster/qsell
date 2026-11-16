@@ -712,11 +712,49 @@ export const deliverySlaSettings = pgTable(
     /** Who is mailed when a delivery is at risk or late (the dispatchers) and when it has been late too long (the supervisors). */
     notifyDispatch: text('notify_dispatch').array().notNull().default(sql`'{}'::text[]`),
     notifySupervisor: text('notify_supervisor').array().notNull().default(sql`'{}'::text[]`),
+    /** The same two groups by text message: mobile numbers, written with the country code. */
+    notifyDispatchPhones: text('notify_dispatch_phones').array().notNull().default(sql`'{}'::text[]`),
+    notifySupervisorPhones: text('notify_supervisor_phones').array().notNull().default(sql`'{}'::text[]`),
+    /** Also text the rider whose run holds a delivery that is at risk or late. */
+    textTheRider: boolean('text_the_rider').notNull().default(false),
     version: integer('version').notNull().default(1),
     updatedBy: text('updated_by'),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [check('delivery_sla_settings_chk', sql`${t.atRiskMinutes} BETWEEN 0 AND 1440 AND ${t.escalateAfterMinutes} BETWEEN 1 AND 1440 AND cardinality(${t.notifyDispatch}) <= 10 AND cardinality(${t.notifySupervisor}) <= 10`)],
+  (t) => [
+    check('delivery_sla_settings_chk', sql`${t.atRiskMinutes} BETWEEN 0 AND 1440 AND ${t.escalateAfterMinutes} BETWEEN 1 AND 1440 AND cardinality(${t.notifyDispatch}) <= 10 AND cardinality(${t.notifySupervisor}) <= 10`),
+    check('delivery_sla_settings_phones_chk', sql`cardinality(${t.notifyDispatchPhones}) <= 10 AND cardinality(${t.notifySupervisorPhones}) <= 10`),
+  ],
+);
+
+/** The text message a delivery's lateness causes for one number, queued in the step that raises the lateness and sent with retries, like the mails. */
+export const deliverySlaTexts = pgTable(
+  'delivery_sla_texts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    eventId: uuid('event_id')
+      .notNull()
+      .references(() => deliverySlaEvents.id, { onDelete: 'restrict' }),
+    /** International form, +254… */
+    recipient: text('recipient').notNull(),
+    audience: text('audience').$type<'staff' | 'rider'>().notNull(),
+    status: text('status').$type<'queued' | 'sent' | 'failed'>().notNull().default('queued'),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+    nextTryAt: timestamp('next_try_at', { withTimezone: true }).notNull().defaultNow(),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_sla_texts_once_uidx').on(t.eventId, t.recipient),
+    index('delivery_sla_texts_due_idx').on(t.status, t.nextTryAt),
+    check('delivery_sla_texts_audience_chk', sql`${t.audience} IN ('staff','rider')`),
+    check('delivery_sla_texts_status_chk', sql`${t.status} IN ('queued','sent','failed')`),
+    check('delivery_sla_texts_attempts_chk', sql`${t.attempts} >= 0`),
+  ],
 );
 
 /**
@@ -844,6 +882,8 @@ export const deliveryVehicles = pgTable(
       .references(() => companySettings.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     maxWeightKg: numeric('max_weight_kg', { precision: 12, scale: 3, mode: 'number' }),
+    /** The most a run in this vehicle may fill, in litres. Null: no limit by volume. */
+    maxVolumeLitres: numeric('max_volume_litres', { precision: 12, scale: 3, mode: 'number' }),
     maxStops: integer('max_stops'),
     isActive: boolean('is_active').notNull().default(true),
     version: integer('version').notNull().default(1),
@@ -853,6 +893,7 @@ export const deliveryVehicles = pgTable(
   },
   (t) => [
     uniqueIndex('delivery_vehicles_company_name_uidx').on(t.companyId, sql`lower(${t.name})`),
+    check('delivery_vehicles_volume_chk', sql`${t.maxVolumeLitres} IS NULL OR (${t.maxVolumeLitres} > 0 AND ${t.maxVolumeLitres} <= 1000000)`),
     check('delivery_vehicles_limits_chk', sql`(${t.maxWeightKg} IS NULL OR (${t.maxWeightKg} > 0 AND ${t.maxWeightKg} <= 1000000)) AND (${t.maxStops} IS NULL OR (${t.maxStops} BETWEEN 1 AND 500))`),
   ],
 );
@@ -1116,6 +1157,9 @@ export const deliveryCosts = pgTable(
     /** The fleet vehicle a fuel, vehicle or other running cost belongs to; the report adds costs up by vehicle. */
     vehicleId: uuid('vehicle_id').references(() => deliveryVehicles.id, { onDelete: 'restrict' }),
     courierName: text('courier_name'),
+    /** Fuel only, optional: the litres bought and the kilometres driven on them (since the last fill). A reversal carries both with the opposite sign, like the amount. */
+    litres: numeric('litres', { precision: 8, scale: 2 }),
+    km: numeric('km', { precision: 8, scale: 1 }),
     note: text('note'),
     key: text('key').notNull(),
     /** The cost this entry takes back. */
@@ -1135,6 +1179,10 @@ export const deliveryCosts = pgTable(
     check('delivery_costs_delivery_chk', sql`${t.kind} NOT IN ('rider_delivery','courier') OR ${t.deliveryId} IS NOT NULL`),
     check('delivery_costs_vehicle_chk', sql`${t.vehicleId} IS NULL OR ${t.kind} IN ('fuel','vehicle','other')`),
     check('delivery_costs_courier_chk', sql`${t.kind} <> 'courier' OR ${t.courierName} IS NOT NULL`),
+    // Litres and kilometres belong to fuel, are never zero, and lean the same way as the amount (a reversal takes both back).
+    check('delivery_costs_fuel_figures_chk', sql`(${t.litres} IS NULL AND ${t.km} IS NULL) OR ${t.kind} = 'fuel'`),
+    check('delivery_costs_litres_sign_chk', sql`${t.litres} IS NULL OR (${t.litres} <> 0 AND (${t.litres} > 0) = (${t.amount} > 0))`),
+    check('delivery_costs_km_sign_chk', sql`${t.km} IS NULL OR (${t.km} <> 0 AND (${t.km} > 0) = (${t.amount} > 0))`),
     // A cost is positive; only a reversal is negative, and it names the cost it takes back.
     check('delivery_costs_reversal_chk', sql`(${t.reversesId} IS NULL) = (${t.amount} > 0)`),
   ],
@@ -1373,6 +1421,30 @@ export const orderVisitMaterials = pgTable(
     index('order_visit_materials_visit_idx').on(t.visitId, t.createdAt),
     uniqueIndex('order_visit_materials_reverses_idx').on(t.reversesId).where(sql`${t.reversesId} IS NOT NULL`),
     check('order_visit_materials_qty_chk', sql`${t.quantity} <> 0 AND ((${t.reversesId} IS NULL) = (${t.quantity} > 0))`),
+  ],
+);
+
+/** A photo the crew took on a visit (before, after, or something to remember). The picture itself is a private media asset; this says what it is for. */
+export const orderVisitPhotos = pgTable(
+  'order_visit_photos',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    visitId: uuid('visit_id')
+      .notNull()
+      .references(() => orderVisits.id, { onDelete: 'restrict' }),
+    mediaId: text('media_id')
+      .notNull()
+      .references(() => mediaAssets.id, { onDelete: 'restrict' }),
+    kind: text('kind').$type<'before' | 'after' | 'other'>().notNull(),
+    caption: text('caption'),
+    takenBy: text('taken_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('order_visit_photos_visit_idx').on(t.visitId, t.createdAt),
+    uniqueIndex('order_visit_photos_media_uidx').on(t.mediaId),
+    check('order_visit_photos_kind_chk', sql`${t.kind} IN ('before','after','other')`),
+    check('order_visit_photos_caption_chk', sql`${t.caption} IS NULL OR char_length(${t.caption}) <= 200`),
   ],
 );
 
@@ -1635,6 +1707,11 @@ export const courierAccounts = pgTable(
     /** The unguessable part of the address the courier pushes its news to. */
     webhookKey: text('webhook_key').notNull(),
     isActive: boolean('is_active').notNull().default(true),
+    /** What the last test parcel did, kept so the card can say it: when, whether the courier booked it, whether it was cancelled again, and the words. Not a setting: it does not change the version. All empty until a test is sent. */
+    lastTestAt: timestamp('last_test_at', { withTimezone: true }),
+    lastTestBooked: boolean('last_test_booked'),
+    lastTestCancelled: boolean('last_test_cancelled'),
+    lastTestMessage: text('last_test_message'),
     version: integer('version').notNull().default(1),
     createdBy: text('created_by').notNull(),
     updatedBy: text('updated_by'),
@@ -1645,6 +1722,7 @@ export const courierAccounts = pgTable(
     uniqueIndex('courier_accounts_name_uidx').on(t.companyId, sql`lower(${t.name})`),
     uniqueIndex('courier_accounts_webhook_uidx').on(t.webhookKey),
     check('courier_accounts_adapter_chk', sql`${t.adapter} IN ('manual','http_json')`),
+    check('courier_accounts_last_test_chk', sql`(${t.lastTestAt} is null and ${t.lastTestBooked} is null and ${t.lastTestCancelled} is null and ${t.lastTestMessage} is null) or (${t.lastTestAt} is not null and ${t.lastTestBooked} is not null and ${t.lastTestCancelled} is not null and ${t.lastTestMessage} is not null and char_length(${t.lastTestMessage}) <= 500 and (${t.lastTestBooked} or not ${t.lastTestCancelled}))`),
   ],
 );
 export type CourierAccountRow = typeof courierAccounts.$inferSelect;
@@ -3248,11 +3326,15 @@ export const customerAddresses = pgTable(
     countyOrState: text('county_or_state').notNull(),
     postalCode: text('postal_code'),
     country: text('country').notNull(),
+    /** The place on the map the shopper chose for this address (a dropped pin, a searched place or the device's location); both empty when they only wrote it. */
+    latitude: numeric('latitude', { precision: 9, scale: 6 }),
+    longitude: numeric('longitude', { precision: 9, scale: 6 }),
     isDefault: boolean('is_default').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    check('customer_addresses_pin_chk', sql`(${t.latitude} is null and ${t.longitude} is null) or (${t.latitude} is not null and ${t.longitude} is not null and ${t.latitude} between -90 and 90 and ${t.longitude} between -180 and 180)`),
     index('customer_addresses_customer_idx').on(t.customerId),
     uniqueIndex('customer_addresses_one_default_uidx')
       .on(t.customerId)
@@ -3754,6 +3836,8 @@ export const products = pgTable(
     isTaxInclusive: boolean('is_tax_inclusive'),
     /** Shipping weight of one base unit, in kg. */
     weight: numeric('weight', { precision: 12, scale: 4 }),
+    /** The space one base unit takes in a vehicle, in litres (1,000 litres is a cubic metre). Null: not known, counted as nothing on a run. */
+    volumeLitres: numeric('volume_litres', { precision: 12, scale: 4 }),
     /**
      * The unit stock is counted in. Rows written without one take the default unit
      * (`default_unit_id()`); the application always sets it explicitly.
@@ -3772,6 +3856,11 @@ export const products = pgTable(
     isActive: boolean('is_active').notNull().default(true),
     /** Checkout-only packaging item: inventory-bearing, but excluded from ordinary catalogue browsing. */
     isCheckoutPackaging: boolean('is_checkout_packaging').notNull().default(false),
+    /**
+     * Sold only inside a package (docs/architecture/configurable-packages.md section 4): real stock, cost and tax, but not listed,
+     * not found, not sold on its own. A package may sell it; nothing else may. Such a product is never shown in the web shop.
+     */
+    soldOnlyInPackages: boolean('sold_only_in_packages').notNull().default(false),
     imageUrl: text('image_url').notNull().default(''),
     additionalImages: jsonb('additional_images').$type<string[]>().notNull().default([]),
     rating: numeric('rating', { precision: 3, scale: 2 }).notNull().default('0'),
@@ -3796,6 +3885,9 @@ export const products = pgTable(
     uniqueIndex('products_slug_uidx')
       .on(t.slug)
       .where(sql`${t.deletedAt} is null`),
+    check('products_package_only_hidden_chk', sql`NOT ${t.soldOnlyInPackages} OR NOT ${t.showOnWebShop}`),
+    check('products_package_only_not_packaging_chk', sql`NOT ${t.soldOnlyInPackages} OR NOT ${t.isCheckoutPackaging}`),
+    check('products_volume_chk', sql`${t.volumeLitres} IS NULL OR (${t.volumeLitres} > 0 AND ${t.volumeLitres} <= 1000000)`),
     check('products_min_order_qty_chk', sql`${t.minOrderQty} IS NULL OR ${t.minOrderQty} > 0`),
     check('products_max_order_qty_chk', sql`${t.maxOrderQty} IS NULL OR ${t.maxOrderQty} > 0`),
     check(
@@ -4060,7 +4152,7 @@ export const stockLocations = pgTable(
     sellsChannels: text('sells_channels')
       .array()
       .notNull()
-      .default(sql`ARRAY['ecommerce','sales_order','credit_sale','pos_cash_sale']::text[]`),
+      .default(sql`ARRAY['ecommerce','sales_order','credit_sale','pos_cash_sale','sales_invoice']::text[]`),
     fulfilsDelivery: boolean('fulfils_delivery').notNull().default(true),
     allowNegative: boolean('allow_negative').notNull().default(false),
     isDefault: boolean('is_default').notNull().default(false),
@@ -4555,6 +4647,49 @@ export const reconciliationLogs = pgTable(
 );
 
 /** Per-company gross-margin approval floor for sales quotes. */
+/**
+ * How each selling document type (sales order, sales invoice, credit sale, cash sale) behaves for this company: the credit check, credit
+ * days, when stock is released, approval, invoice timing (docs/architecture/selling-documents.md section 4.6). Read through the pure
+ * `readSellingSettings`, never trusted as stored; a type with no row behaves by its defaults.
+ */
+export const sellingDocumentSettings = pgTable(
+  'selling_document_settings',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    docType: text('doc_type').notNull(),
+    config: jsonb('config').$type<Record<string, unknown>>().notNull().default({}),
+    version: integer('version').notNull().default(1),
+    updatedBy: text('updated_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('selling_document_settings_company_type_uidx').on(t.companyId, t.docType)],
+);
+
+/**
+ * Who each business mail is written to, copied, blind-copied and answered by, and which business emails a quote shows, per point
+ * (see docs/architecture/email-routing.md). The config is read through the pure `readRouteConfig`, never trusted as stored.
+ */
+export const emailRoutes = pgTable(
+  'email_routes',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    point: text('point').notNull(),
+    config: jsonb('config').$type<Record<string, unknown>>().notNull().default({}),
+    version: integer('version').notNull().default(1),
+    updatedBy: text('updated_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('email_routes_company_point_uidx').on(t.companyId, t.point)],
+);
+
 export const salesQuoteSettings = pgTable('sales_quote_settings', {
   companyId: uuid('company_id')
     .primaryKey()
@@ -4793,8 +4928,12 @@ export const salesQuotes = pgTable(
     paymentMethod: text('payment_method').notNull().default('mpesa_daraja'),
     validUntil: timestamp('valid_until', { withTimezone: true }),
     customerReference: text('customer_reference'),
+    /** The date the goods or the service are needed (`YYYY-MM-DD`), when it matters: a package's notice, closing day and daily limit are counted against it when the quote becomes an order. */
+    neededOn: text('needed_on'),
     publicNotes: text('public_notes'),
     internalNotes: text('internal_notes'),
+    /** The business emails this quote shows, chosen on the quote (a list of email-routing sources); null means the default for its flow. */
+    contactEmails: jsonb('contact_emails').$type<Record<string, unknown>[] | null>(),
     createdBy: text('created_by'),
     approvedBy: text('approved_by'),
     approvedAt: timestamp('approved_at', { withTimezone: true }),
@@ -4803,6 +4942,8 @@ export const salesQuotes = pgTable(
     sentBy: text('sent_by'),
     acceptedAt: timestamp('accepted_at', { withTimezone: true }),
     rejectedAt: timestamp('rejected_at', { withTimezone: true }),
+    /** Where the quote came from: `staff` (made in the admin) or `shop` (a shopper asked for it on the web shop). */
+    source: text('source').$type<'staff' | 'shop'>().notNull().default('staff'),
     convertedOrderId: text('converted_order_id').references(() => orders.id, {
       onDelete: 'set null',
     }),
@@ -4820,6 +4961,7 @@ export const salesQuotes = pgTable(
     uniqueIndex('sales_quotes_company_number_uidx').on(t.companyId, t.quoteNumber),
     index('sales_quotes_company_status_idx').on(t.companyId, t.status, t.createdAt),
     index('sales_quotes_customer_idx').on(t.customerId, t.createdAt),
+    check('sales_quotes_source_chk', sql`${t.source} IN ('staff', 'shop')`),
   ],
 );
 
@@ -6540,6 +6682,255 @@ export const productKitComponents = pgTable(
     primaryKey({ columns: [t.kitId, t.productId] }),
     index('product_kit_components_product_idx').on(t.productId),
     check('product_kit_components_qty_chk', sql`${t.quantity} > 0`),
+  ],
+);
+
+/**
+ * A configurable package: one product made of choices (docs/architecture/configurable-packages.md). Sold as one line; when a sale
+ * is saved the chosen options become one line per part, as for a kit. Its own stock is not used.
+ */
+export const productPackages = pgTable(
+  'product_packages',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    /** The product that is sold as the package. */
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'cascade' }),
+    /** `base_plus_differences` (the base price plus a difference per option) or `summed` (each option priced on its own). */
+    pricingMode: text('pricing_mode').$type<'base_plus_differences' | 'summed'>().notNull().default('base_plus_differences'),
+    allocation: text('allocation').$type<KitAllocation>().notNull().default('list_price'),
+    /** What the shopper sees of an option that is out of stock: hide it, show it greyed out, or suggest another. */
+    shortStockMode: text('short_stock_mode').$type<'hide' | 'disable' | 'substitute'>().notNull().default('hide'),
+    isActive: boolean('is_active').notNull().default(true),
+    version: integer('version').notNull().default(1),
+    /** Ordering rules (all empty = no rule). Servings per order, notice, closing time, days, and the most servings promised for one date. */
+    minServings: integer('min_servings'),
+    maxServings: integer('max_servings'),
+    noticeMinutes: integer('notice_minutes'),
+    closesDaysBefore: integer('closes_days_before'),
+    closesAtMinute: integer('closes_at_minute'),
+    /** Days of the week (0 Sunday to 6) it can be fulfilled on; empty means every day. */
+    weekdays: integer('weekdays').array().notNull().default(sql`'{}'::integer[]`),
+    dailyLimit: integer('daily_limit'),
+    /** Who may order: anyone, signed-in shoppers, or the customer groups in `package_audiences`. */
+    audience: text('audience').$type<'anyone' | 'signed_in' | 'groups'>().notNull().default('anyone'),
+    /** The customer may write a short note on each serving ("no pepper"), kept with the selection and shown on the preparation sheet. */
+    allowNote: boolean('allow_note').notNull().default(false),
+    /** How the web shop takes an order for it: `cart`, `quote` (a quote request only) or `either`. */
+    orderMode: text('order_mode').$type<'cart' | 'quote' | 'either'>().notNull().default('cart'),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('product_packages_product_uidx').on(t.productId),
+    check('product_packages_order_mode_chk', sql`${t.orderMode} IN ('cart', 'quote', 'either')`),
+    check('product_packages_audience_chk', sql`${t.audience} IN ('anyone', 'signed_in', 'groups')`),
+    check('product_packages_rules_chk', sql`(${t.minServings} IS NULL OR ${t.minServings} >= 1) AND (${t.maxServings} IS NULL OR ${t.maxServings} >= 1) AND (${t.minServings} IS NULL OR ${t.maxServings} IS NULL OR ${t.minServings} <= ${t.maxServings}) AND (${t.noticeMinutes} IS NULL OR ${t.noticeMinutes} >= 0) AND (${t.closesDaysBefore} IS NULL OR ${t.closesDaysBefore} >= 0) AND (${t.closesAtMinute} IS NULL OR (${t.closesAtMinute} >= 0 AND ${t.closesAtMinute} < 1440)) AND (${t.dailyLimit} IS NULL OR ${t.dailyLimit} >= 1)`),
+    index('product_packages_company_idx').on(t.companyId),
+    check('product_packages_pricing_mode_chk', sql`${t.pricingMode} IN ('base_plus_differences', 'summed')`),
+    check('product_packages_allocation_chk', sql`${t.allocation} IN ('list_price', 'cost', 'explicit')`),
+    check('product_packages_short_stock_chk', sql`${t.shortStockMode} IN ('hide', 'disable', 'substitute')`),
+  ],
+);
+
+/** One decision inside a package ("Fish", "Starch"). */
+export const packageSlots = pgTable(
+  'package_slots',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    packageId: uuid('package_id')
+      .notNull()
+      .references(() => productPackages.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    helpText: text('help_text').notNull().default(''),
+    minPicks: integer('min_picks').notNull().default(1),
+    maxPicks: integer('max_picks').notNull().default(1),
+    allowRepeats: boolean('allow_repeats').notNull().default(false),
+    /** Not asked: one option that is always part of a serving. */
+    included: boolean('included').notNull().default(false),
+    /** `list`: the options are the rows of `package_options`. `category`: every product of the category that can be sold is an option, so a new one appears by itself. */
+    source: text('source').$type<'list' | 'category'>().notNull().default('list'),
+    categoryId: text('category_id').references(() => categories.id, { onDelete: 'restrict' }),
+    /** For a category slot: what each product adds to the base price, its own fixed price when set, and the units of it in one pick. */
+    categoryDifference: numeric('category_difference', { precision: 14, scale: 2 }).notNull().default('0'),
+    categoryOwnPrice: numeric('category_own_price', { precision: 14, scale: 2 }),
+    categoryQuantity: quantity('category_quantity').notNull().default(1),
+    sortOrder: integer('sort_order').notNull().default(0),
+  },
+  (t) => [
+    index('package_slots_package_idx').on(t.packageId, t.sortOrder),
+    index('package_slots_category_idx').on(t.categoryId),
+    check('package_slots_source_chk', sql`${t.source} IN ('list', 'category') AND (${t.source} = 'list' OR ${t.categoryId} IS NOT NULL) AND ${t.categoryQuantity} > 0`),
+    check('package_slots_picks_chk', sql`${t.minPicks} >= 0 AND ${t.maxPicks} >= 1 AND ${t.minPicks} <= ${t.maxPicks} AND ${t.maxPicks} <= 50`),
+    check('package_slots_name_chk', sql`length(btrim(${t.name})) > 0`),
+  ],
+);
+
+/** One thing a slot offers: an inventory product (normally one sold only inside packages) and how much of it. */
+export const packageOptions = pgTable(
+  'package_options',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    slotId: uuid('slot_id')
+      .notNull()
+      .references(() => packageSlots.id, { onDelete: 'cascade' }),
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    /** In the product's base unit, per pick. */
+    quantity: quantity('quantity').notNull().default(1),
+    /** Base-plus-differences mode: added to the base price per pick; may be zero or negative. */
+    difference: numeric('difference', { precision: 14, scale: 2 }).notNull().default('0'),
+    /** A fixed price per pick for this package; empty means the product's own selling price. */
+    ownPrice: numeric('own_price', { precision: 14, scale: 2 }),
+    isDefault: boolean('is_default').notNull().default(false),
+    /** For the split by shares you set. */
+    weight: numeric('weight', { precision: 12, scale: 4 }),
+    sortOrder: integer('sort_order').notNull().default(0),
+  },
+  (t) => [
+    uniqueIndex('package_options_slot_product_uidx').on(t.slotId, t.productId),
+    index('package_options_product_idx').on(t.productId),
+    check('package_options_qty_chk', sql`${t.quantity} > 0`),
+    check('package_options_price_chk', sql`${t.ownPrice} IS NULL OR ${t.ownPrice} >= 0`),
+  ],
+);
+
+/** The customer groups a package is limited to when its audience is `groups`. */
+export const packageAudiences = pgTable(
+  'package_audiences',
+  {
+    packageId: uuid('package_id')
+      .notNull()
+      .references(() => productPackages.id, { onDelete: 'cascade' }),
+    customerGroupId: uuid('customer_group_id')
+      .notNull()
+      .references(() => customerGroups.id, { onDelete: 'cascade' }),
+  },
+  (t) => [primaryKey({ columns: [t.packageId, t.customerGroupId] })],
+);
+
+/**
+ * One saved selection on a selling document: what was chosen, the price and the date it is for. This, not the (folded) lines, is
+ * the truth for what to prepare. Kept when the package is changed or removed. Keyed by document type and id (orders now; quotes,
+ * point of sale, sales orders, invoices and credit sales register themselves later).
+ */
+export const packageInstances = pgTable(
+  'package_instances',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    documentType: text('document_type').notNull(),
+    documentId: text('document_id').notNull(),
+    /** Position of the selection on the document, from 1. */
+    lineNo: integer('line_no').notNull(),
+    /** Not a foreign key: the history stays when a package or its product goes. */
+    packageProductId: text('package_product_id').notNull(),
+    packageName: text('package_name').notNull(),
+    packageVersion: integer('package_version').notNull(),
+    servings: integer('servings').notNull(),
+    servingPrice: numeric('serving_price', { precision: 14, scale: 2 }).notNull(),
+    lineTotal: numeric('line_total', { precision: 14, scale: 2 }).notNull(),
+    selectionKey: text('selection_key').notNull(),
+    /** What the customer asked for on the serving ("no pepper"); plain text. */
+    note: text('note').notNull().default(''),
+    /** The date it is for (delivery or collection), where the package needs one. */
+    forDate: text('for_date'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('package_instances_line_uidx').on(t.documentType, t.documentId, t.lineNo),
+    index('package_instances_day_idx').on(t.companyId, t.forDate, t.packageProductId),
+    check('package_instances_servings_chk', sql`${t.servings} >= 1`),
+  ],
+);
+
+/** The exact parts of an instance, copied as they were (a later rename or price change cannot alter history). */
+export const packageInstancePicks = pgTable(
+  'package_instance_picks',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    instanceId: uuid('instance_id')
+      .notNull()
+      .references(() => packageInstances.id, { onDelete: 'cascade' }),
+    slotName: text('slot_name').notNull(),
+    productId: text('product_id').notNull(),
+    productName: text('product_name').notNull(),
+    /** How many of the option, and units of the product for one serving. */
+    count: integer('count').notNull(),
+    quantity: quantity('quantity').notNull(),
+    sortOrder: integer('sort_order').notNull().default(0),
+  },
+  (t) => [index('package_instance_picks_instance_idx').on(t.instanceId, t.sortOrder), index('package_instance_picks_product_idx').on(t.productId)],
+);
+
+/**
+ * A group order: an organiser (a signed-in customer) shares a link, each person opens it and chooses their own serving of a package,
+ * and the organiser puts everyone's choices in their cart and pays once. The link's token is kept only as a hash.
+ */
+export const packageGroupOrders = pgTable(
+  'package_group_orders',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    /** Not a foreign key: the group's history stays if the package product goes. */
+    packageProductId: text('package_product_id').notNull(),
+    packageName: text('package_name').notNull(),
+    /** SHA-256 of the token in the link. */
+    tokenHash: text('token_hash').notNull(),
+    title: text('title').notNull().default(''),
+    organiserCustomerId: text('organiser_customer_id').notNull(),
+    organiserName: text('organiser_name').notNull(),
+    /** The date it is for (`YYYY-MM-DD`), told to the people choosing. */
+    forDate: text('for_date'),
+    /** After this nobody can add or change a choice. */
+    closesAt: timestamp('closes_at', { withTimezone: true }),
+    status: text('status').$type<'open' | 'closed' | 'cancelled'>().notNull().default('open'),
+    /** The link sealed under the data key, so the organiser can open the group again from their account. Null if it could not be sealed. */
+    tokenSealed: jsonb('token_sealed').$type<EncryptedCredentialsBlob>(),
+    /** The order the organiser placed from this group (not a foreign key: the group's history stays with the order's). */
+    orderId: text('order_id'),
+    orderNumber: text('order_number'),
+    orderedAt: timestamp('ordered_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('package_group_orders_token_uidx').on(t.tokenHash),
+    index('package_group_orders_organiser_idx').on(t.companyId, t.organiserCustomerId, t.createdAt),
+    check('package_group_orders_status_chk', sql`${t.status} IN ('open', 'closed', 'cancelled')`),
+  ],
+);
+
+/** One person's choice in a group order. They change or withdraw it with a secret only their own browser holds (kept as a hash). */
+export const packageGroupEntries = pgTable(
+  'package_group_entries',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    groupId: uuid('group_id')
+      .notNull()
+      .references(() => packageGroupOrders.id, { onDelete: 'cascade' }),
+    personName: text('person_name').notNull(),
+    /** The choices by slot name and part, so the entry is understood after the package changes. */
+    picks: jsonb('picks').$type<{ slotName: string; productId: string; name: string; count: number }[]>().notNull(),
+    note: text('note').notNull().default(''),
+    selectionKey: text('selection_key').notNull(),
+    secretHash: text('secret_hash').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('package_group_entries_group_idx').on(t.groupId, t.createdAt),
+    check('package_group_entries_name_chk', sql`length(btrim(${t.personName})) BETWEEN 1 AND 60`),
   ],
 );
 
@@ -11370,4 +11761,132 @@ export const newsletterSubscribers = pgTable(
       sql`${t.email} = lower(btrim(${t.email})) AND char_length(${t.email}) BETWEEN 3 AND 254`,
     ),
   ],
+);
+
+/**
+ * A browser a person has agreed to be sent alerts on (web push). One row per browser (the push service's address is unique); the keys
+ * are what that browser gave to receive messages, not secrets of ours. A browser that has stopped listening is removed when the push
+ * service says so.
+ */
+export const pushSubscriptions = pgTable(
+  'push_subscriptions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    endpoint: text('endpoint').notNull(),
+    p256dh: text('p256dh').notNull(),
+    auth: text('auth').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastSentAt: timestamp('last_sent_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('push_subscriptions_endpoint_uidx').on(t.endpoint),
+    index('push_subscriptions_user_idx').on(t.companyId, t.userId),
+    check('push_subscriptions_endpoint_chk', sql`char_length(${t.endpoint}) BETWEEN 10 AND 2048 AND ${t.endpoint} LIKE 'https://%'`),
+  ],
+);
+
+/** The alert a delivery's lateness causes for one subscribed browser, queued in the step that raises the lateness and sent with retries, like the mails. */
+export const deliverySlaPushes = pgTable(
+  'delivery_sla_pushes',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    eventId: uuid('event_id')
+      .notNull()
+      .references(() => deliverySlaEvents.id, { onDelete: 'restrict' }),
+    subscriptionId: uuid('subscription_id')
+      .notNull()
+      .references(() => pushSubscriptions.id, { onDelete: 'cascade' }),
+    /** Who it is for, which decides where the alert opens: the staff Late deliveries screen, or the rider's own app. */
+    audience: text('audience').$type<'staff' | 'rider'>().notNull(),
+    status: text('status').$type<'queued' | 'sent' | 'failed'>().notNull().default('queued'),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+    nextTryAt: timestamp('next_try_at', { withTimezone: true }).notNull().defaultNow(),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('delivery_sla_pushes_once_uidx').on(t.eventId, t.subscriptionId),
+    index('delivery_sla_pushes_due_idx').on(t.status, t.nextTryAt),
+    check('delivery_sla_pushes_audience_chk', sql`${t.audience} IN ('staff','rider')`),
+    check('delivery_sla_pushes_status_chk', sql`${t.status} IN ('queued','sent','failed')`),
+    check('delivery_sla_pushes_attempts_chk', sql`${t.attempts} >= 0`),
+  ],
+);
+
+/**
+ * An SMS provider a company has connected. Each client has its own, so the provider is a kind (`adapter`) with its own settings; keys and
+ * tokens are sealed in `secrets_sealed` and opened only where a message is sent. At most one account is the default (the one used for
+ * sending); a stopped account is never the default. Accounts are stopped, not deleted, so what was sent through them stays explainable.
+ */
+export const smsProviderAccounts = pgTable(
+  'sms_provider_accounts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    adapter: text('adapter').$type<'africastalking' | 'twilio' | 'log'>().notNull(),
+    /** What is not secret: the username, the sender name, the account SID, the number it sends from. */
+    settings: jsonb('settings').$type<Record<string, string>>().notNull().default({}),
+    secretsSealed: jsonb('secrets_sealed').$type<EncryptedCredentialsBlob>(),
+    isDefault: boolean('is_default').notNull().default(false),
+    isActive: boolean('is_active').notNull().default(true),
+    /** The last test message: when, whether it went, and the words for why not. The number it went to is not kept. */
+    lastTestAt: timestamp('last_test_at', { withTimezone: true }),
+    lastTestOk: boolean('last_test_ok'),
+    lastTestError: text('last_test_error'),
+    version: integer('version').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    updatedBy: text('updated_by'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('sms_provider_accounts_name_uidx').on(t.companyId, sql`lower(${t.name})`),
+    uniqueIndex('sms_provider_accounts_default_uidx').on(t.companyId).where(sql`${t.isDefault}`),
+    check('sms_provider_accounts_adapter_chk', sql`${t.adapter} IN ('africastalking','twilio','log')`),
+    check('sms_provider_accounts_default_chk', sql`NOT ${t.isDefault} OR ${t.isActive}`),
+    check('sms_provider_accounts_test_chk', sql`(${t.lastTestAt} IS NULL) = (${t.lastTestOk} IS NULL)`),
+  ],
+);
+export type SmsProviderAccountRow = typeof smsProviderAccounts.$inferSelect;
+
+/**
+ * Whether customers are also told about their delivery by text message, and which of the messages. Off until a company turns it on (a text
+ * costs money at their SMS provider). One row for a company; changes use a version and go to the decision log.
+ */
+export const deliveryTextSettings = pgTable(
+  'delivery_text_settings',
+  {
+    companyId: uuid('company_id')
+      .primaryKey()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    enabled: boolean('enabled').notNull().default(false),
+    kinds: text('kinds').array().notNull().default(sql`'{out_for_delivery,delivered,attempt_failed,ready_for_collection,collection_reminder}'::text[]`),
+    /** Minutes after midnight (business time) between which texts are held for the morning; both empty means texts go at any hour. */
+    quietFromMinute: integer('quiet_from_minute'),
+    quietUntilMinute: integer('quiet_until_minute'),
+    /** Reminders for an order left at the counter after it was marked ready: whether, the day of the first, and the day of the second (empty: no second). Mail goes whatever the texting setting is. */
+    collectionRemindersOn: boolean('collection_reminders_on').notNull().default(true),
+    collectionReminderFirstDays: integer('collection_reminder_first_days').notNull().default(3),
+    collectionReminderSecondDays: integer('collection_reminder_second_days').default(6),
+    version: integer('version').notNull().default(1),
+    updatedBy: text('updated_by'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check('delivery_text_settings_kinds_chk', sql`${t.kinds} <@ ARRAY['out_for_delivery','delivered','part_delivered','attempt_failed','returned','slot_not_kept','ready_for_collection','collection_reminder']::text[]`),
+    check('delivery_text_settings_reminder_days_chk', sql`${t.collectionReminderFirstDays} between 1 and 30 and (${t.collectionReminderSecondDays} is null or (${t.collectionReminderSecondDays} > ${t.collectionReminderFirstDays} and ${t.collectionReminderSecondDays} <= 60))`),
+    check('delivery_text_settings_quiet_chk', sql`(${t.quietFromMinute} is null and ${t.quietUntilMinute} is null) or (${t.quietFromMinute} between 0 and 1439 and ${t.quietUntilMinute} between 0 and 1439 and ${t.quietFromMinute} <> ${t.quietUntilMinute})`),
+],
 );

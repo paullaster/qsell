@@ -40,7 +40,7 @@ export class DeliveryVehicles {
   ) {}
 
   private view(v: typeof deliveryVehicles.$inferSelect, runsInUse: number): VehicleView {
-    return { id: v.id, name: v.name, maxWeightKg: v.maxWeightKg, maxStops: v.maxStops, isActive: v.isActive, version: v.version, runsInUse };
+    return { id: v.id, name: v.name, maxWeightKg: v.maxWeightKg, maxVolumeLitres: v.maxVolumeLitres, maxStops: v.maxStops, isActive: v.isActive, version: v.version, runsInUse };
   }
 
   /** Every vehicle of the company, those in use first. A fleet is a handful of vehicles, so this is one read with the run counts grouped in. */
@@ -60,13 +60,13 @@ export class DeliveryVehicles {
   async usable(tx: Tx | DrizzleDb, companyId: string, id: string): Promise<(VehicleLimits & { id: string; name: string }) | null> {
     if (!UUID.test(id)) return null;
     const [v] = await tx.select().from(deliveryVehicles).where(and(eq(deliveryVehicles.id, id), eq(deliveryVehicles.companyId, companyId), eq(deliveryVehicles.isActive, true)));
-    return v === undefined ? null : { id: v.id, name: v.name, maxWeightKg: v.maxWeightKg, maxStops: v.maxStops };
+    return v === undefined ? null : { id: v.id, name: v.name, maxWeightKg: v.maxWeightKg, maxVolumeLitres: v.maxVolumeLitres, maxStops: v.maxStops };
   }
 
   /** The limits of the vehicle a run goes in, whether or not it is still in use (a run keeps the limits of the vehicle it was given). */
   async limitsOf(tx: Tx | DrizzleDb, companyId: string, id: string): Promise<(VehicleLimits & { name: string }) | null> {
     const [v] = await tx.select().from(deliveryVehicles).where(and(eq(deliveryVehicles.id, id), eq(deliveryVehicles.companyId, companyId)));
-    return v === undefined ? null : { name: v.name, maxWeightKg: v.maxWeightKg, maxStops: v.maxStops };
+    return v === undefined ? null : { name: v.name, maxWeightKg: v.maxWeightKg, maxVolumeLitres: v.maxVolumeLitres, maxStops: v.maxStops };
   }
 
   async create(actor: DocActor, input: Record<string, unknown>): Promise<DocResult<VehicleView>> {
@@ -74,9 +74,9 @@ export class DeliveryVehicles {
     if (!checked.ok) return fail('bad_input', checked.error);
     try {
       return await this.db.transaction(async (tx) => {
-        const [v] = await tx.insert(deliveryVehicles).values({ companyId: actor.companyId, name: checked.name, maxWeightKg: checked.maxWeightKg, maxStops: checked.maxStops, createdBy: actor.userId }).returning();
+        const [v] = await tx.insert(deliveryVehicles).values({ companyId: actor.companyId, name: checked.name, maxWeightKg: checked.maxWeightKg, maxVolumeLitres: checked.maxVolumeLitres, maxStops: checked.maxStops, createdBy: actor.userId }).returning();
         if (v === undefined) throw new Error('The vehicle was not saved.');
-        await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_vehicle', id: v.id }, action: 'vehicle.created', actor: { type: 'user', id: actor.userId }, reason: { text: v.name }, inputs: { maxWeightKg: v.maxWeightKg, maxStops: v.maxStops } }, tx);
+        await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_vehicle', id: v.id }, action: 'vehicle.created', actor: { type: 'user', id: actor.userId }, reason: { text: v.name }, inputs: { maxWeightKg: v.maxWeightKg, maxVolumeLitres: v.maxVolumeLitres, maxStops: v.maxStops } }, tx);
         return { ok: true as const, data: this.view(v, 0) };
       });
     } catch (e) {
@@ -93,9 +93,9 @@ export class DeliveryVehicles {
         const row = await this.locked(tx, actor.companyId, id);
         if (row === null) return fail('not_found', 'That vehicle could not be found.');
         if (input.expectedVersion !== row.version) return fail('conflict', 'Someone else changed this vehicle. Reload to see the latest.');
-        const [v] = await tx.update(deliveryVehicles).set({ name: checked.name, maxWeightKg: checked.maxWeightKg, maxStops: checked.maxStops, version: row.version + 1, updatedAt: this.clock() }).where(eq(deliveryVehicles.id, id)).returning();
+        const [v] = await tx.update(deliveryVehicles).set({ name: checked.name, maxWeightKg: checked.maxWeightKg, maxVolumeLitres: checked.maxVolumeLitres, maxStops: checked.maxStops, version: row.version + 1, updatedAt: this.clock() }).where(eq(deliveryVehicles.id, id)).returning();
         if (v === undefined) throw new Error('The vehicle was not saved.');
-        await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_vehicle', id }, action: 'vehicle.changed', actor: { type: 'user', id: actor.userId }, reason: { text: v.name }, inputs: { before: { name: row.name, maxWeightKg: row.maxWeightKg, maxStops: row.maxStops }, after: { name: v.name, maxWeightKg: v.maxWeightKg, maxStops: v.maxStops } } }, tx);
+        await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_vehicle', id }, action: 'vehicle.changed', actor: { type: 'user', id: actor.userId }, reason: { text: v.name }, inputs: { before: { name: row.name, maxWeightKg: row.maxWeightKg, maxVolumeLitres: row.maxVolumeLitres, maxStops: row.maxStops }, after: { name: v.name, maxWeightKg: v.maxWeightKg, maxVolumeLitres: v.maxVolumeLitres, maxStops: v.maxStops } } }, tx);
         return { ok: true as const, data: this.view(v, await this.inUse(tx, actor.companyId, id)) };
       });
     } catch (e) {

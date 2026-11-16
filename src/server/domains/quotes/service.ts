@@ -1,4 +1,6 @@
-import { required } from '@/lib/values';
+import { packageOnlyRefusal } from '@/lib/package-only';
+import { addressing, readSources, type RouteSource } from '@/server/domains/email-routing/email-routes';
+import { has, required } from '@/lib/values';
 import { basketQuantityProblems } from '@/lib/quantity-limits';
 import { effectiveStandardPrice } from '@/lib/standard-price';
 import { priceItemFor } from '@/server/domains/pricing/service';
@@ -36,6 +38,8 @@ import type { GuardTrace, PriceTrace } from '@/server/domains/pricing/domain/typ
 import type { GuardLine } from '@/server/domains/pricing/guard-service';
 import type { PricedItem, RuleApplication } from '@/server/domains/pricing/discount-service';
 import { kitCost, kitTax } from '@/server/domains/pricing/kit-service';
+import type { StoredPick } from '@/server/domains/pricing/domain/package-shop';
+import type { PreparedPackage } from '@/server/domains/pricing/package-order-service';
 import { PAYMENT_METHOD_LABELS } from '@/lib/payment-method-labels';
 import { encodeCursor, escapeLike } from '@/server/domains/lookups/request';
 import { CLOSED_QUOTE_STATUSES, isQuoteExpired } from './expiry';
@@ -114,6 +118,12 @@ export interface QuoteInput {
   termsAndConditions?: string | null;
   validUntil?: string | null;
   customerReference?: string | null;
+  /** The date it is needed (`YYYY-MM-DD`); packages with ordering rules are checked against it when the quote becomes an order. */
+  neededOn?: string | null;
+  /** The business emails this quote shows, as a list of email-routing sources; null or none means the company's default for its kind of quote. */
+  contactEmails?: RouteSource[] | null;
+  /** Where the quote comes from; kept when it is first made and never changed by an edit. A shopper's request is `shop`. */
+  source?: 'staff' | 'shop';
   publicNotes?: string | null;
   internalNotes?: string | null;
   discountPercent: number;
@@ -157,6 +167,8 @@ export interface QuoteInput {
     discountPercent: number;
     /** A free gift the quote added. Gifts are worked out again on every save, so these are dropped. */
     isGift?: boolean;
+    /** A configurable package: the choices made (by slot name and part); `quantity` is the servings. The price is always worked out from the package. */
+    package?: { picks: StoredPick[]; /** What the customer asked for on the serving ("no pepper"), where the package allows it. */ note?: string; /** What the line read like when it was chosen (for the screen only; the server works its own out). */ summary?: string };
   }[];
 }
 
@@ -257,6 +269,13 @@ export interface SalesQuoteTemplate extends SalesQuoteTemplateRow {
   lines: (typeof salesQuoteTemplateLines.$inferSelect)[];
   sections: (typeof salesQuoteTemplateSections.$inferSelect)[];
   events: (typeof salesQuoteTemplateEvents.$inferSelect)[];
+}
+
+/** What the quote keeps of its own list of business emails: only real sources, and none at all means the default (null); left out, it stays as it was. */
+function contactEmailsOf(raw: RouteSource[] | null | undefined): RouteSource[] | null | undefined {
+  if (raw === undefined) return undefined;
+  const kept = raw === null ? [] : readSources(raw);
+  return kept.length === 0 ? null : kept;
 }
 
 const UUID_TEXT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -470,6 +489,7 @@ export class SalesQuoteService {
       const product = products.get(line.productId);
       if (!product || !product.isSellable)
         throw new Error('A template item is missing or is not sellable.');
+      if (product.soldOnlyInPackages === true) throw new Error(packageOnlyRefusal(product.name));
       if (!Number.isFinite(line.quantity) || line.quantity <= 0)
         throw new Error(`${product.name} needs a quantity greater than zero.`);
       this.assertPercent(line.discountPercent, `${product.name} discount`);
@@ -768,7 +788,7 @@ export class SalesQuoteService {
     ];
     const sellable = new Set(
       (await CatalogService.getProductsByIds(productIds))
-        .filter((p) => p.isSellable)
+        .filter((p) => p.isSellable && p.soldOnlyInPackages !== true)
         .map((p) => p.id),
     );
     const takenNames = new Set((await this.listTemplates()).map((t) => t.name.toLowerCase()));
@@ -868,6 +888,7 @@ export class SalesQuoteService {
       termsAndConditions: previous.termsAndConditions,
       validUntil: previous.validUntil?.toISOString().slice(0, 10),
       customerReference: previous.customerReference,
+      neededOn: previous.neededOn,
       publicNotes: previous.publicNotes,
       internalNotes: previous.internalNotes,
       discountPercent: num(previous.quoteDiscountPercent),
@@ -959,6 +980,21 @@ export class SalesQuoteService {
       companyId,
       input.lines.map((line) => line.productId),
     );
+    // Package lines: the choices are checked against the package as it is now (stock is not looked at: a quote promises nothing from
+    // the shelves), and the price is always worked out from the package, never typed.
+    const preparedPackages = new Map<number, PreparedPackage>();
+    {
+      const wanted = input.lines.flatMap((line, index) => (line.package === undefined ? [] : [{ index, productId: line.productId, servings: line.quantity, stored: line.package.picks, ...(line.package.note === undefined ? {} : { note: line.package.note }) }]));
+      if (wanted.length > 0) {
+        const { packageOrders, pricing } = getContainer();
+        if (wanted.some((w) => !Number.isInteger(w.servings) || w.servings < 1)) throw new Error('A package is quoted in whole servings.');
+        const customerId = has(input.customerId) ? input.customerId : null;
+        const prepared = await packageOrders.prepareStored({ companyId, customerGroupId: await pricing.groupFor(companyId, customerId), signedIn: customerId !== null, forDate: null, now: new Date(), previewOnly: true, skipStock: true }, wanted);
+        if (!prepared.ok) throw new Error(prepared.error);
+        for (const line of prepared.lines) preparedPackages.set(line.index, line);
+        input.lines = input.lines.map((line, i) => (preparedPackages.has(i) ? { ...line, unitPrice: undefined, priceMode: 'catalog' as const, discountPercent: line.discountPercent } : line));
+      }
+    }
     const sections = input.sections ?? [];
     const sectionIds = new Set(sections.map((section) => section.id));
     if (sections.some((section) => !section.title.trim())) {
@@ -1037,6 +1073,13 @@ export class SalesQuoteService {
       toPrice.map(itemFor),
     );
     const engine = new Map(toPrice.map((i, n) => [i, priced[n]!]));
+    // A package serving is the base price plus what the choices add (or the choices' own prices added up); discounts then apply to that.
+    for (const [index, line] of preparedPackages) {
+      const base = engine.get(index);
+      if (base?.unitPrice == null) continue;
+      const unit = money(line.summedPerServing ?? base.unitPrice + (line.addedPerServing ?? 0));
+      engine.set(index, { ...base, unitPrice: unit, lineTotal: money(unit * (input.lines[index]?.quantity ?? 0)) });
+    }
     // What the lists say a hand-typed price replaces, so a reduction can be measured against it.
     const manualAt = input.lines.flatMap((line, i) =>
       modes[i] === 'manual' && products.get(line.productId)?.isSellable !== false ? [i] : [],
@@ -1132,6 +1175,7 @@ export class SalesQuoteService {
       const product = products.get(line.productId);
       if (!product || product.isSellable === false)
         throw new Error('A selected item is no longer sellable.');
+      if (product.soldOnlyInPackages === true) throw new Error(packageOnlyRefusal(product.name));
       const result = engine.get(index);
       if (result && result.unitPrice == null) {
         throw new Error(
@@ -1184,7 +1228,7 @@ export class SalesQuoteService {
       const rate = Math.max(0, product.taxRate ?? 0);
       const inclusive = product.isTaxInclusive !== false;
       // A kit is taxed component by component, each at its own rate, and costs what it holds.
-      const kit = kitDefs.get(product.id);
+      const kit = preparedPackages.get(index)?.kit ?? kitDefs.get(product.id);
       const split = kit ? kitTax(discountedGross, line.quantity, kit, inclusive) : null;
       const net = split
         ? split.net
@@ -1214,7 +1258,7 @@ export class SalesQuoteService {
           Boolean(sections.find((section) => section.id === line.sectionId)?.sectionTemplateId),
         lineNumber: (index + 1) * 10000,
         sku: product.sku,
-        description: product.name,
+        description: preparedPackages.get(index)?.summary ?? product.name,
         quantity: line.quantity.toFixed(3),
         unitPrice: unitPrice.toFixed(4),
         unitCost: unitCost.toFixed(4),
@@ -1317,15 +1361,17 @@ export class SalesQuoteService {
         explicitFloorNet: explicit == null ? null : toNetUnit(i, explicit),
       };
     });
-    const verdict = await getContainer().priceGuard.assess(companyId, userId, guardLines);
+    const verdict = await getContainer().priceGuard.assess(companyId, UUID_TEXT.test(userId) ? userId : null, guardLines);
     if (verdict.blocked.length > 0) throw new Error(verdict.blocked[0]);
     lines.forEach((l, i) => {
-      const { quotedAsKit: _stale, ...trace } = l.priceTrace ?? handTypedTrace(l, input.currency);
+      const { quotedAsKit: _stale, quotedAsPackage: _stalePackage, ...trace } = l.priceTrace ?? handTypedTrace(l, input.currency);
       const kit = l.productId === null ? undefined : kitDefs.get(l.productId);
+      const chosen = preparedPackages.get(i);
       l.priceTrace = {
         ...trace,
         guard: verdict.lines[i]!,
         ...(kit === undefined ? {} : { quotedAsKit: { kitId: kit.id, name: l.description } }),
+        ...(chosen === undefined ? {} : { quotedAsPackage: { productId: chosen.productId, name: chosen.name, version: chosen.version, key: chosen.key, servings: chosen.servings, ...(chosen.note === '' ? {} : { note: chosen.note }), picks: chosen.stored } }),
       };
     });
     // What the discounts gave, kept on the quote so converting it records their use.
@@ -1384,6 +1430,7 @@ export class SalesQuoteService {
       companyId,
       branchId: branch.id,
       customerId: input.customerId || null,
+      contactEmails: contactEmailsOf(input.contactEmails),
       templateId: sourceTemplate?.id ?? null,
       templateName: sourceTemplate?.name ?? null,
       quoteNumber: existingNumber ?? '',
@@ -1415,6 +1462,7 @@ export class SalesQuoteService {
       termsAndConditions: input.termsAndConditions?.trim() || null,
       validUntil: input.validUntil ? new Date(`${input.validUntil}T23:59:59`) : null,
       customerReference: input.customerReference?.trim() || null,
+      neededOn: /^\d{4}-\d{2}-\d{2}$/.test(input.neededOn ?? '') ? (input.neededOn ?? null) : null,
       publicNotes: input.publicNotes?.trim() || null,
       internalNotes: input.internalNotes?.trim() || null,
       updatedAt: now,
@@ -1450,7 +1498,7 @@ export class SalesQuoteService {
         );
         const [created] = await tx
           .insert(salesQuotes)
-          .values({ ...header, id: quoteId, quoteNumber: number, createdBy: userId })
+          .values({ ...header, id: quoteId, quoteNumber: number, createdBy: userId, source: input.source ?? 'staff' })
           .returning();
         quote = created!;
       }
@@ -1760,10 +1808,20 @@ export class SalesQuoteService {
         throw new Error(`${gone.description} was a kit when this quote was made and is not one now. Please make the quote again.`);
     }
     const orderLines = mergeLinesForOrder(quote.lines);
-    const items = orderLines.map((line) => ({
-      productId: line.productId ?? '',
-      quantity: num(line.quantity),
-    }));
+    // Package lines: the quote's choices and price stand, found again by slot name and part. A part the package no longer offers stops
+    // the conversion and is named, so the quote can be changed.
+    const packageLines = orderLines.flatMap((line, index) => (line.priceTrace?.quotedAsPackage === undefined || line.productId === null ? [] : [{ index, productId: line.productId, stored: line.priceTrace.quotedAsPackage.picks, note: line.priceTrace.quotedAsPackage.note ?? '' }]));
+    const resolved = await getContainer().packageOrders.resolve((await getContainer().companySettings.ensureSeeded()).id, packageLines);
+    if (!resolved.ok) throw new Error(resolved.error);
+    const items = orderLines.map((line, index) => {
+      const at = packageLines.findIndex((p) => p.index === index);
+      const picks = at < 0 ? undefined : resolved.picks[at];
+      return {
+        productId: line.productId ?? '',
+        quantity: num(line.quantity),
+        ...(picks === undefined ? {} : { package: { picks, ...(packageLines[at]?.note === undefined || packageLines[at]?.note === '' ? {} : { note: packageLines[at]?.note }) } }),
+      };
+    });
     if (items.some((line) => !line.productId))
       throw new Error('A quoted product was removed from the catalog and cannot be converted.');
     const [claimed] = await drizzleDb
@@ -1802,6 +1860,7 @@ export class SalesQuoteService {
           country: address.country,
         },
         items,
+        ...(quote.neededOn === null ? {} : { fulfilmentDate: quote.neededOn }),
         quotedItems: orderLines.map((line) => ({
           productId: line.productId!,
           quantity: num(line.quantity),
@@ -1854,7 +1913,6 @@ export class SalesQuoteService {
   async send(userId: string, id: string) {
     const quote = await this.get(id);
     if (!quote) throw new Error('Quote not found.');
-    if (!quote.customerEmail) throw new Error('Add a customer email before sending this quote.');
     if (!['draft', 'approved'].includes(quote.status))
       throw new Error('Only draft or approved quotes can be sent.');
     if (quote.approvalStatus === 'pending')
@@ -1871,6 +1929,13 @@ export class SalesQuoteService {
       getContainer().companySettings.getProfile(),
       getContainer().companySettings.ensureSeeded(),
     ]);
+    // Who it is written to, copied, blind-copied and answered by is the company's own setting (Settings, Email routing); with none, it goes to the customer.
+    const route = await getContainer().emailRoutes.resolve(companySettings.id, 'quote_sent', {
+      customerEmail: quote.customerEmail,
+      actorUserId: UUID_TEXT.test(userId) ? userId : null,
+      ownerUserId: quote.createdBy !== null && UUID_TEXT.test(quote.createdBy) ? quote.createdBy : null,
+    });
+    if (!route.send) throw new Error(route.reason === 'This email is switched off.' ? 'Emailing quotes is switched off in Settings, Email routing.' : 'Add a customer email before sending this quote.');
     const token = randomBytes(32).toString('hex');
     const baseUrl =
       companySettings.publicBaseUrl?.replace(/\/$/, '') ||
@@ -1878,13 +1943,14 @@ export class SalesQuoteService {
       process.env.NEXTAUTH_URL?.replace(/\/$/, '') ||
       '';
     const acceptUrl = baseUrl ? `${baseUrl}/quote/${token}` : '';
-    const pdf = await this.renderPdf(quote, company);
-    const html = `<div style="font-family:Arial,sans-serif;color:#111827"><h2>${escapeHtml(company.tradingName)}</h2><p>Your quotation <strong>${escapeHtml(quote.quoteNumber)}</strong> totals ${escapeHtml(quote.currency)} ${num(quote.totalAmount).toFixed(2)}.</p>${quote.validUntil ? `<p>Valid until ${quote.validUntil.toLocaleDateString()}.</p>` : ''}${quote.publicNotes ? `<p>${escapeHtml(quote.publicNotes)}</p>` : ''}${acceptUrl ? `<p><a href="${acceptUrl}">Review and respond to this quote</a></p>` : ''}<p>This proforma quotation is not a tax invoice and does not confirm receipt of funds.</p></div>`;
+    const contacts = await this.contactsOf(quote);
+    const pdf = await this.renderPdf(quote, company, contacts);
+    const html = `<div style="font-family:Arial,sans-serif;color:#111827"><h2>${escapeHtml(company.tradingName)}</h2><p>Your quotation <strong>${escapeHtml(quote.quoteNumber)}</strong> totals ${escapeHtml(quote.currency)} ${num(quote.totalAmount).toFixed(2)}.</p>${quote.validUntil ? `<p>Valid until ${quote.validUntil.toLocaleDateString()}.</p>` : ''}${quote.publicNotes ? `<p>${escapeHtml(quote.publicNotes)}</p>` : ''}${acceptUrl ? `<p><a href="${acceptUrl}">Review and respond to this quote</a></p>` : ''}${contacts.length === 0 ? '' : `<p>Questions? Contact ${escapeHtml(contacts.join(', '))}.</p>`}<p>This proforma quotation is not a tax invoice and does not confirm receipt of funds.</p></div>`;
     const sent = await getContainer().email.send({
-      to: quote.customerEmail,
+      ...addressing(route),
       subject: `${company.tradingName} quotation ${quote.quoteNumber}`,
       html,
-      text: `Your quotation ${quote.quoteNumber} totals ${quote.currency} ${num(quote.totalAmount).toFixed(2)}.${acceptUrl ? ` Review and respond: ${acceptUrl}` : ''}`,
+      text: `Your quotation ${quote.quoteNumber} totals ${quote.currency} ${num(quote.totalAmount).toFixed(2)}.${acceptUrl ? ` Review and respond: ${acceptUrl}` : ''}${contacts.length === 0 ? '' : ` Questions? Contact ${contacts.join(', ')}.`}`,
       sender: { name: company.tradingName, address: company.email },
       attachments: [
         { filename: `${quote.quoteNumber}.pdf`, content: pdf, contentType: 'application/pdf' },
@@ -1901,7 +1967,9 @@ export class SalesQuoteService {
       })
       .where(eq(salesQuotes.id, id));
     await this.event(id, 'sent', userId, {
-      recipient: quote.customerEmail,
+      recipient: route.to.join(', '),
+      ...(route.cc.length === 0 ? {} : { cc: route.cc.join(', ') }),
+      ...(route.bcc.length === 0 ? {} : { bcc: route.bcc.join(', ') }),
       messageId: sent.messageId ?? null,
     });
     return this.get(id);
@@ -1911,7 +1979,7 @@ export class SalesQuoteService {
     const quote = await this.get(id);
     if (!quote) throw new Error('Quote not found.');
     const company = await getContainer().companySettings.getProfile();
-    const pdf = await this.renderPdf(quote, company);
+    const pdf = await this.renderPdf(quote, company, await this.contactsOf(quote));
     // A quote only has a proforma, which is never signed. It still goes through the signing
     // service so the log records that it was considered and why it was not signed. Not
     // awaited: the PDF must not wait on bookkeeping.
@@ -1921,7 +1989,13 @@ export class SalesQuoteService {
     return { filename: `${quote.quoteNumber}.pdf`, pdfBase64: pdf.toString('base64') };
   }
 
-  private async renderPdf(quote: SalesQuote, company: CompanyProfile) {
+  /** The business emails the customer is told to write to: the company's choice for this kind of quote (Settings, Email routing), or the quote's own. */
+  private async contactsOf(quote: { source: string; contactEmails: unknown; createdBy: string | null; customerEmail: string | null }): Promise<string[]> {
+    return await getContainer().emailRoutes.quoteContacts((await getContainer().companySettings.ensureSeeded()).id, quote);
+  }
+
+  private async renderPdf(quote: SalesQuote, profile: CompanyProfile, contacts: string[]) {
+    const company = contacts.length === 0 ? profile : { ...profile, email: contacts.join(', ') };
     return getContainer().invoicePdf.generate({
       documentType: 'sales_quote',
       invoiceNumber: quote.quoteNumber,
@@ -2025,6 +2099,7 @@ export class SalesQuoteService {
     const sections = rawSections;
     const lines = rawLines;
     const company = await getContainer().companySettings.getProfile();
+    const contacts = await this.contactsOf(quote);
     return {
       quoteNumber: quote.quoteNumber,
       status: quote.status,
@@ -2047,7 +2122,8 @@ export class SalesQuoteService {
       sections,
       company: {
         tradingName: company.tradingName,
-        email: company.email,
+        // The emails the company chose to show on this kind of quote (or this quote's own), as a list the page prints.
+        email: contacts.length === 0 ? company.email : contacts.join(', '),
         phone: company.phone,
         logoUrl: company.logoUrl,
       },

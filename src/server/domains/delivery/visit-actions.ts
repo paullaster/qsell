@@ -87,6 +87,33 @@ export async function giveBackMaterialAction(raw: unknown) {
   }, PATHS);
 }
 
+/** Keeps a photo the person just took (uploaded through the photo route) on the visit. */
+export async function addVisitPhotoAction(raw: unknown) {
+  return await runDelivery('visits:work', async (ctx) => {
+    const i = objectOf(raw);
+    return dataOf(await getContainer().orderVisits.addPhoto(await actorOf(ctx), idOf(i.id, 'visit'), { photoId: i.photoId, kind: i.kind, caption: i.caption }));
+  }, PATHS);
+}
+
+export async function removeVisitPhotoAction(raw: unknown) {
+  return await runDelivery('visits:work', async (ctx) => {
+    const i = objectOf(raw);
+    return dataOf(await getContainer().orderVisits.removePhoto(await actorOf(ctx), idOf(i.id, 'visit'), idOf(i.photoId, 'photo'), { reason: i.reason }));
+  }, PATHS);
+}
+
+/** A short-lived link to a photo of a visit the person may see. Opened on demand, never stored in the page. */
+export async function visitPhotoLinkAction(raw: unknown) {
+  return await runDelivery('visits:work', async (ctx) => {
+    const i = objectOf(raw);
+    const { orderVisits, media } = getContainer();
+    const mediaId = await orderVisits.photoMedia(await actorOf(ctx), idOf(i.id, 'visit'), idOf(i.photoId, 'photo'));
+    const url = mediaId === null ? null : await media.deliveryUrlById(mediaId);
+    if (url === null) throw new DeliveryError('That photo could not be found.', 'NOT_FOUND');
+    return { url };
+  });
+}
+
 export async function signOffVisitAction(raw: unknown) {
   return await runDelivery('visits:work', async (ctx) => {
     const i = objectOf(raw);

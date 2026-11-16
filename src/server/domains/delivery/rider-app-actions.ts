@@ -103,3 +103,24 @@ export async function mpesaStatusAction(raw: unknown) {
 export async function finishRunAction(runId: unknown) {
   return await runRider(async (self) => dataOf(await getContainer().doorWork.finish(self, runId)));
 }
+
+/** Whether this rider's browsers get alerts about their deliveries running late, and whether this installation can send them. */
+export async function myAlertsStateAction() {
+  return await runRider(async (self) => await getContainer().deliveryPush.state(self.companyId, self.userId));
+}
+
+export async function turnOnMyAlertsAction(raw: unknown) {
+  return await runRider(async (self) => {
+    const done = await getContainer().deliveryPush.subscribe({ companyId: self.companyId, userId: self.userId }, raw);
+    if (!done.ok) throw new DeliveryError(done.error, 'BAD_INPUT');
+    return await getContainer().deliveryPush.state(self.companyId, self.userId);
+  });
+}
+
+export async function turnOffMyAlertsAction(raw: unknown) {
+  return await runRider(async (self) => {
+    const done = await getContainer().deliveryPush.unsubscribe({ companyId: self.companyId, userId: self.userId }, objectOf(raw).endpoint);
+    if (!done.ok) throw new DeliveryError(done.error, 'BAD_INPUT');
+    return await getContainer().deliveryPush.state(self.companyId, self.userId);
+  });
+}

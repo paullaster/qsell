@@ -65,7 +65,7 @@ export function QuoteDetails({
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Summary
             label="Created by"
-            value={quote.createdByName ?? '—'}
+            value={quote.source === 'shop' ? 'Requested on the web shop' : (quote.createdByName ?? '—')}
             detail={new Date(quote.createdAt).toLocaleString()}
           />
           <Summary

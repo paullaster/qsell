@@ -18,8 +18,8 @@ const PATHS = ['/admin/delivery/slots', '/admin/delivery/deliveries'];
 export async function slotsScreenAction() {
   return await runDelivery('delivery_slots:manage', async (ctx) => {
     const s = getContainer().deliverySlots;
-    const [slots, closed, leads, sla, shopperChoice] = await Promise.all([s.list(ctx.companyId), s.closedDays(ctx.companyId), s.leadTimes(ctx.companyId), getContainer().deliverySla.settings(ctx.companyId), s.shopperChoice(ctx.companyId)]);
-    return { slots, closed, leads, sla, shopperChoice };
+    const [slots, closed, leads, sla, shopperChoice, textsGoThrough] = await Promise.all([s.list(ctx.companyId), s.closedDays(ctx.companyId), s.leadTimes(ctx.companyId), getContainer().deliverySla.settings(ctx.companyId), s.shopperChoice(ctx.companyId), getContainer().smsAccounts.defaultName(ctx.companyId)]);
+    return { slots, closed, leads, sla, shopperChoice, textsGoThrough };
   });
 }
 
@@ -93,6 +93,28 @@ export async function lateDeliveriesAction() {
   });
 }
 
+/** Whether this person's browsers get alerts when a delivery is at risk or late, and whether this installation can send them. */
+export async function lateAlertsStateAction() {
+  return await runDelivery('deliveries:dispatch', async (ctx) => await getContainer().deliveryPush.state(ctx.companyId, ctx.userId));
+}
+
+/** Turns alerts on for the browser the person is in (it gives its own subscription). */
+export async function turnOnLateAlertsAction(raw: unknown) {
+  return await runDelivery('deliveries:dispatch', async (ctx) => {
+    const done = await getContainer().deliveryPush.subscribe({ companyId: ctx.companyId, userId: ctx.userId }, raw);
+    if (!done.ok) throw new DeliveryError(done.error, 'BAD_INPUT');
+    return await getContainer().deliveryPush.state(ctx.companyId, ctx.userId);
+  });
+}
+
+export async function turnOffLateAlertsAction(raw: unknown) {
+  return await runDelivery('deliveries:dispatch', async (ctx) => {
+    const done = await getContainer().deliveryPush.unsubscribe({ companyId: ctx.companyId, userId: ctx.userId }, objectOf(raw).endpoint);
+    if (!done.ok) throw new DeliveryError(done.error, 'BAD_INPUT');
+    return await getContainer().deliveryPush.state(ctx.companyId, ctx.userId);
+  });
+}
+
 export async function acknowledgeLateAction(raw: unknown) {
   return await runDelivery('deliveries:dispatch', async (ctx) => {
     const i = objectOf(raw);
@@ -115,7 +137,7 @@ export async function slaSettingsAction() {
 export async function setSlaSettingsAction(raw: unknown) {
   return await runDelivery('delivery_slots:manage', async (ctx) => {
     const i = objectOf(raw);
-    return dataOf(await getContainer().deliverySla.setSettings({ companyId: ctx.companyId, userId: ctx.userId }, { atRiskMinutes: i.atRiskMinutes, escalateAfterMinutes: i.escalateAfterMinutes, notifyDispatch: i.notifyDispatch, notifySupervisor: i.notifySupervisor, expectedVersion: i.expectedVersion }));
+    return dataOf(await getContainer().deliverySla.setSettings({ companyId: ctx.companyId, userId: ctx.userId }, { atRiskMinutes: i.atRiskMinutes, escalateAfterMinutes: i.escalateAfterMinutes, notifyDispatch: i.notifyDispatch, notifySupervisor: i.notifySupervisor, notifyDispatchPhones: i.notifyDispatchPhones, notifySupervisorPhones: i.notifySupervisorPhones, textTheRider: i.textTheRider, expectedVersion: i.expectedVersion }));
   }, PATHS);
 }
 

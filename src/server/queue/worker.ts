@@ -77,6 +77,14 @@ export async function enqueueRetry(job: RetryFailedCallJob): Promise<string> {
 export async function enqueueOrderEmail(orderId: string, kind: 'placed' | 'paid'): Promise<void> {
   const utils = await getWorkerUtils();
   await utils.addJob('shop-order-email', { orderId, kind }, { jobKey: `shop-order-email:${kind}:${orderId}`, jobKeyMode: 'preserve_run_at', maxAttempts: 8 });
+  // The company's own people are told as well, when they have chosen to be (Settings, Email routing); who is decided when it is sent.
+  await utils.addJob('shop-order-email', { orderId, kind, audience: 'staff' }, { jobKey: `shop-order-email:staff:${kind}:${orderId}`, jobKeyMode: 'preserve_run_at', maxAttempts: 8 });
+}
+
+/** Enqueue the mail about a quote a shopper asked for: `shopper` (the confirmation) or `staff` (the alert). One job for each quote and kind, so a repeated call sends one mail; the worker retries it if the mail server is down. */
+export async function enqueueQuoteRequestEmail(quoteId: string, kind: 'shopper' | 'staff'): Promise<void> {
+  const utils = await getWorkerUtils();
+  await utils.addJob('shop-quote-request-email', { quoteId, kind }, { jobKey: `shop-quote-request-email:${kind}:${quoteId}`, jobKeyMode: 'preserve_run_at', maxAttempts: 8 });
 }
 
 /** Enqueue the reminder about one left cart. The key is the shopper and the state of the cart, so a repeated sweep never sends it twice. */

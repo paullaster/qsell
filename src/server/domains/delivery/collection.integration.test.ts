@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { and, eq, inArray } from 'drizzle-orm';
 import { has } from '@/lib/values';
+import type { MessageKind } from '@/lib/delivery-messages';
 import { COLLECTION_ATTEMPT_LIMIT, normalizeCollectionCode } from '@/lib/collection-code';
 import type * as mod_server_di_container from '@/server/di/container';
 import type * as mod_server_db_drizzle_client from '@/server/db/drizzle/client';
@@ -205,6 +206,374 @@ describe.skipIf(!has(url))('collecting an order from a branch (database)', () =>
       const w = await waiting();
       await OrderStages.move(db, w.order.id, 'cancelled', 'cancelled', { reasonCode: 'cancelled', message: 'test' });
       expect(await c.orderCollections.collectWithCode(staff(), w.order.id, w.code)).toMatchObject({ ok: false, reason: 'order_closed' });
+    });
+
+    it('closes the collection with its order: no reminder, no flag, no code, no hand-over, and takes it back if the order is reopened; earlier ones are closed by the sweep', async () => {
+      const day = 86_400_000;
+      const w = await waiting();
+      await c.orderCollections.markReady(staff(), w.order.id);
+      await db.update(schema.orderCollections).set({ readyAt: new Date(Date.now() - 5 * day) }).where(eq(schema.orderCollections.orderId, w.order.id));
+      expect((await c.orderCollections.leftAtCounter(companyId, [w.order.id])).size).toBe(1);
+      await OrderStages.move(db, w.order.id, 'cancelled', 'cancelled', { reasonCode: 'cancelled', message: 'test' });
+      const state = async () => (await c.orderCollections.view(companyId, w.order.id))?.status;
+      expect(await state()).toBe('cancelled');
+      expect((await c.orderCollections.leftAtCounter(companyId, [w.order.id])).size).toBe(0);
+      expect(await c.orderCollections.codeFor(companyId, w.order.id)).toBeNull();
+      expect(await c.orderCollections.remindNow(staff(), w.order.id)).toMatchObject({ ok: false, reason: 'order_closed' });
+      expect(await c.orderCollections.markReady(staff(), w.order.id)).toMatchObject({ ok: false });
+      expect(await c.orderCollections.reissue(staff(), w.order.id, 'lost the phone')).toMatchObject({ ok: false, reason: 'order_closed' });
+      await c.orderCollections.remindUncollected();
+      const sent = await db.select().from(schema.deliveryMessages).where(and(eq(schema.deliveryMessages.orderId, w.order.id), eq(schema.deliveryMessages.kind, 'collection_reminder')));
+      expect(sent).toHaveLength(0);
+      // The order is put back to work: the collection is ready again, as it was.
+      await OrderStages.move(db, w.order.id, 'released_for_fulfilment', 'succeeded', {});
+      expect(await state()).toBe('ready');
+      // An order that was cancelled before collections followed it is closed by the sweep.
+      const old = await waiting();
+      await db.update(schema.orders).set({ status: 'cancelled' }).where(eq(schema.orders.id, old.order.id));
+      expect(await state()).toBe('ready');
+      expect(await c.orderCollections.closeForClosedOrders()).toBeGreaterThanOrEqual(1);
+      expect((await c.orderCollections.view(companyId, old.order.id))?.status).toBe('cancelled');
+      expect(await c.orderCollections.closeForClosedOrders()).toBe(0);
+    });
+
+    describe('telling the customer it is ready', () => {
+      const sentMail: { to: string; text: string }[] = [];
+      const texted: { to: string; text: string }[] = [];
+      const flusher = async () => {
+        const { DeliveryMessages } = await import('./messages');
+        return new DeliveryMessages(db, { name: 'test', send: (m: { to: string; text?: string }) => { sentMail.push({ to: m.to, text: m.text ?? '' }); return Promise.resolve({ messageId: 'x', provider: 'test' }); } }, c.companySettings, { tokenFor: () => Promise.resolve('tok9') }, {
+          settings: c.deliveryTextSettings,
+          sender: () => Promise.resolve({ send: (m: { to: string; text: string }) => { texted.push(m); return Promise.resolve({ providerMessageId: null }); } }),
+        });
+      };
+      const setTexts = async (enabled: boolean, kinds: MessageKind[] = ['ready_for_collection', 'collection_reminder']) => {
+        const now = await c.deliveryTextSettings.get(companyId);
+        return await c.deliveryTextSettings.set({ companyId, userId: 'counter-1' }, { enabled, kinds, expectedVersion: now.version });
+      };
+      const messagesOf = async (orderId: string) => (await db.select().from(schema.deliveryMessages).where(eq(schema.deliveryMessages.orderId, orderId))).map((m) => `${m.kind}:${m.channel}:${m.status}`).sort();
+      beforeEach(() => {
+        sentMail.length = 0;
+        texted.length = 0;
+      });
+      afterAll(async () => {
+        await setTexts(false);
+      });
+
+      it('queues one email when it is marked ready, however often, and no text while texting is off', async () => {
+        await setTexts(false);
+        const w = await waiting();
+        expect(await messagesOf(w.order.id)).toEqual([]);
+        await c.orderCollections.markReady(staff(), w.order.id);
+        await c.orderCollections.markReady(staff(), w.order.id);
+        expect(await messagesOf(w.order.id)).toEqual(['ready_for_collection:email:queued']);
+        const [m] = await db.select().from(schema.deliveryMessages).where(eq(schema.deliveryMessages.orderId, w.order.id));
+        expect(m?.deliveryId).toBeNull();
+        expect(m?.messageKey).toBe(`${w.order.id}:ready_for_collection:0`);
+      });
+
+      it('sends the branch and the code by mail and by text, and the staff screen lists them without the code', async () => {
+        await setTexts(true);
+        const w = await waiting();
+        await c.orderCollections.markReady(staff(), w.order.id);
+        expect(await messagesOf(w.order.id)).toEqual(['ready_for_collection:email:queued', 'ready_for_collection:sms:queued']);
+        await (await flusher()).flush(500);
+        const shown = `${w.code.slice(0, 3)}-${w.code.slice(3)}`;
+        const text = texted.find((t) => t.text.includes(shown));
+        expect(text?.text).toMatch(/ready to collect at .+Show code/);
+        expect(text?.text).toContain('/track/tok9');
+        expect(text?.text).not.toMatch(/Test Rd|0700000000/);
+        expect(sentMail.some((m) => m.text.includes(shown))).toBe(true);
+        expect(await messagesOf(w.order.id)).toEqual(['ready_for_collection:email:sent', 'ready_for_collection:sms:sent']);
+        const looked = await actions.collectionOfOrderAction(w.order.id);
+        expect(looked).toMatchObject({ ok: true, data: { messages: [{ kind: 'ready_for_collection' }, { kind: 'ready_for_collection' }] } });
+        expect(JSON.stringify(looked)).not.toContain(w.code);
+        expect(JSON.stringify(looked)).not.toContain(shown);
+        expect(JSON.stringify(looked)).not.toContain('0700000000');
+      });
+
+      it('does not send a ready message for an order collected before it went out', async () => {
+        await setTexts(true);
+        const w = await waiting();
+        await c.orderCollections.markReady(staff(), w.order.id);
+        expect(await c.orderCollections.collectWithCode(staff(), w.order.id, w.code)).toMatchObject({ ok: true });
+        await (await flusher()).flush(500);
+        expect(texted.filter((t) => t.text.includes(w.order.orderNumber))).toHaveLength(0);
+        expect(await messagesOf(w.order.id)).toEqual(['ready_for_collection:email:skipped', 'ready_for_collection:sms:skipped']);
+      });
+
+      it('sends the new code when a code is reissued after the customer was told, and says the old one no longer works', async () => {
+        await setTexts(true);
+        const w = await waiting();
+        await c.orderCollections.markReady(staff(), w.order.id);
+        await (await flusher()).flush(500);
+        sentMail.length = 0;
+        texted.length = 0;
+        const fresh = await c.orderCollections.reissue(staff(), w.order.id, 'The customer lost the code');
+        if (!fresh.ok) throw new Error('not reissued');
+        await c.orderCollections.reissue(staff(), w.order.id, 'Lost it again, second time');
+        const keys = (await db.select().from(schema.deliveryMessages).where(eq(schema.deliveryMessages.orderId, w.order.id))).map((m) => m.messageKey).sort();
+        expect(keys).toEqual([`${w.order.id}:ready_for_collection:0`, `${w.order.id}:ready_for_collection:0:sms`, `${w.order.id}:ready_for_collection:1`, `${w.order.id}:ready_for_collection:1:sms`, `${w.order.id}:ready_for_collection:2`, `${w.order.id}:ready_for_collection:2:sms`].sort());
+        await (await flusher()).flush(500);
+        // The first reissue's message was still waiting when the second came, so it is replaced; only the latest code is ever sent.
+        expect(texted).toHaveLength(1);
+        expect(texted[0]?.text).toMatch(/new collection code: [A-Z0-9]{3}-[A-Z0-9]{3}\. The old one no longer works/);
+        expect(texted[0]?.text).not.toContain(`${w.code.slice(0, 3)}-${w.code.slice(3)}`);
+        expect(sentMail).toHaveLength(1);
+        expect(sentMail[0]?.text).toContain('no longer works');
+      });
+
+      it('reminds the customer of an order left at the counter, once at 3 days and once at 6, by mail and by text, and never twice or after it is collected', async () => {
+        await setTexts(true);
+        const w = await waiting();
+        await c.orderCollections.markReady(staff(), w.order.id);
+        await (await flusher()).flush(500);
+        sentMail.length = 0;
+        texted.length = 0;
+        const day = 86_400_000;
+        const agoBy = async (days: number) => {
+          await db.update(schema.orderCollections).set({ readyAt: new Date(Date.now() - days * day - 60_000) }).where(eq(schema.orderCollections.orderId, w.order.id));
+        };
+        const remindersOf = async () => (await db.select().from(schema.deliveryMessages).where(and(eq(schema.deliveryMessages.orderId, w.order.id), eq(schema.deliveryMessages.kind, 'collection_reminder')))).map((m) => m.messageKey).sort();
+        await agoBy(2);
+        await c.orderCollections.remindUncollected();
+        expect(await remindersOf()).toEqual([]);
+        await agoBy(3);
+        await c.orderCollections.remindUncollected();
+        await c.orderCollections.remindUncollected();
+        expect(await remindersOf()).toEqual([`${w.order.id}:collection_reminder:1`, `${w.order.id}:collection_reminder:1:sms`]);
+        await (await flusher()).flush(500);
+        const shown = `${w.code.slice(0, 3)}-${w.code.slice(3)}`;
+        expect(texted.filter((t) => t.text.includes('still waiting') && t.text.includes(shown))).toHaveLength(1);
+        expect(sentMail.filter((m) => m.text.includes('still waiting for you') && m.text.includes('3 days'))).toHaveLength(1);
+        expect(sentMail.some((m) => m.text.includes('last reminder'))).toBe(false);
+        await agoBy(6);
+        await c.orderCollections.remindUncollected();
+        await c.orderCollections.remindUncollected();
+        expect((await remindersOf()).filter((k) => !k.endsWith(':sms'))).toEqual([`${w.order.id}:collection_reminder:1`, `${w.order.id}:collection_reminder:2:last`]);
+        await (await flusher()).flush(500);
+        expect(sentMail.some((m) => m.text.includes('last reminder'))).toBe(true);
+        // Both reminders given, so the order is not looked at again.
+        await agoBy(9);
+        await c.orderCollections.remindUncollected();
+        expect((await remindersOf()).filter((k) => !k.endsWith(':sms'))).toHaveLength(2);
+        const looked = await actions.collectionOfOrderAction(w.order.id);
+        expect(JSON.stringify(looked)).not.toContain(w.code);
+        // Staff see how long it has waited, and only while it is waiting.
+        expect(looked).toMatchObject({ ok: true, data: { view: { waitingDays: 9 } } });
+        await c.orderCollections.collectWithCode(staff(), w.order.id, w.code);
+        expect(await c.orderCollections.view(companyId, w.order.id)).toMatchObject({ status: 'collected', waitingDays: null });
+      });
+
+      it('texts the reminder only when its own text choice is ticked, whatever Ready to collect says', async () => {
+        await setTexts(true, ['ready_for_collection']);
+        const w = await waiting();
+        await c.orderCollections.markReady(staff(), w.order.id);
+        await db.update(schema.orderCollections).set({ readyAt: new Date(Date.now() - 4 * 86_400_000) }).where(eq(schema.orderCollections.orderId, w.order.id));
+        await c.orderCollections.remindUncollected();
+        expect(await messagesOf(w.order.id)).toEqual(['collection_reminder:email:queued', 'ready_for_collection:email:queued', 'ready_for_collection:sms:queued']);
+        await (await flusher()).flush(500);
+        await setTexts(true, ['collection_reminder']);
+        const x = await waiting();
+        await c.orderCollections.markReady(staff(), x.order.id);
+        await db.update(schema.orderCollections).set({ readyAt: new Date(Date.now() - 4 * 86_400_000) }).where(eq(schema.orderCollections.orderId, x.order.id));
+        await c.orderCollections.remindUncollected();
+        expect(await messagesOf(x.order.id)).toEqual(['collection_reminder:email:queued', 'collection_reminder:sms:queued', 'ready_for_collection:email:queued']);
+        await (await flusher()).flush(500);
+      });
+
+      it('does not remind about an order that is collected, not yet ready, or waiting under 3 days, and a reminder not yet sent is skipped once it is collected', async () => {
+        await setTexts(false);
+        const notReady = await waiting();
+        const fresh = await waiting();
+        await c.orderCollections.markReady(staff(), fresh.order.id);
+        const done = await waiting();
+        await c.orderCollections.markReady(staff(), done.order.id);
+        await db.update(schema.orderCollections).set({ readyAt: new Date(Date.now() - 4 * 86_400_000) }).where(eq(schema.orderCollections.orderId, done.order.id));
+        await c.orderCollections.remindUncollected();
+        const queuedFor = async (id: string) => (await db.select().from(schema.deliveryMessages).where(and(eq(schema.deliveryMessages.orderId, id), eq(schema.deliveryMessages.kind, 'collection_reminder')))).length;
+        expect(await queuedFor(notReady.order.id)).toBe(0);
+        expect(await queuedFor(fresh.order.id)).toBe(0);
+        expect(await queuedFor(done.order.id)).toBe(1);
+        expect(await c.orderCollections.collectWithCode(staff(), done.order.id, done.code)).toMatchObject({ ok: true });
+        await (await flusher()).flush(500);
+        expect(sentMail.filter((m) => m.text.includes('still waiting for you'))).toHaveLength(0);
+        expect((await db.select().from(schema.deliveryMessages).where(and(eq(schema.deliveryMessages.orderId, done.order.id), eq(schema.deliveryMessages.kind, 'collection_reminder'))))[0]?.status).toBe('skipped');
+      });
+
+      it('flags the orders left at the counter on the staff list, for the whole page at once, from a day on, and not once collected', async () => {
+        const day = 86_400_000;
+        const mark = async (w: Awaited<ReturnType<typeof waiting>>, daysAgo: number) => {
+          await c.orderCollections.markReady(staff(), w.order.id);
+          await db.update(schema.orderCollections).set({ readyAt: new Date(Date.now() - daysAgo * day - 60_000) }).where(eq(schema.orderCollections.orderId, w.order.id));
+        };
+        const fresh = await waiting();
+        const four = await waiting();
+        const notReady = await waiting();
+        const done = await waiting();
+        await mark(fresh, 0);
+        await mark(four, 4);
+        await mark(done, 5);
+        await c.orderCollections.collectWithCode(staff(), done.order.id, done.code);
+        const ids = [fresh, four, notReady, done].map((w) => w.order.id);
+        const flagged = await c.orderCollections.leftAtCounter(companyId, ids);
+        expect([...flagged.entries()]).toEqual([[four.order.id, 4]]);
+        expect((await c.orderCollections.leftAtCounter(randomUUID(), ids)).size).toBe(0);
+        expect((await c.orderCollections.leftAtCounter(companyId, [])).size).toBe(0);
+        // The staff list carries it on the rows, and only on those rows.
+        const orderActions = await import('@/server/domains/orders/actions');
+        const page = await orderActions.ordersPageAction({ query: four.order.orderNumber });
+        expect(page).toMatchObject({ ok: true, data: { rows: [{ id: four.order.id, leftAtCounterDays: 4 }] } });
+        const other = await orderActions.ordersPageAction({ query: fresh.order.orderNumber });
+        expect(other.ok && other.data.rows.some((r) => r.leftAtCounterDays !== undefined)).toBe(false);
+      });
+
+      it('lets staff remind the customer now: only for an order left a day or more, once a day, as a message of its own that leaves the automatic stages alone, and logs who', async () => {
+        const day = 86_400_000;
+        const w = await waiting();
+        const queued = async () => (await db.select().from(schema.deliveryMessages).where(and(eq(schema.deliveryMessages.orderId, w.order.id), eq(schema.deliveryMessages.kind, 'collection_reminder')))).filter((m) => m.channel === 'email');
+        expect(await c.orderCollections.remindNow(staff(), w.order.id)).toMatchObject({ ok: false, reason: 'not_collectable' });
+        await c.orderCollections.markReady(staff(), w.order.id);
+        expect(await c.orderCollections.remindNow(staff(), w.order.id)).toMatchObject({ ok: false, reason: 'bad_input', message: expect.stringContaining('less than a day') as string });
+        await db.update(schema.orderCollections).set({ readyAt: new Date(Date.now() - 4 * day) }).where(eq(schema.orderCollections.orderId, w.order.id));
+        expect(await c.orderCollections.remindNow({ companyId: randomUUID(), userId: 'x' }, w.order.id)).toMatchObject({ ok: false, reason: 'not_found' });
+        expect(await c.orderCollections.remindNow(staff(), w.order.id)).toMatchObject({ ok: true });
+        const first = await queued();
+        expect(first).toHaveLength(1);
+        expect(first[0]?.messageKey).toContain(':collection_reminder:manual:1');
+        // Twice at once, or again the same day: one message, and a refusal in words.
+        const again = await Promise.all([c.orderCollections.remindNow(staff(), w.order.id), c.orderCollections.remindNow(staff(), w.order.id)]);
+        expect(again.every((r) => !r.ok && r.reason === 'bad_input')).toBe(true);
+        expect(await queued()).toHaveLength(1);
+        // The next day another may go, with the next number.
+        expect(await c.orderCollections.remindNow(staff(), w.order.id, new Date(Date.now() + day + 60_000))).toMatchObject({ ok: true });
+        expect((await queued()).map((m) => m.messageKey.split(':manual:')[1]).sort()).toEqual(['1', '2']);
+        // The automatic reminders still have their own stages.
+        await c.orderCollections.remindUncollected();
+        expect((await queued()).some((m) => /:collection_reminder:1(:last)?$/.test(m.messageKey))).toBe(true);
+        const log = await db.select().from(schema.decisionLog).where(and(eq(schema.decisionLog.subjectId, w.order.id), eq(schema.decisionLog.action, 'delivery.collection_reminder_sent_by_staff')));
+        expect(log).toHaveLength(2);
+        expect(await c.orderCollections.collectWithCode(staff(), w.order.id, w.code)).toMatchObject({ ok: true });
+        expect(await c.orderCollections.remindNow(staff(), w.order.id)).toMatchObject({ ok: false, reason: 'already_collected' });
+      });
+
+      it('narrows the staff list to orders left at the counter for N days or more, paged on the server, and ignores a made-up choice', async () => {
+        const day = 86_400_000;
+        const mark = async (w: Awaited<ReturnType<typeof waiting>>, daysAgo: number) => {
+          await c.orderCollections.markReady(staff(), w.order.id);
+          await db.update(schema.orderCollections).set({ readyAt: new Date(Date.now() - daysAgo * day - 60_000) }).where(eq(schema.orderCollections.orderId, w.order.id));
+        };
+        const two = await waiting();
+        const five = await waiting();
+        const nine = await waiting();
+        const notReady = await waiting();
+        const gone = await waiting();
+        await mark(two, 2);
+        await mark(five, 5);
+        await mark(nine, 9);
+        await mark(gone, 8);
+        await c.orderCollections.collectWithCode(staff(), gone.order.id, gone.code);
+        const mine = new Set([two, five, nine, notReady, gone].map((w) => w.order.id));
+        const idsAt = async (counter: string | null) => {
+          const out: string[] = [];
+          let cursor: string | null = null;
+          do {
+            const page = await actions2.ordersPageAction({ counter, cursor });
+            if (!page.ok) throw new Error(page.error);
+            out.push(...page.data.rows.map((r) => r.id).filter((id) => mine.has(id)));
+            cursor = page.data.nextCursor;
+          } while (cursor !== null);
+          return new Set(out);
+        };
+        const actions2 = await import('@/server/domains/orders/actions');
+        expect(await idsAt('1')).toEqual(new Set([two.order.id, five.order.id, nine.order.id]));
+        expect(await idsAt('3')).toEqual(new Set([five.order.id, nine.order.id]));
+        expect(await idsAt('7')).toEqual(new Set([nine.order.id]));
+        expect((await idsAt('banana')).size).toBe(5);
+        expect((await idsAt(null)).size).toBe(5);
+      });
+
+      describe('the company chooses the reminders', () => {
+        const setReminders = async (enabled: boolean, firstDays: unknown, secondDays: unknown) => {
+          const now = await c.deliveryTextSettings.get(companyId);
+          return await c.deliveryTextSettings.setReminders({ companyId, userId: 'counter-1' }, { enabled, firstDays, secondDays, expectedVersion: now.version });
+        };
+        afterAll(async () => {
+          await setReminders(true, 3, 6);
+        });
+
+        it('keeps the days and the switch, refuses nonsense and a stale version in words, and keeps a line in the decision log', async () => {
+          expect(await setReminders(true, 0, 6)).toMatchObject({ ok: false, reason: 'bad_input', message: expect.stringContaining('1 to 30') as string });
+          expect(await setReminders(true, 31, '')).toMatchObject({ ok: false, reason: 'bad_input' });
+          expect(await setReminders(true, 'soon', '')).toMatchObject({ ok: false, reason: 'bad_input' });
+          expect(await setReminders(true, 5, 5)).toMatchObject({ ok: false, reason: 'bad_input', message: expect.stringContaining('later than the first') as string });
+          expect(await setReminders(true, 5, 61)).toMatchObject({ ok: false, reason: 'bad_input' });
+          expect(await setReminders(true, 2.5, '')).toMatchObject({ ok: false, reason: 'bad_input' });
+          const before = await c.deliveryTextSettings.get(companyId);
+          expect(await c.deliveryTextSettings.setReminders({ companyId, userId: 'counter-1' }, { enabled: true, firstDays: 2, secondDays: 4, expectedVersion: before.version - 1 })).toMatchObject({ ok: false, reason: 'conflict' });
+          const saved = await setReminders(true, '2', '4');
+          expect(saved).toMatchObject({ ok: true, data: { reminders: { enabled: true, firstDays: 2, secondDays: 4 }, version: before.version + 1 } });
+          expect(await setReminders(true, 7, '')).toMatchObject({ ok: true, data: { reminders: { enabled: true, firstDays: 7, secondDays: null } } });
+          expect((await c.deliveryTextSettings.get(companyId)).reminders).toEqual({ enabled: true, firstDays: 7, secondDays: null });
+          const log = await db.select().from(schema.decisionLog).where(and(eq(schema.decisionLog.subjectId, companyId), eq(schema.decisionLog.action, 'delivery.collection_reminders_changed')));
+          expect(log.length).toBeGreaterThanOrEqual(2);
+          // The text settings are left as they were by this save, and a text save leaves the reminders alone.
+          await setTexts(false);
+          expect((await c.deliveryTextSettings.get(companyId)).reminders).toEqual({ enabled: true, firstDays: 7, secondDays: null });
+          // The database refuses the same nonsense.
+          await expect(db.update(schema.deliveryTextSettings).set({ collectionReminderSecondDays: 3, collectionReminderFirstDays: 3 }).where(eq(schema.deliveryTextSettings.companyId, companyId))).rejects.toThrow();
+        });
+
+        it('uses the days chosen, sends only one reminder when there is no second (saying it is the last), and nothing when turned off', async () => {
+          await setTexts(false);
+          const day = 86_400_000;
+          const readyFor = async (days: number) => {
+            const w = await waiting();
+            await c.orderCollections.markReady(staff(), w.order.id);
+            await db.update(schema.orderCollections).set({ readyAt: new Date(Date.now() - days * day - 60_000) }).where(eq(schema.orderCollections.orderId, w.order.id));
+            return w;
+          };
+          const keys = async (orderId: string) => (await db.select().from(schema.deliveryMessages).where(and(eq(schema.deliveryMessages.orderId, orderId), eq(schema.deliveryMessages.kind, 'collection_reminder')))).map((m) => m.messageKey).sort();
+          await setReminders(true, 1, '');
+          const one = await readyFor(1);
+          const early = await readyFor(0.5);
+          await c.orderCollections.remindUncollected();
+          await c.orderCollections.remindUncollected();
+          expect(await keys(one.order.id)).toEqual([`${one.order.id}:collection_reminder:1:last`]);
+          expect(await keys(early.order.id)).toEqual([]);
+          sentMail.length = 0;
+          await (await flusher()).flush(500);
+          expect(sentMail.some((m) => m.text.includes('last reminder') && m.text.includes(`${one.code.slice(0, 3)}-${one.code.slice(3)}`))).toBe(true);
+          // Far past any second day, with only one chosen, still only one.
+          await db.update(schema.orderCollections).set({ readyAt: new Date(Date.now() - 20 * day) }).where(eq(schema.orderCollections.orderId, one.order.id));
+          await c.orderCollections.remindUncollected();
+          expect(await keys(one.order.id)).toHaveLength(1);
+          // Two chosen later: the one already sent is not sent again as the first, and the second follows once it is due.
+          await setReminders(true, 1, 10);
+          await c.orderCollections.remindUncollected();
+          expect(await keys(one.order.id)).toEqual([`${one.order.id}:collection_reminder:1:last`, `${one.order.id}:collection_reminder:2:last`]);
+          // Turned off, nothing is queued, however long the order has waited.
+          await setReminders(false, 1, 2);
+          const off = await readyFor(30);
+          await c.orderCollections.remindUncollected();
+          expect(await keys(off.order.id)).toEqual([]);
+          // Nothing this test queued is left to go out during the next one.
+          await (await flusher()).flush(500);
+        });
+      });
+
+      it('sends nothing extra when a code is reissued before the customer was told, and the first message then carries the new code', async () => {
+        await setTexts(false);
+        const w = await waiting();
+        const fresh = await c.orderCollections.reissue(staff(), w.order.id, 'The customer lost the code');
+        if (!fresh.ok) throw new Error('not reissued');
+        expect(await messagesOf(w.order.id)).toEqual([]);
+        await c.orderCollections.markReady(staff(), w.order.id);
+        await (await flusher()).flush(500);
+        expect(sentMail).toHaveLength(1);
+        expect(sentMail[0]?.text).toContain(`${fresh.code.slice(0, 3)}-${fresh.code.slice(3)}`);
+        expect(sentMail[0]?.text).not.toContain('no longer works');
+      });
     });
 
     it('is marked ready, then handed over once to whoever shows the code, however it is typed, and the order is then delivered', async () => {

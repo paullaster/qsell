@@ -63,9 +63,10 @@ describe('the suggested order of stops', () => {
 
 describe('a run in numbers', () => {
   it('adds stops, units, value and the weight of what has one, and counts the stops with none', () => {
-    expect(runTotals([{ units: 2, value: 1500.5, weightKg: 1.5 }, { units: 3, value: 200.25, weightKg: null }, { units: 1, value: 10, weightKg: 0.25 }])).toEqual({ stops: 3, units: 6, value: 1710.75, weightKg: 1.75, stopsWithoutWeight: 1 });
-    expect(runTotals([])).toEqual({ stops: 0, units: 0, value: 0, weightKg: null, stopsWithoutWeight: 0 });
-    expect(runTotals([{ units: 1, value: 1, weightKg: null }]).weightKg).toBeNull();
+    expect(runTotals([{ units: 2, value: 1500.5, weightKg: 1.5, volumeLitres: 40 }, { units: 3, value: 200.25, weightKg: null, volumeLitres: null }, { units: 1, value: 10, weightKg: 0.25, volumeLitres: 2.5 }])).toEqual({ stops: 3, units: 6, value: 1710.75, weightKg: 1.75, stopsWithoutWeight: 1, volumeLitres: 42.5, stopsWithoutVolume: 1 });
+    expect(runTotals([])).toEqual({ stops: 0, units: 0, value: 0, weightKg: null, stopsWithoutWeight: 0, volumeLitres: null, stopsWithoutVolume: 0 });
+    expect(runTotals([{ units: 1, value: 1, weightKg: null, volumeLitres: null }]).weightKg).toBeNull();
+    expect(runTotals([{ units: 1, value: 1, weightKg: 2, volumeLitres: null }]).volumeLitres).toBeNull();
   });
   it('flags a delivery that has waited a day, with the clock passed in', () => {
     const now = new Date('2026-11-04T12:00:00Z');

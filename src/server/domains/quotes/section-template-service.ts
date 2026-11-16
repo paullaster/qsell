@@ -1,3 +1,4 @@
+import { packageOnlyRefusal } from '@/lib/package-only';
 import { and, asc, desc, eq, ilike, inArray, or, sql, type SQL } from 'drizzle-orm';
 import { getContainer } from '@/server/di/container';
 import { drizzleDb } from '@/server/db/drizzle/client';
@@ -162,6 +163,7 @@ export class SectionTemplateService {
       if (product?.isSellable !== true) {
         throw new Error(`Item ${String(index + 1)} is missing or is not sellable.`);
       }
+      if (product.soldOnlyInPackages === true) throw new Error(packageOnlyRefusal(product.name));
       return {
         productId: product.id,
         lineNumber: (index + 1) * 10000,

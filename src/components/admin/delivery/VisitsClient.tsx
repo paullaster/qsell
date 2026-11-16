@@ -6,6 +6,7 @@ import type { MaterialView, VisitView } from '@/server/domains/delivery/visits';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
+import { VisitPhotosPanel } from './VisitPhotosPanel';
 import { usePagedList } from '@/components/ui/usePagedList';
 import type { Choice } from '@/lib/payment-options';
 import { VISIT_STATUS_WORDS, fromNairobiInput, itemsFromLines, toNairobiInput, visitActionsFrom, type VisitStatus } from '@/lib/visit';
@@ -255,6 +256,10 @@ function VisitCard({ visit, onDone, onError }: { visit: VisitView; onDone: (text
 
       {visit.materials.length === 0 && visit.status !== 'on_site' && visit.status !== 'completed' ? null : (
         <MaterialsPanel visit={visit} busy={busy} onDone={onDone} onError={onError} />
+      )}
+
+      {visit.photos.length === 0 && visit.status !== 'on_site' && visit.status !== 'completed' ? null : (
+        <VisitPhotosPanel visit={visit} busy={busy} onDone={onDone} onError={onError} />
       )}
 
       {actions.length === 0 ? null : (

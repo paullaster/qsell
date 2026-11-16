@@ -8,6 +8,8 @@ import type * as mod_server_db_drizzle_client from '@/server/db/drizzle/client';
 import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
 import type { OrderWriteService as OrderWriteServiceType } from '@/server/domains/orders/write-service';
 import type { OrderStages as OrderStagesType } from '@/server/domains/orders/stages';
+import type { DeliveryMessages as DeliveryMessagesType } from './messages';
+import type { SmsSendError as SmsSendErrorType } from '@/server/ports/sms';
 import { holdLedgerSwitch, settleFinanceBacklog } from '@/server/domains/stock/test-support';
 
 const { requirePermission } = vi.hoisted(() => ({ requirePermission: vi.fn() }));
@@ -87,6 +89,11 @@ describe.skipIf(!has(url))('delivery slots (database)', () => {
   beforeAll(async () => {
     releaseLedgerSwitch = await holdLedgerSwitch(url);
     process.env.DATA_ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString('base64');
+    const webpush = await import('web-push');
+    const keys = webpush.generateVAPIDKeys();
+    process.env.VAPID_PUBLIC_KEY = keys.publicKey;
+    process.env.VAPID_PRIVATE_KEY = keys.privateKey;
+    process.env.VAPID_SUBJECT = 'mailto:ops@slots.test';
     const mod = await import('@/server/di/container');
     db = (await import('@/server/db/drizzle/client')).drizzleDb;
     schema = await import('@/server/db/drizzle/schema');
@@ -408,6 +415,496 @@ describe.skipIf(!has(url))('delivery slots (database)', () => {
     await c.deliverySla.scan(now);
     for (const id of [far, done, gone, none]) expect(await eventsOf(id)).toEqual([]);
     expect((await c.deliverySla.overview(companyId, now)).some((l) => [far, done, gone, none].includes(l.deliveryId))).toBe(false);
+  });
+
+  describe('push alerts about lateness', () => {
+    interface Sent { endpoint: string; title: string; body: string; url: string; tag: string }
+    const fakePush = (mode: 'up' | 'down' | 'gone' = 'up') => {
+      const sent: Sent[] = [];
+      const port = {
+        publicKey: () => 'test-public-key',
+        send: (t: { endpoint: string }, m: { title: string; body: string; url: string; tag: string }) => {
+          if (mode === 'down') return Promise.reject(new Error('The push service answered 503.'));
+          if (mode === 'gone') return Promise.resolve('gone' as const);
+          sent.push({ endpoint: t.endpoint, title: m.title, body: m.body, url: m.url, tag: m.tag });
+          return Promise.resolve('sent' as const);
+        },
+      };
+      return { sent, port };
+    };
+    const made: string[] = [];
+    const person = async (email: string, role = 'manager') => {
+      const id = randomUUID();
+      await db.insert(schema.users).values({ id, email, passwordHash: 'x', name: `Push ${id.slice(0, 4)}`, role });
+      made.push(id);
+      return id;
+    };
+    const endpoint = () => `https://push.example.test/send/${randomUUID()}`;
+    const sub = (e = endpoint()) => ({ endpoint: e, p256dh: 'BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM', auth: 'tBHItJI5svbpez7KI4CCXg' });
+    const setLists = async (dispatch: string, supervisor = '') => {
+      const now = await c.deliverySla.settings(companyId);
+      await must(c.deliverySla.setSettings(actor(), { atRiskMinutes: 60, escalateAfterMinutes: 60, notifyDispatch: dispatch, notifySupervisor: supervisor, expectedVersion: now.version }));
+    };
+    const pushesOf = async (deliveryId: string) => {
+      const events = await db.select({ id: schema.deliverySlaEvents.id, level: schema.deliverySlaEvents.level }).from(schema.deliverySlaEvents).where(eq(schema.deliverySlaEvents.deliveryId, deliveryId));
+      const rows = events.length === 0 ? [] : await db.select().from(schema.deliverySlaPushes).where(inArray(schema.deliverySlaPushes.eventId, events.map((e) => e.id)));
+      return rows.map((r) => `${events.find((e) => e.id === r.eventId)?.level ?? '?'}:${r.audience}:${r.status}`).sort();
+    };
+    afterAll(async () => {
+      // A person who became a rider stays (riders are kept for good); the rest are removed with their browsers.
+      for (const id of made) await db.delete(schema.users).where(eq(schema.users.id, id)).catch(() => undefined);
+    });
+
+    it('turns alerts on for a browser, keeps one row for it, and only its owner can turn it off', async () => {
+      const { DeliveryPush } = await import('./push');
+      const push = new DeliveryPush(db, fakePush().port);
+      const a = await person(`pa-${randomUUID()}@push.test`);
+      const b = await person(`pb-${randomUUID()}@push.test`);
+      const mine = sub();
+      expect(await push.subscribe({ companyId, userId: a }, mine)).toEqual({ ok: true });
+      expect(await push.subscribe({ companyId, userId: a }, mine)).toEqual({ ok: true });
+      expect((await push.state(companyId, a)).browsers).toBe(1);
+      expect(await push.unsubscribe({ companyId, userId: b }, mine.endpoint)).toEqual({ ok: true });
+      expect((await push.state(companyId, a)).browsers).toBe(1);
+      expect(await push.unsubscribe({ companyId, userId: a }, mine.endpoint)).toEqual({ ok: true });
+      expect((await push.state(companyId, a)).browsers).toBe(0);
+      expect(await push.subscribe({ companyId, userId: a }, { ...mine, endpoint: 'http://not-secure.test/x' })).toMatchObject({ ok: false });
+      expect(await push.subscribe({ companyId, userId: a }, { endpoint: endpoint(), p256dh: 'x', auth: 'y' })).toMatchObject({ ok: false });
+      expect(await push.subscribe({ companyId, userId: a }, null)).toMatchObject({ ok: false });
+      for (let i = 0; i < 7; i += 1) await push.subscribe({ companyId, userId: a }, sub());
+      expect((await push.state(companyId, a)).browsers).toBe(5);
+    });
+
+    it('says plainly when the installation has no push keys, and refuses to subscribe', async () => {
+      const { DeliveryPush } = await import('./push');
+      const { NoPushAdapter } = await import('@/server/adapters/push/web-push.adapter');
+      const push = new DeliveryPush(db, new NoPushAdapter());
+      const a = await person(`pn-${randomUUID()}@push.test`);
+      expect(await push.state(companyId, a)).toEqual({ available: false, publicKey: null, browsers: 0 });
+      expect(await push.subscribe({ companyId, userId: a }, sub())).toMatchObject({ ok: false });
+    });
+
+    it('queues an alert for a subscribed person on the list in the same step as the lateness, sends it once with no personal details, and not to people off the list', async () => {
+      const { DeliveryPush } = await import('./push');
+      const fake = fakePush();
+      const push = new DeliveryPush(db, fake.port);
+      const email = `Desk-${randomUUID()}@push.test`;
+      const onList = await person(email);
+      const offList = await person(`off-${randomUUID()}@push.test`);
+      const mine = sub();
+      await push.subscribe({ companyId, userId: onList }, mine);
+      await push.subscribe({ companyId, userId: offList }, sub());
+      await setLists(email);
+      const now = new Date();
+      const a = await delivery();
+      await windowed(a, -120, 30, now);
+      await c.deliverySla.scan(now);
+      await c.deliverySla.scan(now);
+      expect(await pushesOf(a)).toEqual(['at_risk:staff:queued']);
+      await push.flush(500);
+      const mineSent = fake.sent.filter((x) => x.endpoint === mine.endpoint);
+      expect(mineSent).toHaveLength(1);
+      expect(mineSent[0]?.title).toMatch(/^Delivery DLV-.* is at risk$/);
+      expect(mineSent[0]?.url).toBe('/admin/delivery/late');
+      expect(`${mineSent[0]?.title ?? ""} ${mineSent[0]?.body ?? ""}`).not.toMatch(/0700|Test Rd|Wanjiru|@/i);
+      expect(await pushesOf(a)).toEqual(['at_risk:staff:sent']);
+      await push.flush(500);
+      expect(fake.sent.filter((x) => x.endpoint === mine.endpoint)).toHaveLength(1);
+    });
+
+    it('sends the supervisors the escalation and nobody else, and the rider whose run holds the delivery the first two levels', async () => {
+      const { DeliveryPush } = await import('./push');
+      const fake = fakePush();
+      const push = new DeliveryPush(db, fake.port);
+      const boss = `boss-${randomUUID()}@push.test`;
+      const bossId = await person(boss);
+      const bossSub = sub();
+      await push.subscribe({ companyId, userId: bossId }, bossSub);
+      const riderUser = await person(`rider-${randomUUID()}@push.test`, 'super_admin');
+      const riderSub = sub();
+      await push.subscribe({ companyId, userId: riderUser }, riderSub);
+      const kinds = await c.deliveryRiders.settings(companyId);
+      await c.deliveryRiders.setKinds(actor(), { allowStaff: true, allowSeparate: true, expectedVersion: kinds.version });
+      const rider = await c.deliveryRiders.addStaff(actor(), { userId: riderUser });
+      if (!rider.ok) throw new Error(rider.message);
+      await setLists('', boss);
+      const now = new Date();
+      const a = await delivery();
+      await windowed(a, -120, 30, now);
+      const run = await must(c.deliveryRuns.create(actor(), { branchId, runDate: nairobiDay(now), riderId: rider.data.id }));
+      // Readiness is tested with the runs; here the delivery only needs to be a live stop of the rider's run.
+      await db.insert(schema.deliveryRunStops).values({ runId: run.id, deliveryId: a, sequence: 1, addedBy: 'dispatcher-1' });
+      await c.deliverySla.scan(now);
+      await c.deliverySla.scan(new Date(now.getTime() + 50 * 60_000));
+      await c.deliverySla.scan(new Date(now.getTime() + 95 * 60_000));
+      expect(await pushesOf(a)).toEqual(['at_risk:rider:queued', 'escalated:staff:queued', 'late:rider:queued']);
+      await push.flush(500);
+      // Other deliveries left late by earlier tests are alerted too; this one is told apart by its tag.
+      const ours = fake.sent.filter((x) => x.tag === `delivery-${a}`);
+      expect(ours.filter((x) => x.endpoint === riderSub.endpoint).map((x) => x.url)).toEqual(['/rider', '/rider']);
+      expect(ours.filter((x) => x.endpoint === bossSub.endpoint)).toHaveLength(1);
+      expect(ours).toHaveLength(3);
+    });
+
+    it('forgets a browser the push service says is gone, and keeps an alert that could not be sent to try again after a wait', async () => {
+      const { DeliveryPush } = await import('./push');
+      const email = `gone-${randomUUID()}@push.test`;
+      const user = await person(email);
+      const mine = sub();
+      await new DeliveryPush(db, fakePush().port).subscribe({ companyId, userId: user }, mine);
+      await setLists(email);
+      const now = new Date();
+      const a = await delivery();
+      await windowed(a, -120, 30, now);
+      await c.deliverySla.scan(now);
+      const down = new DeliveryPush(db, fakePush('down').port);
+      expect(await down.flush(500)).toBe(0);
+      expect(await pushesOf(a)).toEqual(['at_risk:staff:failed']);
+      const [failed] = await db.select().from(schema.deliverySlaPushes).where(eq(schema.deliverySlaPushes.status, 'failed'));
+      expect(failed?.attempts).toBe(1);
+      expect(failed?.lastError).toContain('503');
+      expect(new Date(failed?.nextTryAt ?? 0).getTime()).toBeGreaterThan(Date.now());
+      // Not due yet: nothing is tried; once the wait is over it goes.
+      const up = fakePush();
+      const again = new DeliveryPush(db, up.port);
+      expect(await again.flush(500)).toBe(0);
+      await db.update(schema.deliverySlaPushes).set({ nextTryAt: new Date(Date.now() - 1000) }).where(eq(schema.deliverySlaPushes.status, 'failed'));
+      expect(await again.flush(500)).toBeGreaterThanOrEqual(1);
+      expect(up.sent.some((x) => x.endpoint === mine.endpoint)).toBe(true);
+      // A later alert to a browser that has gone removes the browser.
+      const b = await delivery();
+      await windowed(b, -120, 30, now);
+      await c.deliverySla.scan(now);
+      await new DeliveryPush(db, fakePush('gone').port).flush(500);
+      expect((await new DeliveryPush(db, fakePush().port).state(companyId, user)).browsers).toBe(0);
+    });
+  });
+
+  describe('text messages about lateness', () => {
+    const setTexts = async (over: { dispatch?: string; supervisor?: string; rider?: boolean; mails?: [string, string] } = {}) => {
+      const now = await c.deliverySla.settings(companyId);
+      return await c.deliverySla.setSettings(actor(), { atRiskMinutes: 60, escalateAfterMinutes: 60, notifyDispatch: over.mails?.[0] ?? '', notifySupervisor: over.mails?.[1] ?? '', notifyDispatchPhones: over.dispatch ?? '', notifySupervisorPhones: over.supervisor ?? '', textTheRider: over.rider ?? false, expectedVersion: now.version });
+    };
+    const textsOf = async (deliveryId: string) => {
+      const events = await db.select({ id: schema.deliverySlaEvents.id, level: schema.deliverySlaEvents.level }).from(schema.deliverySlaEvents).where(eq(schema.deliverySlaEvents.deliveryId, deliveryId));
+      const rows = events.length === 0 ? [] : await db.select().from(schema.deliverySlaTexts).where(inArray(schema.deliverySlaTexts.eventId, events.map((e) => e.id)));
+      return rows.map((r) => `${events.find((e) => e.id === r.eventId)?.level ?? '?'}:${r.audience}:${r.recipient}:${r.status}`).sort();
+    };
+    /** Texts go through a connection of the company's own, with the provider's answer decided here. */
+    const sent: { to: string; text: string }[] = [];
+    let providerAnswer: () => Response = () => new Response(JSON.stringify({ SMSMessageData: { Recipients: [{ statusCode: 101, messageId: 'm1' }] } }), { status: 201 });
+    const texter = async (name: string) => {
+      const { SmsAccounts } = await import('@/server/domains/sms/accounts');
+      const { DeliverySlaTexts } = await import('./sla-texts');
+      const accounts = new SmsAccounts(db, c.decisionLog, (_u: string, init: RequestInit) => {
+        const form = new URLSearchParams(init.body as string);
+        sent.push({ to: form.get('to') ?? '', text: form.get('message') ?? '' });
+        return Promise.resolve(providerAnswer());
+      });
+      const made = await accounts.create(actor(), { name, adapter: 'africastalking', username: 'texts', apiKey: 'k'.repeat(30) });
+      if (!made.ok) throw new Error(made.message);
+      return { accounts, texts: new DeliverySlaTexts(db, accounts, c.companySettings), accountId: made.data.id };
+    };
+    const clearAccounts = () => db.delete(schema.smsProviderAccounts).where(eq(schema.smsProviderAccounts.companyId, companyId));
+    beforeEach(async () => {
+      sent.length = 0;
+      providerAnswer = () => new Response(JSON.stringify({ SMSMessageData: { Recipients: [{ statusCode: 101, messageId: 'm1' }] } }), { status: 201 });
+      await clearAccounts();
+    });
+    afterAll(clearAccounts);
+
+    it('keeps the numbers with their country code, once each, and refuses one that is not a mobile number', async () => {
+      const saved = await setTexts({ dispatch: '0712 345 678, +254712345678; 0722111222', supervisor: '0733 000 111' });
+      expect(saved).toMatchObject({ ok: true, data: { notifyDispatchPhones: ['+254712345678', '+254722111222'], notifySupervisorPhones: ['+254733000111'], textTheRider: false } });
+      expect(await setTexts({ dispatch: '0712345678, nonsense' })).toMatchObject({ ok: false, reason: 'bad_input', message: expect.stringContaining('nonsense') as string });
+      expect((await c.deliverySla.settings(companyId)).notifyDispatchPhones).toEqual(['+254712345678', '+254722111222']);
+    });
+
+    it('queues one text for each number and level in the same step as the lateness: dispatchers for the first two levels, supervisors for the third, and once only', async () => {
+      await setTexts({ dispatch: '0711000001, 0711000002', supervisor: '0711000009' });
+      const now = new Date();
+      const a = await delivery();
+      await windowed(a, -120, 30, now);
+      await c.deliverySla.scan(now);
+      await c.deliverySla.scan(now);
+      await c.deliverySla.scan(new Date(now.getTime() + 50 * 60_000));
+      await c.deliverySla.scan(new Date(now.getTime() + 95 * 60_000));
+      expect(await textsOf(a)).toEqual([
+        'at_risk:staff:+254711000001:queued', 'at_risk:staff:+254711000002:queued',
+        'escalated:staff:+254711000009:queued',
+        'late:staff:+254711000001:queued', 'late:staff:+254711000002:queued',
+      ]);
+    });
+
+    it('queues nothing when no number is set, and changing the list later does not change who was texted', async () => {
+      await setTexts({});
+      const now = new Date();
+      const a = await delivery();
+      await windowed(a, -120, 30, now);
+      await c.deliverySla.scan(now);
+      expect(await textsOf(a)).toEqual([]);
+      await setTexts({ dispatch: '0711000003' });
+      const b = await delivery();
+      await windowed(b, -120, 30, now);
+      await c.deliverySla.scan(now);
+      await setTexts({ dispatch: '0711000004' });
+      expect(await textsOf(b)).toEqual(['at_risk:staff:+254711000003:queued']);
+    });
+
+    it('sends each text once through the default connection, with the delivery and the time promised, and nothing of the customer', async () => {
+      const t = await texter(`Texts ${randomUUID().slice(0, 6)}`);
+      await setTexts({ dispatch: '0711000005' });
+      const now = new Date();
+      const a = await delivery();
+      await windowed(a, -120, 30, now);
+      await c.deliverySla.scan(now);
+      await t.texts.flush(500);
+      const mine = sent.filter((m) => m.to === '+254711000005');
+      expect(mine).toHaveLength(1);
+      expect(mine[0]?.text).toMatch(/^Delivery DLV-\S+ is at risk of being late\. Promised /);
+      expect(mine[0]?.text.length).toBeLessThanOrEqual(160);
+      expect(mine[0]?.text).not.toMatch(/0700|Test Rd|Wanjiru/i);
+      expect(await textsOf(a)).toEqual(['at_risk:staff:+254711000005:sent']);
+      await t.texts.flush(500);
+      expect(sent.filter((m) => m.to === '+254711000005')).toHaveLength(1);
+      const shown = (await c.deliverySla.overview(companyId, now)).find((l) => l.deliveryId === a);
+      expect(shown?.texts).toEqual({ sent: 1, waiting: 0, failed: 0 });
+    });
+
+    it('waits when no SMS provider is connected, says why, and sends when one is', async () => {
+      const { SmsAccounts } = await import('@/server/domains/sms/accounts');
+      const { DeliverySlaTexts } = await import('./sla-texts');
+      await setTexts({ dispatch: '0711000006' });
+      const now = new Date();
+      const a = await delivery();
+      await windowed(a, -120, 30, now);
+      await c.deliverySla.scan(now);
+      const none = new DeliverySlaTexts(db, new SmsAccounts(db, c.decisionLog, undefined), c.companySettings);
+      expect(await none.flush(500)).toBe(0);
+      const [waiting] = await db.select().from(schema.deliverySlaTexts).where(eq(schema.deliverySlaTexts.recipient, '+254711000006'));
+      expect(waiting?.status).toBe('failed');
+      expect(waiting?.lastError).toContain('No SMS provider is set up');
+      expect((waiting?.attempts ?? 9)).toBeLessThan(5);
+      expect(await c.smsAccounts.defaultName(companyId)).toBeNull();
+      const t = await texter(`Later ${randomUUID().slice(0, 6)}`);
+      await db.update(schema.deliverySlaTexts).set({ nextTryAt: new Date(Date.now() - 1000) }).where(eq(schema.deliverySlaTexts.recipient, '+254711000006'));
+      expect(await t.texts.flush(500)).toBeGreaterThanOrEqual(1);
+      expect(sent.some((m) => m.to === '+254711000006')).toBe(true);
+    });
+
+    it('does not try again a refusal that asking again cannot change, and tries again one that can', async () => {
+      const t = await texter(`Refuse ${randomUUID().slice(0, 6)}`);
+      await setTexts({ dispatch: '0711000007' });
+      const now = new Date();
+      const a = await delivery();
+      await windowed(a, -120, 30, now);
+      await c.deliverySla.scan(now);
+      providerAnswer = () => new Response(JSON.stringify({ SMSMessageData: { Recipients: [{ statusCode: 405 }] } }), { status: 201 });
+      expect(await t.texts.flush(500)).toBe(0);
+      const [refused] = await db.select().from(schema.deliverySlaTexts).where(eq(schema.deliverySlaTexts.recipient, '+254711000007'));
+      expect(refused).toMatchObject({ status: 'failed', attempts: 5 });
+      expect(refused?.lastError).toContain('balance');
+      expect((await c.deliverySla.overview(companyId, now)).find((l) => l.deliveryId === a)?.texts).toEqual({ sent: 0, waiting: 0, failed: 1 });
+      const b = await delivery();
+      await windowed(b, -120, 30, now);
+      await setTexts({ dispatch: '0711000008' });
+      await c.deliverySla.scan(now);
+      providerAnswer = () => new Response('{}', { status: 503 });
+      await t.texts.flush(500);
+      const [again] = await db.select().from(schema.deliverySlaTexts).where(eq(schema.deliverySlaTexts.recipient, '+254711000008'));
+      expect(again).toMatchObject({ status: 'failed', attempts: 1 });
+      expect(new Date(again?.nextTryAt ?? 0).getTime()).toBeGreaterThan(Date.now());
+    });
+
+    it('drops a text that has waited too long to be of use', async () => {
+      const t = await texter(`Stale ${randomUUID().slice(0, 6)}`);
+      await setTexts({ dispatch: '0711000010' });
+      const now = new Date();
+      const a = await delivery();
+      await windowed(a, -120, 30, now);
+      await c.deliverySla.scan(now);
+      await db.update(schema.deliverySlaTexts).set({ createdAt: new Date(Date.now() - 4 * 3600_000) }).where(eq(schema.deliverySlaTexts.recipient, '+254711000010'));
+      expect(await t.texts.flush(500)).toBe(0);
+      expect(sent.filter((m) => m.to === '+254711000010')).toHaveLength(0);
+      const [row] = await db.select().from(schema.deliverySlaTexts).where(eq(schema.deliverySlaTexts.recipient, '+254711000010'));
+      expect(row?.lastError).toContain('too late');
+    });
+
+    it('texts the rider of the run on the number saved for them, for the first two levels only, and only when the company chose it', async () => {
+      const t = await texter(`Rider ${randomUUID().slice(0, 6)}`);
+      const user = randomUUID();
+      await db.insert(schema.users).values({ id: user, email: `txt-${user}@texts.test`, passwordHash: 'x', name: 'Texted Rider', role: 'super_admin' });
+      const kinds = await c.deliveryRiders.settings(companyId);
+      await c.deliveryRiders.setKinds(actor(), { allowStaff: true, allowSeparate: true, expectedVersion: kinds.version });
+      const rider = await c.deliveryRiders.addStaff(actor(), { userId: user });
+      if (!rider.ok) throw new Error(rider.message);
+      await db.update(schema.deliveryRiders).set({ phone: '+254744000111' }).where(eq(schema.deliveryRiders.id, rider.data.id));
+      const now = new Date();
+      const onRun = async () => {
+        const d = await delivery();
+        await windowed(d, -120, 30, now);
+        const run = await must(c.deliveryRuns.create(actor(), { branchId, runDate: nairobiDay(now), riderId: rider.data.id }));
+        await db.insert(schema.deliveryRunStops).values({ runId: run.id, deliveryId: d, sequence: 1, addedBy: 'dispatcher-1' });
+        return d;
+      };
+      await setTexts({ rider: false });
+      const off = await onRun();
+      await c.deliverySla.scan(now);
+      expect(await textsOf(off)).toEqual([]);
+      await setTexts({ rider: true, supervisor: '0711000011' });
+      const on = await onRun();
+      await c.deliverySla.scan(now);
+      await c.deliverySla.scan(new Date(now.getTime() + 50 * 60_000));
+      await c.deliverySla.scan(new Date(now.getTime() + 95 * 60_000));
+      expect(await textsOf(on)).toEqual(['at_risk:rider:+254744000111:queued', 'escalated:staff:+254711000011:queued', 'late:rider:+254744000111:queued']);
+      // The setting is read when a level is raised, so the delivery planned while it was off is texted for the levels raised after it was turned on.
+      await t.texts.flush(500);
+      expect(await textsOf(on)).toEqual(['at_risk:rider:+254744000111:sent', 'escalated:staff:+254711000011:sent', 'late:rider:+254744000111:sent']);
+      expect(await textsOf(off)).toEqual(['escalated:staff:+254711000011:sent', 'late:rider:+254744000111:sent']);
+    });
+  });
+
+  describe('text messages to customers', () => {
+    const setCustomerTexts = async (enabled: boolean, kinds: string[]) => {
+      const now = await c.deliveryTextSettings.get(companyId);
+      return await c.deliveryTextSettings.set(actor(), { enabled, kinds, expectedVersion: now.version });
+    };
+    const messagesOf = async (deliveryId: string) => (await db.select().from(schema.deliveryMessages).where(eq(schema.deliveryMessages.deliveryId, deliveryId))).map((m) => `${m.kind}:${m.channel}:${m.status}`).sort();
+    const enqueue = async (deliveryId: string, kind: 'out_for_delivery' | 'delivered' | 'attempt_failed', key = `${deliveryId}:${kind}:0`) => {
+      const row = await rowOf(deliveryId);
+      if (row === undefined) throw new Error('no delivery');
+      await db.transaction((tx) => c.deliveryMessages.enqueueIn(tx, { companyId, orderId: row.orderId, deliveryId, kind, key }));
+    };
+    const sentMail: string[] = [];
+    const texted: { to: string; text: string }[] = [];
+    const sender = (mode: 'up' | 'none' | 'refused' | 'down') => ({
+      settings: c.deliveryTextSettings,
+      sender: () => Promise.resolve(mode === 'none' ? null : { send: (m: { to: string; text: string }) => { if (mode === 'refused') return Promise.reject(new SmsSendError('The Africa\'s Talking account has no balance. Top it up and try again.', false)); if (mode === 'down') return Promise.reject(new SmsSendError('The SMS provider had a problem. Try again in a moment.', true)); texted.push(m); return Promise.resolve({ providerMessageId: null }); } }),
+    });
+    const flusher = (mode: 'up' | 'none' | 'refused' | 'down') => new DeliveryMessagesClass(db, { name: 'test', send: (m: { to: string }) => { sentMail.push(m.to); return Promise.resolve({ messageId: 'x', provider: 'test' }); } }, c.companySettings, { tokenFor: () => Promise.resolve('tok123') }, sender(mode));
+    let DeliveryMessagesClass: typeof DeliveryMessagesType;
+    let SmsSendError: typeof SmsSendErrorType;
+    beforeAll(async () => {
+      ({ DeliveryMessages: DeliveryMessagesClass } = await import('./messages'));
+      ({ SmsSendError } = await import('@/server/ports/sms'));
+    });
+    beforeEach(() => {
+      sentMail.length = 0;
+      texted.length = 0;
+    });
+    afterAll(async () => {
+      await setCustomerTexts(false, ['out_for_delivery', 'delivered', 'attempt_failed']);
+    });
+
+    it('is off until the company turns it on, then keeps the choice with a version, and refuses nonsense', async () => {
+      expect(await c.deliveryTextSettings.get(companyId)).toMatchObject({ enabled: false, kinds: ['out_for_delivery', 'delivered', 'attempt_failed', 'ready_for_collection', 'collection_reminder'] });
+      expect(await setCustomerTexts(true, [])).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect(await setCustomerTexts(true, ['nonsense'])).toMatchObject({ ok: false, reason: 'bad_input' });
+      const on = await setCustomerTexts(true, ['delivered', 'out_for_delivery']);
+      expect(on).toMatchObject({ ok: true, data: { enabled: true, kinds: ['out_for_delivery', 'delivered'] } });
+      const stale = await c.deliveryTextSettings.set(actor(), { enabled: false, kinds: [], expectedVersion: 1 });
+      expect(stale).toMatchObject({ ok: false, reason: 'conflict' });
+      expect(await setCustomerTexts(false, [])).toMatchObject({ ok: true, data: { enabled: false } });
+    });
+
+    it('queues only the email while texting is off, and the text as its own row when it is on for that kind', async () => {
+      await setCustomerTexts(false, ['out_for_delivery']);
+      const a = await delivery();
+      await enqueue(a, 'out_for_delivery');
+      expect(await messagesOf(a)).toEqual(['out_for_delivery:email:queued']);
+      await setCustomerTexts(true, ['out_for_delivery']);
+      const b = await delivery();
+      await enqueue(b, 'out_for_delivery');
+      await enqueue(b, 'out_for_delivery');
+      await enqueue(b, 'delivered');
+      expect(await messagesOf(b)).toEqual(['delivered:email:queued', 'out_for_delivery:email:queued', 'out_for_delivery:sms:queued']);
+      const [sms] = await db.select().from(schema.deliveryMessages).where(eq(schema.deliveryMessages.messageKey, `${b}:out_for_delivery:0:sms`));
+      expect(sms?.recipient).toBe('+254700123456');
+    });
+
+    it('sends the text through the default SMS connection with the facts, the code and the link, and nothing of the address or the phone', async () => {
+      await setCustomerTexts(true, ['out_for_delivery']);
+      const a = await delivery();
+      await db.update(schema.deliveries).set({ handoverCode: '482913' }).where(eq(schema.deliveries.id, a));
+      await enqueue(a, 'out_for_delivery');
+      await flusher('up').flush(500);
+      const mineText = texted.find((t) => t.to === '+254700123456' && t.text.includes('482913'));
+      expect(mineText).toBeDefined();
+      expect(mineText?.text).toMatch(/on its way/);
+      expect(mineText?.text).toContain('/track/tok123');
+      expect(mineText?.text).not.toMatch(/Test Rd|0700123456/);
+      expect((mineText?.text ?? '').length).toBeLessThanOrEqual(306);
+      expect(await messagesOf(a)).toEqual(['out_for_delivery:email:sent', 'out_for_delivery:sms:sent']);
+      expect(sentMail.length).toBeGreaterThan(0);
+      texted.length = 0;
+      await flusher('up').flush(500);
+      expect(texted.filter((t) => t.text.includes('482913'))).toHaveLength(0);
+    });
+
+    it('does not text a customer with no usable mobile number, and the email still goes', async () => {
+      await setCustomerTexts(true, ['delivered']);
+      const a = await delivery();
+      const row = await rowOf(a);
+      await db.update(schema.orders).set({ customerPhone: 'call me' }).where(eq(schema.orders.id, row?.orderId ?? ''));
+      await enqueue(a, 'delivered');
+      expect(await messagesOf(a)).toEqual(['delivered:email:queued', 'delivered:sms:skipped']);
+      const [skipped] = await db.select().from(schema.deliveryMessages).where(and(eq(schema.deliveryMessages.deliveryId, a), eq(schema.deliveryMessages.channel, 'sms')));
+      expect(skipped?.lastError).toContain('no usable mobile number');
+    });
+
+    it('waits when no SMS provider is connected and says why, never holding back the email', async () => {
+      await setCustomerTexts(true, ['attempt_failed']);
+      const a = await delivery();
+      await enqueue(a, 'attempt_failed');
+      await flusher('none').flush(500);
+      const rows = await db.select().from(schema.deliveryMessages).where(eq(schema.deliveryMessages.deliveryId, a));
+      const sms = rows.find((r) => r.channel === 'sms');
+      expect(sms).toMatchObject({ status: 'failed', attempts: 1 });
+      expect(sms?.lastError).toContain('No SMS provider is set up');
+      expect(rows.find((r) => r.channel === 'email')?.status).toBe('sent');
+    });
+
+    it('does not repeat a refusal asking again cannot change, and tries again a fault after a wait', async () => {
+      await setCustomerTexts(true, ['out_for_delivery']);
+      const a = await delivery();
+      await enqueue(a, 'out_for_delivery');
+      await flusher('refused').flush(500);
+      const [refused] = await db.select().from(schema.deliveryMessages).where(and(eq(schema.deliveryMessages.deliveryId, a), eq(schema.deliveryMessages.channel, 'sms')));
+      expect(refused).toMatchObject({ status: 'failed', attempts: 5 });
+      expect(refused?.lastError).toContain('balance');
+      const b = await delivery();
+      await enqueue(b, 'out_for_delivery');
+      await flusher('down').flush(500);
+      const [again] = await db.select().from(schema.deliveryMessages).where(and(eq(schema.deliveryMessages.deliveryId, b), eq(schema.deliveryMessages.channel, 'sms')));
+      expect(again).toMatchObject({ status: 'failed', attempts: 1 });
+      expect(new Date(again?.nextTryAt ?? 0).getTime()).toBeGreaterThan(Date.now());
+    });
+
+    it('keeps quiet hours, refuses half a pair, and holds a night text for the morning while the email goes at once', async () => {
+      const now = await c.deliveryTextSettings.get(companyId);
+      expect(await c.deliveryTextSettings.set(actor(), { enabled: true, kinds: ['out_for_delivery'], quietFrom: '21:00', quietUntil: '', expectedVersion: now.version })).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect(await c.deliveryTextSettings.set(actor(), { enabled: true, kinds: ['out_for_delivery'], quietFrom: '08:00', quietUntil: '08:00', expectedVersion: now.version })).toMatchObject({ ok: false, reason: 'bad_input' });
+      const saved = await c.deliveryTextSettings.set(actor(), { enabled: true, kinds: ['out_for_delivery'], quietFrom: '21:00', quietUntil: '07:00', expectedVersion: now.version });
+      expect(saved).toMatchObject({ ok: true, data: { quiet: { from: 1260, until: 420 } } });
+      expect((await c.deliveryTextSettings.get(companyId)).quiet).toEqual({ from: 1260, until: 420 });
+      const a = await delivery();
+      await db.update(schema.deliveries).set({ handoverCode: '735190' }).where(eq(schema.deliveries.id, a));
+      await enqueue(a, 'out_for_delivery');
+      // 23:00 in Nairobi: the email goes, the text waits.
+      await flusher('up').flush(500, new Date('2030-01-01T20:00:00Z'));
+      expect(texted.filter((t) => t.text.includes('735190'))).toHaveLength(0);
+      const [held] = await db.select().from(schema.deliveryMessages).where(and(eq(schema.deliveryMessages.deliveryId, a), eq(schema.deliveryMessages.channel, 'sms')));
+      expect(held).toMatchObject({ status: 'queued', attempts: 0, lastError: 'Held until the quiet hours end.' });
+      expect(held?.nextTryAt.toISOString()).toBe('2030-01-02T04:00:00.000Z');
+      expect((await messagesOf(a)).sort()).toEqual(['out_for_delivery:email:sent', 'out_for_delivery:sms:queued']);
+      // Still night a little later: nothing is due, so nothing goes. At 07:00 it goes, and the note is cleared.
+      await flusher('up').flush(500, new Date('2030-01-02T03:59:00Z'));
+      expect(texted.filter((t) => t.text.includes('735190'))).toHaveLength(0);
+      await flusher('up').flush(500, new Date('2030-01-02T04:00:00Z'));
+      expect(texted.filter((t) => t.text.includes('735190'))).toHaveLength(1);
+      expect(await messagesOf(a)).toEqual(['out_for_delivery:email:sent', 'out_for_delivery:sms:sent']);
+      await setCustomerTexts(false, []);
+    });
   });
 
   describe('mail about lateness', () => {

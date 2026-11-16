@@ -95,7 +95,7 @@ export interface SaleFacts {
   branchId?: string | null;
   /** cash | credit */
   salesType?: string | null;
-  /** The invoicing module: ecommerce, sales_order, credit_sale, pos_cash_sale. */
+  /** The invoicing module: ecommerce, sales_order, credit_sale, pos_cash_sale, sales_invoice. */
   channel?: string | null;
   route?: string | null;
   country?: string | null;

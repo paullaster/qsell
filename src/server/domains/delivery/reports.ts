@@ -1,13 +1,21 @@
 import { sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { FAILURE_REASONS } from '@/lib/delivery-document';
-import { marginCents, money, readPeriod, sharePercent, type ReportPeriod } from '@/lib/delivery-cost';
+import { fuelEconomy, marginCents, money, readPeriod, sharePercent, type ReportPeriod } from '@/lib/delivery-cost';
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import type { DocRefusal, DocResult } from './documents';
 
 const fail = (reason: DocRefusal, message: string): { ok: false; reason: DocRefusal; message: string } => ({ ok: false, reason, message });
 const TZ = 'Africa/Nairobi';
 const cents = (v: unknown): number => Math.round(Number(v ?? 0) * 100);
+
+/** The fuel figures of one vehicle's row: what was typed, and what it gave. */
+function fuelFigures(r: Record<string, unknown>): { litres: string | null; km: string | null; kmPerLitre: number | null; fuelPerKm: string | null } {
+  const litres = Number(r.litres ?? 0);
+  const km = Number(r.km ?? 0);
+  const e = fuelEconomy({ costWithKm: cents(r.cost_with_km), km, litresWithKm: Number(r.litres_with_km ?? 0), kmWithLitres: Number(r.km_with_litres ?? 0) });
+  return { litres: litres > 0 ? litres.toFixed(2) : null, km: km > 0 ? km.toFixed(1) : null, kmPerLitre: e.kmPerLitre, fuelPerKm: e.costPerKm === null ? null : e.costPerKm.toFixed(2) };
+}
 
 export interface DeliveryReport {
   period: ReportPeriod;
@@ -30,7 +38,9 @@ export interface DeliveryReport {
   byCourier: { courier: string; deliveries: number; charged: string }[];
   byZone: { zone: string; delivered: number; charge: string; directCost: string }[];
   /** Each vehicle that ran deliveries or had running costs in the period. A cost not tied to a vehicle is counted in `untiedRunningCosts`, so the table and the total reconcile. */
-  byVehicle: { vehicleId: string; name: string; runs: number; delivered: number; fuel: string; repairs: string; other: string; total: string; perDelivery: string | null }[];
+  byVehicle: { vehicleId: string; name: string; runs: number; delivered: number; fuel: string; repairs: string; other: string; total: string; perDelivery: string | null;
+    /** Fuel figures from the fills that gave them: litres and kilometres typed, kilometres to the litre, and the fuel cost of a kilometre. Null when no fill gave what is needed. */
+    litres: string | null; km: string | null; kmPerLitre: number | null; fuelPerKm: string | null }[];
   untiedRunningCosts: string;
   failures: { code: string; words: string; count: number }[];
 }
@@ -109,11 +119,17 @@ export class DeliveryReports {
           SELECT c.vehicle_id,
                  COALESCE(sum(c.amount) FILTER (WHERE c.kind = 'fuel'), 0) AS fuel,
                  COALESCE(sum(c.amount) FILTER (WHERE c.kind = 'vehicle'), 0) AS repairs,
-                 COALESCE(sum(c.amount) FILTER (WHERE c.kind = 'other'), 0) AS other
+                 COALESCE(sum(c.amount) FILTER (WHERE c.kind = 'other'), 0) AS other,
+                 COALESCE(sum(c.litres), 0) AS litres, COALESCE(sum(c.km), 0) AS km,
+                 COALESCE(sum(c.amount) FILTER (WHERE c.km IS NOT NULL), 0) AS cost_with_km,
+                 COALESCE(sum(c.litres) FILTER (WHERE c.km IS NOT NULL), 0) AS litres_with_km,
+                 COALESCE(sum(c.km) FILTER (WHERE c.litres IS NOT NULL), 0) AS km_with_litres
           FROM delivery_costs c WHERE c.company_id = ${companyId}::uuid AND c.vehicle_id IS NOT NULL AND c.created_at >= ${start} AND c.created_at < ${end}
           GROUP BY c.vehicle_id)
         SELECT v.id AS vehicle_id, v.name, COALESCE(ran.runs, 0) AS runs, COALESCE(ran.delivered, 0) AS delivered,
-               COALESCE(spent.fuel, 0) AS fuel, COALESCE(spent.repairs, 0) AS repairs, COALESCE(spent.other, 0) AS other
+               COALESCE(spent.fuel, 0) AS fuel, COALESCE(spent.repairs, 0) AS repairs, COALESCE(spent.other, 0) AS other,
+               COALESCE(spent.litres, 0) AS litres, COALESCE(spent.km, 0) AS km, COALESCE(spent.cost_with_km, 0) AS cost_with_km,
+               COALESCE(spent.litres_with_km, 0) AS litres_with_km, COALESCE(spent.km_with_litres, 0) AS km_with_litres
         FROM delivery_vehicles v LEFT JOIN ran ON ran.vehicle_id = v.id LEFT JOIN spent ON spent.vehicle_id = v.id
         WHERE v.company_id = ${companyId}::uuid AND (ran.vehicle_id IS NOT NULL OR spent.vehicle_id IS NOT NULL)
         ORDER BY v.name, v.id`),
@@ -156,7 +172,7 @@ export class DeliveryReports {
           const otherC = cents(r.other);
           const totalC = fuelC + repairsC + otherC;
           const delivered = Number(r.delivered);
-          return { vehicleId: String(r.vehicle_id), name: String(r.name), runs: Number(r.runs), delivered, fuel: money(fuelC), repairs: money(repairsC), other: money(otherC), total: money(totalC), perDelivery: delivered === 0 ? null : money(Math.round(totalC / delivered)) };
+          return { vehicleId: String(r.vehicle_id), name: String(r.name), runs: Number(r.runs), delivered, fuel: money(fuelC), repairs: money(repairsC), other: money(otherC), total: money(totalC), perDelivery: delivered === 0 ? null : money(Math.round(totalC / delivered)), ...fuelFigures(r) };
         }),
         untiedRunningCosts: money(cents(untied[0]?.total)),
         failures: failures.map((r) => ({ code: String(r.code), words: FAILURE_REASONS.find((f) => f.code === r.code)?.words ?? String(r.code), count: Number(r.n) })),

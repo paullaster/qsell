@@ -1,0 +1,5 @@
+ALTER TABLE "courier_accounts" ADD COLUMN "last_test_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "courier_accounts" ADD COLUMN "last_test_booked" boolean;--> statement-breakpoint
+ALTER TABLE "courier_accounts" ADD COLUMN "last_test_cancelled" boolean;--> statement-breakpoint
+ALTER TABLE "courier_accounts" ADD COLUMN "last_test_message" text;--> statement-breakpoint
+ALTER TABLE "courier_accounts" ADD CONSTRAINT "courier_accounts_last_test_chk" CHECK (("courier_accounts"."last_test_at" is null and "courier_accounts"."last_test_booked" is null and "courier_accounts"."last_test_cancelled" is null and "courier_accounts"."last_test_message" is null) or ("courier_accounts"."last_test_at" is not null and "courier_accounts"."last_test_booked" is not null and "courier_accounts"."last_test_cancelled" is not null and "courier_accounts"."last_test_message" is not null and char_length("courier_accounts"."last_test_message") <= 500 and ("courier_accounts"."last_test_booked" or not "courier_accounts"."last_test_cancelled")));

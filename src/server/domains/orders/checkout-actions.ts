@@ -135,8 +135,8 @@ export async function placeOrderAction(raw: unknown): Promise<CheckoutResult<Che
   } catch (error) {
     console.error('[checkout] could not clear the saved cart', error);
   }
-  // The shopper is written to that the order is held; a queue that is down never stops the order.
-  if (order.customerEmail.trim() !== '') await enqueueOrderEmail(order.id, 'placed').catch((error: unknown) => console.error('[checkout] could not queue the order mail', error));
+  // The shopper is written to that the order is held, and the company's people are told if they chose to be (who is decided when it is sent); a queue that is down never stops the order.
+  await enqueueOrderEmail(order.id, 'placed').catch((error: unknown) => console.error('[checkout] could not queue the order mail', error));
   // An order on account is invoiced as it is placed, so its tax invoice is issued now (numbering is once per order; KRA signing follows the company's rules).
   if (method === 'on_account') void getContainer().invoices.generatePdf(order.id, 'tax_invoice').catch((error: unknown) => console.error('[checkout] tax invoice not issued', order.id, error));
   // On account is paid on its invoice; pay on delivery is paid to the rider at the door. Neither starts a payment now.

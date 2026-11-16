@@ -76,6 +76,8 @@ export interface Product {
   isTaxInclusive?: boolean;
   /** Shipping weight of one base unit, in kg. */
   weight?: number;
+  /** The space one base unit takes in a vehicle, in litres (1,000 litres is a cubic metre). */
+  volumeLitres?: number;
   /** The unit stock is counted in (kg for fish, pieces for a phone). */
   baseUnitId: string;
   baseUnitCode: string;
@@ -89,6 +91,10 @@ export interface Product {
   isActive: boolean;
   /** Hidden from catalogue, but may be offered as an inventory-backed checkout add-on. */
   isCheckoutPackaging?: boolean;
+  /** Sold only inside packages: real stock, but never listed and never sold on its own. Such a product is never shown in the web shop. */
+  soldOnlyInPackages?: boolean;
+  /** A configurable package: the shopper builds it from choices, so it is never added to the cart as it stands. */
+  isPackage?: boolean;
   /** Per-product capacity rules, loaded for packaging administration only. */
   packagingFits?: { productId: string; capacity: number }[];
   imageUrl: string;
@@ -338,6 +344,8 @@ export interface Order {
   paymentMethod: PaymentProvider;
   shippingCourier?: string;
   trackingNumber?: string;
+  /** Staff list only: whole days an order to be collected has been left at the counter (one or more); absent otherwise. */
+  leftAtCounterDays?: number;
   internalNotes?: string;
   shippedAt?: string;
   deliveredAt?: string;
@@ -360,7 +368,7 @@ export interface Order {
   currentStage?: string | null;
   currentStageSince?: string | null;
   /** Invoicing module this sale belongs to; decides which signing switch applies. */
-  salesModule?: 'ecommerce' | 'sales_order' | 'credit_sale' | 'pos_cash_sale';
+  salesModule?: 'ecommerce' | 'sales_order' | 'credit_sale' | 'pos_cash_sale' | 'sales_invoice';
   createdAt: string;
   updatedAt: string;
   /** The discounts applied when the order was priced (rules, coupons, amounts). */
@@ -425,6 +433,9 @@ export interface CustomerAddress {
   countyOrState: string;
   postalCode?: string;
   country: string;
+  /** The place on the map chosen for this address, when there is one (both or neither). */
+  latitude?: number | null;
+  longitude?: number | null;
   isDefault: boolean;
 }
 

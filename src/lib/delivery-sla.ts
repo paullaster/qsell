@@ -61,6 +61,8 @@ export function lateWords(minutes: number): string {
   return [days > 0 ? `${String(days)} ${days === 1 ? 'day' : 'days'}` : '', hours > 0 ? `${String(hours)} ${hours === 1 ? 'hour' : 'hours'}` : '', rest > 0 && days === 0 ? `${String(rest)} min` : ''].filter((p) => p !== '').join(' ');
 }
 
+import { internationalPhone } from '@/lib/sms-providers';
+
 export const MAX_NOTIFY_ADDRESSES = 10;
 const EMAIL = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
 
@@ -79,6 +81,34 @@ export function readAddressList(raw: unknown): { ok: true; addresses: string[] }
   }
   if (out.length > MAX_NOTIFY_ADDRESSES) return { ok: false, error: `At most ${String(MAX_NOTIFY_ADDRESSES)} addresses for each.` };
   return { ok: true, addresses: out };
+}
+
+/** Mobile numbers as typed (commas, semicolons, spaces or new lines between them), each written with its country code, none twice, at most ten. */
+export function readPhoneList(raw: unknown): { ok: true; numbers: string[] } | { ok: false; error: string } {
+  if (raw === undefined || raw === null || raw === '') return { ok: true, numbers: [] };
+  // A number may be typed with spaces inside it ("0712 345 678"), so only commas, semicolons and new lines separate numbers.
+  const parts: unknown = typeof raw === 'string' ? raw.split(/[,;\n]+/) : raw;
+  if (!Array.isArray(parts)) return { ok: false, error: 'Type the phone numbers separated by commas.' };
+  const out: string[] = [];
+  for (const part of parts) {
+    if (typeof part !== 'string') return { ok: false, error: 'Type the phone numbers separated by commas.' };
+    if (part.trim() === '') continue;
+    const n = internationalPhone(part);
+    if (n === null) return { ok: false, error: `"${part.trim().slice(0, 30)}" is not a mobile number.` };
+    if (!out.includes(n)) out.push(n);
+  }
+  if (out.length > MAX_NOTIFY_ADDRESSES) return { ok: false, error: `At most ${String(MAX_NOTIFY_ADDRESSES)} numbers for each.` };
+  return { ok: true, numbers: out };
+}
+
+/** The text message for a level: the delivery, the day and time promised and how late, and the shop. Never the customer, address or payment. */
+export function lateText(input: { level: EscalationLevel; number: string; windowStart: Date | null; windowEnd: Date | null; minutesLate: number; shop: string }): string {
+  const when = input.windowStart !== null && input.windowEnd !== null ? ` Promised ${windowWords(input.windowStart, input.windowEnd)}.` : '';
+  const state = input.level === 'at_risk' ? 'is at risk of being late' : `is late by ${lateWords(input.minutesLate)}`;
+  const head = `Delivery ${input.number} ${state}.${when}`;
+  const tail = ` ${input.shop.trim()}`;
+  // One message part is 160 characters; the shop's name gives way before the facts do.
+  return tail.length + head.length <= 160 ? `${head}${tail}` : head.slice(0, 160);
 }
 
 /** Who a level is mailed to: the dispatchers for at risk and late, the supervisors when it has gone on too long. */

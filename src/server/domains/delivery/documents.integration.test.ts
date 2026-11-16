@@ -56,7 +56,7 @@ describe.skipIf(!has(url))('deliveries of an order (database)', () => {
   };
 
   /** A placed, paid order of two products (5 and 2), delivered by the shop's own riders from a branch that holds them. */
-  const order = async (over: { pay?: boolean; quantities?: [number, number]; wholeUnits?: boolean; method?: 'own_fleet' | 'courier' | 'pickup' } = {}) => {
+  const order = async (over: { pay?: boolean; quantities?: [number, number]; wholeUnits?: boolean; method?: 'own_fleet' | 'courier' | 'pickup'; unplanned?: boolean } = {}) => {
     const method = over.method ?? 'own_fleet';
     const [b] = await db.insert(schema.branches).values({ companyId, code: code(), name: `Branch ${code()}`, latitude: PIN.latitude, longitude: PIN.longitude }).returning();
     const branchId = b?.id ?? '';
@@ -77,7 +77,8 @@ describe.skipIf(!has(url))('deliveries of an order (database)', () => {
       orderNumber: `DD-${randomUUID()}`, customerName: 'Delivered Buyer', customerEmail: `dd-${randomUUID()}@deliver.test`, customerPhone: '0700000000',
       shippingAddress: { street: '1 Test Rd', city: 'Nairobi', countyOrState: 'Nairobi', country: 'KE' },
       items: [{ productId: a, quantity: qa }, { productId: bProduct, quantity: qb }], currency: 'KES', paymentMethod: 'mpesa_daraja',
-      delivery: method === 'pickup' ? { method, pickupBranchId: branchId } : { method, pin: PIN },
+      // An order taken by staff, or converted from a quote, comes with its branch and no delivery plan.
+      ...(over.unplanned === true ? { branchId } : { delivery: method === 'pickup' ? { method, pickupBranchId: branchId } : { method, pin: PIN } }),
     });
     if (!r.success || r.order === undefined) throw new Error(r.error);
     if (over.pay !== false) await OrderStages.move(db, r.order.id, 'payment_confirmed', 'succeeded', {});
@@ -370,6 +371,94 @@ describe.skipIf(!has(url))('deliveries of an order (database)', () => {
       expect(await c.deliveryDocuments.cancel(staff(), gone, { reason: 'Changed our minds' })).toMatchObject({ ok: false, reason: 'not_allowed' });
       const log = await db.select().from(schema.decisionLog).where(and(eq(schema.decisionLog.subjectId, id), eq(schema.decisionLog.action, 'delivery.cancel')));
       expect(log[0]).toMatchObject({ reasonText: 'Customer asked us to wait' });
+    });
+
+    it('plans the delivery of an order taken by staff, from its own branch and for the charge already on it, and then it is delivered like any other', async () => {
+      const o = await order({ unplanned: true });
+      // Before: it has no plan, so no delivery can be made, and the overview says staff can plan it, starting from the order's own address.
+      expect(await c.deliveryDocuments.create(staff(), o.id, { lines: null })).toMatchObject({ ok: false, reason: 'not_found', message: expect.stringContaining('no delivery to make') as string });
+      expect(await c.deliveryDocuments.forOrder(companyId, o.id)).toMatchObject({ eligible: { ok: false, needsPlan: true }, prefill: { town: 'Nairobi', county: 'Nairobi', street: '1 Test Rd' } });
+      // Refused in words: nothing chosen, nowhere to go, half a receiver, an order that is not this company's or does not exist.
+      const plan = (input: Record<string, unknown>) => c.orderDeliveries.planStaffOrder(staff(), o.id, input as Parameters<typeof c.orderDeliveries.planStaffOrder>[2]);
+      expect(await plan({ method: 'drone', town: 'Nairobi' })).toMatchObject({ ok: false, reason: 'bad_input', message: expect.stringContaining('how it is delivered') as string });
+      expect(await plan({ method: 'own_fleet' })).toMatchObject({ ok: false, reason: 'bad_input', message: expect.stringContaining('town or area') as string });
+      expect(await plan({ method: 'own_fleet', town: 'Nairobi', recipientName: 'Mama Wanjiku' })).toMatchObject({ ok: false, reason: 'bad_input', message: expect.stringContaining('both the name and the phone') as string });
+      expect(await c.orderDeliveries.planStaffOrder(staff(), randomUUID(), { method: 'own_fleet', town: 'Nairobi' })).toMatchObject({ ok: false, reason: 'not_found' });
+      expect(await c.orderDeliveries.forOrder(companyId, o.id)).toBeNull();
+      // Planned: the record carries the order's branch, its charge as it stands, the words and the receiver; the decision log says who and why.
+      const done = await plan({ method: 'own_fleet', county: 'Nairobi', town: 'Nairobi', area: 'Westlands', recipientName: 'Mama Wanjiku', recipientPhone: '0722 111 222', notes: 'Blue gate' });
+      expect(done).toMatchObject({ ok: true });
+      const [taken] = await db.select({ fee: schema.orders.shippingFee }).from(schema.orders).where(eq(schema.orders.id, o.id));
+      expect(await c.orderDeliveries.forOrder(companyId, o.id)).toMatchObject({ method: 'own_fleet', branchId: o.branchId, chargeAmount: Number(taken?.fee ?? 0).toFixed(2), chargeTax: '0.00', recipientName: 'Mama Wanjiku', notes: 'Blue gate', destination: { pin: null, address: { town: 'Nairobi', area: 'Westlands' }, positionFrom: 'none' }, choice: { reason: 'staff_chose' } });
+      const log = await db.select().from(schema.decisionLog).where(and(eq(schema.decisionLog.subjectId, o.id), eq(schema.decisionLog.action, 'delivery.planned_by_staff')));
+      expect(log).toHaveLength(1);
+      // Only once: a second plan is refused and changes nothing.
+      expect(await plan({ method: 'courier', town: 'Mombasa' })).toMatchObject({ ok: false, reason: 'not_allowed', message: expect.stringContaining('already has its delivery planned') as string });
+      expect((await c.orderDeliveries.forOrder(companyId, o.id))?.method).toBe('own_fleet');
+      // And now it is delivered like any other: a delivery can be made, to the receiver and the words given, and the street is the order's.
+      const id = await made(o);
+      expect(await view(id)).toMatchObject({ recipientName: 'Mama Wanjiku', notes: 'Blue gate', street: '1 Test Rd', destination: { address: { area: 'Westlands' } } });
+      expect(await c.deliveryDocuments.forOrder(companyId, o.id)).toMatchObject({ eligible: { ok: true }, prefill: null });
+    });
+
+    it('puts a pin on a delivery that has only words, moves it and takes it off, until it goes out, and leaves everything else about it as it was', async () => {
+      const o = await order({ unplanned: true });
+      expect(await c.orderDeliveries.planStaffOrder(staff(), o.id, { method: 'own_fleet', town: 'Nairobi', area: 'Westlands' })).toMatchObject({ ok: true });
+      const id = await made(o);
+      expect((await view(id)).destination).toMatchObject({ pin: null, positionFrom: 'none', address: { area: 'Westlands' } });
+      // Left out, the pin is untouched; a place that is not on the earth, or not a place, is refused in words and nothing else in the save is kept.
+      expect(await c.deliveryDocuments.amend(staff(), id, { notes: 'Ring twice' })).toMatchObject({ ok: true, data: { destination: { pin: null } } });
+      expect(await c.deliveryDocuments.amend(staff(), id, { pin: { latitude: 95, longitude: 36.8 }, notes: 'Not kept' })).toMatchObject({ ok: false, reason: 'bad_input', message: expect.stringContaining('not a place on the earth') as string });
+      expect(await c.deliveryDocuments.amend(staff(), id, { pin: 'near the baobab', notes: 'Not kept' })).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect((await view(id)).notes).toBe('Ring twice');
+      // Put on: the destination now has the pin and says the position is from it; the words and the charge are as they were.
+      const before = await c.orderDeliveries.forOrder(companyId, o.id);
+      const put = await c.deliveryDocuments.amend(staff(), id, { pin: { latitude: -1.2921, longitude: 36.8219 } });
+      expect(put).toMatchObject({ ok: true, data: { destination: { pin: { latitude: -1.2921, longitude: 36.8219 }, positionFrom: 'pin', approximate: false, address: { area: 'Westlands' } } } });
+      expect(await c.orderDeliveries.forOrder(companyId, o.id)).toEqual(before);
+      // Moved, then taken off (null), and the history says from where to where.
+      expect(await c.deliveryDocuments.amend(staff(), id, { pin: { latitude: -1.3, longitude: 36.78 } })).toMatchObject({ ok: true, data: { destination: { pin: { latitude: -1.3, longitude: 36.78 } } } });
+      expect(await c.deliveryDocuments.amend(staff(), id, { pin: null })).toMatchObject({ ok: true, data: { destination: { pin: null, positionFrom: 'none' } } });
+      const events = await db.select().from(schema.deliveryEvents).where(eq(schema.deliveryEvents.deliveryId, id));
+      const moves = events.filter((e) => e.action === 'amend' && 'pinTo' in (e.detail as object)).map((e) => e.detail as { pinFrom: unknown; pinTo: unknown });
+      expect(moves).toEqual([{ pinFrom: null, pinTo: { latitude: -1.2921, longitude: 36.8219 } }, { pinFrom: { latitude: -1.2921, longitude: 36.8219 }, pinTo: { latitude: -1.3, longitude: 36.78 } }, { pinFrom: { latitude: -1.3, longitude: 36.78 }, pinTo: null }].map((m) => expect.objectContaining(m) as unknown));
+      // The same place again says nothing in the history; after it goes out it cannot be changed.
+      await c.deliveryDocuments.amend(staff(), id, { pin: { latitude: -1.2921, longitude: 36.8219 } });
+      await c.deliveryDocuments.amend(staff(), id, { pin: { latitude: -1.2921, longitude: 36.8219 } });
+      await toReady(id);
+      await goOut(id);
+      expect(await c.deliveryDocuments.amend(staff(), id, { pin: null })).toMatchObject({ ok: false, reason: 'not_allowed' });
+    });
+
+    it('does not offer to plan an order that is cancelled', async () => {
+      const o = await order({ unplanned: true });
+      await db.update(schema.orders).set({ status: 'cancelled' }).where(eq(schema.orders.id, o.id));
+      expect(await c.deliveryDocuments.forOrder(companyId, o.id)).toMatchObject({ eligible: { ok: false, reason: expect.stringContaining('cancelled') as string } });
+      expect(await c.orderDeliveries.planStaffOrder(staff(), o.id, { method: 'own_fleet', town: 'Nairobi' })).toMatchObject({ ok: false, reason: 'not_allowed' });
+    });
+
+    it('corrects the street the order was written with, and nothing else about where it goes, until it goes out', async () => {
+      const o = await order();
+      const id = await made(o);
+      const addressOf = async () => (await db.select({ a: schema.orders.shippingAddress }).from(schema.orders).where(eq(schema.orders.id, o.id)))[0]?.a;
+      // The street is shown with the delivery, as the rider and the courier are given it.
+      expect(await c.deliveryDocuments.get(companyId, id)).toMatchObject({ street: '1 Test Rd' });
+      // Left out, it is left alone; too short, it is refused in words and nothing else changes.
+      expect(await c.deliveryDocuments.amend(staff(), id, { notes: 'Ring twice' })).toMatchObject({ ok: true, data: { street: '1 Test Rd', notes: 'Ring twice' } });
+      expect(await c.deliveryDocuments.amend(staff(), id, { street: ' x ', notes: 'Should not be kept' })).toMatchObject({ ok: false, reason: 'bad_input', message: expect.stringContaining('street or building') as string });
+      expect((await c.deliveryDocuments.get(companyId, id))?.notes).toBe('Ring twice');
+      // Corrected: the order carries it, the town and country are untouched, the place and charge are not recalculated, and the history says from what to what.
+      const before = (await c.deliveryDocuments.get(companyId, id))?.destination;
+      expect(await c.deliveryDocuments.amend(staff(), id, { street: '  14B Test Rd, Gate 2 ' })).toMatchObject({ ok: true, data: { street: '14B Test Rd, Gate 2' } });
+      expect(await addressOf()).toMatchObject({ street: '14B Test Rd, Gate 2', city: 'Nairobi', countyOrState: 'Nairobi', country: 'KE' });
+      expect((await c.deliveryDocuments.get(companyId, id))?.destination).toEqual(before);
+      const events = await db.select().from(schema.deliveryEvents).where(eq(schema.deliveryEvents.deliveryId, id));
+      expect(events.some((e) => e.action === 'amend' && (e.detail as { streetFrom?: string; streetTo?: string }).streetFrom === '1 Test Rd' && (e.detail as { streetTo?: string }).streetTo === '14B Test Rd, Gate 2')).toBe(true);
+      // The same street again changes nothing in the history's detail; after it goes out it cannot be changed.
+      await toReady(id);
+      await goOut(id);
+      expect(await c.deliveryDocuments.amend(staff(), id, { street: 'Somewhere else' })).toMatchObject({ ok: false, reason: 'not_allowed' });
+      expect((await addressOf())?.street).toBe('14B Test Rd, Gate 2');
     });
 
     it('changes who receives it, and the note, until it goes out and not after', async () => {

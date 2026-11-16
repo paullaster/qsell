@@ -16,7 +16,8 @@ import { ProductGallery } from '@/components/store/product/ProductGallery';
 import { MobileBuyBar } from '@/components/store/product/MobileBuyBar';
 import { ProductReviews } from '@/components/store/product/ProductReviews';
 import { productReviewsAction } from '@/server/domains/reviews/actions';
-import { ProductPurchase } from '@/components/store/product/ProductPurchase';
+import { PackageBuyPanel } from '@/components/store/product/PackageBuyPanel';
+import { packageBuilderFor } from '@/server/domains/storefront/package-builder';
 import { RecentlyViewed } from '@/components/store/product/RecentlyViewed';
 import { RelatedProducts } from '@/components/store/product/RelatedProducts';
 import { WishlistButton } from '@/components/store/wishlist/WishlistButton';
@@ -117,11 +118,13 @@ export default async function ProductPage({ params }: Props) {
             </div>
           </div>
 
-          <div className="rounded-xl border border-line bg-surface p-4">
-            <Price product={product} size="lg" />
-          </div>
+          {product.isPackage === true ? null : (
+            <div className="rounded-xl border border-line bg-surface p-4">
+              <Price product={product} size="lg" />
+            </div>
+          )}
 
-          <div id="buy-panel"><ProductPurchase product={product} /></div>
+          <div id="buy-panel"><PackageBuyPanel product={product} builder={packageBuilderFor(product.id)} /></div>
 
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3 text-sm text-fg-muted">
             <span>SKU: <span className="font-mono text-fg">{product.sku}</span></span>

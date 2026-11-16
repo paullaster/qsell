@@ -57,6 +57,8 @@ export function reasonWords(code: string | null): string {
     credit_limit: 'Over the credit limit',
     approval_needed: 'Needs approval',
     kit_error: 'Set contents problem',
+    package_rule: 'Package ordering rule',
+    package_choice: 'Package choice problem',
     delivery_unavailable: 'Could not be delivered',
     delivery_changed: 'The delivery charge changed',
     slot_unavailable: 'The delivery time chosen was no longer free',

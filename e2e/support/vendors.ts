@@ -117,8 +117,8 @@ export interface ShopperFixture {
 }
 
 /** A shopper made for this test alone, with `orders` orders of their own and one order of somebody else (see shopper-fixture.ts). */
-export function makeShopper(tag: string, orders: number): ShopperFixture {
-  const output = execFileSync('pnpm', ['exec', 'tsx', 'e2e/support/shopper-fixture.ts', tag, String(orders)], { env: { ...process.env, ...e2eEnvironment() }, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+export function makeShopper(tag: string, orders: number, saved = false): ShopperFixture {
+  const output = execFileSync('pnpm', ['exec', 'tsx', 'e2e/support/shopper-fixture.ts', tag, String(orders), ...(saved ? ['saved'] : [])], { env: { ...process.env, ...e2eEnvironment() }, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
   const line = output.split('\n').find((l) => l.startsWith('FIXTURE '));
   if (line === undefined) throw new Error(`the shopper fixture printed nothing usable: ${output.slice(-500)}`);
   return JSON.parse(line.slice('FIXTURE '.length)) as ShopperFixture;

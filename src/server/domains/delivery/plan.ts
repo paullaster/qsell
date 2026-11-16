@@ -4,7 +4,7 @@ import { branches } from '@/server/db/drizzle/schema';
 import { chooseBranch, choiceWords, type BranchOption } from '@/lib/branch-choice';
 import { hasAnyKey, keysOf, type AddressWords } from '@/lib/delivery-zones';
 import type { DeliveryMethod } from '@/lib/delivery-methods';
-import { isGeoPoint, type GeoPoint } from '@/lib/geo';
+import { isGeoPoint, straightLineKm, type GeoPoint } from '@/lib/geo';
 import type { ChoiceRecord, DestinationRecord } from '@/lib/order-delivery';
 import type { SalesChannel } from '@/lib/stock';
 import { roundQty } from '@/lib/decimal';
@@ -35,7 +35,10 @@ export interface PlanInput {
   orderValue: number;
 }
 
-export type PlanRefusal = QuoteRefusal | 'no_destination' | 'no_branch' | 'method_not_available';
+export type PlanRefusal = QuoteRefusal | 'no_destination' | 'no_branch' | 'method_not_available' | 'pin_far_from_address';
+
+/** How far the pin may be from the area written beside it before the two are taken to be different places. Towns and estates are far smaller than this. */
+export const PIN_ADDRESS_LIMIT_KM = 30;
 type Quoted = Extract<QuoteResult, { ok: true }>;
 
 export type PlanResult =
@@ -131,6 +134,22 @@ export class DeliveryPlans {
     return { ok: true, branch: { id: point.branchId, code: point.code, name: point.name }, choice, destination, quote, pickup: point };
   }
 
+  /**
+   * Words in plain language when the pin is far from where the written area is, otherwise null. The area is looked for with its estate
+   * and then without it, so a name the map service does not know does not count against the shopper; when the area cannot be placed
+   * at all nothing is claimed.
+   */
+  private async pinFarFromWords(pin: GeoPoint, address: AddressWords): Promise<string | null> {
+    const whole = await placeAddress(this.geo, address);
+    const coarse = address.area === undefined || address.area === null || address.area.trim() === '' ? null : await placeAddress(this.geo, { county: address.county ?? null, town: address.town ?? null });
+    const placed = [whole, coarse].filter((p): p is GeoPoint => p !== null);
+    if (placed.length === 0) return null;
+    const nearest = Math.min(...placed.map((p) => straightLineKm(pin, p)));
+    if (nearest <= PIN_ADDRESS_LIMIT_KM) return null;
+    const written = [address.area, address.town, address.county].filter((w): w is string => typeof w === 'string' && w.trim() !== '').join(', ');
+    return `The pin is about ${String(Math.round(nearest))} km from ${written}, the area you wrote. Move the pin to where we should deliver, or change the address to where the pin is.`;
+  }
+
   async plan(companyId: string, input: PlanInput): Promise<PlanResult> {
     const pin = input.pin !== undefined && input.pin !== null && isGeoPoint(input.pin) ? input.pin : null;
     const address = input.address !== undefined && hasAnyKey(keysOf(input.address)) ? input.address : undefined;
@@ -146,6 +165,11 @@ export class DeliveryPlans {
       approximate = point !== null;
     }
     const destination: DestinationRecord = { pin, address: address ?? null, positionFrom: positionOf(pin, point), approximate };
+    // A pin and a written area that are in different places cannot both be where the order goes: the charge would be for one and the delivery to the other.
+    if (pin !== null && address !== undefined) {
+      const far = await this.pinFarFromWords(pin, address);
+      if (far !== null) return { ok: false, reason: 'pin_far_from_address', message: far, choice: null, destination };
+    }
 
     const rows = await this.db.select({ id: branches.id, code: branches.code, name: branches.name, latitude: branches.latitude, longitude: branches.longitude }).from(branches).where(and(eq(branches.companyId, companyId), eq(branches.isActive, true)));
     const ids = rows.map((r) => r.id);

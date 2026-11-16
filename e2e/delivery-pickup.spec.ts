@@ -72,8 +72,8 @@ async function openOrder(page: Page, orderNumber: string): Promise<void> {
   await page.getByLabel('Search orders').fill(orderNumber);
   const manage = page.getByRole('button', { name: /Manage/ }).first();
   await expect(manage).toBeVisible({ timeout: 60_000 });
-  await manage.click();
-  await expect(page.getByRole('dialog')).toBeVisible({ timeout: 30_000 });
+  // The list can be drawn before its buttons are wired up, and a click in that moment does nothing.
+  await clickUntilVisible(manage, page.getByRole('dialog'));
 }
 
 const shown = (code: string): string => `${code.slice(0, 3)}-${code.slice(3)}`;
@@ -120,6 +120,11 @@ test.describe('collecting an order from a branch', () => {
       await panel.getByRole('button', { name: 'Mark ready for collection' }).click();
       await expect(panel.getByText('Marked ready for collection.')).toBeVisible({ timeout: 30_000 });
       await expect(panel).toContainText('Ready, waiting for the customer');
+      // Just marked ready, so nothing says it has been left yet.
+      await expect(panel.getByLabel('Left at the counter')).toHaveCount(0);
+      // The customer is told, and the counter can see it was: the mail to them is listed, without the code.
+      await expect(panel.getByRole('list', { name: 'Messages to the customer' })).toContainText('Ready to collect (email)', { timeout: 30_000 });
+      await expect(panel.getByRole('list', { name: 'Messages to the customer' })).not.toContainText(shown(code));
 
       const wrong = code === 'ZZZZZZ' ? 'YYYYYY' : 'ZZZZZZ';
       await panel.getByLabel('Code the customer shows').fill(wrong);
@@ -142,6 +147,90 @@ test.describe('collecting an order from a branch', () => {
       const after = page.getByRole('region', { name: 'Collect your order' });
       await expect(after).toContainText('You have collected this order', { timeout: 30_000 });
       await expect(after).not.toContainText(shown(code));
+    } finally {
+      deliveryTool('close', tag);
+    }
+  });
+
+  test('an order left at the counter is flagged on the staff orders list with the days it has waited, and not when it has only just been marked ready', async ({ page }, testInfo) => {
+    test.slow();
+    const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}`;
+    const email = `waiting-${tag.toLowerCase()}@example.test`;
+    const branchName = deliveryTool('open', tag).branchName ?? '';
+    try {
+      const orderNumber = await placeCollectedOrder(page, branchName, email);
+      deliveryTool('pay', orderNumber);
+      const find = async (): Promise<ReturnType<Page['locator']>> => {
+        await open(page, '/admin/orders', /Customer Orders/);
+        await page.getByLabel('Search orders').fill(orderNumber);
+        const row = page.locator('tr, li').filter({ hasText: orderNumber }).filter({ has: page.getByRole('button', { name: /Manage/ }) }).first();
+        await expect(row).toBeVisible({ timeout: 60_000 });
+        return row;
+      };
+      // Just marked ready: nothing to flag yet.
+      deliveryTool('collection-ready', orderNumber, '0');
+      await expect(await find()).not.toContainText('At counter');
+      // A reminder cannot go before it has waited a day, and says so.
+      await openOrder(page, orderNumber);
+      const early = page.getByRole('region', { name: 'Collection' });
+      await early.getByRole('button', { name: 'Remind the customer now' }).click();
+      await expect(early.getByRole('alert')).toContainText('less than a day', { timeout: 30_000 });
+      // Three days later: the list says so, in words.
+      deliveryTool('collection-ready', orderNumber, '3');
+      const row = await find();
+      await expect(row).toContainText('At counter 3 days', { timeout: 30_000 });
+      // Staff can remind the customer now, once a day: the second press is refused in words and no second message is listed.
+      await openOrder(page, orderNumber);
+      const panel = page.getByRole('region', { name: 'Collection' });
+      await panel.getByRole('button', { name: 'Remind the customer now' }).click();
+      await expect(panel.getByText('The customer is being reminded.')).toBeVisible({ timeout: 30_000 });
+      await expect(panel.getByRole('list', { name: 'Messages to the customer' })).toContainText('Still waiting to be collected (email)', { timeout: 30_000 });
+      // At three days the automatic reminder may be listed too, so what is checked is that the refused press adds nothing.
+      const listed = panel.getByRole('list', { name: 'Messages to the customer' }).getByText(/Still waiting to be collected \(email\)/);
+      const before = await listed.count();
+      await panel.getByRole('button', { name: 'Remind the customer now' }).click();
+      await expect(panel.getByRole('alert')).toContainText('already reminded', { timeout: 30_000 });
+      await expect(listed).toHaveCount(before);
+      await noHorizontalScroll(page);
+      await find();
+      // The list can be narrowed to what has waited long enough: three days is kept at "3 or more", dropped at "7 or more".
+      const wait = page.getByRole('combobox', { name: 'Waiting at the counter' });
+      const orderRow = () => page.locator('tr, li').filter({ hasText: orderNumber }).filter({ has: page.getByRole('button', { name: /Manage/ }) });
+      await clickUntilVisible(wait, page.getByRole('option', { name: 'At the counter 3 days or more' }));
+      await page.getByRole('option', { name: 'At the counter 3 days or more' }).click();
+      await expect(orderRow().first()).toBeVisible({ timeout: 30_000 });
+      await clickUntilVisible(wait, page.getByRole('option', { name: 'At the counter 7 days or more' }));
+      await page.getByRole('option', { name: 'At the counter 7 days or more' }).click();
+      await expect(orderRow()).toHaveCount(0, { timeout: 30_000 });
+      await expect(page.getByText('No orders match the current filter criteria.').first()).toBeVisible();
+      await noHorizontalScroll(page);
+      await noInnerHorizontalScroll(page);
+    } finally {
+      deliveryTool('close', tag);
+    }
+  });
+
+  test('an order cancelled while it waits at the counter is closed: no flag, no reminder button and no way to hand it over', async ({ page }, testInfo) => {
+    test.slow();
+    const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}`;
+    const email = `cancelled-${tag.toLowerCase()}@example.test`;
+    const branchName = deliveryTool('open', tag).branchName ?? '';
+    try {
+      const orderNumber = await placeCollectedOrder(page, branchName, email);
+      deliveryTool('pay', orderNumber);
+      deliveryTool('collection-ready', orderNumber, '4');
+      deliveryTool('cancel-order', orderNumber);
+      await open(page, '/admin/orders', /Customer Orders/);
+      await page.getByLabel('Search orders').fill(orderNumber);
+      const row = page.locator('tr, li').filter({ hasText: orderNumber }).filter({ has: page.getByRole('button', { name: /Manage/ }) }).first();
+      await expect(row).toBeVisible({ timeout: 60_000 });
+      await expect(row).not.toContainText('At counter');
+      await openOrder(page, orderNumber);
+      const panel = page.getByRole('region', { name: 'Collection' });
+      await expect(panel).toContainText('Cancelled', { timeout: 30_000 });
+      await expect(panel.getByRole('button', { name: 'Remind the customer now' })).toHaveCount(0);
+      await expect(panel.getByRole('button', { name: 'Hand over', exact: true })).toHaveCount(0);
+      await noHorizontalScroll(page);
     } finally {
       deliveryTool('close', tag);
     }

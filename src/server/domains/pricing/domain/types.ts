@@ -35,7 +35,7 @@ export type Scopes = Partial<Record<ScopeDimension, ScopeRule>>;
 /** Sales types a price list can be scoped to. */
 export const SALES_TYPES = ['cash', 'credit'] as const;
 /** Channels a price list can be scoped to (the invoicing module the sale belongs to). */
-export const CHANNELS = ['ecommerce', 'sales_order', 'credit_sale', 'pos_cash_sale'] as const;
+export const CHANNELS = ['ecommerce', 'sales_order', 'credit_sale', 'pos_cash_sale', 'sales_invoice'] as const;
 
 export type QuantityMode = 'all_units' | 'incremental';
 export type PriceListKind = 'list' | 'contract';
@@ -171,6 +171,8 @@ export interface PriceTrace {
   kit?: { productId: string; name: string; quantity: number; total: number };
   /** Set on a quote line whose product was a kit when it was quoted, so converting the quote can tell if it has stopped being one. */
   quotedAsKit?: { kitId: string; name: string };
+  /** Set on a quote line that is a configurable package: the package, its version and the choices made, kept by slot name and part so the quote is still understood after the package changes. */
+  quotedAsPackage?: { productId: string; name: string; version: number; key: string; servings: number; /** What the customer asked for on the serving. */ note?: string; picks: { slotName: string; productId: string; name: string; count: number }[] };
   unitPrice: number | null;
   lineTotal: number | null;
   /** Set when the price is below the line's floor (a soft floor: needs a decision elsewhere). */

@@ -4,7 +4,7 @@ import { loadProblem, type VehicleLimits } from '@/lib/delivery-vehicle';
 import { DEFAULT_AT_RISK_MINUTES, slaState, type SlaState } from '@/lib/delivery-sla';
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, deliveries, deliveryLines, deliveryRunStops, deliveryRuns, deliverySlaSettings, deliveryShipments, orderItems, orders, products } from '@/server/db/drizzle/schema';
+import { branches, deliveries, deliveryLines, deliveryRiders, deliveryRunStops, deliveryRuns, deliverySlaSettings, deliveryShipments, orderItems, orders, products } from '@/server/db/drizzle/schema';
 import { RUN_ACTION_WORDS, RUN_STATUS_WORDS, canJoinRun, isReordering, isRunEditable, nearestNext, nextRunStatus, runActionsFrom, runCloseProblem, runTotals, waitingSince, type RunAction, type RunStatus, type RunTotals } from '@/lib/dispatch-run';
 import { STATUS_WORDS, type DeliveryStatus } from '@/lib/delivery-document';
 import { readGeoPoint, type GeoPoint } from '@/lib/geo';
@@ -34,6 +34,7 @@ export interface RunStopView {
   units: number;
   value: number;
   weightKg: number | null;
+  volumeLitres: number | null;
 }
 
 export interface RunView {
@@ -48,6 +49,8 @@ export interface RunView {
   /** The fleet vehicle chosen from the register, and what it may carry; null when the vehicle was only typed in or none was given. */
   vehicleId: string | null;
   limits: VehicleLimits | null;
+  /** Said once, in the answer to giving the run to another rider, when their usual vehicle was not put on the run and why; null otherwise and never kept. */
+  vehicleNote?: string | null;
   notes: string | null;
   status: RunStatus;
   statusWords: string;
@@ -146,12 +149,12 @@ export class DeliveryRuns {
     return riderName === null ? fail('bad_input', 'Say who the rider is.') : { ok: true, data: { riderId: null, riderName, usualVehicleId: null } };
   }
 
-  async create(actor: DocActor, input: { branchId?: unknown; runDate?: unknown; riderId?: unknown; riderName?: unknown; vehicle?: unknown; vehicleId?: unknown; notes?: unknown }): Promise<DocResult<{ id: string; number: string; vehicle: string | null }>> {
+  async create(actor: DocActor, input: { branchId?: unknown; runDate?: unknown; riderId?: unknown; riderName?: unknown; vehicle?: unknown; vehicleId?: unknown; notes?: unknown }): Promise<DocResult<{ id: string; number: string; vehicle: string | null; vehicleNote: string | null }>> {
     const runDate = typeof input.runDate === 'string' && DATE.test(input.runDate) && !Number.isNaN(Date.parse(input.runDate)) ? input.runDate : null;
     if (runDate === null) return fail('bad_input', 'Choose the day of the run.');
     if (typeof input.branchId !== 'string' || input.branchId === '') return fail('bad_input', 'Choose the branch the run leaves from.');
     const branchId = input.branchId;
-    return await this.db.transaction(async (tx): Promise<DocResult<{ id: string; number: string; vehicle: string | null }>> => {
+    return await this.db.transaction(async (tx): Promise<DocResult<{ id: string; number: string; vehicle: string | null; vehicleNote: string | null }>> => {
       const [branch] = await tx.select({ id: branches.id }).from(branches).where(and(eq(branches.id, branchId), eq(branches.companyId, actor.companyId), eq(branches.isActive, true)));
       if (branch === undefined) return fail('not_found', 'That branch could not be found.');
       const who = await this.riderFor(tx, actor.companyId, input);
@@ -165,7 +168,9 @@ export class DeliveryRuns {
       const { number } = await this.numbering.assign('delivery_run', { companyId: actor.companyId, date: businessDate(), document: { kind: 'delivery_run', id } }, tx);
       await tx.insert(deliveryRuns).values({ id, companyId: actor.companyId, number, branchId, runDate, riderName, riderId, vehicle: chosen.data.name, vehicleId: chosen.data.id, notes: text(input.notes, 300), createdBy: actor.userId });
       await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_run', id }, action: 'run.created', actor: { type: 'user', id: actor.userId }, to: 'planned', reason: { text: `${riderName}, ${runDate}` } }, tx);
-      return { ok: true, data: { id, number, vehicle: chosen.data.name } };
+      const skipped = !asked && who.data.usualVehicleId !== null && chosen.data.id === null;
+      if (skipped) await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_run', id }, action: 'run.usual_vehicle_not_used', actor: { type: 'user', id: actor.userId }, reason: { text: `${riderName}'s usual vehicle is stopped or no longer in the list` } }, tx);
+      return { ok: true, data: { id, number, vehicle: chosen.data.name, vehicleNote: skipped ? `${riderName}'s usual vehicle is stopped or no longer in the list, so the run has no vehicle yet. Choose one for it.` : null } };
     });
   }
 
@@ -185,13 +190,13 @@ export class DeliveryRuns {
     const limits = await this.vehicles.limitsOf(tx, companyId, run.vehicleId);
     if (limits === null) return null;
     const current = await this.stopViews(tx, run.id);
-    const facts = [...current.map((s) => ({ units: s.units, value: s.value, weightKg: s.weightKg }))];
+    const facts = [...current.map((s) => ({ units: s.units, value: s.value, weightKg: s.weightKg, volumeLitres: s.volumeLitres }))];
     if (extra !== null) {
       const more = (await this.loadFacts(tx, [extra])).get(extra.deliveryId);
-      facts.push({ units: more?.units ?? 0, value: more?.value ?? 0, weightKg: more?.weightKg ?? null });
+      facts.push({ units: more?.units ?? 0, value: more?.value ?? 0, weightKg: more?.weightKg ?? null, volumeLitres: more?.volumeLitres ?? null });
     }
     const totals = runTotals(facts);
-    return loadProblem({ stops: totals.stops, weightKg: totals.weightKg }, limits, limits.name);
+    return loadProblem({ stops: totals.stops, weightKg: totals.weightKg, volumeLitres: totals.volumeLitres }, limits, limits.name);
   }
 
   /** Changes the vehicle of a run that has not gone out. A vehicle from the register must be in use and must fit what is already on the run. */
@@ -216,10 +221,33 @@ export class DeliveryRuns {
       if ('ok' in run) return run;
       const who = await this.riderFor(tx, actor.companyId, input);
       if (!who.ok) return who;
-      await tx.update(deliveryRuns).set({ riderId: who.data.riderId, riderName: who.data.riderName, version: run.version + 1, updatedAt: new Date() }).where(eq(deliveryRuns.id, runId));
-      await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_run', id: runId }, action: 'run.rider_changed', actor: { type: 'user', id: actor.userId }, reason: { text: `${run.riderName} to ${who.data.riderName}` } }, tx);
-      return { ok: true, data: await this.viewIn(tx, actor.companyId, runId) };
+      const carried = await this.vehicleToCarryOver(tx, actor.companyId, run, who.data);
+      const vehicle = carried.use;
+      const note = carried.skipped === null ? null : `${who.data.riderName}'s usual vehicle ${carried.skipped}, so the run keeps ${run.vehicle ?? 'no vehicle'}. Choose a vehicle for it if it needs one.`;
+      await tx.update(deliveryRuns).set({ riderId: who.data.riderId, riderName: who.data.riderName, ...(vehicle === null ? {} : { vehicle: vehicle.name, vehicleId: vehicle.id }), version: run.version + 1, updatedAt: new Date() }).where(eq(deliveryRuns.id, runId));
+      await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_run', id: runId }, action: 'run.rider_changed', actor: { type: 'user', id: actor.userId }, reason: { text: `${run.riderName} to ${who.data.riderName}${vehicle === null ? '' : `; vehicle ${run.vehicle ?? 'none'} to ${vehicle.name}`}${note === null ? '' : `; usual vehicle not used: ${carried.skipped ?? ''}`}` } }, tx);
+      return { ok: true, data: { ...(await this.viewIn(tx, actor.companyId, runId)), vehicleNote: note } };
     });
+  }
+
+  /**
+   * The new rider's usual vehicle, when a planned run is given to them and it should go in that: the run has no vehicle, or has the
+   * previous rider's usual one (so it was only following the rider, not chosen or typed by the office). Never when the new rider has none,
+   * when theirs is stopped, when it would be overloaded by what is already on the run, or when the office chose another: those stay as they are.
+   */
+  private async vehicleToCarryOver(tx: Tx, companyId: string, run: { id: string; riderId: string | null; vehicleId: string | null; vehicle: string | null }, next: { riderId: string | null; usualVehicleId: string | null }): Promise<{ use: { id: string; name: string } | null; skipped: string | null }> {
+    const none = { use: null, skipped: null };
+    if (next.usualVehicleId === null || next.riderId === run.riderId || run.vehicleId === next.usualVehicleId) return none;
+    let followsRider = run.vehicleId === null && run.vehicle === null;
+    if (!followsRider && run.vehicleId !== null && run.riderId !== null) {
+      const [previous] = await tx.select({ vehicleId: deliveryRiders.vehicleId }).from(deliveryRiders).where(and(eq(deliveryRiders.id, run.riderId), eq(deliveryRiders.companyId, companyId)));
+      followsRider = previous?.vehicleId === run.vehicleId;
+    }
+    if (!followsRider) return none;
+    const usable = await this.vehicles.usable(tx, companyId, next.usualVehicleId);
+    if (usable === null) return { use: null, skipped: 'is stopped or no longer in the list' };
+    const tooMuch = await this.overload(tx, { id: run.id, vehicleId: usable.id }, companyId, null);
+    return tooMuch === null ? { use: { id: usable.id, name: usable.name }, skipped: null } : { use: null, skipped: `(${usable.name}) cannot take what is already on the run: ${tooMuch}` };
   }
 
   /** Locks a run and checks the version and that it can still be edited. */
@@ -416,7 +444,7 @@ export class DeliveryRuns {
       riderId: r.riderId,
       vehicle: r.vehicle,
       vehicleId: r.vehicleId,
-      limits: limits === null ? null : { maxWeightKg: limits.maxWeightKg, maxStops: limits.maxStops },
+      limits: limits === null ? null : { maxWeightKg: limits.maxWeightKg, maxVolumeLitres: limits.maxVolumeLitres, maxStops: limits.maxStops },
       notes: r.notes,
       status: r.status,
       statusWords: RUN_STATUS_WORDS[r.status],
@@ -424,7 +452,7 @@ export class DeliveryRuns {
       startedAt: r.startedAt?.toISOString() ?? null,
       closedAt: r.closedAt?.toISOString() ?? null,
       stops,
-      totals: runTotals(stops.map((s) => ({ units: s.units, value: s.value, weightKg: s.weightKg }))),
+      totals: runTotals(stops.map((s) => ({ units: s.units, value: s.value, weightKg: s.weightKg, volumeLitres: s.volumeLitres }))),
       editable: isRunEditable(r.status),
       actions: runActionsFrom(r.status).map((action) => ({ action, words: RUN_ACTION_WORDS[action] })),
     };
@@ -452,15 +480,16 @@ export class DeliveryRuns {
       units: facts.get(r.d.id)?.units ?? 0,
       value: facts.get(r.d.id)?.value ?? 0,
       weightKg: facts.get(r.d.id)?.weightKg ?? null,
+      volumeLitres: facts.get(r.d.id)?.volumeLitres ?? null,
     }));
   }
 
   /** Units, worth (at the order's own prices) and weight of what each delivery carries. Two reads for any number of deliveries. */
-  private async loadFacts(db: Tx | DrizzleDb, pairs: { deliveryId: string; orderId: string }[]): Promise<Map<string, { units: number; value: number; weightKg: number | null }>> {
-    const out = new Map<string, { units: number; value: number; weightKg: number | null }>();
+  private async loadFacts(db: Tx | DrizzleDb, pairs: { deliveryId: string; orderId: string }[]): Promise<Map<string, { units: number; value: number; weightKg: number | null; volumeLitres: number | null }>> {
+    const out = new Map<string, { units: number; value: number; weightKg: number | null; volumeLitres: number | null }>();
     if (pairs.length === 0) return out;
     const lines = await db
-      .select({ deliveryId: deliveryLines.deliveryId, productId: deliveryLines.productId, quantity: deliveryLines.quantity, picked: deliveryLines.picked, weight: products.weight })
+      .select({ deliveryId: deliveryLines.deliveryId, productId: deliveryLines.productId, quantity: deliveryLines.quantity, picked: deliveryLines.picked, weight: products.weight, volume: products.volumeLitres })
       .from(deliveryLines)
       .innerJoin(products, eq(products.id, deliveryLines.productId))
       .where(inArray(deliveryLines.deliveryId, pairs.map((p) => p.deliveryId)));
@@ -469,10 +498,11 @@ export class DeliveryRuns {
     const orderOf = new Map(pairs.map((p) => [p.deliveryId, p.orderId]));
     for (const l of lines) {
       const q = Number(l.picked ?? l.quantity);
-      const cur = out.get(l.deliveryId) ?? { units: 0, value: 0, weightKg: null };
+      const cur = out.get(l.deliveryId) ?? { units: 0, value: 0, weightKg: null, volumeLitres: null };
       cur.units = Math.round((cur.units + q) * 1000) / 1000;
       cur.value = Math.round((cur.value + q * (price.get(`${orderOf.get(l.deliveryId) ?? ''}|${l.productId}`) ?? 0)) * 100) / 100;
       if (l.weight !== null) cur.weightKg = Math.round(((cur.weightKg ?? 0) + q * Number(l.weight)) * 1000) / 1000;
+      if (l.volume !== null) cur.volumeLitres = Math.round(((cur.volumeLitres ?? 0) + q * Number(l.volume)) * 1000) / 1000;
       out.set(l.deliveryId, cur);
     }
     return out;

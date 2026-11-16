@@ -1,3 +1,4 @@
+import type { PackageConfigService } from './package-service';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
@@ -136,6 +137,7 @@ export class InsightsService {
   constructor(
     private readonly db: DrizzleDb,
     private readonly guard: PriceGuardService,
+    private readonly packages?: PackageConfigService,
   ) {}
 
   private async cached<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -637,6 +639,36 @@ export class InsightsService {
         count: n(kits[0]?.total),
         examples: kits.map((r) => r.label!),
         href: '/admin/pricing/kits',
+      });
+
+      // Packages: a part that cannot be chosen any more, and a package whose cheapest valid choice sells for less than it costs.
+      const packagesOff = await q(sql`
+        select p.name || ' (' || p.sku || ')' as label, count(*) over () as total
+        from product_packages k join products p on p.id = k.product_id
+        where k.company_id = ${companyId} and k.is_active and exists (
+          select 1 from package_slots s
+          join package_options o on o.slot_id = s.id
+          join products op on op.id = o.product_id
+          where s.package_id = k.id and (not op.is_active or op.deleted_at is not null or not op.is_sellable))
+        limit 5`);
+      add({
+        code: 'package_option_off',
+        severity: 'medium',
+        title: 'Packages with an option that cannot be chosen',
+        detail: 'Shoppers no longer see these options. If a required choice has none left, the package cannot be ordered.',
+        count: n(packagesOff[0]?.total),
+        examples: packagesOff.map((r) => r.label!),
+        href: '/admin/pricing/packages',
+      });
+      const packagesBelowCost = (await (this.packages?.list(companyId) ?? Promise.resolve([]))).filter((p) => p.isActive && p.from.belowCost);
+      add({
+        code: 'package_below_cost',
+        severity: 'high',
+        title: 'Packages that can be chosen below cost',
+        detail: 'The cheapest valid choice sells for less than its parts cost. Raise the base price or the differences.',
+        count: packagesBelowCost.length,
+        examples: packagesBelowCost.slice(0, 5).map((p) => `${p.productName} (${p.sku})`),
+        href: '/admin/pricing/packages',
       });
 
       const slow = await q(sql`

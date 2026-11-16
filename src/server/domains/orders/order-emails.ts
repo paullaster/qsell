@@ -1,7 +1,8 @@
 import { getContainer } from '@/server/di/container';
 import { layout } from '@/server/domains/auth/emails';
 import { resolvePublicBaseUrl } from '@/server/domains/auth/account-service';
-import { isOrderEmailKind, orderEmailContent, usableEmail } from '@/lib/order-emails';
+import { isOrderEmailKind, orderEmailContent, staffOrderEmailContent } from '@/lib/order-emails';
+import { addressing } from '@/server/domains/email-routing/email-routes';
 import { shownPaymentReference } from '@/lib/paymentReference';
 import { formatCartAmount, resolveBaseCurrency } from '@/lib/cartMoney';
 import { listCurrenciesAction } from '@/server/domains/currencies/actions';
@@ -15,19 +16,20 @@ function payLaterOf(method: string): 'account' | 'door' | null {
 }
 
 /**
- * Writes to the shopper about their order: that it was placed, or that its payment was received. The job that calls this is retried
+ * Writes about a web shop order: to the shopper (placed, payment received) or, as `staff`, the alert to the company's own people.
+ * Who is written to, copied and answered by is the company's setting for that point (Settings, Email routing). The job that calls this is retried
  * by the worker, so a mail server that is down only delays it. Sends at most the one mail for each order and kind (the job key).
  * Returns what happened, for the log.
  */
-export async function sendOrderEmail(orderId: string, kind: string): Promise<'sent' | 'no_address' | 'gone'> {
+export async function sendOrderEmail(orderId: string, kind: string, audience: 'customer' | 'staff' = 'customer'): Promise<'sent' | 'no_address' | 'off' | 'gone'> {
   if (!isOrderEmailKind(kind)) return 'gone';
   const c = getContainer();
   const order = await c.orders.getById(orderId);
   // Staff-placed orders are the business's own paperwork; this mail is the shop's.
   if (order?.salesModule !== 'ecommerce') return 'gone';
-  const to = usableEmail(order.customerEmail);
-  if (to === null) return 'no_address';
   const settings = await c.companySettings.ensureSeeded();
+  const route = await c.emailRoutes.resolve(settings.id, `shop_order_${kind}_${audience}`, { customerEmail: order.customerEmail });
+  if (!route.send) return route.reason === 'This email is switched off.' ? 'off' : 'no_address';
   const base = resolvePublicBaseUrl(settings.publicBaseUrl);
   const token = await c.trackingLinks.tokenFor(settings.id, order.id);
   const trackUrl = token === null ? `${base}/` : `${base}/track/${token}`;
@@ -38,7 +40,7 @@ export async function sendOrderEmail(orderId: string, kind: string): Promise<'se
     currency = null;
   }
   const money = (amount: number): string => formatCartAmount(amount, currency);
-  const content = orderEmailContent(kind, {
+  const facts = {
     tradingName: orElse(settings.tradingName, 'our shop'),
     customerName: order.customerName,
     orderNumber: order.orderNumber,
@@ -51,10 +53,13 @@ export async function sendOrderEmail(orderId: string, kind: string): Promise<'se
     reference: orElse(shownPaymentReference(order), '') === '' ? null : shownPaymentReference(order),
     payLater: payLaterOf(order.paymentMethod),
     trackUrl,
-  });
-  const footer = `You are receiving this because you placed order ${order.orderNumber}. Please do not forward it: the link shows your order.`;
-  const html = layout({ heading: content.heading, greeting: content.greeting, body: content.body, cta: content.cta, actionUrl: trackUrl, footer, details: content.details });
-  const text = `${content.heading}\n\n${content.greeting}\n\n${content.body}\n\n${content.details.map(([k, v]) => `${k}: ${v}`).join('\n')}\n\n${content.cta}: ${trackUrl}\n\n${footer}`;
-  await c.email.send({ to, subject: content.subject, html, text });
+  };
+  const content = audience === 'staff' ? staffOrderEmailContent(kind, { ...facts, customerEmail: order.customerEmail, customerPhone: order.customerPhone }) : orderEmailContent(kind, facts);
+  // The team goes to the orders screen; the shopper follows their own order.
+  const actionUrl = audience === 'staff' ? `${base}/admin/orders` : trackUrl;
+  const footer = audience === 'staff' ? `You are receiving this because you are told about web shop orders (order ${order.orderNumber}).` : `You are receiving this because you placed order ${order.orderNumber}. Please do not forward it: the link shows your order.`;
+  const html = layout({ heading: content.heading, greeting: content.greeting, body: content.body, cta: content.cta, actionUrl, footer, details: content.details });
+  const text = `${content.heading}\n\n${content.greeting}\n\n${content.body}\n\n${content.details.map(([k, v]) => `${k}: ${v}`).join('\n')}\n\n${content.cta}: ${actionUrl}\n\n${footer}`;
+  await c.email.send({ ...addressing(route), subject: content.subject, html, text, sender: { name: orElse(settings.tradingName, 'our shop'), address: settings.email } });
   return 'sent';
 }

@@ -16,6 +16,14 @@ import { PriceBookService } from '@/server/domains/pricing/price-book-service';
 import { DiscountService } from '@/server/domains/pricing/discount-service';
 import { DiscountConfigService } from '@/server/domains/pricing/discount-config-service';
 import { KitConfigService, KitService } from '@/server/domains/pricing/kit-service';
+import { PackageConfigService } from '@/server/domains/pricing/package-service';
+import { PackageShopService } from '@/server/domains/pricing/package-shop-service';
+import { PackageOrderService } from '@/server/domains/pricing/package-order-service';
+import { PreparationService } from '@/server/domains/pricing/preparation-service';
+import { PackageGroupService } from '@/server/domains/pricing/package-group-service';
+import { SellingSettingsService } from '@/server/domains/selling/selling-settings-service';
+import { EmailRouteService } from '@/server/domains/email-routing/email-route-service';
+import { PackageQuoteRequestService } from '@/server/domains/pricing/package-quote-request-service';
 import { PriceGuardConfigService } from '@/server/domains/pricing/guard-config-service';
 import type { EmailPort, InvoicePdfPort } from '@/server/ports/communications';
 import { PdfKitInvoiceAdapter } from '@/server/adapters/pdf/pdfkit-invoice.adapter';
@@ -133,6 +141,13 @@ import { DeliverySla } from '@/server/domains/delivery/sla';
 import { DeliveryReports } from '@/server/domains/delivery/reports';
 import { CourierInvoices } from '@/server/domains/delivery/courier-invoices';
 import { DeliverySlaNotices } from '@/server/domains/delivery/sla-notices';
+import { DeliveryPush } from '@/server/domains/delivery/push';
+import type { DeliveryTextSettings } from '@/server/domains/delivery/text-settings';
+import { SmsAccounts } from '@/server/domains/sms/accounts';
+import { DeliverySlaTexts } from '@/server/domains/delivery/sla-texts';
+import type { PushPort } from '@/server/ports/push';
+import { NoPushAdapter, WebPushAdapter } from '@/server/adapters/push/web-push.adapter';
+import { pushRuntimeConfig } from '@/server/adapters/push/config';
 import { RiderPins } from '@/server/domains/delivery/rider-pins';
 import { RiderPay } from '@/server/domains/delivery/rider-pay';
 import { DeliveryPerformanceReports } from '@/server/domains/delivery/performance';
@@ -322,6 +337,9 @@ export interface AppContainer {
   deliverySlots: DeliverySlots;
   deliverySla: DeliverySla;
   deliverySlaNotices: DeliverySlaNotices;
+  deliveryPush: DeliveryPush;
+  deliverySlaTexts: DeliverySlaTexts;
+  smsAccounts: SmsAccounts;
   courierInvoices: CourierInvoices;
   doorHandIns: DoorHandIns;
   doorMpesa: DoorMpesa;
@@ -330,6 +348,7 @@ export interface AppContainer {
   courierSync: CourierSync;
   trackingLinks: TrackingLinks;
   deliveryMessages: DeliveryMessages;
+  deliveryTextSettings: DeliveryTextSettings;
   trackedOrders: TrackedOrders;
   /** How delivery is billed on invoices and at KRA. */
   deliveryBilling: DeliveryBilling;
@@ -361,6 +380,14 @@ export interface AppContainer {
   discountConfig: DiscountConfigService;
   kits: KitService;
   kitConfig: KitConfigService;
+  packageConfig: PackageConfigService;
+  emailRoutes: EmailRouteService;
+  sellingSettings: SellingSettingsService;
+  packageShop: PackageShopService;
+  packageOrders: PackageOrderService;
+  preparation: PreparationService;
+  packageGroups: PackageGroupService;
+  packageQuoteRequests: PackageQuoteRequestService;
   rebates: RebateService;
   rebateConfig: RebateConfigService;
   loyalty: LoyaltyService;
@@ -377,6 +404,11 @@ function createEmailPort(): EmailPort {
     return new NodemailerSmtpAdapter();
   }
   return new ConsoleEmailAdapter();
+}
+
+function createPushPort(): PushPort {
+  const config = pushRuntimeConfig(process.env);
+  return config === null ? new NoPushAdapter() : new WebPushAdapter(config);
 }
 
 function createPdfPort(): InvoicePdfPort {
@@ -454,6 +486,7 @@ export function getContainer(): AppContainer {
 
   const invoicePdf = createPdfPort();
   const email = createEmailPort();
+  const deliveryPush = new DeliveryPush(drizzleDb, createPushPort());
   const companySettings = new CompanySettingsRepository(drizzleDb);
   const invoices = new InvoiceService({
     db: drizzleDb,
@@ -516,6 +549,8 @@ export function getContainer(): AppContainer {
     etimsTransmission,
   );
   const decisionLog = new DecisionLog(drizzleDb);
+  const smsAccounts = new SmsAccounts(drizzleDb, decisionLog, undefined);
+  const deliverySlaTexts = new DeliverySlaTexts(drizzleDb, smsAccounts, companySettings);
   const reasonCodes = new ReasonCodes(drizzleDb);
   const numbering = createNumbering(decisionLog, reasonCodes);
   const creditNotes = new CreditNoteService(drizzleDb, kraSigning, numbering);
@@ -531,7 +566,7 @@ export function getContainer(): AppContainer {
   });
   const stockReservations = new StockReservations(drizzleDb, stockLedger, decisionLog);
   const rateLimits = new RateLimitService(drizzleDb);
-  const deliveryServices = createDeliveryServices({ db: drizzleDb, decisionLog, geo, companySettings, numbering, stockReservations, email, usersAdmin, customers });
+  const deliveryServices = createDeliveryServices({ db: drizzleDb, decisionLog, geo, companySettings, numbering, stockReservations, email, sms: smsAccounts, usersAdmin, customers });
   const orderSla = new OrderSlaService(drizzleDb, new OrderSlaNotifier(email, companySettings));
   const vendorNotifier = new VendorNotifier(drizzleDb, email, companySettings);
   const prequalLifecycle = new PrequalLifecycle(drizzleDb, vendorNotifier);
@@ -566,7 +601,15 @@ export function getContainer(): AppContainer {
   const rebates = new RebateService(drizzleDb, priceGuard, pricing);
   const loyalty = new LoyaltyService(drizzleDb, decisionLog, reasonCodes, finance.fx);
   const giftCards = new GiftCardService(drizzleDb, decisionLog, reasonCodes, finance.fx);
-  const insights = new InsightsService(drizzleDb, priceGuard);
+  const packageConfig = new PackageConfigService(drizzleDb, decisionLog, reasonCodes);
+  const emailRoutes = new EmailRouteService(drizzleDb, decisionLog, reasonCodes, companySettings);
+  const sellingSettings = new SellingSettingsService(drizzleDb, decisionLog, reasonCodes);
+  const packageShop = new PackageShopService(drizzleDb, packageConfig, deliveryServices.stockSettings, deliveryServices.stockAvailability);
+  const packageOrders = new PackageOrderService(drizzleDb, packageShop);
+  const preparation = new PreparationService(drizzleDb);
+  const packageGroups = new PackageGroupService(drizzleDb, packageShop, packageOrders);
+  const packageQuoteRequests = new PackageQuoteRequestService(drizzleDb, packageShop, packageOrders);
+  const insights = new InsightsService(drizzleDb, priceGuard, packageConfig);
   const pricingConfig = new PricingConfigService(
     drizzleDb,
     decisionLog,
@@ -685,8 +728,11 @@ export function getContainer(): AppContainer {
     riderPins: new RiderPins(drizzleDb, decisionLog, deliveryServices.deliveryRiders),
     orderVisits: new OrderVisits(drizzleDb, decisionLog, stockLedger),
     deliverySlots: deliveryServices.deliverySlots,
-    deliverySla: new DeliverySla(drizzleDb, decisionLog),
+    deliverySla: new DeliverySla(drizzleDb, decisionLog, undefined, deliveryPush, deliverySlaTexts),
     deliverySlaNotices: new DeliverySlaNotices(drizzleDb, email, companySettings),
+    deliveryPush,
+    smsAccounts,
+    deliverySlaTexts,
     courierInvoices: new CourierInvoices(drizzleDb, decisionLog),
     doorHandIns: new DoorHandIns(drizzleDb, decisionLog, finance.engine, numbering),
     doorMpesa: new DoorMpesa(drizzleDb, {
@@ -707,6 +753,7 @@ export function getContainer(): AppContainer {
     courierSync: deliveryServices.courierSync,
     trackingLinks: deliveryServices.trackingLinks,
     deliveryMessages: deliveryServices.deliveryMessages,
+    deliveryTextSettings: deliveryServices.deliveryTextSettings,
     trackedOrders: deliveryServices.trackedOrders,
     deliveryBilling: deliveryServices.deliveryBilling,
     kraConfigs,
@@ -731,6 +778,14 @@ export function getContainer(): AppContainer {
     discounts,
     kits,
     kitConfig: new KitConfigService(drizzleDb, decisionLog, reasonCodes, kits),
+    packageConfig,
+    emailRoutes,
+    sellingSettings,
+    packageShop,
+    packageOrders,
+    preparation,
+    packageGroups,
+    packageQuoteRequests,
     rebates,
     rebateConfig: new RebateConfigService(drizzleDb, decisionLog, reasonCodes, rebates, approvals),
     loyalty,

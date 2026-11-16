@@ -80,6 +80,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'Sales quotes that become orders',
       'Customer records, order history and newsletter',
       'Product reviews with moderation',
+      'A preparation sheet for catering and made-to-order meals: what to make for each day and delivery time, with totals to print',
       'Price lists, discounts and promotions',
     ],
     keywords: [
@@ -90,10 +91,13 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'quotation software',
       'customer management software',
       'retail POS Nairobi',
+      'catering order software Kenya',
+      'meal preparation sheet',
     ],
     subModules: [
       'Sales Quotes',
       'Customer Orders',
+      'Preparation sheet',
       'Newsletter',
       'Product Reviews',
       'Customers',
@@ -140,7 +144,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'late delivery alerts and delivery SLA',
       'courier parcel tracking',
     ],
-    subModules: ['Deliveries', 'Dispatch board', 'Delivery runs', 'Riders', 'Vehicles', 'Door payments', 'Delivery costs', 'Delivery report', 'Visits', 'Delivery slots', 'Late deliveries', 'Delivery performance', 'Courier invoices', 'Couriers', 'Delivery zones', 'Delivery charges', 'Delivery methods', 'Delivery invoicing', 'Stock timing', 'Map service'],
+    subModules: ['Deliveries', 'Dispatch board', 'Delivery runs', 'Riders', 'Vehicles', 'Door payments', 'Delivery costs', 'Delivery report', 'Visits', 'Delivery slots', 'Customer messages', 'Late deliveries', 'Delivery performance', 'Courier invoices', 'Couriers', 'Delivery zones', 'Delivery charges', 'Delivery methods', 'Delivery invoicing', 'Stock timing', 'Map service'],
   },
   {
     navId: 'products-inventory',
@@ -152,6 +156,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'Transfers between locations with stock tracked while it is on its way',
       'Stock counts that carry on while the shop sells',
       'Products, categories, bundles and hampers',
+      'Packages with choices inside, such as a lunch where the customer picks the fish, the starch and the vegetables, priced as a base plus a difference per choice or option by option; a group order link where each person chooses their own and one person pays',
       'Kilograms, litres, pieces and packs with the right decimals',
       'Stock ledger with every movement recorded',
     ],
@@ -162,6 +167,8 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'inventory software for small business',
       'warehouse management',
       'product catalogue software',
+      'build your own meal package',
+      'customisable bundles for an online shop',
     ],
     subModules: [
       'Products',
@@ -170,6 +177,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'Units of Measure',
       'Categories',
       'Kits and hampers',
+      'Packages',
       'Product groups',
       'Stock levels',
       'Stock by location',
@@ -319,6 +327,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'Payment methods and gateways',
       'Automatic invoice and order numbering',
       'Time limits for each order stage, with late-order alerts',
+      'Your own SMS provider, connected with your own keys',
     ],
     keywords: [
       'multi-branch retail software',
@@ -335,6 +344,9 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'Approvals',
       'Tax Compliance',
       'Order Targets',
+      'SMS Providers',
+      'Email Routing',
+      'Selling Documents',
     ],
   },
   {

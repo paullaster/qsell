@@ -1,0 +1,4 @@
+ALTER TABLE "delivery_text_settings" ADD COLUMN "collection_reminders_on" boolean DEFAULT true NOT NULL;--> statement-breakpoint
+ALTER TABLE "delivery_text_settings" ADD COLUMN "collection_reminder_first_days" integer DEFAULT 3 NOT NULL;--> statement-breakpoint
+ALTER TABLE "delivery_text_settings" ADD COLUMN "collection_reminder_second_days" integer DEFAULT 6;--> statement-breakpoint
+ALTER TABLE "delivery_text_settings" ADD CONSTRAINT "delivery_text_settings_reminder_days_chk" CHECK ("delivery_text_settings"."collection_reminder_first_days" between 1 and 30 and ("delivery_text_settings"."collection_reminder_second_days" is null or ("delivery_text_settings"."collection_reminder_second_days" > "delivery_text_settings"."collection_reminder_first_days" and "delivery_text_settings"."collection_reminder_second_days" <= 60)));

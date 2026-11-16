@@ -17,7 +17,7 @@ import type { Choice } from '@/lib/payment-options';
 import type { Order } from '@/types/index';
 import { OrderDetailsModal, type FulfilmentChange } from './orders/OrderDetailsModal';
 import { OrderInvoicePreview } from './orders/OrderInvoicePreview';
-import { OrderStatusBadge } from './orders/OrderStatusBadge';
+import { LeftAtCounterBadge, OrderStatusBadge } from './orders/OrderStatusBadge';
 
 /** The order (and invoice preview) the address asked to open, read on the server. */
 export interface OpenTarget {
@@ -51,11 +51,12 @@ export function AdminOrders({ firstPage, companyPromise, canEditProductsPromise,
 
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<Choice | null>(null);
+  const [counter, setCounter] = useState<Choice | null>(null);
   const query = useDebouncedValue(search.trim());
-  const list = usePagedList<Order, { query: string; status: string | null }>({
+  const list = usePagedList<Order, { query: string; status: string | null; counter: string | null }>({
     load: (filters, cursor) =>
-      ordersPageAction({ query: filters.query, status: filters.status, cursor }),
-    filters: { query, status: status?.id ?? null },
+      ordersPageAction({ query: filters.query, status: filters.status, counter: filters.counter, cursor }),
+    filters: { query, status: status?.id ?? null, counter: counter?.id ?? null },
     initialPage: first,
   });
 
@@ -191,6 +192,15 @@ export function AdminOrders({ firstPage, companyPromise, canEditProductsPromise,
             placeholder="All statuses"
           />
         </div>
+        <div className="w-full sm:w-64">
+          <ChoicePicker
+            label="Waiting at the counter"
+            source="order-counter-waits"
+            choice={counter}
+            onChoice={setCounter}
+            placeholder="Any wait"
+          />
+        </div>
       </div>
 
       {list.phase === 'error' && rows.length === 0 ? (
@@ -233,7 +243,10 @@ export function AdminOrders({ firstPage, companyPromise, canEditProductsPromise,
                       {new Date(o.createdAt).toLocaleString()}
                     </p>
                   </div>
-                  <OrderStatusBadge status={o.status} />
+                  <div className="flex flex-col items-end gap-1">
+                    <OrderStatusBadge status={o.status} />
+                    {o.leftAtCounterDays === undefined ? null : <LeftAtCounterBadge days={o.leftAtCounterDays} />}
+                  </div>
                 </div>
                 <div>
                   <p className="font-semibold text-fg-strong">{o.customerName}</p>
@@ -322,7 +335,10 @@ export function AdminOrders({ firstPage, companyPromise, canEditProductsPromise,
                       </div>
                     </td>
                     <td className="px-4 py-3.5 text-center">
-                      <OrderStatusBadge status={o.status} />
+                      <div className="flex flex-col items-center gap-1">
+                        <OrderStatusBadge status={o.status} />
+                        {o.leftAtCounterDays === undefined ? null : <LeftAtCounterBadge days={o.leftAtCounterDays} />}
+                      </div>
                     </td>
                     <td className="px-4 py-3.5 text-right">
                       <button type="button" onClick={() => open(o)} className={buttonClass}>

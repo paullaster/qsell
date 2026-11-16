@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { eq, inArray, like } from 'drizzle-orm';
+import { and, eq, inArray, like } from 'drizzle-orm';
 import { has } from '@/lib/values';
 import type * as mod_server_di_container from '@/server/di/container';
 import type * as mod_server_db_drizzle_client from '@/server/db/drizzle/client';
@@ -526,7 +526,7 @@ describe.skipIf(!has(url))('cash at the door (database)', () => {
       expect((await c.deliveryCosts.recordRunning(dispatcher(), { kind: 'fuel', amount: 90, note: 'Tied to nothing', clientKey: randomUUID() })).ok).toBe(true);
       const after = await c.deliveryReports.summary(companyId, {});
       if (!after.ok) throw new Error('report');
-      expect(after.data.byVehicle.find((v) => v.vehicleId === vehicle.id)).toEqual({ vehicleId: vehicle.id, name: vehicle.name, runs: 1, delivered: 1, fuel: '1200.00', repairs: '600.00', other: '200.00', total: '2000.00', perDelivery: '2000.00' });
+      expect(after.data.byVehicle.find((v) => v.vehicleId === vehicle.id)).toEqual({ vehicleId: vehicle.id, name: vehicle.name, runs: 1, delivered: 1, fuel: '1200.00', repairs: '600.00', other: '200.00', total: '2000.00', perDelivery: '2000.00', litres: null, km: null, kmPerLitre: null, fuelPerKm: null });
       // The table and the total reconcile: what is tied to no vehicle is shown beside it.
       expect(Number(after.data.untiedRunningCosts) - Number(before.data.untiedRunningCosts)).toBe(90);
       // A vehicle with a cost and nothing delivered has no cost per delivery.
@@ -536,6 +536,47 @@ describe.skipIf(!has(url))('cash at the door (database)', () => {
       const last = await c.deliveryReports.summary(companyId, {});
       if (!last.ok) throw new Error('report');
       expect(last.data.byVehicle.find((v) => v.vehicleId === idle.data.id)).toMatchObject({ delivered: 0, runs: 0, total: '75.00', perDelivery: null });
+    });
+
+    it('keep the litres and kilometres of a fill, work out kilometres to the litre and fuel a kilometre per vehicle, and take them back with the cost', async () => {
+      const mk = await c.deliveryVehicles.create(dispatcher(), { name: `Thirsty ${code()}` });
+      if (!mk.ok) throw new Error(mk.message);
+      const vehicle = mk.data;
+      const fill = async (amount: number, extra: Record<string, unknown>) => {
+        const r = await c.deliveryCosts.recordRunning(dispatcher(), { kind: 'fuel', amount, note: 'Diesel for the van', vehicleId: vehicle.id, clientKey: randomUUID(), ...extra });
+        if (!r.ok) throw new Error(r.message);
+        return r.data.id;
+      };
+      const first = await fill(1200, { litres: 40, km: 400 });
+      await fill(900, { litres: 30, km: 270 });
+      // A fill with litres only counts for the litres; a fill with nothing counts for the money alone.
+      await fill(500, { litres: 20 });
+      await fill(100, {});
+      const figures = async () => {
+        const r = await c.deliveryReports.summary(companyId, {});
+        if (!r.ok) throw new Error('report');
+        return r.data.byVehicle.find((v) => v.vehicleId === vehicle.id);
+      };
+      expect(await figures()).toMatchObject({ fuel: '2700.00', litres: '90.00', km: '670.0', kmPerLitre: 9.57, fuelPerKm: '3.13' });
+      const saved = await db.select().from(schema.deliveryCosts).where(and(eq(schema.deliveryCosts.vehicleId, vehicle.id), eq(schema.deliveryCosts.id, first)));
+      expect(saved[0]).toMatchObject({ litres: '40.00', km: '400.0' });
+      expect((await c.deliveryCosts.list(companyId, { kind: 'fuel' })).rows.find((r) => r.id === first)).toMatchObject({ litres: '40.00', km: '400.0' });
+      // Taking the first fill back takes its litres and kilometres back too, so the figures follow.
+      expect((await c.deliveryCosts.reverse(dispatcher(), first, { reason: 'Typed twice by mistake' })).ok).toBe(true);
+      const reversal = (await db.select().from(schema.deliveryCosts).where(eq(schema.deliveryCosts.reversesId, first)))[0];
+      expect(reversal).toMatchObject({ litres: '-40.00', km: '-400.0', amount: '-1200.00' });
+      expect(await figures()).toMatchObject({ litres: '50.00', km: '270.0', kmPerLitre: 9, fuelPerKm: '3.33' });
+    });
+
+    it('refuse litres and kilometres that are silly or are not fuel, and the database refuses them too', async () => {
+      const ok = { kind: 'fuel', amount: 100, note: 'Diesel', clientKey: randomUUID() };
+      expect(await c.deliveryCosts.recordRunning(dispatcher(), { ...ok, litres: 0 })).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect(await c.deliveryCosts.recordRunning(dispatcher(), { ...ok, km: -5 })).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect(await c.deliveryCosts.recordRunning(dispatcher(), { ...ok, kind: 'vehicle', litres: 10 })).toMatchObject({ ok: false, reason: 'bad_input', message: 'Litres and kilometres are only for fuel.' });
+      const row = { companyId, currency: 'KES', actorId: 'x' };
+      await expect(db.insert(schema.deliveryCosts).values({ ...row, kind: 'other', amount: '5.00', litres: '3.00', key: `lit-${randomUUID()}` })).rejects.toThrow();
+      await expect(db.insert(schema.deliveryCosts).values({ ...row, kind: 'fuel', amount: '5.00', km: '0.0', key: `zero-${randomUUID()}` })).rejects.toThrow();
+      await expect(db.insert(schema.deliveryCosts).values({ ...row, kind: 'fuel', amount: '5.00', litres: '-3.00', key: `neg-${randomUUID()}` })).rejects.toThrow();
     });
 
     it('are refused without a kind, money, words or a form key, and for a run that is not the company\'s', async () => {

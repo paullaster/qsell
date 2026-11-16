@@ -86,7 +86,7 @@ function Screen({ initial }: { initial: Report }) {
         rows={report.byVehicle.map((v) => [
           v.name,
           `${String(v.delivered)} on ${String(v.runs)} ${v.runs === 1 ? 'run' : 'runs'}`,
-          `KSh ${v.total} (fuel ${v.fuel}, repairs ${v.repairs}, other ${v.other})`,
+          `KSh ${v.total} (fuel ${v.fuel}, repairs ${v.repairs}, other ${v.other})${fuelWords(v)}`,
           v.perDelivery === null ? 'Nothing delivered' : `KSh ${v.perDelivery}`,
         ])}
         note={`Running costs are fuel, vehicle costs and other costs typed against a vehicle (or against a run that went out in it). A delivery counts for the vehicle of the run it was delivered on.${Number(report.untiedRunningCosts) === 0 ? '' : ` Running costs not tied to any vehicle in these days: KSh ${report.untiedRunningCosts}.`}`}
@@ -95,6 +95,17 @@ function Screen({ initial }: { initial: Report }) {
       <Table label="Cash riders hold now" empty="No rider holds cash." head={['Rider', 'Holds']} rows={report.cashHeld.map((h) => [h.name, `KSh ${h.balance}`])} note="Not limited to the days above: this is what they hold today, until it is handed in." />
     </div>
   );
+}
+
+/** What the fuel gave, in words: only what the typed fills allow. */
+function fuelWords(v: { litres: string | null; km: string | null; kmPerLitre: number | null; fuelPerKm: string | null }): string {
+  const parts = [
+    v.km === null ? null : `${v.km} km`,
+    v.litres === null ? null : `${v.litres} litres`,
+    v.kmPerLitre === null ? null : `${String(v.kmPerLitre)} km a litre`,
+    v.fuelPerKm === null ? null : `fuel KSh ${v.fuelPerKm} a km`,
+  ].filter((p): p is string => p !== null);
+  return parts.length === 0 ? '' : ` · ${parts.join(', ')}`;
 }
 
 function Stat({ label, value, hint, tone }: { label: string; value: string; hint?: string; tone?: 'good' | 'bad' }) {

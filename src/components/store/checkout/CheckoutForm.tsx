@@ -6,19 +6,21 @@ import { ArrowRight, Building, Check, CreditCard, Lock, LogIn, MapPin, Smartphon
 import type { CustomerAccount, CustomerAddress, PaymentProvider } from '@/types/index';
 import type { PaymentProviderCode } from '@/server/domains/payments/types';
 import type { CartLine } from '@/lib/cart-lines';
+import type { BasketItem } from '@/lib/basket-items';
 import { cartTotals } from '@/lib/cartMoney';
 import { readOptionalEmail } from '@/lib/guest-contact';
 import { has, nth, orElse } from '@/lib/values';
 import { paymentUsesPhone, resolvePaymentPhone } from '@/lib/payment-phone';
 import { PAY_ON_DELIVERY, PAY_ON_DELIVERY_HELP, PAY_ON_DELIVERY_WORDS, offerPayOnDelivery, type PayOnDeliveryOffer } from '@/lib/pay-on-delivery';
-import { payOnDeliveryOfferAction } from '@/server/domains/delivery/shop-actions';
+import { payOnDeliveryOfferAction, type ShopPinPlace } from '@/server/domains/delivery/shop-actions';
 import { PayFromField } from '@/components/store/checkout/PayFromField';
-import { fetchCustomerAccountAction, listEnabledCheckoutProvidersAction, lookupCheckoutCustomerAction, addCustomerAddressAction } from '@/server/actions';
+import { fetchCustomerAccountAction, listEnabledCheckoutProvidersAction, lookupCheckoutCustomerAction, addCustomerAddressAction, updateCustomerAddressAction } from '@/server/actions';
 import { useStore } from '@/components/store/StoreContext';
 import { OrderSummary } from '@/components/store/checkout/OrderSummary';
 import { PackagingOptions } from '@/components/store/PackagingOptions';
 import { DeliverySection, type Recipient } from '@/components/store/checkout/DeliverySection';
-import { useShopDelivery } from '@/components/store/checkout/useShopDelivery';
+import { useShopDelivery, type PinEvent } from '@/components/store/checkout/useShopDelivery';
+import { pinOfAddress, saveDecision } from '@/lib/saved-address';
 import { useShopBasket } from '@/components/store/checkout/useShopBasket';
 import { PromoCode } from '@/components/store/checkout/PromoCode';
 import type { DeliveryInput } from '@/lib/checkout-input';
@@ -40,6 +42,8 @@ export interface CheckoutSubmission {
 
 interface CheckoutFormProps {
   lines: CartLine[];
+  /** Package lines in the cart: the choices (sent to the server) and what the shop priced them at. */
+  packages?: { id: string; productId: string; picks: { slotId: string; optionId: string; count: number }[]; note?: string; servings: number; summary: string; total: number }[];
   defaultCountry: string;
   submitting: boolean;
   /** Why the last attempt failed, in words for the shopper. */
@@ -92,7 +96,7 @@ interface LookedUp {
 }
 
 /** Who is buying, where it goes, and how they pay, with the order beside it. The server checks all of it again. */
-export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmit }: CheckoutFormProps) {
+export function CheckoutForm({ lines, packages = [], defaultCountry, submitting, error, onSubmit }: CheckoutFormProps) {
   const { money } = useStore();
   const [customer, setCustomer] = useState<CustomerAccount | null>(null);
   const [customerName, setCustomerName] = useState('');
@@ -117,6 +121,37 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
   const [lookedUp, setLookedUp] = useState<LookedUp | null>(null);
   const [couponCodes, setCouponCodes] = useState<string[]>([]);
 
+  /** True once the shopper has typed or changed the written address themselves: their words are then never replaced by what the map calls a place. */
+  const [typedByHand, setTypedByHand] = useState(false);
+  const fillFrom = (place: ShopPinPlace) => {
+    setStreet(place.road ?? place.label.split(',')[0]?.trim() ?? '');
+    setCity(place.town ?? '');
+    setCountyOrState(place.county ?? '');
+    setArea(place.area ?? '');
+  };
+  // The charge is worked out for the place on the map, so the order must be addressed there too: choosing a new place leaves the saved
+  // address that was picked (it describes somewhere else) and writes the address of the place, which the shopper can still correct.
+  const followPin = (event: PinEvent) => {
+    if (typedByHand) return;
+    if (event.phase === 'chosen') {
+      setUseNewAddress(true);
+      setSelectedAddressId(null);
+      setStreet('');
+      setCity('');
+      setCountyOrState('');
+      setArea('');
+      return;
+    }
+    fillFrom(event.place);
+  };
+
+  const items: BasketItem[] = [
+    ...lines.map((l) => ({ productId: l.product.id, quantity: l.quantity })),
+    ...packages.map((p) => ({ productId: p.productId, quantity: p.servings, package: { picks: p.picks, ...(p.note === undefined || p.note === '' ? {} : { note: p.note }) } })),
+  ];
+  const delivery = useShopDelivery({ items, county: countyOrState, town: city, area, country, couponCodes, onPin: followPin });
+
+  const placeOnMap = delivery.setPin;
   const isSignedIn = customer !== null && has(customer.email);
   // A lookup answer only counts while the email field still holds an address.
   const accountCustomer = customerEmail.includes('@') ? lookedUp : null;
@@ -134,8 +169,11 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
 
   // A signed-in shopper's saved details and addresses fill the form; the ways to pay come from the shop.
   useEffect(() => {
+    // An answer that comes after this effect was run again (or after the page was left) must not undo what the shopper has chosen since.
+    let live = true;
     fetchCustomerAccountAction()
       .then(({ customer: account }) => {
+        if (!live) return;
         if (account === null) {
           setCustomer(null);
           setUseNewAddress(true);
@@ -154,11 +192,14 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
           setCity(preferred.city);
           setCountyOrState(preferred.countyOrState);
           setCountry(preferred.country);
+          // An address saved with its place on the map brings that place, so the charge and the delivery are for the same place.
+          placeOnMap(pinOfAddress(preferred), { restored: true });
         } else {
           setUseNewAddress(true);
         }
       })
       .catch(() => {
+        if (!live) return;
         setCustomer(null);
         setUseNewAddress(true);
       });
@@ -169,7 +210,10 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
         setPaymentMethod((current) => (current !== '' && list.some((p) => p.code === current) ? current : (list[0]?.code ?? '')));
       })
       .catch(() => setProviders([]));
-  }, []);
+    return () => {
+      live = false;
+    };
+  }, [placeOnMap]);
 
   const pickSaved = (address: CustomerAddress) => {
     setSelectedAddressId(address.id);
@@ -179,14 +223,15 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
     setCountyOrState(address.countyOrState);
     setCountry(address.country);
     setArea('');
-    delivery.setPin(null);
+    setTypedByHand(false);
+    // A saved address with a place on the map delivers to that place; one that was only written has none, and no pin from before is kept.
+    delivery.setPin(pinOfAddress(address), { restored: true });
     if (has(address.recipientName)) setCustomerName(address.recipientName);
     if (has(address.recipientPhone)) setCustomerPhone(address.recipientPhone);
   };
 
-  const totals = cartTotals(lines);
-  const items = lines.map((l) => ({ productId: l.product.id, quantity: l.quantity }));
-  const delivery = useShopDelivery({ items, county: countyOrState, town: city, area, country, couponCodes });
+  const packageSum = packages.reduce((n, p) => n + p.total, 0);
+  const totals = { ...cartTotals(lines), totalAmount: cartTotals(lines).totalAmount + packageSum };
   const basketPhase = useShopBasket({ items, couponCodes, paymentMethod: chosenMethod });
   const basket = basketPhase.phase === 'ok' ? basketPhase.basket : null;
   const codeProblem = basket !== null && basket.promotions.couponProblems.length > 0;
@@ -262,7 +307,11 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
     event.preventDefault();
     setFormError(null);
     if (!has(customerName) || !has(customerPhone) || (!collecting && (!has(street) || !has(city)))) {
-      setFormError(isSignedIn && !hasSavedAddresses ? 'Add a delivery address to continue.' : 'Please fill in your name, phone number and delivery address.');
+      const nearPin = !collecting && delivery.pin !== null && !has(street);
+      let words = 'Please fill in your name, phone number and delivery address.';
+      if (isSignedIn && !hasSavedAddresses) words = 'Add a delivery address to continue.';
+      if (nearPin) words = 'Write the street or building next to your pin, so the rider can find you.';
+      setFormError(words);
       return;
     }
     const email = readOptionalEmail(customerEmail);
@@ -290,17 +339,29 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
     }
     try {
       if (isSignedIn && !collecting && (useNewAddress || !hasSavedAddresses)) {
-        const { customer: updated } = await addCustomerAddressAction(customer.id, {
-          label: hasSavedAddresses ? 'Delivery' : 'Primary',
-          recipientName: customerName,
-          recipientPhone: customerPhone,
-          street,
-          city,
-          countyOrState,
-          country,
-          isDefault: !hasSavedAddresses,
-        });
-        setCustomer(updated);
+        // What was delivered to is kept for next time, with its place on the map when there is one; an address already in the book is not added twice.
+        const place = delivery.pin;
+        const decision = saveDecision(savedAddresses, { street, city }, place);
+        const where = place === null ? {} : { latitude: place.latitude, longitude: place.longitude };
+        let label = 'Primary';
+        if (hasSavedAddresses) label = place === null ? 'Delivery' : 'Pinned location';
+        if (decision.kind === 'add') {
+          const { customer: updated } = await addCustomerAddressAction(customer.id, {
+            label,
+            recipientName: customerName,
+            recipientPhone: customerPhone,
+            street,
+            city,
+            countyOrState,
+            country,
+            ...where,
+            isDefault: !hasSavedAddresses,
+          });
+          setCustomer(updated);
+        } else if (decision.kind === 'attach') {
+          const { customer: updated } = await updateCustomerAddressAction(customer.id, decision.id, where);
+          setCustomer(updated);
+        }
       }
     } catch {
       // The address could not be saved to the account; the order itself does not depend on it.
@@ -430,10 +491,14 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
                 }
                 setUseNewAddress(true);
                 setSelectedAddressId(null);
+                setTypedByHand(false);
                 setStreet('');
                 setCity('');
                 setCountyOrState('');
+                setArea('');
                 setCountry(defaultCountry);
+                // A new address is a new place: the one from the saved address is not carried over.
+                delivery.setPin(null);
               }}
               aria-pressed={useNewAddress}
               className={`min-h-11 w-full cursor-pointer rounded-xl border px-3 py-2 text-left text-sm transition-colors ${useNewAddress ? 'border-indigo-500 bg-indigo-600/10' : 'border-line bg-surface hover:border-line-strong'}`}
@@ -444,16 +509,16 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
           {showAddressFields && !collecting ? (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field label="Street, building or office" className="sm:col-span-2">
-                {(id) => <input id={id} value={street} onChange={(e) => setStreet(e.target.value)} required autoComplete="street-address" className={inputClass} placeholder="Street address" />}
+                {(id) => <input id={id} value={street} onChange={(e) => { setStreet(e.target.value); setTypedByHand(true); }} required autoComplete="street-address" className={inputClass} placeholder="Street address" />}
               </Field>
               <Field label="City or town">
-                {(id) => <input id={id} value={city} onChange={(e) => setCity(e.target.value)} required autoComplete="address-level2" className={inputClass} placeholder="City" />}
+                {(id) => <input id={id} value={city} onChange={(e) => { setCity(e.target.value); setTypedByHand(true); }} required autoComplete="address-level2" className={inputClass} placeholder="City" />}
               </Field>
               <Field label="County or region">
-                {(id) => <input id={id} value={countyOrState} onChange={(e) => setCountyOrState(e.target.value)} autoComplete="address-level1" className={inputClass} placeholder="Region" />}
+                {(id) => <input id={id} value={countyOrState} onChange={(e) => { setCountyOrState(e.target.value); setTypedByHand(true); }} autoComplete="address-level1" className={inputClass} placeholder="Region" />}
               </Field>
               <Field label="Estate or area (optional)" className="sm:col-span-2" hint="Helps us find your delivery zone.">
-                {(id) => <input id={id} value={area} onChange={(e) => setArea(e.target.value)} autoComplete="address-level3" className={inputClass} placeholder="Estate, neighbourhood or area" />}
+                {(id) => <input id={id} value={area} onChange={(e) => { setArea(e.target.value); setTypedByHand(true); }} autoComplete="address-level3" className={inputClass} placeholder="Estate, neighbourhood or area" />}
               </Field>
               <Field label="Country" className="sm:col-span-2">
                 {(id) => <input id={id} value={country} onChange={(e) => setCountry(e.target.value)} autoComplete="country-name" className={inputClass} />}
@@ -469,10 +534,10 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
             onUseNamed={() => {
               const place = delivery.named;
               if (place === null) return;
-              setStreet(place.road ?? place.label.split(',')[0]?.trim() ?? '');
-              if (place.town !== null) setCity(place.town);
-              if (place.county !== null) setCountyOrState(place.county);
-              if (place.area !== null) setArea(place.area);
+              setTypedByHand(false);
+              setUseNewAddress(true);
+              setSelectedAddressId(null);
+              fillFrom(place);
             }}
           />
         </section>
@@ -485,10 +550,10 @@ export function CheckoutForm({ lines, defaultCountry, submitting, error, onSubmi
       </div>
 
       <aside aria-label="Order summary" className="space-y-5 self-start rounded-xl border border-line bg-surface p-4 sm:p-5 lg:sticky lg:top-24 lg:col-span-5">
-        <h2 className="border-b border-line pb-2 text-base font-bold text-fg-strong">Order review ({lines.length} {lines.length === 1 ? 'item' : 'items'})</h2>
+        <h2 className="border-b border-line pb-2 text-base font-bold text-fg-strong">Order review ({lines.length + packages.length} {lines.length + packages.length === 1 ? 'item' : 'items'})</h2>
         <PackagingOptions />
         <PromoCode codes={couponCodes} onCodes={setCouponCodes} basket={basket} />
-        <OrderSummary lines={lines} basket={basket} collecting={collecting} delivery={deliveryQuote === null ? null : { gross: deliveryQuote.gross, net: deliveryQuote.net, tax: deliveryQuote.tax, branchName: deliveryQuote.branchName }} />
+        <OrderSummary lines={lines} packages={packages} basket={basket} collecting={collecting} delivery={deliveryQuote === null ? null : { gross: deliveryQuote.gross, net: deliveryQuote.net, tax: deliveryQuote.tax, branchName: deliveryQuote.branchName }} />
         <button
           type="submit"
           disabled={submitting || providers === null || codeProblem || (deliveryOn && delivery.quote.phase === 'loading')}

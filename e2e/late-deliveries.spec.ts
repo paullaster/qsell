@@ -44,6 +44,21 @@ test.describe('late deliveries', () => {
     }
   });
 
+  test('the late screen has an alerts card that says plainly when this installation cannot send alerts, and the alert workers are served', async ({ page, request }) => {
+    // A real alert needs the browsers' push services, so the end-to-end check is what a person sees and what is served; sending is tested with the database.
+    await open(page, '/admin/delivery/late', 'Late deliveries');
+    const card = page.getByRole('region', { name: 'Alerts on this device' });
+    await expect(card).toBeVisible({ timeout: 30_000 });
+    await expect(card).toContainText(/not set up on this installation yet|Turn on alerts in this browser|cannot show alerts/, { timeout: 30_000 });
+    await noHorizontalScroll(page);
+    await noInnerHorizontalScroll(page);
+    for (const path of ['/alerts-sw.js', '/push-handlers.js']) {
+      const response = await request.get(path);
+      expect(response.status()).toBe(200);
+      expect(await response.text()).toContain('push');
+    }
+  });
+
   test('the lateness settings are saved with words, and refused when they make no sense', async ({ page }) => {
     await open(page, '/admin/delivery/slots', 'Delivery slots');
     const form = page.getByRole('form', { name: 'Lateness' });
@@ -58,6 +73,14 @@ test.describe('late deliveries', () => {
     await form.getByLabel('Mail the dispatchers when a delivery is at risk or late').fill('dispatch@e2e.test, Ops@e2e.test');
     await form.getByLabel('Mail the supervisors when it has been late too long').fill('boss@e2e.test');
     await form.getByLabel('At risk this many minutes before the window ends').fill('30');
+    // The numbers texted about lateness are checked, written with their country code, and the screen says where texts will go.
+    await form.getByLabel('Text the dispatchers when a delivery is at risk or late').fill('0712 345 678, nonsense');
+    await form.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByRole('alert').filter({ hasText: '"nonsense" is not a mobile number' })).toBeVisible({ timeout: 30_000 });
+    await form.getByLabel('Text the dispatchers when a delivery is at risk or late').fill('0712 345 678, +254722111222');
+    await form.getByLabel('Text the supervisors when it has been late too long').fill('0733000111');
+    await form.getByLabel('Also text the rider whose run holds the delivery').check();
+    await expect(form.getByRole('status')).toContainText(/No SMS provider is connected|Texts go through the connection called/);
     await form.getByRole('button', { name: 'Save' }).click();
     await expect(page.getByText('Saved. The Late deliveries screen uses these from now on.')).toBeVisible({ timeout: 30_000 });
     // Put back what it was so other tests are not held to these numbers.
@@ -66,8 +89,14 @@ test.describe('late deliveries', () => {
     await again.getByLabel('At risk this many minutes before the window ends').fill('60');
     await expect(again.getByLabel('Mail the dispatchers when a delivery is at risk or late')).toHaveValue('dispatch@e2e.test, ops@e2e.test');
     await expect(again.getByLabel('Mail the supervisors when it has been late too long')).toHaveValue('boss@e2e.test');
+    await expect(again.getByLabel('Text the dispatchers when a delivery is at risk or late')).toHaveValue('+254712345678, +254722111222');
+    await expect(again.getByLabel('Text the supervisors when it has been late too long')).toHaveValue('+254733000111');
+    await expect(again.getByLabel('Also text the rider whose run holds the delivery')).toBeChecked();
     await again.getByLabel('Mail the dispatchers when a delivery is at risk or late').fill('');
     await again.getByLabel('Mail the supervisors when it has been late too long').fill('');
+    await again.getByLabel('Text the dispatchers when a delivery is at risk or late').fill('');
+    await again.getByLabel('Text the supervisors when it has been late too long').fill('');
+    await again.getByLabel('Also text the rider whose run holds the delivery').uncheck();
     await again.getByRole('button', { name: 'Save' }).click();
     await expect(page.getByText('Saved. The Late deliveries screen uses these from now on.').first()).toBeVisible({ timeout: 30_000 });
   });

@@ -1,7 +1,7 @@
 import { and, desc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { deliveries, deliveryCosts, deliveryPaySettings, deliveryRiders, deliveryRuns, deliveryShipments, deliveryVehicles, financeSettings } from '@/server/db/drizzle/schema';
-import { COST_WORDS, courierChargeProblem, runningCostProblem, dayPayKey, deliveryPayKey, isCostKind, money, readPayRules, reversalKey, type CostKind } from '@/lib/delivery-cost';
+import { COST_WORDS, courierChargeProblem, fuelFiguresProblem, runningCostProblem, dayPayKey, deliveryPayKey, isCostKind, money, readPayRules, reversalKey, type CostKind } from '@/lib/delivery-cost';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { decodeCursor, encodeCursor } from '@/server/domains/lookups/request';
 import type { DocActor, DocRefusal, DocResult } from './documents';
@@ -31,6 +31,9 @@ export interface CostView {
   /** The fleet vehicle a running cost belongs to. */
   vehicleName: string | null;
   courierName: string | null;
+  /** Fuel only: litres bought and kilometres driven on them, when given (negative on a reversal). */
+  litres: string | null;
+  km: string | null;
   note: string | null;
   reverses: string | null;
   reversed: boolean;
@@ -134,9 +137,11 @@ export class DeliveryCosts {
    * The form's own key makes a double click or a retry save it once. It is a cost of delivery for the report and the margin; it is not posted
    * to the books here (the company books the receipt as an expense claim or a supplier invoice, so posting it again would count it twice).
    */
-  async recordRunning(actor: DocActor, input: { kind?: unknown; amount?: unknown; note?: unknown; runId?: unknown; vehicleId?: unknown; clientKey?: unknown }): Promise<DocResult<{ id: string; replayed: boolean }>> {
+  async recordRunning(actor: DocActor, input: { kind?: unknown; amount?: unknown; litres?: unknown; km?: unknown; note?: unknown; runId?: unknown; vehicleId?: unknown; clientKey?: unknown }): Promise<DocResult<{ id: string; replayed: boolean }>> {
     const cost = runningCostProblem(input.kind, input.amount, input.note);
     if ('error' in cost) return fail('bad_input', cost.error);
+    const fuel = fuelFiguresProblem(cost.kind, input.litres, input.km);
+    if ('error' in fuel) return fail('bad_input', fuel.error);
     const clientKey = typeof input.clientKey === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(input.clientKey) ? input.clientKey : null;
     if (clientKey === null) return fail('bad_input', 'This form could not be read. Reload the page and try again.');
     const runId = typeof input.runId === 'string' && input.runId !== '' ? input.runId : null;
@@ -163,10 +168,10 @@ export class DeliveryCosts {
       }
       const [row] = await tx
         .insert(deliveryCosts)
-        .values({ companyId: actor.companyId, kind: cost.kind, amount: money(cost.cents), currency: await this.currencyIn(tx, actor.companyId), runId, riderId, vehicleId, note: cost.note, key, actorId: actor.userId })
+        .values({ companyId: actor.companyId, kind: cost.kind, amount: money(cost.cents), currency: await this.currencyIn(tx, actor.companyId), runId, riderId, vehicleId, litres: fuel.litres === null ? null : fuel.litres.toFixed(2), km: fuel.km === null ? null : fuel.km.toFixed(1), note: cost.note, key, actorId: actor.userId })
         .returning({ id: deliveryCosts.id });
       if (row === undefined) throw new Error('The cost could not be saved.');
-      await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_cost', id: row.id }, action: 'delivery_cost.running', actor: { type: 'user', id: actor.userId }, reason: { text: cost.note }, outcome: { kind: cost.kind, amount: money(cost.cents), runId } }, tx);
+      await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_cost', id: row.id }, action: 'delivery_cost.running', actor: { type: 'user', id: actor.userId }, reason: { text: cost.note }, outcome: { kind: cost.kind, amount: money(cost.cents), runId, litres: fuel.litres, km: fuel.km } }, tx);
       return { ok: true, data: { id: row.id, replayed: false } };
     });
   }
@@ -183,7 +188,7 @@ export class DeliveryCosts {
       if (again !== undefined) return fail('conflict', 'That cost has already been taken back.');
       const [row] = await tx
         .insert(deliveryCosts)
-        .values({ companyId: actor.companyId, kind: c.kind, amount: money(-Math.round(Number(c.amount) * 100)), currency: c.currency, deliveryId: c.deliveryId, runId: c.runId, riderId: c.riderId, vehicleId: c.vehicleId, courierName: c.courierName, note: reason, key: reversalKey(costId), reversesId: c.id, actorId: actor.userId })
+        .values({ companyId: actor.companyId, kind: c.kind, amount: money(-Math.round(Number(c.amount) * 100)), currency: c.currency, deliveryId: c.deliveryId, runId: c.runId, riderId: c.riderId, vehicleId: c.vehicleId, courierName: c.courierName, litres: c.litres === null ? null : (-Number(c.litres)).toFixed(2), km: c.km === null ? null : (-Number(c.km)).toFixed(1), note: reason, key: reversalKey(costId), reversesId: c.id, actorId: actor.userId })
         .returning({ id: deliveryCosts.id });
       if (row === undefined) throw new Error('The reversal could not be saved.');
       await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_cost', id: costId }, action: 'delivery_cost.reversed', actor: { type: 'user', id: actor.userId }, reason: { text: reason }, outcome: { amount: c.amount } }, tx);
@@ -194,7 +199,7 @@ export class DeliveryCosts {
   // ── Reading ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
   private view(r: typeof deliveryCosts.$inferSelect, deliveryNumber: string | null, riderName: string | null, reversed: boolean, runNumber: string | null, vehicleName: string | null = null): CostView {
-    return { id: r.id, kind: r.kind, kindWords: COST_WORDS[r.kind], amount: r.amount, currency: r.currency, deliveryNumber, runNumber, riderName, vehicleName, courierName: r.courierName, note: r.note, reverses: r.reversesId, reversed, createdAt: r.createdAt.toISOString() };
+    return { id: r.id, kind: r.kind, kindWords: COST_WORDS[r.kind], amount: r.amount, currency: r.currency, deliveryNumber, runNumber, riderName, vehicleName, courierName: r.courierName, litres: r.litres, km: r.km, note: r.note, reverses: r.reversesId, reversed, createdAt: r.createdAt.toISOString() };
   }
 
   /** The costs of one delivery, oldest first, with those that have been taken back marked. */

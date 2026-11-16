@@ -18,7 +18,7 @@ describe('what the SMTP adapter hands the mail server', () => {
       expect.objectContaining({
         from: '"Acme Ltd" <mailer@mail.test>',
         replyTo: 'sales@acme.co.ke',
-        envelope: { from: 'mailer@mail.test', to: 'buyer@customer.test' },
+        envelope: { from: 'mailer@mail.test', to: ['buyer@customer.test'] },
         subject: 'Quotation Q-1',
       }),
     );
@@ -29,7 +29,7 @@ describe('what the SMTP adapter hands the mail server', () => {
     const { adapter, sendMail } = adapterWith({ ...mailbox, policy: 'business' });
     await adapter.send(message);
     expect(sendMail).toHaveBeenCalledWith(
-      expect.objectContaining({ from: '"Acme Ltd" <sales@acme.co.ke>', sender: 'mailer@mail.test', envelope: { from: 'mailer@mail.test', to: 'buyer@customer.test' } }),
+      expect.objectContaining({ from: '"Acme Ltd" <sales@acme.co.ke>', sender: 'mailer@mail.test', envelope: { from: 'mailer@mail.test', to: ['buyer@customer.test'] } }),
     );
   });
 
@@ -72,5 +72,25 @@ describe('when the mail server refuses the sender', () => {
     const down = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNECTION' });
     const { adapter } = adapterWith(mailbox, vi.fn().mockRejectedValue(down));
     await expect(adapter.send(message)).rejects.toBe(down);
+  });
+});
+
+describe('a mail to several people', () => {
+  it('writes to all of them, copies the Cc and blind-copies the Bcc, with everyone in the envelope', async () => {
+    const { adapter, sendMail } = adapterWith(mailbox);
+    await adapter.send({ ...message, toMore: ['b@acme.co.ke'], cc: ['c@acme.co.ke'], bcc: ['d@acme.co.ke', 'D@acme.co.ke'], replyTo: ['sales@acme.co.ke', 'accounts@acme.co.ke'] });
+    const sent = sendMail.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(sent.to).toEqual(['buyer@customer.test', 'b@acme.co.ke']);
+    expect(sent.cc).toEqual(['c@acme.co.ke']);
+    expect(sent.bcc).toEqual(['d@acme.co.ke', 'D@acme.co.ke']);
+    expect(sent.replyTo).toBe('sales@acme.co.ke, accounts@acme.co.ke');
+    expect(sent.envelope).toEqual({ from: 'mailer@mail.test', to: ['buyer@customer.test', 'b@acme.co.ke', 'c@acme.co.ke', 'd@acme.co.ke'] });
+  });
+
+  it('leaves Cc and Bcc off when there are none, as before', async () => {
+    const { adapter, sendMail } = adapterWith(mailbox);
+    await adapter.send({ ...message, cc: [], bcc: [] });
+    expect(sendMail.mock.calls[0]?.[0]).not.toHaveProperty('cc');
+    expect(sendMail.mock.calls[0]?.[0]).not.toHaveProperty('bcc');
   });
 });

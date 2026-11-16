@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { isMessageKind, kindForStep, messageContent, messageKey, reasonForCustomer, MESSAGE_KINDS, type MessageFacts } from './delivery-messages';
+import { DEFAULT_REMINDERS, TEXT_KIND_CHOICES, readReminders, isMessageKind, kindForStep, messageContent, messageKey, minutesToClock, quietEndsAt, readQuietHours, readTextKinds, reasonForCustomer, textContent, MESSAGE_KINDS, type MessageFacts } from './delivery-messages';
 
 const facts: MessageFacts = { tradingName: 'Test Traders', firstName: 'Wanjiru', orderNumber: 'ORD-77', deliveryNumber: 'DLV-26-0000000007', trackUrl: 'https://shop.example.test/track/abc', courierName: null, receivedBy: null,
-  handoverCode: null, reasonCode: null, triesLeft: null };
+  handoverCode: null, reasonCode: null, triesLeft: null, collection: null };
 
 describe('which step sends which message', () => {
   it('sends one for going out, arriving (whole or in part), a failed attempt and a return, and none for the quiet steps', () => {
@@ -68,5 +68,129 @@ describe('the delivery code', () => {
     const m = messageContent('out_for_delivery', facts);
     expect(m.details.some(([k]) => k === 'Delivery code')).toBe(false);
     expect(m.body).not.toContain('delivery code');
+  });
+});
+
+describe('customer text messages', () => {
+  const facts = { tradingName: 'Wanjiku Traders', firstName: 'Achieng', orderNumber: 'ORD-1001', deliveryNumber: 'DLV-55', trackUrl: 'https://shop.example/track/abcdef1234567890abcdef1234567890', courierName: null, receivedBy: 'Brian', handoverCode: '482913', reasonCode: 'customer_absent', triesLeft: 2, collection: null };
+  it('says the state in a few words with the tracking link last, and the code only when it is on its way', () => {
+    const way = textContent('out_for_delivery', facts);
+    expect(way).toContain('on its way');
+    expect(way).toContain('482913');
+    expect(way.endsWith(facts.trackUrl)).toBe(true);
+    expect(textContent('out_for_delivery', { ...facts, handoverCode: null })).not.toContain('code');
+    for (const kind of MESSAGE_KINDS.filter((k) => k !== 'out_for_delivery')) expect(textContent(kind, facts)).not.toContain('482913');
+    expect(textContent('delivered', facts)).toContain('received by Brian');
+    expect(textContent('attempt_failed', facts)).toMatch(/nobody was there to receive it.*2 tries left/);
+    expect(textContent('attempt_failed', { ...facts, triesLeft: 1 })).toContain('1 try left');
+  });
+  it('carries no address, phone number or payment, only what the email carries', () => {
+    for (const kind of MESSAGE_KINDS) {
+      const t = textContent(kind, facts);
+      expect(t).not.toMatch(/\b0[17]\d{8}\b|\+254|KSh|street|road/i);
+      expect(t.length).toBeLessThanOrEqual(306);
+    }
+  });
+  it('shortens the shop name, then drops it, before the link or the facts are cut', () => {
+    const long = textContent('attempt_failed', { ...facts, tradingName: 'A Very Long Trading Name Indeed '.repeat(8) });
+    expect(long.length).toBeLessThanOrEqual(306);
+    expect(long.endsWith(facts.trackUrl)).toBe(true);
+    expect(long).toContain('ORD-1001');
+    expect(textContent('delivered', { ...facts, firstName: '', tradingName: '' })).toMatch(/^Hello, your order ORD-1001 was delivered/);
+  });
+  it('reads the kinds ticked: known ones only, once each, in the usual order', () => {
+    expect(readTextKinds(['delivered', 'out_for_delivery', 'delivered'])).toEqual({ ok: true, kinds: ['out_for_delivery', 'delivered'] });
+    expect(readTextKinds([])).toEqual({ ok: true, kinds: [] });
+    expect(readTextKinds(['nonsense']).ok).toBe(false);
+    expect(readTextKinds('delivered').ok).toBe(false);
+    // The reminder is a choice of its own, listed after the first message about collecting.
+    expect(readTextKinds(['collection_reminder', 'ready_for_collection'])).toEqual({ ok: true, kinds: ['ready_for_collection', 'collection_reminder'] });
+    expect(TEXT_KIND_CHOICES.map((c) => c.kind)).toEqual([...MESSAGE_KINDS]);
+  });
+});
+
+describe('quiet hours for texts', () => {
+  const night = { from: 21 * 60, until: 7 * 60 };
+  const tz = 'Africa/Nairobi';
+  it('reads two times, or none, and refuses half a pair or the same time twice', () => {
+    expect(readQuietHours('21:00', '07:00')).toEqual({ ok: true, quiet: night });
+    expect(readQuietHours('', '')).toEqual({ ok: true, quiet: null });
+    expect(readQuietHours(null, undefined)).toEqual({ ok: true, quiet: null });
+    expect(readQuietHours('21:00', '').ok).toBe(false);
+    expect(readQuietHours('25:00', '07:00').ok).toBe(false);
+    expect(readQuietHours('08:00', '08:00').ok).toBe(false);
+    expect(minutesToClock(7 * 60 + 5)).toBe('07:05');
+  });
+  it('holds a night text until the morning, across midnight, in the business time', () => {
+    // 22:30 in Nairobi is 19:30 UTC; the quiet hours end at 07:00 Nairobi, 04:00 UTC the next day.
+    expect(quietEndsAt(new Date('2026-11-12T19:30:45Z'), night, tz)?.toISOString()).toBe('2026-11-13T04:00:00.000Z');
+    // 02:00 in Nairobi is the same night, so it ends at 07:00 the same day.
+    expect(quietEndsAt(new Date('2026-11-12T23:00:10Z'), night, tz)?.toISOString()).toBe('2026-11-13T04:00:00.000Z');
+  });
+  it('lets a daytime text go, and the very minute the quiet hours end', () => {
+    expect(quietEndsAt(new Date('2026-11-12T09:00:00Z'), night, tz)).toBeNull();
+    expect(quietEndsAt(new Date('2026-11-13T04:00:00Z'), night, tz)).toBeNull();
+    expect(quietEndsAt(new Date('2026-11-12T09:00:00Z'), null, tz)).toBeNull();
+  });
+  it('handles quiet hours inside one day', () => {
+    const lunch = { from: 12 * 60, until: 14 * 60 };
+    expect(quietEndsAt(new Date('2026-11-12T09:30:00Z'), lunch, tz)?.toISOString()).toBe('2026-11-12T11:00:00.000Z');
+    expect(quietEndsAt(new Date('2026-11-12T11:00:00Z'), lunch, tz)).toBeNull();
+  });
+});
+
+describe('ready to collect', () => {
+  const at = { ...facts, collection: { branchName: 'Westlands Branch', code: 'ABC-DEF' } };
+  it('the reminder says how long the order has waited, names the branch and carries the code, and the last one says so', () => {
+    const wait = { ...facts, collection: { branchName: 'Westlands Branch', code: 'ABC-DEF', waitingDays: 3 } };
+    const m = messageContent('collection_reminder', wait);
+    expect(m.heading).toBe('Your order is still waiting for you');
+    expect(m.body).toContain('for 3 days');
+    expect(m.body).not.toContain('last reminder');
+    expect(m.details).toContainEqual(['Collection code', 'ABC-DEF']);
+    expect(messageContent('collection_reminder', { ...wait, collection: { ...wait.collection, waitingDays: 1 } }).body).toContain('for 1 day.');
+    expect(messageContent('collection_reminder', { ...wait, collection: { ...wait.collection, lastReminder: true } }).body).toContain('last reminder');
+    const t = textContent('collection_reminder', wait);
+    expect(t).toMatch(/still waiting at Westlands Branch\. Show code ABC-DEF at the counter/);
+    expect(t.endsWith(facts.trackUrl)).toBe(true);
+  });
+
+  it('says a new code replaces the old one when the code was renewed, and says nothing of the sort the first time', () => {
+    const renewed = { ...facts, collection: { branchName: 'Westlands Branch', code: 'XYZ-123', renewed: true } };
+    const m = messageContent('ready_for_collection', renewed);
+    expect(m.heading).toBe('Your new collection code');
+    expect(m.body).toContain('no longer works');
+    expect(m.details).toContainEqual(['Collection code', 'XYZ-123']);
+    const t = textContent('ready_for_collection', renewed);
+    expect(t).toMatch(/new collection code: XYZ-123\. The old one no longer works/);
+    expect(t.endsWith(facts.trackUrl)).toBe(true);
+    expect(messageContent('ready_for_collection', at).body).not.toContain('no longer works');
+  });
+  it('names the branch and carries the collection code in the mail and the text, and the text stays short with the link last', () => {
+    const m = messageContent('ready_for_collection', at);
+    expect(m.subject).toContain('ready to collect');
+    expect(m.body).toContain('Westlands Branch');
+    expect(m.details).toContainEqual(['Collection code', 'ABC-DEF']);
+    expect(m.details.some(([k]) => k === 'Delivery')).toBe(false);
+    const t = textContent('ready_for_collection', at);
+    expect(t).toMatch(/ready to collect at Westlands Branch\. Show code ABC-DEF at the counter/);
+    expect(t.endsWith(facts.trackUrl)).toBe(true);
+    expect(t.length).toBeLessThanOrEqual(306);
+    expect(textContent('ready_for_collection', { ...at, tradingName: 'A Very Long Trading Name Indeed '.repeat(8) }).length).toBeLessThanOrEqual(306);
+  });
+  it('never carries the code in any other message, and says nothing of a code when it has none', () => {
+    for (const kind of MESSAGE_KINDS.filter((k) => k !== 'ready_for_collection' && k !== 'collection_reminder')) expect(textContent(kind, at)).not.toContain('ABC-DEF');
+    expect(textContent('ready_for_collection', facts)).not.toMatch(/code/i);
+  });
+});
+
+describe('reminder settings as typed', () => {
+  it('takes whole days, the last optional and later than the first, and says why in words when not', () => {
+    expect(readReminders(true, 3, 6)).toEqual({ ok: true, reminders: { enabled: true, firstDays: 3, secondDays: 6 } });
+    expect(readReminders(false, ' 2 ', '')).toEqual({ ok: true, reminders: { enabled: false, firstDays: 2, secondDays: null } });
+    expect(readReminders(true, 30, 60)).toMatchObject({ ok: true });
+    for (const first of [0, 31, 2.5, 'x', '', null, undefined, '1e1', -1]) expect(readReminders(true, first, '')).toMatchObject({ ok: false, error: expect.stringContaining('1 to 30') as string });
+    for (const second of [3, 2, 61, 'later', 4.5]) expect(readReminders(true, 3, second)).toMatchObject({ ok: false, error: expect.stringContaining('later than the first') as string });
+    expect(DEFAULT_REMINDERS).toEqual({ enabled: true, firstDays: 3, secondDays: 6 });
   });
 });

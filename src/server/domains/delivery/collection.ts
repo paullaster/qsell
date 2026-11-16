@@ -1,12 +1,14 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, orderCollections, orders } from '@/server/db/drizzle/schema';
+import { branches, deliveryMessages, deliveryTextSettings, orderCollections, orders } from '@/server/db/drizzle/schema';
 import { COLLECTION_ATTEMPT_LIMIT, generateCollectionCode, isWellFormedCollectionCode, normalizeCollectionCode } from '@/lib/collection-code';
 import { decryptCredentials, encryptCredentials, fingerprintSecret } from '@/server/domains/payments/crypto';
 import { OrderStages } from '@/server/domains/orders/stages';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { orderReadinessProblem } from './order-readiness';
+import { DEFAULT_REMINDERS } from '@/lib/delivery-messages';
+import type { DeliveryMessages } from './messages';
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
@@ -26,6 +28,8 @@ export interface CollectionView {
   branch: { id: string; code: string; name: string; address: string; phone: string | null };
   attemptsLeft: number;
   readyAt: string | null;
+  /** Whole days an order has waited at the counter since it was marked ready; null unless it is ready or locked. */
+  waitingDays: number | null;
   collectedAt: string | null;
   collectedHow: 'code' | 'id_check' | null;
 }
@@ -42,6 +46,11 @@ export type CollectionRefusal =
   | 'not_collectable';
 
 export type CollectionOutcome = { ok: true; view: CollectionView } | { ok: false; reason: CollectionRefusal; message: string; attemptsLeft?: number };
+
+/** Whole days an order has waited at the counter since it was marked ready. */
+export const waitedDays = (readyAt: Date, now: Date): number => Math.max(0, Math.floor((now.getTime() - readyAt.getTime()) / 86_400_000));
+
+const CLOSED_WORDS = 'This order was cancelled or refunded, so it is not handed over.';
 
 const fail = (reason: CollectionRefusal, message: string, attemptsLeft?: number): CollectionOutcome => ({ ok: false, reason, message, ...(attemptsLeft === undefined ? {} : { attemptsLeft }) });
 
@@ -68,6 +77,8 @@ export class OrderCollections {
     private readonly db: DrizzleDb,
     private readonly decisions: DecisionLog,
     private readonly randomSource: (count: number) => Uint8Array = (count) => new Uint8Array(randomBytes(count)),
+    /** Tells the customer, by mail and (when the company has it on) text, that the order is ready to collect. */
+    private readonly messages: Pick<DeliveryMessages, 'enqueueIn'> | null = null,
   ) {}
 
   private fingerprint(orderId: string, code: string): string {
@@ -116,6 +127,7 @@ export class OrderCollections {
       branch: { id: row.c.branchId, code: row.code, name: row.name, address, phone: row.phone },
       attemptsLeft: Math.max(0, COLLECTION_ATTEMPT_LIMIT - row.c.failedAttempts),
       readyAt: row.c.readyAt?.toISOString() ?? null,
+      waitingDays: (row.c.status === 'ready' || row.c.status === 'locked') && row.c.readyAt !== null ? waitedDays(row.c.readyAt, new Date()) : null,
       collectedAt: row.c.collectedAt?.toISOString() ?? null,
       collectedHow: row.c.collectedHow,
     };
@@ -126,6 +138,22 @@ export class OrderCollections {
     const view = await this.viewIn(db, companyId, orderId);
     if (view === null) throw new Error(`The collection of order ${orderId} vanished while it was locked.`);
     return view;
+  }
+
+  /** For a page of orders at once: how many whole days each one that is left at the counter has waited (a day or more only), for the orders list. One query, whatever the page. */
+  async leftAtCounter(companyId: string, orderIds: readonly string[], now: Date = new Date()): Promise<Map<string, number>> {
+    if (orderIds.length === 0) return new Map();
+    const rows = await this.db
+      .select({ orderId: orderCollections.orderId, readyAt: orderCollections.readyAt })
+      .from(orderCollections)
+      .where(and(eq(orderCollections.companyId, companyId), inArray(orderCollections.orderId, [...orderIds]), inArray(orderCollections.status, ['ready', 'locked'])));
+    const waiting = new Map<string, number>();
+    for (const r of rows) {
+      if (r.readyAt === null) continue;
+      const days = waitedDays(r.readyAt, now);
+      if (days >= 1) waiting.set(r.orderId, days);
+    }
+    return waiting;
   }
 
   /** The code, for the customer who owns the order. Not once it is collected, locked or cancelled: there is nothing left to show it for. */
@@ -154,6 +182,8 @@ export class OrderCollections {
       if (row.status === 'ready') return { ok: true, view: await this.requireView(tx, actor.companyId, orderId) };
       await tx.update(orderCollections).set({ status: 'ready', readyAt: new Date(), readyBy: actor.userId, updatedAt: new Date() }).where(eq(orderCollections.orderId, orderId));
       await OrderStages.moveIn(tx, orderId, 'ready', 'succeeded', { actor: { type: 'user', id: actor.userId }, message: 'Ready for collection', detail: { branchId: row.branchId } });
+      // In the same transaction, so there is never a ready order whose customer was never to be told (and never a message for a step that was undone).
+      await this.messages?.enqueueIn(tx, { companyId: actor.companyId, orderId, deliveryId: null, kind: 'ready_for_collection', key: `${orderId}:ready_for_collection:0` });
       return { ok: true, view: await this.requireView(tx, actor.companyId, orderId) };
     });
     return done;
@@ -222,7 +252,7 @@ export class OrderCollections {
       const [row] = await tx.select().from(orderCollections).where(and(eq(orderCollections.orderId, orderId), eq(orderCollections.companyId, actor.companyId))).for('update');
       if (row === undefined) return { ok: false as const, reason: 'not_found' as const, message: 'That order is not waiting to be collected.' };
       if (row.status === 'collected') return { ok: false as const, reason: 'already_collected' as const, message: 'This order has already been collected.' };
-      if (row.status === 'cancelled') return { ok: false as const, reason: 'not_collectable' as const, message: 'This order is not waiting to be collected.' };
+      if (row.status === 'cancelled') return { ok: false as const, reason: 'order_closed' as const, message: CLOSED_WORDS };
       const code = this.newCode();
       await tx
         .update(orderCollections)
@@ -230,14 +260,115 @@ export class OrderCollections {
         .where(eq(orderCollections.orderId, orderId));
       await OrderStages.moveIn(tx, orderId, 'delivery_attempted', 'entered', { actor: { type: 'user', id: actor.userId }, message: 'A new collection code was given', detail: { by: actor.userId } });
       await this.decisions.record({ companyId: actor.companyId, subject: { type: 'order', id: orderId }, action: 'delivery.collection_code_reissued', actor: { type: 'user', id: actor.userId }, from: row.status, to: row.status === 'locked' ? 'waiting' : row.status, reason: { text: reason } }, tx);
+      // A customer who was already told the order is ready holds a code that no longer works: send the new one. Before that, the first
+      // message carries whatever the code is when it goes, so there is nothing to correct.
+      if (row.readyAt !== null && this.messages !== null) {
+        const [counted] = await tx.select({ n: sql<number>`count(*)::int` }).from(deliveryMessages).where(and(eq(deliveryMessages.orderId, orderId), eq(deliveryMessages.kind, 'ready_for_collection'), eq(deliveryMessages.channel, 'email')));
+        // Anything not yet sent would carry the new code too, so it is replaced rather than sent twice.
+        await tx.update(deliveryMessages).set({ status: 'skipped', lastError: 'A newer message with the new code replaces it.' }).where(and(eq(deliveryMessages.orderId, orderId), eq(deliveryMessages.kind, 'ready_for_collection'), inArray(deliveryMessages.status, ['queued', 'failed'])));
+        await this.messages.enqueueIn(tx, { companyId: actor.companyId, orderId, deliveryId: null, kind: 'ready_for_collection', key: `${orderId}:ready_for_collection:${String(counted?.n ?? 1)}` });
+      }
       return { ok: true as const, code, view: await this.requireView(tx, actor.companyId, orderId) };
     });
+  }
+
+  /**
+   * Staff: remind the customer now that the order is still at the counter, without waiting for the next automatic reminder. Only for an
+   * order that is ready or locked; once a day at most for an order, so a double press or a busy counter cannot flood the customer. It
+   * is a message of its own (the key says "manual"), so it does not use up or move the automatic reminder stages, and the decision log
+   * records who sent it.
+   */
+  async remindNow(actor: CollectionActor, orderId: string, now: Date = new Date()): Promise<CollectionOutcome> {
+    if (this.messages === null) return fail('not_collectable', 'Messages to customers are not set up.');
+    const messages = this.messages;
+    return await this.db.transaction(async (tx): Promise<CollectionOutcome> => {
+      const [row] = await tx.select({ status: orderCollections.status, readyAt: orderCollections.readyAt }).from(orderCollections).where(and(eq(orderCollections.orderId, orderId), eq(orderCollections.companyId, actor.companyId))).for('update');
+      if (row === undefined) return fail('not_found', 'That order is not waiting to be collected.');
+      if (row.status === 'collected') return fail('already_collected', 'This order has already been collected.');
+      if (row.status === 'cancelled') return fail('order_closed', CLOSED_WORDS);
+      if ((row.status !== 'ready' && row.status !== 'locked') || row.readyAt === null) return fail('not_collectable', 'Only an order that is ready at the counter can be reminded. Mark it ready first.');
+      if (waitedDays(row.readyAt, now) < 1) return fail('bad_input', 'This order was marked ready less than a day ago. A reminder can go once it has waited a day.');
+      const [had] = await tx
+        .select({ n: sql<number>`count(*)::int`, last: sql<Date | null>`max(${deliveryMessages.createdAt})` })
+        .from(deliveryMessages)
+        .where(and(eq(deliveryMessages.companyId, actor.companyId), eq(deliveryMessages.orderId, orderId), eq(deliveryMessages.kind, 'collection_reminder'), eq(deliveryMessages.channel, 'email'), sql`${deliveryMessages.messageKey} like '%:collection_reminder:manual:%'`));
+      if (had?.last != null && now.getTime() - new Date(had.last).getTime() < 86_400_000) return fail('bad_input', 'The customer was already reminded in the last day. Try again tomorrow, or call them.');
+      await messages.enqueueIn(tx, { companyId: actor.companyId, orderId, deliveryId: null, kind: 'collection_reminder', key: `${orderId}:collection_reminder:manual:${String((had?.n ?? 0) + 1)}` });
+      await this.decisions.record({ companyId: actor.companyId, subject: { type: 'order', id: orderId }, action: 'delivery.collection_reminder_sent_by_staff', actor: { type: 'user', id: actor.userId }, reason: { code: 'staff_reminder' } }, tx);
+      return { ok: true, view: await this.requireView(tx, actor.companyId, orderId) };
+    });
+  }
+
+  /**
+   * Orders that have sat ready at the counter past the days their company chose (3, and then 6, unless changed or turned off) get a
+   * reminder, once for each stage: the message key carries the stage, so a repeated or overlapping scan queues nothing new, and a scan
+   * that was down for days queues only the latest stage that is due. An order that is collected, cancelled or has had its last
+   * reminder drops out of the search. Returns how many reminders were queued.
+   */
+  async remindUncollected(now: Date = new Date(), limit = 200): Promise<number> {
+    // Orders cancelled, refunded or failed before collections followed their order are closed first, so none is reminded.
+    await this.closeForClosedOrders();
+    const first = sql`coalesce(${deliveryTextSettings.collectionReminderFirstDays}, ${DEFAULT_REMINDERS.firstDays})`;
+    const stages = sql`case when ${deliveryTextSettings.companyId} is null then 2 when ${deliveryTextSettings.collectionReminderSecondDays} is null then 1 else 2 end`;
+    const candidates = await this.db
+      .select({
+        orderId: orderCollections.orderId,
+        companyId: orderCollections.companyId,
+        readyAt: orderCollections.readyAt,
+        first: sql<number>`${first}::int`,
+        second: sql<number | null>`case when ${deliveryTextSettings.companyId} is null then ${DEFAULT_REMINDERS.secondDays ?? 0}::int else ${deliveryTextSettings.collectionReminderSecondDays} end`,
+      })
+      .from(orderCollections)
+      .leftJoin(deliveryTextSettings, eq(deliveryTextSettings.companyId, orderCollections.companyId))
+      .where(
+        and(
+          inArray(orderCollections.status, ['ready', 'locked']),
+          sql`coalesce(${deliveryTextSettings.collectionRemindersOn}, true)`,
+          lte(orderCollections.readyAt, sql`${now.toISOString()}::timestamptz - make_interval(days => ${first})`),
+          // Not when the last stage has already been queued.
+          sql`coalesce((select max((substring(m.message_key from ':collection_reminder:([0-9]+)'))::int) from ${deliveryMessages} m where m.company_id = ${orderCollections.companyId} and m.order_id = ${orderCollections.orderId} and m.kind = 'collection_reminder'), 0) < ${stages}`,
+        ),
+      )
+      .orderBy(orderCollections.readyAt)
+      .limit(limit);
+    let queued = 0;
+    for (const c of candidates) {
+      if (c.readyAt === null || this.messages === null) continue;
+      const waited = (now.getTime() - c.readyAt.getTime()) / 86_400_000;
+      const last = c.second === null ? 1 : 2;
+      const reachedFirst = waited >= c.first;
+      const stage = c.second !== null && waited >= c.second ? 2 : Number(reachedFirst);
+      if (stage === 0) continue;
+      const messages = this.messages;
+      const made = await this.db.transaction(async (tx) => {
+        // Look again under the lock: it may have been collected since the search.
+        const [row] = await tx.select({ status: orderCollections.status }).from(orderCollections).where(and(eq(orderCollections.orderId, c.orderId), eq(orderCollections.companyId, c.companyId))).for('update');
+        if (row === undefined || (row.status !== 'ready' && row.status !== 'locked')) return false;
+        const [had] = await tx.select({ n: sql<number>`coalesce(max((substring(${deliveryMessages.messageKey} from ':collection_reminder:([0-9]+)'))::int), 0)` }).from(deliveryMessages).where(and(eq(deliveryMessages.companyId, c.companyId), eq(deliveryMessages.orderId, c.orderId), eq(deliveryMessages.kind, 'collection_reminder')));
+        if ((had?.n ?? 0) >= stage) return false;
+        const key = `${c.orderId}:collection_reminder:${String(stage)}${stage === last ? ':last' : ''}`;
+        await messages.enqueueIn(tx, { companyId: c.companyId, orderId: c.orderId, deliveryId: null, kind: 'collection_reminder', key });
+        return true;
+      });
+      if (made) queued += 1;
+    }
+    return queued;
+  }
+
+  /** Closes collections still open for an order that is cancelled, refunded or failed. Idempotent; returns how many it closed. */
+  async closeForClosedOrders(): Promise<number> {
+    const closed = await this.db
+      .update(orderCollections)
+      .set({ status: 'cancelled', updatedAt: new Date() })
+      .where(and(inArray(orderCollections.status, ['waiting', 'ready', 'locked']), sql`exists (select 1 from ${orders} o where o.id = ${orderCollections.orderId} and o.status in ('cancelled','refunded','failed'))`))
+      .returning({ id: orderCollections.orderId });
+    return closed.length;
   }
 
   private statusProblem(status: CollectionStatus): CollectionOutcome | null {
     if (status === 'collected') return fail('already_collected', 'This order has already been collected.');
     if (status === 'locked') return fail('locked', 'This order’s code is locked. Give the customer a new code first.', 0);
-    if (status !== 'waiting' && status !== 'ready') return fail('not_collectable', 'This order is not waiting to be collected.');
+    if (status === 'cancelled') return fail('order_closed', CLOSED_WORDS);
     return null;
   }
 

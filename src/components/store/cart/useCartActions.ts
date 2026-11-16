@@ -4,6 +4,7 @@ import { useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import type { PublicProduct } from '@/types/index';
 import { cartQuantityWords } from '@/lib/cart-quantity';
+import { productHref } from '@/lib/product-link';
 import { useCart } from '@/components/store/cart/CartProvider';
 import { useToast } from '@/components/store/ToastProvider';
 
@@ -15,6 +16,12 @@ export function useCartActions() {
 
   const addToCart = useCallback(
     (product: PublicProduct, quantity = 1): boolean => {
+      // A package is built from choices, so it is never added as it stands: the shopper goes to its page to choose.
+      if (product.isPackage === true) {
+        toast({ type: 'info', title: 'Choose your options', message: `${product.name} is made to order. Pick what you want on its page.` });
+        router.push(productHref(product));
+        return false;
+      }
       const outcome = cart.add(product, quantity);
       if (outcome === 'sold_out') {
         toast({ type: 'error', title: 'Sold out', message: `${product.name} is out of stock right now.` });
@@ -35,7 +42,7 @@ export function useCartActions() {
       toast({ type: 'success', title: 'Added to your cart', message: `${product.name} is in your cart.` });
       return true;
     },
-    [cart, toast],
+    [cart, toast, router],
   );
 
   const buyNow = useCallback(
