@@ -82,6 +82,19 @@ export const deliveryMessagesSweep = async (_payload: unknown, helpers: JobHelpe
     return 0;
   });
   if (reminded > 0) helpers.logger.info(`Collection reminders queued: ${String(reminded)}`);
+  // Visits booked for an order that has since been cancelled are cancelled, so no crew is sent.
+  const visits = await getContainer().orderVisits.closeForClosedOrders().catch((error: unknown) => {
+    helpers.logger.error(`Visits for closed orders: ${String(error)}`);
+    return 0;
+  });
+  if (visits > 0) helpers.logger.info(`Visits cancelled for closed orders: ${String(visits)}`);
+};
+
+/** Worker cron task: issue the stock of staff documents whose moment has come (paid, or approved), so a held document leaves the shelf soon after it is paid. */
+export const stockReleaseSweep = async (_payload: unknown, helpers: JobHelpers) => {
+  const { InventoryReservationService } = await import('@/server/domains/inventory/reservation-service');
+  const issued = await InventoryReservationService.issueDue(100);
+  if (issued > 0) helpers.logger.info(`Stock issued for ${String(issued)} paid or approved documents`);
 };
 
 /** A mail to a shopper about their order (placed, payment received). A failure is thrown so the worker tries again later. */
@@ -555,6 +568,7 @@ export const tasks = {
   'provider-send-operation': providerSendOperation,
   'provider-sweep': providerSweep,
   'delivery-messages-sweep': deliveryMessagesSweep,
+  'stock-release-sweep': stockReleaseSweep,
   'shop-order-email': shopOrderEmail,
   'shop-quote-request-email': shopQuoteRequestEmail,
   'shop-cart-reminder-sweep': shopCartReminderSweep,

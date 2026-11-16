@@ -1,5 +1,5 @@
 import { packageAsLineRefusal, packageOnlyRefusal } from '@/lib/package-only';
-import { creditDaysFor, type SellingSettings } from '@/server/domains/selling/selling-documents';
+import { creditDaysFor, stockReleaseFor, type SellingSettings } from '@/server/domains/selling/selling-documents';
 import type { RawPick } from '@/server/domains/pricing/domain/packages';
 import type { PreparedPackage } from '@/server/domains/pricing/package-order-service';
 import { quantityProblem } from '@/lib/unit-rules';
@@ -174,6 +174,8 @@ export const OrderWriteService = {
      * credit days, approval and discounts. Left out, the order behaves as it always has (the shop, and callers that predate the settings).
      */
     selling?: SellingSettings;
+    /** Hold this one document's stock until it is paid, where its kind allows it (the staff member switched it on). */
+    holdUntilPaid?: boolean;
     /**
      * The staff member placing the order. Orders on the sales-order and credit channels are sent
      * for approval when a workflow says so; without one (a shop checkout) they never are.
@@ -730,7 +732,8 @@ export const OrderWriteService = {
       {
         channel: isSalesChannel(salesModule) ? salesModule : 'ecommerce',
         branchId: branchId ?? null,
-        payNow: (ONLINE_PAYMENT_METHODS as readonly string[]).includes(params.paymentMethod),
+        // A shopper paying now holds stock only for the hold time. A kind of sale the company's settings govern keeps its own stock as it chose (until issued, or until paid).
+        payNow: params.selling === undefined && (ONLINE_PAYMENT_METHODS as readonly string[]).includes(params.paymentMethod),
       },
     );
     if (!reservation.success) {
@@ -805,6 +808,11 @@ export const OrderWriteService = {
         (await customers.hasOverdueInvoice(tradeCustomer.id, params.selling.overdueDays));
       const overCreditLimit = overLimit || overdue;
       const overCreditWords = overdue && !overLimit ? `${tradeCustomer.name} has an invoice overdue by more than ${String(params.selling?.overdueDays ?? 0)} days.` : `${tradeCustomer.name} would exceed the credit limit of ${Number(tradeCustomer.creditLimit).toLocaleString()}.`;
+      if (params.holdUntilPaid === true && params.selling?.allowHoldUntilPaid !== true) throw new Error('This kind of sale cannot be held until it is paid.');
+      // When the stock is issued is decided now and kept with the order, so a later change of the settings leaves it alone.
+      if (params.selling !== undefined) {
+        order.stockRelease = stockReleaseFor(params.selling, { holdUntilPaid: params.holdUntilPaid === true, hasCreditAccount: tradeCustomer.accountType === 'credit' });
+      }
       // A kind of sale that refuses over the limit never asks for approval: it is refused here, before anything is requested.
       if (overCreditLimit && params.selling?.overLimit === 'refuse') throw new Error(overCreditWords);
       // The trade customer is the durable identity for this order.
@@ -994,6 +1002,16 @@ export const OrderWriteService = {
 
     // The stock was set aside before the order existed; now the order's own timeline says so, and where.
     if (stockItems.length > 0) await InventoryReservationService.recordReserved(orderId, stockItems);
+
+    // Stock that is to leave when the document is issued does so now; one waiting for approval is issued when it is approved, and one
+    // held until paid when it is paid. A failure here never undoes the order: the stock stays reserved and can be issued by hand.
+    if (order.stockRelease === 'on_issue' && order.approvalStatus !== 'pending') {
+      await InventoryReservationService.fulfilOrder(order.id).catch((error: unknown) => console.error('[orders] could not issue the stock', order.id, error));
+    }
+    // A document whose invoice is made with it gets its tax invoice now (not while it waits for approval); signing never holds it up.
+    if (params.selling?.invoice === 'with_document' && order.approvalStatus !== 'pending') {
+      await getContainer().invoices.generatePdf(order.id, 'tax_invoice').catch((error: unknown) => console.error('[orders] the invoice was not made', order.id, error));
+    }
 
     void broadcastRealtime('order_event', { type: 'order_created', order });
 

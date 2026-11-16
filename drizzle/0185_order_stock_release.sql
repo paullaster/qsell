@@ -1,0 +1,3 @@
+ALTER TABLE "orders" ADD COLUMN "stock_release" text;--> statement-breakpoint
+CREATE INDEX "orders_stock_release_due_idx" ON "orders" USING btree ("created_at") WHERE "orders"."stock_release" IN ('on_issue', 'on_payment');--> statement-breakpoint
+ALTER TABLE "orders" ADD CONSTRAINT "orders_stock_release_chk" CHECK ("orders"."stock_release" IS NULL OR "orders"."stock_release" IN ('on_issue', 'on_payment', 'on_delivery'));

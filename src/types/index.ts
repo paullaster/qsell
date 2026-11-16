@@ -369,6 +369,8 @@ export interface Order {
   currentStageSince?: string | null;
   /** Invoicing module this sale belongs to; decides which signing switch applies. */
   salesModule?: 'ecommerce' | 'sales_order' | 'credit_sale' | 'pos_cash_sale' | 'sales_invoice';
+  /** When the reserved stock is issued (decided when the order was placed); absent follows the stock module's setting. */
+  stockRelease?: 'on_issue' | 'on_payment' | 'on_delivery' | null;
   createdAt: string;
   updatedAt: string;
   /** The discounts applied when the order was priced (rules, coupons, amounts). */

@@ -3186,6 +3186,8 @@ export const orders = pgTable(
     customerAccountType: text('customer_account_type'),
     /** Which invoicing module the sale belongs to; decides which signing switch applies. */
     salesModule: text('sales_module').$type<SigningModule>().notNull().default('ecommerce'),
+    /** When this order's reserved stock is issued, decided when it was placed (a staff document's kind, or Hold until paid); null follows the stock module's own setting, as web shop orders always have. */
+    stockRelease: text('stock_release').$type<'on_issue' | 'on_payment' | 'on_delivery'>(),
     /** 'none' until approvals apply; 'pending'/'rejected'/'draft' block the order from moving on. */
     approvalStatus: text('approval_status')
       .$type<'none' | 'pending' | 'approved' | 'rejected' | 'draft'>()
@@ -3204,6 +3206,8 @@ export const orders = pgTable(
     uniqueIndex('orders_order_number_uidx').on(t.orderNumber),
     index('orders_customer_email_idx').on(t.customerEmail),
     index('orders_status_idx').on(t.status),
+    check('orders_stock_release_chk', sql`${t.stockRelease} IS NULL OR ${t.stockRelease} IN ('on_issue', 'on_payment', 'on_delivery')`),
+    index('orders_stock_release_due_idx').on(t.createdAt).where(sql`${t.stockRelease} IN ('on_issue', 'on_payment')`),
     // Orders still waiting for their timeline to be rebuilt (the worker's backfill reads only these).
     index('orders_stage_unseeded_idx')
       .on(t.id)

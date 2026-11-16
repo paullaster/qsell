@@ -313,6 +313,33 @@ export class InventoryReservationService {
    * Convert a reservation into a real deduction once payment succeeds.
    * No-op if the order was already fulfilled or released.
    */
+  /**
+   * Issues the stock of staff documents whose release is due: the stock of one issued with the document (when that did not happen at
+   * placing, or it waited for approval) and of one held until paid, once it is paid. Idempotent: an order already issued, released or
+   * held for approval is left alone. Run every minute by the worker; returns how many it issued.
+   */
+  static async issueDue(limit = 50): Promise<number> {
+    const due = await drizzleDb.execute<{ id: string }>(sql`
+      SELECT o.id FROM orders o
+       WHERE o.stock_release IN ('on_issue', 'on_payment')
+         AND o.status NOT IN ('cancelled', 'failed', 'refunded')
+         AND o.approval_status NOT IN ('pending', 'rejected', 'draft')
+         AND (o.stock_release = 'on_issue' OR o.payment_status = 'paid')
+         AND NOT EXISTS (SELECT 1 FROM order_stage_events e WHERE e.order_id = o.id AND e.stage IN ('stock_issued', 'stock_released'))
+       ORDER BY o.created_at
+       LIMIT ${limit}`);
+    let issued = 0;
+    for (const row of due) {
+      try {
+        await this.fulfilOrder(row.id);
+        issued += 1;
+      } catch (error) {
+        console.error('[stock] could not issue the stock of order', row.id, error);
+      }
+    }
+    return issued;
+  }
+
   static async fulfilOrder(orderId: string): Promise<void> {
     const container = getContainer();
     if (await container.stockSettings.isLedgerMode()) {

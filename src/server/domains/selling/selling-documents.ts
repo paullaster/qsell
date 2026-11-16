@@ -8,7 +8,7 @@ export type SellingType = (typeof SELLING_TYPES)[number];
 export const isSellingType = (value: unknown): value is SellingType => typeof value === 'string' && (SELLING_TYPES as readonly string[]).includes(value);
 
 export const CREDIT_CHECKS = ['off', 'limit', 'limit_and_overdue'] as const;
-export const NO_ACCOUNT_RULES = ['allow', 'refuse'] as const;
+export const NO_ACCOUNT_RULES = ['allow', 'refuse', 'pay_first'] as const;
 export const OVER_LIMIT_RULES = ['refuse', 'hold'] as const;
 export const CREDIT_DAYS_RULES = ['customer', 'fixed', 'on_issue'] as const;
 export const STOCK_RELEASES = ['on_issue', 'on_payment', 'on_delivery'] as const;
@@ -59,6 +59,7 @@ export const OPTION_WORDS: Record<EnumSetting, Record<string, { label: string; d
   noAccount: {
     allow: { label: 'Allow', description: 'A customer without a credit account may buy' },
     refuse: { label: 'Refuse', description: 'Only customers with a credit account' },
+    pay_first: { label: 'Require payment first', description: 'A customer without a credit account may buy, but the stock is held until they have paid' },
   },
   overLimit: {
     refuse: { label: 'Refuse', description: 'The document is not accepted' },
@@ -160,6 +161,16 @@ export function checkSellingInput(type: SellingType, raw: unknown): CheckedSetti
   // A document that never waits for credit cannot be held over a limit it never checks.
   if (out.creditCheck === 'off' && out.overLimit === 'hold') out.overLimit = defOf(type).defaults.overLimit === 'hold' ? 'refuse' : out.overLimit;
   return { ok: true, settings: out };
+}
+
+/**
+ * When an order's reserved stock is issued, decided at placing and kept on the order: the document's own "Hold until paid" (where the
+ * kind allows it), a customer without a credit account under "Require payment first", otherwise the kind's setting.
+ */
+export function stockReleaseFor(settings: SellingSettings, order: { holdUntilPaid: boolean; hasCreditAccount: boolean }): (typeof STOCK_RELEASES)[number] {
+  if (order.holdUntilPaid && settings.allowHoldUntilPaid) return 'on_payment';
+  if (settings.noAccount === 'pay_first' && !order.hasCreditAccount) return 'on_payment';
+  return settings.stockRelease;
 }
 
 /** The date a document falls due, in days after it is issued, under the type's credit-days rule. */
