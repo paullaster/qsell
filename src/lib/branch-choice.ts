@@ -37,7 +37,9 @@ export type ChoiceReason =
   /** The customer's position is not known, so the branch is chosen by what it holds (then its code). */
   | 'position_unknown'
   /** The customer chose the branch to collect from. */
-  | 'customer_chose';
+  | 'customer_chose'
+  /** The order was taken by staff for a branch, and the delivery was planned afterwards from that branch. */
+  | 'staff_chose';
 
 export interface BranchChoiceResult {
   chosen: BranchOption | null;
@@ -112,6 +114,8 @@ export function choiceWords(result: BranchChoiceResult): string {
       return `${c.name} holds the most of it. The customer's position is not known, so distance was not used.`;
     case 'customer_chose':
       return `The customer chose to collect from ${c.name}.`;
+    case 'staff_chose':
+      return `The order was taken for ${c.name}, and the delivery was planned from there by staff.`;
     case 'no_branch':
       return 'No branch can deliver this order.';
   }

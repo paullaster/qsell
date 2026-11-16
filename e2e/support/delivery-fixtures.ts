@@ -224,6 +224,32 @@ async function advance(id: string, number: string): Promise<Record<string, strin
   return { number, id };
 }
 
+/** A paid order for one salt taken by staff for the fixture's branch, with no delivery plan, as a converted quote is. */
+async function unplannedOrder(tag: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { products, branches } = await import('@/server/db/drizzle/schema');
+  const { OrderWriteService } = await import('@/server/domains/orders/write-service');
+  const { OrderStages } = await import('@/server/domains/orders/stages');
+  const [branch] = await db.select({ id: branches.id }).from(branches).where(eq(branches.code, `E${tag}`.slice(0, 20)));
+  const [salt] = await db.select({ id: products.id }).from(products).where(eq(products.name, 'Salt 500g'));
+  if (branch === undefined || salt === undefined) throw new Error('e2e fixture: the branch or the seeded products are not there');
+  const orderNumber = `E2E-UP-${tag}`.toUpperCase();
+  const made = await OrderWriteService.createOrder({
+    orderNumber,
+    customerName: `Quote Buyer ${tag}`,
+    customerEmail: `quote-${tag}@example.test`.toLowerCase(),
+    customerPhone: '0711000888',
+    shippingAddress: { street: '7 Kimathi Street', city: 'Nairobi', countyOrState: 'Nairobi', country: 'Kenya' },
+    items: [{ productId: salt.id, quantity: 1 }],
+    currency: 'KES',
+    paymentMethod: 'mpesa_daraja',
+    branchId: branch.id,
+  });
+  if (!made.success || made.order === undefined) throw new Error(`e2e fixture: the order was refused: ${made.error ?? 'no reason'}`);
+  await OrderStages.move(db, made.order.id, 'payment_confirmed', 'succeeded', {});
+  return { orderNumber, orderId: made.order.id };
+}
+
 /** A paid order for one salt that is to be sent by courier from the fixture's branch, placed the way the shop places it. */
 async function courierOrder(tag: string, again = ''): Promise<Record<string, string>> {
   const { getContainer } = await import('@/server/di/container');
@@ -330,6 +356,7 @@ async function main(): Promise<void> {
   if (command === 'messages') result = await messages(tag);
   if (command === 'deliver-promised' && extra !== undefined) result = await deliverPromised(tag, extra);
   if (command === 'courier-order') result = await courierOrder(tag);
+  if (command === 'unplanned-order') result = await unplannedOrder(tag);
   if (command === 'courier-charge' && extra !== undefined) result = await courierCharge(tag, extra.split('|')[0] ?? '', extra.split('|')[1] ?? '0');
   if (command === 'service') result = { id: await serviceItem(), name: SERVICE_NAME };
   if (result === null) throw new Error('usage: delivery-fixtures open|close|order|billing|service|pay|collection <tag>');

@@ -7,6 +7,7 @@ import { createDeliveryAction, orderDeliveriesAction } from '@/server/domains/de
 import { replaceTrackingLinkAction, trackingLinkAction, type TrackingLinkView } from '@/server/domains/delivery/tracking-actions';
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
 import { Chip, attempt, fieldClass, primaryClass } from '@/components/ui/screen-kit';
+import { OrderPlanDeliveryForm } from './OrderPlanDeliveryForm';
 import { ORDER_STATE_WORDS, type DeliveryStatus, type OrderDeliveryState } from '@/lib/delivery-document';
 
 type Loaded = Extract<Awaited<ReturnType<typeof orderDeliveriesAction>>, { ok: true }>['data'];
@@ -46,7 +47,9 @@ export function OrderDeliveriesPanel({ orderId, onChanged }: { orderId: string; 
     let cancelled = false;
     void orderDeliveriesAction(orderId).then((r) => {
       if (cancelled) return;
-      if (!r.ok || !r.data.eligible.ok) setHidden(true);
+      // An order that was never planned for delivery is offered the form to plan it, to those who may; any other order that is not delivered by a document is not drawn.
+      const planAsked = r.ok && !r.data.eligible.ok && r.data.eligible.needsPlan === true && r.data.canFulfil;
+      if (!r.ok || (!r.data.eligible.ok && !planAsked)) setHidden(true);
       else {
         setData(r.data);
         setHidden(false);
@@ -58,6 +61,9 @@ export function OrderDeliveriesPanel({ orderId, onChanged }: { orderId: string; 
   }, [orderId, version]);
 
   if (hidden || data === null) return null;
+  if (!data.eligible.ok) {
+    return <OrderPlanDeliveryForm orderId={orderId} prefill={data.prefill} onPlanned={() => { setVersion((v) => v + 1); onChanged(); }} />;
+  }
   const open = data.lines.filter((l) => l.open > 0);
   const quantityFor = (line: Loaded['lines'][number]): string => asked[line.productId] ?? String(line.open);
 

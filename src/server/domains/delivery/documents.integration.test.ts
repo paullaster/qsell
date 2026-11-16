@@ -56,7 +56,7 @@ describe.skipIf(!has(url))('deliveries of an order (database)', () => {
   };
 
   /** A placed, paid order of two products (5 and 2), delivered by the shop's own riders from a branch that holds them. */
-  const order = async (over: { pay?: boolean; quantities?: [number, number]; wholeUnits?: boolean; method?: 'own_fleet' | 'courier' | 'pickup' } = {}) => {
+  const order = async (over: { pay?: boolean; quantities?: [number, number]; wholeUnits?: boolean; method?: 'own_fleet' | 'courier' | 'pickup'; unplanned?: boolean } = {}) => {
     const method = over.method ?? 'own_fleet';
     const [b] = await db.insert(schema.branches).values({ companyId, code: code(), name: `Branch ${code()}`, latitude: PIN.latitude, longitude: PIN.longitude }).returning();
     const branchId = b?.id ?? '';
@@ -77,7 +77,8 @@ describe.skipIf(!has(url))('deliveries of an order (database)', () => {
       orderNumber: `DD-${randomUUID()}`, customerName: 'Delivered Buyer', customerEmail: `dd-${randomUUID()}@deliver.test`, customerPhone: '0700000000',
       shippingAddress: { street: '1 Test Rd', city: 'Nairobi', countyOrState: 'Nairobi', country: 'KE' },
       items: [{ productId: a, quantity: qa }, { productId: bProduct, quantity: qb }], currency: 'KES', paymentMethod: 'mpesa_daraja',
-      delivery: method === 'pickup' ? { method, pickupBranchId: branchId } : { method, pin: PIN },
+      // An order taken by staff, or converted from a quote, comes with its branch and no delivery plan.
+      ...(over.unplanned === true ? { branchId } : { delivery: method === 'pickup' ? { method, pickupBranchId: branchId } : { method, pin: PIN } }),
     });
     if (!r.success || r.order === undefined) throw new Error(r.error);
     if (over.pay !== false) await OrderStages.move(db, r.order.id, 'payment_confirmed', 'succeeded', {});
@@ -370,6 +371,41 @@ describe.skipIf(!has(url))('deliveries of an order (database)', () => {
       expect(await c.deliveryDocuments.cancel(staff(), gone, { reason: 'Changed our minds' })).toMatchObject({ ok: false, reason: 'not_allowed' });
       const log = await db.select().from(schema.decisionLog).where(and(eq(schema.decisionLog.subjectId, id), eq(schema.decisionLog.action, 'delivery.cancel')));
       expect(log[0]).toMatchObject({ reasonText: 'Customer asked us to wait' });
+    });
+
+    it('plans the delivery of an order taken by staff, from its own branch and for the charge already on it, and then it is delivered like any other', async () => {
+      const o = await order({ unplanned: true });
+      // Before: it has no plan, so no delivery can be made, and the overview says staff can plan it, starting from the order's own address.
+      expect(await c.deliveryDocuments.create(staff(), o.id, { lines: null })).toMatchObject({ ok: false, reason: 'not_found', message: expect.stringContaining('no delivery to make') as string });
+      expect(await c.deliveryDocuments.forOrder(companyId, o.id)).toMatchObject({ eligible: { ok: false, needsPlan: true }, prefill: { town: 'Nairobi', county: 'Nairobi', street: '1 Test Rd' } });
+      // Refused in words: nothing chosen, nowhere to go, half a receiver, an order that is not this company's or does not exist.
+      const plan = (input: Record<string, unknown>) => c.orderDeliveries.planStaffOrder(staff(), o.id, input as Parameters<typeof c.orderDeliveries.planStaffOrder>[2]);
+      expect(await plan({ method: 'drone', town: 'Nairobi' })).toMatchObject({ ok: false, reason: 'bad_input', message: expect.stringContaining('how it is delivered') as string });
+      expect(await plan({ method: 'own_fleet' })).toMatchObject({ ok: false, reason: 'bad_input', message: expect.stringContaining('town or area') as string });
+      expect(await plan({ method: 'own_fleet', town: 'Nairobi', recipientName: 'Mama Wanjiku' })).toMatchObject({ ok: false, reason: 'bad_input', message: expect.stringContaining('both the name and the phone') as string });
+      expect(await c.orderDeliveries.planStaffOrder(staff(), randomUUID(), { method: 'own_fleet', town: 'Nairobi' })).toMatchObject({ ok: false, reason: 'not_found' });
+      expect(await c.orderDeliveries.forOrder(companyId, o.id)).toBeNull();
+      // Planned: the record carries the order's branch, its charge as it stands, the words and the receiver; the decision log says who and why.
+      const done = await plan({ method: 'own_fleet', county: 'Nairobi', town: 'Nairobi', area: 'Westlands', recipientName: 'Mama Wanjiku', recipientPhone: '0722 111 222', notes: 'Blue gate' });
+      expect(done).toMatchObject({ ok: true });
+      const [taken] = await db.select({ fee: schema.orders.shippingFee }).from(schema.orders).where(eq(schema.orders.id, o.id));
+      expect(await c.orderDeliveries.forOrder(companyId, o.id)).toMatchObject({ method: 'own_fleet', branchId: o.branchId, chargeAmount: Number(taken?.fee ?? 0).toFixed(2), chargeTax: '0.00', recipientName: 'Mama Wanjiku', notes: 'Blue gate', destination: { pin: null, address: { town: 'Nairobi', area: 'Westlands' }, positionFrom: 'none' }, choice: { reason: 'staff_chose' } });
+      const log = await db.select().from(schema.decisionLog).where(and(eq(schema.decisionLog.subjectId, o.id), eq(schema.decisionLog.action, 'delivery.planned_by_staff')));
+      expect(log).toHaveLength(1);
+      // Only once: a second plan is refused and changes nothing.
+      expect(await plan({ method: 'courier', town: 'Mombasa' })).toMatchObject({ ok: false, reason: 'not_allowed', message: expect.stringContaining('already has its delivery planned') as string });
+      expect((await c.orderDeliveries.forOrder(companyId, o.id))?.method).toBe('own_fleet');
+      // And now it is delivered like any other: a delivery can be made, to the receiver and the words given, and the street is the order's.
+      const id = await made(o);
+      expect(await view(id)).toMatchObject({ recipientName: 'Mama Wanjiku', notes: 'Blue gate', street: '1 Test Rd', destination: { address: { area: 'Westlands' } } });
+      expect(await c.deliveryDocuments.forOrder(companyId, o.id)).toMatchObject({ eligible: { ok: true }, prefill: null });
+    });
+
+    it('does not offer to plan an order that is cancelled', async () => {
+      const o = await order({ unplanned: true });
+      await db.update(schema.orders).set({ status: 'cancelled' }).where(eq(schema.orders.id, o.id));
+      expect(await c.deliveryDocuments.forOrder(companyId, o.id)).toMatchObject({ eligible: { ok: false, reason: expect.stringContaining('cancelled') as string } });
+      expect(await c.orderDeliveries.planStaffOrder(staff(), o.id, { method: 'own_fleet', town: 'Nairobi' })).toMatchObject({ ok: false, reason: 'not_allowed' });
     });
 
     it('corrects the street the order was written with, and nothing else about where it goes, until it goes out', async () => {

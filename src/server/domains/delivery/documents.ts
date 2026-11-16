@@ -171,8 +171,10 @@ export interface OrderDeliveries {
   /** Per product: ordered, on live deliveries, delivered and still open, with the product's name. */
   lines: (OrderDeliveryStatus['lines'][number] & { productName: string; sku: string; decimals: number })[];
   deliveries: { id: string; number: string; status: DeliveryStatus; statusWords: string; lineCount: number }[];
-  /** Whether the order is one that gets a delivery document at all, and if not why. */
-  eligible: { ok: true } | { ok: false; reason: string };
+  /** Whether the order is one that gets a delivery document at all, and if not why. `needsPlan`: it was never planned for delivery (taken by staff, or from a quote), and staff can plan it. */
+  eligible: { ok: true } | { ok: false; reason: string; needsPlan?: true };
+  /** For an order that needs its delivery planned: the address it was taken with, to start the form from. */
+  prefill: { county: string; town: string; street: string } | null;
 }
 
 const PAGE = 25;
@@ -897,7 +899,7 @@ export class DeliveryDocuments {
 
   /** An order's deliveries and what it has left, for its own screen. Null when there is no such order. */
   async forOrder(companyId: string, orderId: string): Promise<OrderDeliveries | null> {
-    const [order] = await this.db.select({ id: orders.id, status: orders.status, paymentStatus: orders.paymentStatus, approvalStatus: orders.approvalStatus, paymentMethod: orders.paymentMethod }).from(orders).where(eq(orders.id, orderId));
+    const [order] = await this.db.select({ id: orders.id, status: orders.status, paymentStatus: orders.paymentStatus, approvalStatus: orders.approvalStatus, paymentMethod: orders.paymentMethod, address: orders.shippingAddress }).from(orders).where(eq(orders.id, orderId));
     if (order === undefined) return null;
     const [chosen] = await this.db.select({ method: orderDeliveries.method }).from(orderDeliveries).where(and(eq(orderDeliveries.orderId, orderId), eq(orderDeliveries.companyId, companyId)));
     const ordered = await this.db
@@ -914,10 +916,13 @@ export class DeliveryDocuments {
       .where(and(eq(deliveries.orderId, orderId), eq(deliveries.companyId, companyId)))
       .orderBy(asc(deliveries.createdAt));
     let eligible: OrderDeliveries['eligible'] = { ok: true };
-    if (chosen === undefined) eligible = { ok: false, reason: 'This order has no delivery.' };
+    if (chosen === undefined) eligible = orderReadinessProblem(order)?.reason === 'order_closed' ? { ok: false, reason: 'This order was cancelled or refunded.' } : { ok: false, reason: 'This order has no delivery plan yet.', needsPlan: true };
     else if (!isDocumentMethod(chosen.method)) eligible = { ok: false, reason: chosen.method === 'pickup' ? 'This order is collected from a branch.' : 'This kind of delivery is not made here yet.' };
     else if (orderReadinessProblem(order)?.reason === 'order_closed') eligible = { ok: false, reason: 'This order was cancelled or refunded.' };
+    const needsPlan = !eligible.ok && eligible.needsPlan === true;
+    const written = needsPlan ? order.address : undefined;
     return {
+      prefill: written === undefined ? null : { county: written.countyOrState, town: written.city, street: written.street },
       state: status.state,
       lines: status.lines.map((l) => ({ ...l, productName: names.get(l.productId)?.name ?? l.productId, sku: names.get(l.productId)?.sku ?? '', decimals: decimals.get(l.productId)?.decimals ?? 3 })),
       deliveries: list.map((d) => ({ id: d.id, number: d.number, status: d.status, statusWords: STATUS_WORDS[d.status], lineCount: d.lineCount })),
