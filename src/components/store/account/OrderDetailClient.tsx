@@ -24,6 +24,21 @@ function DeliveryProgress({ tracking }: { tracking: Promise<AccountResult<MyOrde
       <h2 className="text-lg font-semibold text-fg-strong">{t.kind === 'collection' ? 'Collecting your order' : 'Your delivery'}</h2>
       <p className="mt-1 text-sm font-medium text-fg-strong">{t.headline}</p>
       {t.detail === null ? null : <p className="text-sm text-fg-muted">{t.detail}</p>}
+      {t.collection === null ? null : (
+        <div className="mt-3 space-y-1 text-sm">
+          <p className="font-semibold text-fg-strong">{t.collection.branchName}</p>
+          {t.collection.address === '' ? null : <p className="break-words text-fg-muted">{t.collection.address}</p>}
+          {t.collection.phone === null ? null : <p className="text-fg-muted">{t.collection.phone}</p>}
+          {t.collection.code === null ? null : (
+            <div className="pt-1">
+              <p className="text-xs text-fg-muted">Show this code at the counter. It works once, so keep it to yourself.</p>
+              <p aria-label={`Collection code ${t.collection.code.split('').join(' ')}`} className="mt-1 font-mono text-3xl font-bold tracking-widest text-fg-strong">
+                {`${t.collection.code.slice(0, 3)}-${t.collection.code.slice(3)}`}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
       {t.deliveries.length === 0 ? null : (
         <ul aria-label="Deliveries of this order" className="mt-3 space-y-2 text-sm">
           {t.deliveries.map((d) => (

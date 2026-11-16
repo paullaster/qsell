@@ -348,9 +348,11 @@ export interface MyOrderTracking {
   deliveries: { number: string; words: string; window: { start: string; end: string } | null; receivedBy: string | null }[];
   /** The page that follows the order and can be shared with whoever receives it; null when it has been turned off. */
   link: string | null;
+  /** For an order to be collected: where, and the code to show at the counter. The code is the owner's own, only until the order is collected, and is never in the shareable page. */
+  collection: { branchName: string; address: string; phone: string | null; code: string | null } | null;
 }
 
-/** How one of the signed-in shopper's own orders is getting to them; null for an order that has no delivery to follow. */
+/** How one of the signed-in shopper's own orders is getting to them (with the collection code, for their own order only); null for an order that has no delivery to follow. */
 export async function myOrderTrackingAction(id: string): Promise<AccountResult<MyOrderTracking | null>> {
   try {
     const mine = await ownerOf();
@@ -365,7 +367,9 @@ export async function myOrderTrackingAction(id: string): Promise<AccountResult<M
     const link = token === null ? null : `${resolvePublicBaseUrl(company.publicBaseUrl)}/track/${token}`;
     if (tracked.kind === 'collection') {
       const words = tracked.collection === null ? { headline: 'You will collect this order', detail: '' } : collectionWords(tracked.collection);
-      return { ok: true, data: { headline: words.headline, detail: words.detail === '' ? null : words.detail, kind: 'collection', deliveries: [], link } };
+      const [view, code] = await Promise.all([c.orderCollections.view(company.id, order.id), c.orderCollections.codeFor(company.id, order.id)]);
+      const where = view === null ? null : { branchName: view.branch.name, address: view.branch.address, phone: view.branch.phone, code };
+      return { ok: true, data: { headline: words.headline, detail: words.detail === '' ? null : words.detail, kind: 'collection', deliveries: [], link, collection: where } };
     }
     return {
       ok: true,
@@ -375,6 +379,7 @@ export async function myOrderTrackingAction(id: string): Promise<AccountResult<M
         kind: 'delivery',
         deliveries: tracked.deliveries.map((d) => ({ number: d.number, words: CUSTOMER_STATUS_WORDS[d.status], window: d.window ?? null, receivedBy: d.receivedBy })),
         link,
+        collection: null,
       },
     };
   } catch (error) {

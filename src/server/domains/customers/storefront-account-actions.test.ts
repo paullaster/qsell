@@ -10,6 +10,8 @@ const deleteAddress = vi.fn();
 const setDefaultAddress = vi.fn();
 const forOrder = vi.fn();
 const tokenFor = vi.fn();
+const collectionView = vi.fn();
+const codeFor = vi.fn();
 
 vi.mock('@/auth', () => ({ auth: (...args: unknown[]) => auth(...args) as unknown }));
 vi.mock('@/server/domains/access-control/guard', () => ({
@@ -31,6 +33,7 @@ vi.mock('@/server/di/container', () => ({
     orders: { pageForOwner, getById },
     trackedOrders: { forOrder },
     trackingLinks: { tokenFor },
+    orderCollections: { view: collectionView, codeFor },
     customers: {
       ensureStorefrontCustomer: () =>
         Promise.resolve({
@@ -197,7 +200,21 @@ describe('where my order is', () => {
     getById.mockResolvedValue(base);
     forOrder.mockResolvedValue({ storeName: 'Shop', orderNumber: 'SO-1', placedAt: '2026-11-15T08:00:00Z', kind: 'collection', state: 'not_started', waiting: [], deliveries: [], collection: { branchName: 'Westlands Branch', status: 'ready' } });
     tokenFor.mockResolvedValue(null);
-    expect(await actions.myOrderTrackingAction('o1')).toMatchObject({ ok: true, data: { kind: 'collection', headline: 'Your order is ready to collect', detail: expect.stringContaining('Westlands Branch') as string, deliveries: [], link: null } });
+    collectionView.mockResolvedValue({ branch: { name: 'Westlands Branch', address: '5 Moi Avenue, Nairobi', phone: '0711000000' } });
+    codeFor.mockResolvedValue('ABCDEF');
+    // The owner is given the branch and their own code; the code is looked up only for an order that is theirs.
+    expect(await actions.myOrderTrackingAction('o1')).toMatchObject({ ok: true, data: { kind: 'collection', headline: 'Your order is ready to collect', detail: expect.stringContaining('Westlands Branch') as string, deliveries: [], link: null, collection: { branchName: 'Westlands Branch', address: '5 Moi Avenue, Nairobi', phone: '0711000000', code: 'ABCDEF' } } });
+    expect(codeFor).toHaveBeenCalledWith('co-1', 'o1');
+    // Once it is collected the code is no longer given (the service answers null).
+    codeFor.mockResolvedValue(null);
+    expect(await actions.myOrderTrackingAction('o1')).toMatchObject({ ok: true, data: { collection: { code: null } } });
+  });
+  it('never looks up a collection code for an order that is not the shopper’s', async () => {
+    signedIn();
+    getById.mockResolvedValue({ ...base, userId: 'someone-else' });
+    await actions.myOrderTrackingAction('o1');
+    expect(codeFor).not.toHaveBeenCalled();
+    expect(collectionView).not.toHaveBeenCalled();
   });
 });
 
