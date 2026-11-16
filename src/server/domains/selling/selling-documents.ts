@@ -8,11 +8,11 @@ export type SellingType = (typeof SELLING_TYPES)[number];
 export const isSellingType = (value: unknown): value is SellingType => typeof value === 'string' && (SELLING_TYPES as readonly string[]).includes(value);
 
 export const CREDIT_CHECKS = ['off', 'limit', 'limit_and_overdue'] as const;
-export const NO_ACCOUNT_RULES = ['allow', 'refuse', 'pay_first'] as const;
+export const NO_ACCOUNT_RULES = ['allow', 'refuse'] as const;
 export const OVER_LIMIT_RULES = ['refuse', 'hold'] as const;
 export const CREDIT_DAYS_RULES = ['customer', 'fixed', 'on_issue'] as const;
 export const STOCK_RELEASES = ['on_issue', 'on_payment', 'on_delivery'] as const;
-export const APPROVAL_RULES = ['workflow', 'always', 'never'] as const;
+export const APPROVAL_RULES = ['workflow', 'never'] as const;
 export const INVOICE_TIMINGS = ['with_document', 'later'] as const;
 export const DISCOUNT_RULES = ['allowed', 'not_allowed'] as const;
 
@@ -59,11 +59,10 @@ export const OPTION_WORDS: Record<EnumSetting, Record<string, { label: string; d
   noAccount: {
     allow: { label: 'Allow', description: 'A customer without a credit account may buy' },
     refuse: { label: 'Refuse', description: 'Only customers with a credit account' },
-    pay_first: { label: 'Require payment first', description: 'A customer without a credit account must pay before the goods are released' },
   },
   overLimit: {
     refuse: { label: 'Refuse', description: 'The document is not accepted' },
-    hold: { label: 'Hold and ask for approval', description: 'The document is kept on hold with its stock reserved until approved or rejected' },
+    hold: { label: 'Ask for approval', description: 'The company\'s approval workflows decide: the document waits, with its stock reserved, until approved or rejected; with no workflow that covers it, it is refused' },
   },
   creditDays: {
     customer: { label: 'The customer\'s payment terms', description: 'Due after the days on the customer\'s account' },
@@ -76,8 +75,7 @@ export const OPTION_WORDS: Record<EnumSetting, Record<string, { label: string; d
     on_delivery: { label: 'At delivery or collection', description: 'Stock leaves at goods issue, when the goods are handed over' },
   },
   approval: {
-    workflow: { label: 'By the company\'s approval workflows', description: 'Waits only when a workflow matches' },
-    always: { label: 'Always needs approval', description: 'Every document waits for an approver' },
+    workflow: { label: 'By the company\'s approval workflows', description: 'Waits only when a workflow matches (price floors, size, the customer\'s limit)' },
     never: { label: 'Never needs approval', description: 'No document waits (price floors and limits still apply)' },
   },
   invoice: {
