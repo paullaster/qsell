@@ -561,6 +561,12 @@ export const PERMISSIONS = {
     category: 'Company & Settings',
     description: 'Choose who receives the business emails (quotes and web shop orders), who is copied, where replies go, and which business emails a quote shows',
   },
+  'selling_settings:manage': {
+    resource: 'selling_settings',
+    action: 'manage',
+    category: 'Company & Settings',
+    description: 'Choose how sales orders, sales invoices, credit sales and cash sales behave: the credit check, credit days, when stock is released, approval and invoicing',
+  },
   'gl_accounts:read': {
     resource: 'gl_accounts',
     action: 'read',

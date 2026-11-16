@@ -368,7 +368,7 @@ export interface Order {
   currentStage?: string | null;
   currentStageSince?: string | null;
   /** Invoicing module this sale belongs to; decides which signing switch applies. */
-  salesModule?: 'ecommerce' | 'sales_order' | 'credit_sale' | 'pos_cash_sale';
+  salesModule?: 'ecommerce' | 'sales_order' | 'credit_sale' | 'pos_cash_sale' | 'sales_invoice';
   createdAt: string;
   updatedAt: string;
   /** The discounts applied when the order was priced (rules, coupons, amounts). */

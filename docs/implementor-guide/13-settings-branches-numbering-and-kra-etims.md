@@ -124,6 +124,22 @@ Every client sends text messages through their own SMS provider, so the provider
 
 The keys are sealed when saved, are never shown again (not in the list, not when the connection is opened to change it) and are used only at the moment a message is sent. Which fields are secret is part of each provider's definition. Nothing is sent by the test except a fixed sentence naming the business (*Test message from …: your SMS provider is connected.*), so the button cannot be used to send anything else; the number typed is not kept, and the same connection can be tested once every half minute. A client whose provider is not in the list needs a new adapter built (a development task, not a setting); the screen and everything that sends messages stay as they are.
 
+### 7c. Selling Documents (`/admin/settings/selling-documents`)
+How each kind of staff sale behaves: **Sales orders**, **Credit sales**, **Sales invoices** (a sale invoiced directly, with no sales order) and **Cash sales**. Behind its own permission (**Selling settings**, *Company & Settings*). One card per kind says what it is, whether it is **As built in** or **Changed**, and each choice in words.
+
+- **Credit check**: *No credit check*, *Check the credit limit* (the customer's balance plus this document against their limit) or *Check the limit and overdue invoices* (also when an invoice is overdue by more than the days you give). It applies to customers with a credit account; their limit and payment terms stay on the customer.
+- **Customer without a credit account**: *Allow*, *Refuse* or *Require payment first*.
+- **When over the limit**: *Refuse*, or *Hold and ask for approval* (the document is kept on hold with its stock reserved until an approver releases or rejects it).
+- **Credit days**: *The customer's payment terms* (the days on their account), *A fixed number of days* for every customer, or *Due on issue*. This sets the due date on the invoice and the customer's ledger.
+- **Stock is released**: *When the document is issued*, *When payment is received* (this is "hold until paid", and choosing it on every kind gives **always hold until paid**), or *At delivery or collection*. "Released" means the reserved stock is issued: on-hand falls and the order records the stock-issued stage.
+- **Approval**: *By the company's approval workflows*, *Always needs approval* or *Never needs approval* (price floors and limits still apply).
+- **The invoice is made**: *Issued with the document* or *Raised by staff later*.
+- **Discounts**: *Staff may discount* or *No discounts* (the pricing guard and override limits still apply).
+- **Hold until paid for a single document**: when ticked, staff may switch it on for one document whatever the kind's stock setting says (not offered for cash sales).
+- **Cash sales offer no credit**: their credit check, credit days, approval and stock choices are fixed (no credit, due at once, never waits, stock leaves when sold), and they need an open shift.
+- **Changing a card**: press **Change**, choose, give a **reason**, **Save**; **Put back as built in** (asks first). It applies to the next document, and every change is recorded with who, when and why. A setting that is missing or damaged behaves as built in, so a sale is never stopped by a bad setting.
+- **Not on this screen yet**: the sales screens themselves (they arrive with the Sales Orders, Sales Invoices, Credit Sales and Cash Sales modules), and per-customer rules, which stay on the customer's account.
+
 ### 7b. Email Routing (`/admin/settings/email-routing`)
 Who each business email goes to, and which business emails a quote shows. Behind its own permission (**Email routing**, in the *Company & Settings* group); without it the screen is not in the menu and its pickers refuse.
 

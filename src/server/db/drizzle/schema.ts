@@ -4152,7 +4152,7 @@ export const stockLocations = pgTable(
     sellsChannels: text('sells_channels')
       .array()
       .notNull()
-      .default(sql`ARRAY['ecommerce','sales_order','credit_sale','pos_cash_sale']::text[]`),
+      .default(sql`ARRAY['ecommerce','sales_order','credit_sale','pos_cash_sale','sales_invoice']::text[]`),
     fulfilsDelivery: boolean('fulfils_delivery').notNull().default(true),
     allowNegative: boolean('allow_negative').notNull().default(false),
     isDefault: boolean('is_default').notNull().default(false),
@@ -4647,6 +4647,28 @@ export const reconciliationLogs = pgTable(
 );
 
 /** Per-company gross-margin approval floor for sales quotes. */
+/**
+ * How each selling document type (sales order, sales invoice, credit sale, cash sale) behaves for this company: the credit check, credit
+ * days, when stock is released, approval, invoice timing (docs/architecture/selling-documents.md section 4.6). Read through the pure
+ * `readSellingSettings`, never trusted as stored; a type with no row behaves by its defaults.
+ */
+export const sellingDocumentSettings = pgTable(
+  'selling_document_settings',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    docType: text('doc_type').notNull(),
+    config: jsonb('config').$type<Record<string, unknown>>().notNull().default({}),
+    version: integer('version').notNull().default(1),
+    updatedBy: text('updated_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('selling_document_settings_company_type_uidx').on(t.companyId, t.docType)],
+);
+
 /**
  * Who each business mail is written to, copied, blind-copied and answered by, and which business emails a quote shows, per point
  * (see docs/architecture/email-routing.md). The config is read through the pure `readRouteConfig`, never trusted as stored.

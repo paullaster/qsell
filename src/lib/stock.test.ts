@@ -34,7 +34,7 @@ describe('checkLocation', () => {
   it('accepts a plain location and fills in the defaults', () => {
     expect(checkLocation(good)).toEqual({
       ok: true,
-      location: { code: 'MAIN', name: 'Main stock', kind: 'warehouse', branchId: null, address: '', isSellable: true, sellsChannels: ['ecommerce', 'sales_order', 'credit_sale', 'pos_cash_sale'], fulfilsDelivery: true, allowNegative: false },
+      location: { code: 'MAIN', name: 'Main stock', kind: 'warehouse', branchId: null, address: '', isSellable: true, sellsChannels: ['ecommerce', 'sales_order', 'credit_sale', 'pos_cash_sale', 'sales_invoice'], fulfilsDelivery: true, allowNegative: false },
     });
   });
   it('trims, and keeps each channel once', () => {

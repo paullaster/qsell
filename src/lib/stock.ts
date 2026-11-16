@@ -27,7 +27,7 @@ export type LocationKind = (typeof LOCATION_KINDS)[number];
 /** Kinds that never count toward what can be sold, whatever else is set on them. */
 export const NEVER_SELLABLE_KINDS: readonly LocationKind[] = ['quarantine', 'damaged', 'transit'];
 
-export const SALES_CHANNELS = ['ecommerce', 'sales_order', 'credit_sale', 'pos_cash_sale'] as const;
+export const SALES_CHANNELS = ['ecommerce', 'sales_order', 'credit_sale', 'pos_cash_sale', 'sales_invoice'] as const;
 export type SalesChannel = (typeof SALES_CHANNELS)[number];
 
 export function isLocationKind(value: unknown): value is LocationKind {

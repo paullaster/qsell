@@ -167,7 +167,7 @@ export const OrderWriteService = {
      * The invoicing module this sale belongs to. Defaults to the store. A sale on account is
      * always a credit sale, whatever channel it came through.
      */
-    salesModule?: 'ecommerce' | 'sales_order' | 'pos_cash_sale';
+    salesModule?: 'ecommerce' | 'sales_order' | 'pos_cash_sale' | 'sales_invoice';
     /**
      * The staff member placing the order. Orders on the sales-order and credit channels are sent
      * for approval when a workflow says so; without one (a shop checkout) they never are.

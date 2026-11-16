@@ -1352,6 +1352,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'sms:manage',
       },
       {
+        id: 'settings-selling-documents',
+        title: 'Selling Documents',
+        name: 'settings-selling-documents',
+        href: '/admin/settings/selling-documents',
+        description: 'How sales orders, sales invoices, credit sales and cash sales behave: credit check, credit days, when stock is released, approval and invoicing',
+        icon: 'FileText',
+        permission: 'selling_settings:manage',
+      },
+      {
         id: 'settings-email-routing',
         title: 'Email Routing',
         name: 'settings-email-routing',

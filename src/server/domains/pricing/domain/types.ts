@@ -35,7 +35,7 @@ export type Scopes = Partial<Record<ScopeDimension, ScopeRule>>;
 /** Sales types a price list can be scoped to. */
 export const SALES_TYPES = ['cash', 'credit'] as const;
 /** Channels a price list can be scoped to (the invoicing module the sale belongs to). */
-export const CHANNELS = ['ecommerce', 'sales_order', 'credit_sale', 'pos_cash_sale'] as const;
+export const CHANNELS = ['ecommerce', 'sales_order', 'credit_sale', 'pos_cash_sale', 'sales_invoice'] as const;
 
 export type QuantityMode = 'all_units' | 'incremental';
 export type PriceListKind = 'list' | 'contract';

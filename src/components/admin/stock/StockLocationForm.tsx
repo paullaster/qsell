@@ -12,6 +12,7 @@ const CHANNEL_WORDS: Record<SalesChannel, string> = {
   sales_order: 'Sales orders',
   credit_sale: 'Credit sales',
   pos_cash_sale: 'Point of sale',
+  sales_invoice: 'Sales invoices',
 };
 const KIND_WORDS: Record<string, string> = {
   warehouse: 'Warehouse',

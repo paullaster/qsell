@@ -14,7 +14,7 @@ import { CHANNELS } from '@/server/domains/pricing/domain/types';
 const text = (v: unknown): string => (typeof v === 'string' ? v : '');
 
 /** The words for the parts of the business a charge can be limited to. */
-export const CHANNEL_WORDS: Record<string, string> = { ecommerce: 'Web shop', sales_order: 'Sales orders', credit_sale: 'Credit sales', pos_cash_sale: 'Point of sale' };
+export const CHANNEL_WORDS: Record<string, string> = { ecommerce: 'Web shop', sales_order: 'Sales orders', credit_sale: 'Credit sales', pos_cash_sale: 'Point of sale', sales_invoice: 'Sales invoices' };
 
 /** The delivery zones, for choosing one in a rate or an area. Stopped zones are not offered. */
 const zones = tableSource({
