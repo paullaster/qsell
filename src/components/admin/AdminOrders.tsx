@@ -17,7 +17,7 @@ import type { Choice } from '@/lib/payment-options';
 import type { Order } from '@/types/index';
 import { OrderDetailsModal, type FulfilmentChange } from './orders/OrderDetailsModal';
 import { OrderInvoicePreview } from './orders/OrderInvoicePreview';
-import { OrderStatusBadge } from './orders/OrderStatusBadge';
+import { LeftAtCounterBadge, OrderStatusBadge } from './orders/OrderStatusBadge';
 
 /** The order (and invoice preview) the address asked to open, read on the server. */
 export interface OpenTarget {
@@ -233,7 +233,10 @@ export function AdminOrders({ firstPage, companyPromise, canEditProductsPromise,
                       {new Date(o.createdAt).toLocaleString()}
                     </p>
                   </div>
-                  <OrderStatusBadge status={o.status} />
+                  <div className="flex flex-col items-end gap-1">
+                    <OrderStatusBadge status={o.status} />
+                    {o.leftAtCounterDays === undefined ? null : <LeftAtCounterBadge days={o.leftAtCounterDays} />}
+                  </div>
                 </div>
                 <div>
                   <p className="font-semibold text-fg-strong">{o.customerName}</p>
@@ -322,7 +325,10 @@ export function AdminOrders({ firstPage, companyPromise, canEditProductsPromise,
                       </div>
                     </td>
                     <td className="px-4 py-3.5 text-center">
-                      <OrderStatusBadge status={o.status} />
+                      <div className="flex flex-col items-center gap-1">
+                        <OrderStatusBadge status={o.status} />
+                        {o.leftAtCounterDays === undefined ? null : <LeftAtCounterBadge days={o.leftAtCounterDays} />}
+                      </div>
                     </td>
                     <td className="px-4 py-3.5 text-right">
                       <button type="button" onClick={() => open(o)} className={buttonClass}>

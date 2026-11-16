@@ -158,6 +158,21 @@ async function collection(orderNumber: string): Promise<Record<string, string>> 
   return { orderStatus: order.status, status: row?.status ?? '', how: row?.collectedHow ?? '', attempts: String(row?.failedAttempts ?? 0), code: code ?? '' };
 }
 
+/** Marks an order's collection ready, as the counter does, and makes it have been ready `daysAgo` days, so a test need not wait for the time to pass. */
+async function markCollectionReady(orderNumber: string, daysAgo: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { orders, orderCollections } = await import('@/server/db/drizzle/schema');
+  const c = getContainer();
+  const company = await c.companySettings.ensureSeeded();
+  const [order] = await db.select({ id: orders.id }).from(orders).where(eq(orders.orderNumber, orderNumber));
+  if (order === undefined) throw new Error(`e2e fixture: no order ${orderNumber}`);
+  const done = await c.orderCollections.markReady({ companyId: company.id, userId: 'e2e' }, order.id);
+  if (!done.ok) throw new Error(`e2e fixture: ${done.message}`);
+  await db.update(orderCollections).set({ readyAt: new Date(Date.now() - Number(daysAgo) * 86_400_000 - 60_000) }).where(eq(orderCollections.orderId, order.id));
+  return { ready: orderNumber, daysAgo };
+}
+
 /**
  * Makes a delivery for the whole of an order and takes it to ready to go, as a person would on its screen, so a test of the dispatch
  * board need not click through all of that. Prints the delivery number.
@@ -309,6 +324,7 @@ async function main(): Promise<void> {
   if (command === 'pay') result = await pay(tag);
   if (command === 'collection') result = await collection(tag);
   if (command === 'ready') result = await ready(tag, extra);
+  if (command === 'collection-ready' && extra !== undefined) result = await markCollectionReady(tag, extra);
   if (command === 'advance' && extra !== undefined) result = await advance(tag, extra);
   if (command === 'set-email' && extra !== undefined) result = await setEmail(tag, extra);
   if (command === 'messages') result = await messages(tag);

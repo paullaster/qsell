@@ -25,7 +25,12 @@ export async function ordersPageAction(input: { query?: string; status?: string 
   }
   const status = typeof input.status === 'string' && (ORDER_STATUSES as readonly string[]).includes(input.status) ? (input.status as OrderStatus) : null;
   try {
-    return { ok: true, data: await getContainer().orders.page({ query: input.query, status, cursor: input.cursor }) };
+    const c = getContainer();
+    const page = await c.orders.page({ query: input.query, status, cursor: input.cursor });
+    // Orders left at the counter are flagged on the list, read for the whole page in one query.
+    const company = await c.companySettings.ensureSeeded();
+    const left = await c.orderCollections.leftAtCounter(company.id, page.rows.map((o) => o.id));
+    return { ok: true, data: { ...page, rows: page.rows.map((o) => (left.has(o.id) ? { ...o, leftAtCounterDays: left.get(o.id) } : o)) } };
   } catch (error) {
     console.error('[orders] page', error);
     return { ok: false, error: 'The orders could not be loaded. Please try again.' };

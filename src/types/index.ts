@@ -344,6 +344,8 @@ export interface Order {
   paymentMethod: PaymentProvider;
   shippingCourier?: string;
   trackingNumber?: string;
+  /** Staff list only: whole days an order to be collected has been left at the counter (one or more); absent otherwise. */
+  leftAtCounterDays?: number;
   internalNotes?: string;
   shippedAt?: string;
   deliveredAt?: string;

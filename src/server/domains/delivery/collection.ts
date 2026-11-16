@@ -47,6 +47,9 @@ export type CollectionRefusal =
 
 export type CollectionOutcome = { ok: true; view: CollectionView } | { ok: false; reason: CollectionRefusal; message: string; attemptsLeft?: number };
 
+/** Whole days an order has waited at the counter since it was marked ready. */
+export const waitedDays = (readyAt: Date, now: Date): number => Math.max(0, Math.floor((now.getTime() - readyAt.getTime()) / 86_400_000));
+
 const fail = (reason: CollectionRefusal, message: string, attemptsLeft?: number): CollectionOutcome => ({ ok: false, reason, message, ...(attemptsLeft === undefined ? {} : { attemptsLeft }) });
 
 /** The order states from which an order is not handed over, with what to say. */
@@ -122,7 +125,7 @@ export class OrderCollections {
       branch: { id: row.c.branchId, code: row.code, name: row.name, address, phone: row.phone },
       attemptsLeft: Math.max(0, COLLECTION_ATTEMPT_LIMIT - row.c.failedAttempts),
       readyAt: row.c.readyAt?.toISOString() ?? null,
-      waitingDays: (row.c.status === 'ready' || row.c.status === 'locked') && row.c.readyAt !== null ? Math.max(0, Math.floor((Date.now() - row.c.readyAt.getTime()) / 86_400_000)) : null,
+      waitingDays: (row.c.status === 'ready' || row.c.status === 'locked') && row.c.readyAt !== null ? waitedDays(row.c.readyAt, new Date()) : null,
       collectedAt: row.c.collectedAt?.toISOString() ?? null,
       collectedHow: row.c.collectedHow,
     };
@@ -133,6 +136,22 @@ export class OrderCollections {
     const view = await this.viewIn(db, companyId, orderId);
     if (view === null) throw new Error(`The collection of order ${orderId} vanished while it was locked.`);
     return view;
+  }
+
+  /** For a page of orders at once: how many whole days each one that is left at the counter has waited (a day or more only), for the orders list. One query, whatever the page. */
+  async leftAtCounter(companyId: string, orderIds: readonly string[], now: Date = new Date()): Promise<Map<string, number>> {
+    if (orderIds.length === 0) return new Map();
+    const rows = await this.db
+      .select({ orderId: orderCollections.orderId, readyAt: orderCollections.readyAt })
+      .from(orderCollections)
+      .where(and(eq(orderCollections.companyId, companyId), inArray(orderCollections.orderId, [...orderIds]), inArray(orderCollections.status, ['ready', 'locked'])));
+    const waiting = new Map<string, number>();
+    for (const r of rows) {
+      if (r.readyAt === null) continue;
+      const days = waitedDays(r.readyAt, now);
+      if (days >= 1) waiting.set(r.orderId, days);
+    }
+    return waiting;
   }
 
   /** The code, for the customer who owns the order. Not once it is collected, locked or cancelled: there is nothing left to show it for. */

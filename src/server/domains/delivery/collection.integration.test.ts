@@ -372,6 +372,33 @@ describe.skipIf(!has(url))('collecting an order from a branch (database)', () =>
         expect((await db.select().from(schema.deliveryMessages).where(and(eq(schema.deliveryMessages.orderId, done.order.id), eq(schema.deliveryMessages.kind, 'collection_reminder'))))[0]?.status).toBe('skipped');
       });
 
+      it('flags the orders left at the counter on the staff list, for the whole page at once, from a day on, and not once collected', async () => {
+        const day = 86_400_000;
+        const mark = async (w: Awaited<ReturnType<typeof waiting>>, daysAgo: number) => {
+          await c.orderCollections.markReady(staff(), w.order.id);
+          await db.update(schema.orderCollections).set({ readyAt: new Date(Date.now() - daysAgo * day - 60_000) }).where(eq(schema.orderCollections.orderId, w.order.id));
+        };
+        const fresh = await waiting();
+        const four = await waiting();
+        const notReady = await waiting();
+        const done = await waiting();
+        await mark(fresh, 0);
+        await mark(four, 4);
+        await mark(done, 5);
+        await c.orderCollections.collectWithCode(staff(), done.order.id, done.code);
+        const ids = [fresh, four, notReady, done].map((w) => w.order.id);
+        const flagged = await c.orderCollections.leftAtCounter(companyId, ids);
+        expect([...flagged.entries()]).toEqual([[four.order.id, 4]]);
+        expect((await c.orderCollections.leftAtCounter(randomUUID(), ids)).size).toBe(0);
+        expect((await c.orderCollections.leftAtCounter(companyId, [])).size).toBe(0);
+        // The staff list carries it on the rows, and only on those rows.
+        const orderActions = await import('@/server/domains/orders/actions');
+        const page = await orderActions.ordersPageAction({ query: four.order.orderNumber });
+        expect(page).toMatchObject({ ok: true, data: { rows: [{ id: four.order.id, leftAtCounterDays: 4 }] } });
+        const other = await orderActions.ordersPageAction({ query: fresh.order.orderNumber });
+        expect(other.ok && other.data.rows.some((r) => r.leftAtCounterDays !== undefined)).toBe(false);
+      });
+
       describe('the company chooses the reminders', () => {
         const setReminders = async (enabled: boolean, firstDays: unknown, secondDays: unknown) => {
           const now = await c.deliveryTextSettings.get(companyId);

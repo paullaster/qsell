@@ -152,6 +152,35 @@ test.describe('collecting an order from a branch', () => {
     }
   });
 
+  test('an order left at the counter is flagged on the staff orders list with the days it has waited, and not when it has only just been marked ready', async ({ page }, testInfo) => {
+    test.slow();
+    const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}`;
+    const email = `waiting-${tag.toLowerCase()}@example.test`;
+    const branchName = deliveryTool('open', tag).branchName ?? '';
+    try {
+      const orderNumber = await placeCollectedOrder(page, branchName, email);
+      deliveryTool('pay', orderNumber);
+      const find = async (): Promise<ReturnType<Page['locator']>> => {
+        await open(page, '/admin/orders', /Customer Orders/);
+        await page.getByLabel('Search orders').fill(orderNumber);
+        const row = page.locator('tr, li').filter({ hasText: orderNumber }).filter({ has: page.getByRole('button', { name: /Manage/ }) }).first();
+        await expect(row).toBeVisible({ timeout: 60_000 });
+        return row;
+      };
+      // Just marked ready: nothing to flag yet.
+      deliveryTool('collection-ready', orderNumber, '0');
+      await expect(await find()).not.toContainText('At counter');
+      // Three days later: the list says so, in words.
+      deliveryTool('collection-ready', orderNumber, '3');
+      const row = await find();
+      await expect(row).toContainText('At counter 3 days', { timeout: 30_000 });
+      await noHorizontalScroll(page);
+      await noInnerHorizontalScroll(page);
+    } finally {
+      deliveryTool('close', tag);
+    }
+  });
+
   test('without a code, a person allowed to may hand the order over after an ID check, saying what was seen and why', async ({ page }, testInfo) => {
     test.slow();
     const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}`;
