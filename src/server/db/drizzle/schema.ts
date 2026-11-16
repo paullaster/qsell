@@ -1424,6 +1424,30 @@ export const orderVisitMaterials = pgTable(
   ],
 );
 
+/** A photo the crew took on a visit (before, after, or something to remember). The picture itself is a private media asset; this says what it is for. */
+export const orderVisitPhotos = pgTable(
+  'order_visit_photos',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    visitId: uuid('visit_id')
+      .notNull()
+      .references(() => orderVisits.id, { onDelete: 'restrict' }),
+    mediaId: text('media_id')
+      .notNull()
+      .references(() => mediaAssets.id, { onDelete: 'restrict' }),
+    kind: text('kind').$type<'before' | 'after' | 'other'>().notNull(),
+    caption: text('caption'),
+    takenBy: text('taken_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('order_visit_photos_visit_idx').on(t.visitId, t.createdAt),
+    uniqueIndex('order_visit_photos_media_uidx').on(t.mediaId),
+    check('order_visit_photos_kind_chk', sql`${t.kind} IN ('before','after','other')`),
+    check('order_visit_photos_caption_chk', sql`${t.caption} IS NULL OR char_length(${t.caption}) <= 200`),
+  ],
+);
+
 /** What the crew does on a visit, in order, each ticked when done. */
 export const orderVisitItems = pgTable(
   'order_visit_items',

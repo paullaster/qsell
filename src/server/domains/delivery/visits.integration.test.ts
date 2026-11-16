@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { has } from '@/lib/values';
 import type * as mod_server_di_container from '@/server/di/container';
 import type * as mod_server_db_drizzle_client from '@/server/db/drizzle/client';
@@ -297,6 +297,85 @@ describe.skipIf(!has(url))('booked visits (database)', () => {
     await must(c.orderVisits.signOff(crewOf(a), v.id, { name: 'Mama Wanjiku' }));
     expect(await c.orderVisits.useMaterial(crewOf(a), v.id, { productId, quantity: 1 })).toMatchObject({ ok: false, reason: 'not_allowed' });
     expect(await onHand(productId)).toBe(16.5);
+  });
+
+  /** A photo as the upload route leaves it: private, of the visit purpose, the taker's own, and not yet used. */
+  const uploaded = async (userId: string, over: { purpose?: string; visibility?: 'private' | 'public' } = {}): Promise<string> => {
+    const id = randomUUID();
+    await db.insert(schema.mediaAssets).values({ id, provider: 'local', visibility: over.visibility ?? 'private', purpose: over.purpose ?? 'visit_photo', storageKey: `visit_photo/${id}.jpg`, mime: 'image/jpeg', status: 'pending', createdBy: userId, createdByEmail: '' });
+    return id;
+  };
+
+  it('keeps the photos the crew takes while it is on site, only their own and only once, up to 20, and not before or after', async () => {
+    const a = await staff();
+    const b = await staff();
+    const v = await must(book(await order(), { crewIds: [a, b] }));
+    const early = await uploaded(a);
+    expect(await c.orderVisits.addPhoto(crewOf(a), v.id, { photoId: early, kind: 'before' })).toMatchObject({ ok: false, reason: 'not_allowed', message: expect.stringContaining('Photos are kept once the crew is on site') as string });
+    await must(c.orderVisits.start(crewOf(a), v.id));
+    // What the photo shows is asked for; a photo that is not theirs, not of this kind, public, already used or invented is refused alike.
+    expect(await c.orderVisits.addPhoto(crewOf(a), v.id, { photoId: early, kind: 'nonsense' })).toMatchObject({ ok: false, reason: 'bad_input', message: expect.stringContaining('what the photo shows') as string });
+    for (const photoId of [await uploaded(b), await uploaded(a, { purpose: 'delivery_proof' }), await uploaded(a, { visibility: 'public' }), randomUUID(), '', 7]) {
+      expect(await c.orderVisits.addPhoto(crewOf(a), v.id, { photoId, kind: 'before' })).toMatchObject({ ok: false, reason: 'bad_input', message: 'That photo could not be used. Take it again.' });
+    }
+    const kept = await must(c.orderVisits.addPhoto(crewOf(a), v.id, { photoId: early, kind: 'before', caption: '  Old unit in place  ' }));
+    expect(kept.photos).toHaveLength(1);
+    expect(kept.photos[0]).toMatchObject({ kind: 'before', caption: 'Old unit in place', by: expect.stringContaining('Fundi') as string, canRemove: true });
+    expect(kept.photos[0]).not.toHaveProperty('mediaId');
+    // It is not an unused upload any more. Sent again for the same visit (a retry) it is not added twice; it is never shared with another visit.
+    expect((await db.select({ s: schema.mediaAssets.status }).from(schema.mediaAssets).where(eq(schema.mediaAssets.id, early)))[0]?.s).toBe('ready');
+    expect((await must(c.orderVisits.addPhoto(crewOf(a), v.id, { photoId: early, kind: 'before' }))).photos).toHaveLength(1);
+    const elsewhere = await must(book(await order(), { crewIds: [a] }));
+    await must(c.orderVisits.start(crewOf(a), elsewhere.id));
+    expect(await c.orderVisits.addPhoto(crewOf(a), elsewhere.id, { photoId: early, kind: 'after' })).toMatchObject({ ok: false, reason: 'bad_input', message: 'That photo could not be used. Take it again.' });
+    // A fellow crew member and the office see it; the other crew member may not take it off, the office may.
+    expect((await must(c.orderVisits.addPhoto(crewOf(b), v.id, { photoId: await uploaded(b), kind: 'after' }))).photos).toHaveLength(2);
+    const seenByB = await c.orderVisits.view(crewOf(b), v.id);
+    expect(seenByB?.photos.map((p) => [p.kind, p.canRemove])).toEqual([['before', false], ['after', true]]);
+    const first = kept.photos[0]?.id ?? '';
+    expect(await c.orderVisits.removePhoto(crewOf(b), v.id, first, { reason: 'Not mine to remove' })).toMatchObject({ ok: false, reason: 'not_allowed' });
+    expect(await c.orderVisits.removePhoto(crewOf(a), v.id, first, { reason: '' })).toMatchObject({ ok: false, reason: 'bad_input' });
+    const after = await must(c.orderVisits.removePhoto(crewOf(a), v.id, first, { reason: 'Blurred, taking it again' }));
+    expect(after.photos).toHaveLength(1);
+    expect((await db.select({ d: schema.mediaAssets.deletedAt }).from(schema.mediaAssets).where(eq(schema.mediaAssets.id, early)))[0]?.d).not.toBeNull();
+    // The office may take off anyone's.
+    const other = after.photos[0]?.id ?? '';
+    expect((await must(c.orderVisits.removePhoto(office(), v.id, other, { reason: 'Shows the customer' }))).photos).toHaveLength(0);
+    // The limit: 20 on a visit.
+    for (let i = 0; i < 20; i += 1) await must(c.orderVisits.addPhoto(crewOf(a), v.id, { photoId: await uploaded(a), kind: 'other' }));
+    expect(await c.orderVisits.addPhoto(crewOf(a), v.id, { photoId: await uploaded(a), kind: 'other' })).toMatchObject({ ok: false, reason: 'not_allowed', message: expect.stringContaining('at most 20') as string });
+    // Each is on the order's decision log, and once the work is signed off nothing can be added or taken off.
+    const log = await db.select().from(schema.decisionLog).where(and(eq(schema.decisionLog.subjectId, v.orderId), inArray(schema.decisionLog.action, ['visit.photo_added', 'visit.photo_removed'])));
+    expect(log.filter((l) => l.action === 'visit.photo_added')).toHaveLength(22);
+    expect(log.filter((l) => l.action === 'visit.photo_removed')).toHaveLength(2);
+    const [i1, i2] = (await c.orderVisits.view(crewOf(a), v.id))?.items ?? [];
+    await must(c.orderVisits.tick(crewOf(a), v.id, i1?.id ?? '', true));
+    await must(c.orderVisits.tick(crewOf(a), v.id, i2?.id ?? '', true));
+    await must(c.orderVisits.complete(crewOf(a), v.id));
+    await must(c.orderVisits.signOff(crewOf(a), v.id, { name: 'Mama Wanjiku' }));
+    expect(await c.orderVisits.addPhoto(crewOf(a), v.id, { photoId: await uploaded(a), kind: 'after' })).toMatchObject({ ok: false, reason: 'not_allowed' });
+    const last = (await c.orderVisits.view(crewOf(a), v.id))?.photos[0];
+    expect(last?.canRemove).toBe(false);
+    expect(await c.orderVisits.removePhoto(office(), v.id, last?.id ?? '', { reason: 'Too late to change' })).toMatchObject({ ok: false, reason: 'not_allowed' });
+  });
+
+  it('gives a photo to those who may see the visit and to no one else', async () => {
+    const a = await staff();
+    const b = await staff();
+    const v = await must(book(await order(), { crewIds: [a] }));
+    await must(c.orderVisits.start(crewOf(a), v.id));
+    const mediaId = await uploaded(a);
+    const photo = (await must(c.orderVisits.addPhoto(crewOf(a), v.id, { photoId: mediaId, kind: 'after' }))).photos[0];
+    expect(await c.orderVisits.photoMedia(crewOf(a), v.id, photo?.id ?? '')).toBe(mediaId);
+    expect(await c.orderVisits.photoMedia(office(), v.id, photo?.id ?? '')).toBe(mediaId);
+    // A crew member who is not on this visit, another company, and ids that are not ids learn nothing.
+    expect(await c.orderVisits.photoMedia(crewOf(b), v.id, photo?.id ?? '')).toBeNull();
+    expect(await c.orderVisits.photoMedia({ companyId: randomUUID(), userId: a, crewOnly: false }, v.id, photo?.id ?? '')).toBeNull();
+    expect(await c.orderVisits.photoMedia(office(), v.id, randomUUID())).toBeNull();
+    expect(await c.orderVisits.photoMedia(office(), 'x', 'y')).toBeNull();
+    // The database does not let a photo name a kind we do not know, or a caption that is too long.
+    await expect(db.insert(schema.orderVisitPhotos).values({ visitId: v.id, mediaId: await uploaded(a), kind: 'nonsense' as 'other', takenBy: a })).rejects.toThrow();
+    await expect(db.insert(schema.orderVisitPhotos).values({ visitId: v.id, mediaId: await uploaded(a), kind: 'other', caption: 'x'.repeat(201), takenBy: a })).rejects.toThrow();
   });
 
   it('refuses materials that are not there, a bad amount, a stranger on the crew list and a visit that is not theirs', async () => {
