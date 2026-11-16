@@ -644,17 +644,29 @@ export class CustomerMasterService {
     return customer;
   }
 
+  /** Whether the customer has an invoice still unpaid that fell due more than this many days ago. */
+  async hasOverdueInvoice(customerId: string, olderThanDays: number): Promise<boolean> {
+    const found = await this.db.execute<{ one: number }>(sql`
+      SELECT 1 AS one FROM customer_ledger_entries
+       WHERE customer_id = ${customerId}::uuid AND document_type = 'invoice' AND remaining_amount::numeric > 0
+         AND COALESCE(due_date, created_at) < now() - make_interval(days => ${olderThanDays}::int)
+       LIMIT 1`);
+    return found.length > 0;
+  }
+
   async postInvoice(input: {
     customer: CustomerRow;
     orderId: string;
     orderNumber: string;
     amount: number;
     currency: string;
+    /** The days until it falls due, when the kind of sale decides them; otherwise the customer's own payment terms. */
+    dueInDays?: number;
   }): Promise<void> {
     const amount = Math.round(input.amount * 100) / 100;
     const openReceivable = input.customer.accountType === 'credit';
     const due = new Date();
-    due.setDate(due.getDate() + input.customer.paymentTermDays);
+    due.setDate(due.getDate() + (input.dueInDays ?? input.customer.paymentTermDays));
     const description = openReceivable ? 'Credit invoice' : 'Cash invoice';
 
     // One transaction: the ledger entry, its history, the balance and the transaction-ledger debit

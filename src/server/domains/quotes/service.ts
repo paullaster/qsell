@@ -1845,6 +1845,8 @@ export class SalesQuoteService {
         // conversion gets the same number back.
         // A quote only ever has a proforma; signing starts once it is a sales order.
         salesModule: 'sales_order',
+        // How a sales order behaves for the company (credit check, credit days, approval): the same as one entered by staff.
+        selling: await getContainer().sellingSettings.get((await getContainer().companySettings.ensureSeeded()).id, 'sales_order'),
         // Staff placing it: approvals (if configured) are asked on their behalf.
         requestedBy: userId,
         userId: quote.customerId,

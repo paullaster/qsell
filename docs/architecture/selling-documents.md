@@ -113,11 +113,11 @@ The behaviours that differ between selling documents, and between companies, are
 | Setting | Choices | Meaning |
 |---|---|---|
 | **Credit check** | *Off* · *Limit* (balance plus this document against the limit) · *Limit and overdue* (also when an invoice is overdue by more than N days) | Applies to customers with a credit account; a customer without one is handled by the next setting |
-| **Customer without a credit account** | *Allow* · *Refuse* · *Require payment first* | What a type does with a cash customer (a sales invoice to a walk-in) |
+| **Customer without a credit account** | *Allow* · *Refuse* (· *Require payment first*, added with the stock settings in S-1b) | What a type does with a cash customer (a sales invoice to a walk-in) |
 | **Over the limit** | *Refuse* · *Hold and ask for approval* | The hold keeps the document with its stock reserved, on hold, until the approval releases or rejects it (blueprint 6.5; decision 11.9) |
 | **Credit days** | *The customer's payment terms* · *A fixed number of days* · *Due on issue* | Sets the due date of the ledger entry and the invoice |
 | **Stock release** | *When the document is issued* · *When payment is received (hold until paid)* · *At delivery or collection* | When reserved stock is **issued** (taken off on-hand). Today's paths are the second and third; the first is new. "Always hold until paid" is simply the second choice on every type |
-| **Approval** | *By the company's workflows* · *Always* · *Never* | Whether the document waits for approval (today fixed in code for sales orders and credit sales) |
+| **Approval** | *By the company's workflows* · *Never* | Whether the document can wait for approval (today fixed in code for sales orders and credit sales). *Always* is not offered: the approval engine decides by workflows and has no way to force an approver; to be considered with the engine |
 | **Invoice** | *Issued with the document* · *Raised by staff later* | When the tax invoice is made (sales orders default to later, credit sales and sales invoices to with the document) |
 | **Discounts** | *Allowed* · *Not allowed* | Whether staff may discount on this type (the pricing guard and override limits still apply) |
 
@@ -179,7 +179,10 @@ Every action checks its permission on the server; a person may only act in their
 | Slice | What | Notes |
 |---|---|---|
 | **S-0** (built) | The type registry with options and defaults; the **selling settings** (table, service, pure resolver, screen under Settings with its permission); `sales_invoice` as a sales module (signing switch, pricing channel, stock channel) | Foundation; no selling screen yet |
-| **S-1** | **Sales Orders**: list and editor, packages; the writer honours the settings (credit mode, over-limit hold, credit days, stock release, approval); `sales_order` registered as a package document type with the shared test; source quote link and document flow panel; nav and permissions | The staff order; closes the packages gap |
+| **S-1a** (built) | The order writer honours the credit check, the customer-without-account rule, over the limit, credit days, approval and discounts for every staff sales order, including one from an accepted quote | Defaults leave behaviour as it was |
+| **S-1b** | Stock release (when issued, when paid, at delivery, and a per-document hold until paid, joined with the stock module's issue moment) and invoice timing; "require payment first" | Needs the stock decisions below |
+| **S-1c** | **Sales Orders** screens: list, editor with packages and credit position, the place action, nav and permissions | The staff order; closes the packages gap |
+| **S-1d** | `sales_order` registered as a package document type with the shared test; `orders.source_quote_id` and the document flow panel | |
 | **S-2** | **Sales Invoicing**: invoice list and detail, raise for a whole order, re-send, statuses, payments and credit notes shown | Screens over what exists |
 | **S-3** | **Sales Invoices (direct)**: issue an invoice with no order step, fiscal numbering and signing, receivable on the ledger, release rule | Builds on S-1 and S-2 |
 | **S-4** | **Credit Sales**: account customer, credit position, hold and approval, invoice on account at once, ledger | Builds on S-1 and S-2 |

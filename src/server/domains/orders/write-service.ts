@@ -1,4 +1,5 @@
 import { packageAsLineRefusal, packageOnlyRefusal } from '@/lib/package-only';
+import { creditDaysFor, type SellingSettings } from '@/server/domains/selling/selling-documents';
 import type { RawPick } from '@/server/domains/pricing/domain/packages';
 import type { PreparedPackage } from '@/server/domains/pricing/package-order-service';
 import { quantityProblem } from '@/lib/unit-rules';
@@ -168,6 +169,11 @@ export const OrderWriteService = {
      * always a credit sale, whatever channel it came through.
      */
     salesModule?: 'ecommerce' | 'sales_order' | 'pos_cash_sale' | 'sales_invoice';
+    /**
+     * How this kind of sale behaves for the company (Settings, Selling documents): the credit check, what happens over the limit,
+     * credit days, approval and discounts. Left out, the order behaves as it always has (the shop, and callers that predate the settings).
+     */
+    selling?: SellingSettings;
     /**
      * The staff member placing the order. Orders on the sales-order and credit channels are sent
      * for approval when a workflow says so; without one (a shop checkout) they never are.
@@ -423,7 +429,10 @@ export const OrderWriteService = {
     let discountApplications: RuleApplication[] = [...(params.discountApplications ?? [])];
     let discountSummary: Record<string, unknown> | null = params.discountSummary ?? null;
     let gifts: GiftLine[] = [];
-    if (guarded.length > 0 && has(saleCompanyId)) {
+    if (params.selling?.discounts === 'not_allowed' && (params.couponCodes ?? []).length > 0) {
+      return { success: false, error: 'Coupons are not accepted on this kind of sale.', code: 'coupon_refused' };
+    }
+    if (guarded.length > 0 && has(saleCompanyId) && params.selling?.discounts !== 'not_allowed') {
       const { discounts } = getContainer();
       const items: PricedItem[] = guarded.map((g) => ({
         productId: g.productId,
@@ -762,7 +771,8 @@ export const OrderWriteService = {
       discounts: discountSummary,
     };
 
-    const gated = needsApprovalCheck(order.salesModule, params.requestedBy);
+    const gated = needsApprovalCheck(order.salesModule, params.requestedBy) && params.selling?.approval !== 'never';
+    const creditOff = params.selling?.creditCheck === 'off';
 
     try {
       const { companySettings, dimensionSets, customers } = getContainer();
@@ -777,12 +787,26 @@ export const OrderWriteService = {
         buyerKraPin: params.buyerKraPin,
         amount: totalAmount,
         onAccount,
-        allowOverLimit: gated,
+        // Over the limit is let through to approval only when the kind of sale asks for approval; with the credit check off it is not looked at.
+        allowOverLimit: creditOff || (gated && params.selling?.overLimit !== 'refuse'),
         updateExisting: params.identityVerified !== false || has(params.requestedBy),
       });
-      const overCreditLimit =
+      if (params.selling?.noAccount === 'refuse' && tradeCustomer.accountType !== 'credit') {
+        throw new Error(`${tradeCustomer.name} has no credit account, and this kind of sale is only for customers who do.`);
+      }
+      const overLimit =
+        !creditOff &&
         tradeCustomer.accountType === 'credit' &&
         Number(tradeCustomer.balance) + totalAmount > Number(tradeCustomer.creditLimit);
+      // The stricter check also stops a customer who has an invoice overdue by more than the days the company chose.
+      const overdue =
+        params.selling?.creditCheck === 'limit_and_overdue' &&
+        tradeCustomer.accountType === 'credit' &&
+        (await customers.hasOverdueInvoice(tradeCustomer.id, params.selling.overdueDays));
+      const overCreditLimit = overLimit || overdue;
+      const overCreditWords = overdue && !overLimit ? `${tradeCustomer.name} has an invoice overdue by more than ${String(params.selling?.overdueDays ?? 0)} days.` : `${tradeCustomer.name} would exceed the credit limit of ${Number(tradeCustomer.creditLimit).toLocaleString()}.`;
+      // A kind of sale that refuses over the limit never asks for approval: it is refused here, before anything is requested.
+      if (overCreditLimit && params.selling?.overLimit === 'refuse') throw new Error(overCreditWords);
       // The trade customer is the durable identity for this order.
       if (!has(resolvedUserId)) resolvedUserId = tradeCustomer.id;
       const callerDimensions = params.dimensionFields;
@@ -929,9 +953,7 @@ export const OrderWriteService = {
             );
           } else if (overCreditLimit) {
             // Over the limit and nothing releases it: that is exactly what the limit is for.
-            throw new Error(
-              `${tradeCustomer.name} would exceed the credit limit of ${Number(tradeCustomer.creditLimit).toLocaleString()}.`,
-            );
+            throw new Error(overCreditWords);
           }
         },
         // Who placed it and from where is the first event of the order's timeline; a shop checkout carries the time the shopper started it.
@@ -946,6 +968,7 @@ export const OrderWriteService = {
         orderNumber: order.orderNumber,
         amount: totalAmount,
         currency: order.currency,
+        ...(params.selling === undefined ? {} : { dueInDays: creditDaysFor(params.selling, tradeCustomer.paymentTermDays) }),
       });
     } catch (err) {
       // The order was not created, so the stock set aside for it must not stay reserved.

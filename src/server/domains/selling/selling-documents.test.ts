@@ -26,12 +26,12 @@ describe('what is stored', () => {
     const d = defOf('sales_order').defaults;
     expect(readSellingSettings('sales_order', null)).toEqual(d);
     expect(readSellingSettings('sales_order', 'x')).toEqual(d);
-    const read = readSellingSettings('sales_order', { creditCheck: 'nonsense', stockRelease: 'on_payment', fixedDays: 90, overdueDays: -4, approval: 'always' });
-    expect(read).toMatchObject({ creditCheck: d.creditCheck, stockRelease: 'on_payment', fixedDays: 90, overdueDays: d.overdueDays, approval: 'always' });
+    const read = readSellingSettings('sales_order', { creditCheck: 'nonsense', stockRelease: 'on_payment', fixedDays: 90, overdueDays: -4, approval: 'never' });
+    expect(read).toMatchObject({ creditCheck: d.creditCheck, stockRelease: 'on_payment', fixedDays: 90, overdueDays: d.overdueDays, approval: 'never' });
   });
 
   it('never lets a cash sale pick up credit from a stored row', () => {
-    const read = readSellingSettings('pos_cash_sale', { creditCheck: 'limit', creditDays: 'customer', approval: 'always', allowHoldUntilPaid: true });
+    const read = readSellingSettings('pos_cash_sale', { creditCheck: 'limit', creditDays: 'customer', approval: 'workflow', allowHoldUntilPaid: true });
     expect(read).toMatchObject({ creditCheck: 'off', creditDays: 'on_issue', approval: 'never', allowHoldUntilPaid: false });
   });
 });
