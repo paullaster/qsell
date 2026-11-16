@@ -401,6 +401,35 @@ describe.skipIf(!has(url))('deliveries of an order (database)', () => {
       expect(await c.deliveryDocuments.forOrder(companyId, o.id)).toMatchObject({ eligible: { ok: true }, prefill: null });
     });
 
+    it('puts a pin on a delivery that has only words, moves it and takes it off, until it goes out, and leaves everything else about it as it was', async () => {
+      const o = await order({ unplanned: true });
+      expect(await c.orderDeliveries.planStaffOrder(staff(), o.id, { method: 'own_fleet', town: 'Nairobi', area: 'Westlands' })).toMatchObject({ ok: true });
+      const id = await made(o);
+      expect((await view(id)).destination).toMatchObject({ pin: null, positionFrom: 'none', address: { area: 'Westlands' } });
+      // Left out, the pin is untouched; a place that is not on the earth, or not a place, is refused in words and nothing else in the save is kept.
+      expect(await c.deliveryDocuments.amend(staff(), id, { notes: 'Ring twice' })).toMatchObject({ ok: true, data: { destination: { pin: null } } });
+      expect(await c.deliveryDocuments.amend(staff(), id, { pin: { latitude: 95, longitude: 36.8 }, notes: 'Not kept' })).toMatchObject({ ok: false, reason: 'bad_input', message: expect.stringContaining('not a place on the earth') as string });
+      expect(await c.deliveryDocuments.amend(staff(), id, { pin: 'near the baobab', notes: 'Not kept' })).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect((await view(id)).notes).toBe('Ring twice');
+      // Put on: the destination now has the pin and says the position is from it; the words and the charge are as they were.
+      const before = await c.orderDeliveries.forOrder(companyId, o.id);
+      const put = await c.deliveryDocuments.amend(staff(), id, { pin: { latitude: -1.2921, longitude: 36.8219 } });
+      expect(put).toMatchObject({ ok: true, data: { destination: { pin: { latitude: -1.2921, longitude: 36.8219 }, positionFrom: 'pin', approximate: false, address: { area: 'Westlands' } } } });
+      expect(await c.orderDeliveries.forOrder(companyId, o.id)).toEqual(before);
+      // Moved, then taken off (null), and the history says from where to where.
+      expect(await c.deliveryDocuments.amend(staff(), id, { pin: { latitude: -1.3, longitude: 36.78 } })).toMatchObject({ ok: true, data: { destination: { pin: { latitude: -1.3, longitude: 36.78 } } } });
+      expect(await c.deliveryDocuments.amend(staff(), id, { pin: null })).toMatchObject({ ok: true, data: { destination: { pin: null, positionFrom: 'none' } } });
+      const events = await db.select().from(schema.deliveryEvents).where(eq(schema.deliveryEvents.deliveryId, id));
+      const moves = events.filter((e) => e.action === 'amend' && 'pinTo' in (e.detail as object)).map((e) => e.detail as { pinFrom: unknown; pinTo: unknown });
+      expect(moves).toEqual([{ pinFrom: null, pinTo: { latitude: -1.2921, longitude: 36.8219 } }, { pinFrom: { latitude: -1.2921, longitude: 36.8219 }, pinTo: { latitude: -1.3, longitude: 36.78 } }, { pinFrom: { latitude: -1.3, longitude: 36.78 }, pinTo: null }].map((m) => expect.objectContaining(m) as unknown));
+      // The same place again says nothing in the history; after it goes out it cannot be changed.
+      await c.deliveryDocuments.amend(staff(), id, { pin: { latitude: -1.2921, longitude: 36.8219 } });
+      await c.deliveryDocuments.amend(staff(), id, { pin: { latitude: -1.2921, longitude: 36.8219 } });
+      await toReady(id);
+      await goOut(id);
+      expect(await c.deliveryDocuments.amend(staff(), id, { pin: null })).toMatchObject({ ok: false, reason: 'not_allowed' });
+    });
+
     it('does not offer to plan an order that is cancelled', async () => {
       const o = await order({ unplanned: true });
       await db.update(schema.orders).set({ status: 'cancelled' }).where(eq(schema.orders.id, o.id));

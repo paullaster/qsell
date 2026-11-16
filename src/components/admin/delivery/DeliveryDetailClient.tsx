@@ -17,6 +17,8 @@ import { METHOD_WORDS } from '@/lib/delivery-methods';
 import type { DeliveryAction, DeliveryStatus } from '@/lib/delivery-document';
 import type { Choice } from '@/lib/payment-options';
 import { KIND_WORDS, isMessageKind } from '@/lib/delivery-messages';
+import { pinText, readPinText } from '@/lib/pin-text';
+import type { GeoPoint } from '@/lib/geo';
 
 type Loaded = Awaited<ReturnType<typeof deliveryAction>>;
 
@@ -93,6 +95,7 @@ function DeliveryScreen({ initial, canFulfil, initialExtras }: { initial: Delive
   const [courierAccount, setCourierAccount] = useState<Choice | null>(null);
   const [failure, setFailure] = useState<Choice | null>(null);
   const [street, setStreet] = useState(initial.street ?? '');
+  const [pinInput, setPinInput] = useState(initial.destination.pin === null ? '' : pinText(initial.destination.pin));
   const [recipientName, setRecipientName] = useState(initial.recipientName ?? '');
   const [recipientPhone, setRecipientPhone] = useState(initial.recipientPhone ?? '');
   const [notes, setNotes] = useState(initial.notes ?? '');
@@ -176,17 +179,35 @@ function DeliveryScreen({ initial, canFulfil, initialExtras }: { initial: Delive
         {view.receivedBy === null ? null : <p className="text-sm text-fg-muted">Received by {view.receivedBy}{view.deliveredAt === null ? '' : ` on ${when(view.deliveredAt)}`}</p>}
         {editable ? (
           <details className="text-sm">
-            <summary className="min-h-10 cursor-pointer py-2 font-semibold text-indigo-500">Change the street, who receives it, or the note</summary>
+            <summary className="min-h-10 cursor-pointer py-2 font-semibold text-indigo-500">Change the street, the place on the map, who receives it, or the note</summary>
             <form
               className="grid grid-cols-1 gap-3 pt-2 sm:grid-cols-2"
               onSubmit={(event) => {
                 event.preventDefault();
-                void run('amend', { ...(street.trim() === (view.street ?? '') ? {} : { street }), recipientName, recipientPhone, notes }, 'The details are changed.');
+                // The place is sent only when it was changed: a pasted place (checked here for the words, and again on the server), or taken off when cleared.
+                const now = view.destination.pin;
+                const typed = pinInput.trim();
+                let pin: { pin: GeoPoint | null } | Record<string, never> = {};
+                if (typed === '' && now !== null) pin = { pin: null };
+                else if (typed !== '' && (now === null || typed !== pinText(now))) {
+                  const read = readPinText(typed);
+                  if (!read.ok) {
+                    setNotice({ kind: 'error', text: read.error });
+                    return;
+                  }
+                  pin = { pin: read.point };
+                }
+                void run('amend', { ...(street.trim() === (view.street ?? '') ? {} : { street }), ...pin, recipientName, recipientPhone, notes }, 'The details are changed.');
               }}
             >
               <div className="sm:col-span-2">
                 <Field id={`${uid}-st`} label="Street or building" hint="Only the words are changed. The place on the map and the charge stay as they were; for another place, cancel this delivery and place the order again.">
                   <input id={`${uid}-st`} value={street} onChange={(e) => setStreet(e.target.value)} maxLength={200} className={fieldClass} autoComplete="off" />
+                </Field>
+              </div>
+              <div className="sm:col-span-2">
+                <Field id={`${uid}-pin`} label="Place on the map" hint="Paste what the customer shared: two numbers like -1.2921, 36.8219 (WhatsApp location), or the long link from a map app. The rider is guided to it and runs are ordered by it. Clear it to take the place off. The charge is not changed.">
+                  <input id={`${uid}-pin`} value={pinInput} onChange={(e) => setPinInput(e.target.value)} maxLength={300} className={`${fieldClass} font-mono`} autoComplete="off" inputMode="text" />
                 </Field>
               </div>
               <Field id={`${uid}-rn`} label="Who receives it">

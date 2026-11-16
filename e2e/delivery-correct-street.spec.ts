@@ -15,7 +15,7 @@ test.describe('correcting the street of a delivery', () => {
       // The street the order was written with leads what is shown.
       await expect(where).toContainText('1 Moi Avenue');
 
-      await where.getByText('Change the street, who receives it, or the note').click();
+      await where.getByText('Change the street, the place on the map, who receives it, or the note').click();
       const street = where.getByLabel('Street or building');
       await expect(street).toBeVisible();
       await expect(where).toContainText('The place on the map and the charge stay as they were');
@@ -37,6 +37,30 @@ test.describe('correcting the street of a delivery', () => {
       const after = page.getByRole('region', { name: 'Where it goes' });
       await expect(after).toContainText(corrected, { timeout: 30_000 });
       await expect(after).not.toContainText('1 Moi Avenue');
+
+      // The place on the map: what the customer shared is pasted (a map link here), read in words when it is not a place, and it can be taken off.
+      await after.getByText('Change the street, the place on the map, who receives it, or the note').click();
+      const place = after.getByLabel('Place on the map');
+      await expect(place).toHaveValue('-1.2864, 36.8172');
+      await place.fill('near the big baobab');
+      await after.getByRole('button', { name: 'Save these details' }).click();
+      await expect(page.getByRole('alert').filter({ hasText: 'could not find a place' })).toBeVisible({ timeout: 30_000 });
+      // Nothing was changed by the refusal: the place the checkout recorded is still there.
+      await expect(after).toContainText('Pin -1.2864, 36.8172');
+      await place.fill('https://www.google.com/maps/place/Home/@-1.2921,36.8219,17z/data=!4m5');
+      await after.getByRole('button', { name: 'Save these details' }).click();
+      await expect(page.getByRole('status').filter({ hasText: 'The details are changed.' })).toBeVisible({ timeout: 30_000 });
+      await expect(after).toContainText('Pin -1.2921, 36.8219');
+      await page.reload();
+      const pinned = page.getByRole('region', { name: 'Where it goes' });
+      await expect(pinned).toContainText('Pin -1.2921, 36.8219', { timeout: 30_000 });
+      await pinned.getByText('Change the street, the place on the map, who receives it, or the note').click();
+      await expect(pinned.getByLabel('Place on the map')).toHaveValue('-1.2921, 36.8219');
+      await pinned.getByLabel('Place on the map').fill('');
+      await pinned.getByRole('button', { name: 'Save these details' }).click();
+      await expect(pinned).not.toContainText('Pin ', { timeout: 30_000 });
+      await noInnerHorizontalScroll(page);
+      await noHorizontalScroll(page);
     } finally {
       deliveryTool('close', tag);
     }

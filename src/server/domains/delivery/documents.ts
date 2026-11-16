@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { isGeoPoint, type GeoPoint } from '@/lib/geo';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { branches, courierAccounts, deliveries, deliveryAttemptLines, deliveryAttempts, deliveryEvents, deliveryProofs, deliveryRiderSettings, deliveryRiders, deliveryShipments, deliveryLines, deliveryReturns, orderDeliveries, orderItems, orders, products, stockReservations, stockSettings, unitsOfMeasure, type ReturnEffects } from '@/server/db/drizzle/schema';
 import {
@@ -423,9 +424,10 @@ export class DeliveryDocuments {
 
   /**
    * Corrections that do not change the state, until it goes out: who receives it, any note, and the street or building the order was
-   * written with. The street is only words: the place and the charge were worked out for the pin and the area, and stay as they were.
+   * written with, and the pin of the place (put on a delivery that has none, moved, or taken off). The street is only words, and neither it nor
+   * the pin changes the charge, which was worked out when the order was planned.
    */
-  async amend(actor: DocActor, id: string, input: { recipientName?: unknown; recipientPhone?: unknown; notes?: unknown; street?: unknown }, expectedVersion?: number): Promise<DocResult<DeliveryView>> {
+  async amend(actor: DocActor, id: string, input: { recipientName?: unknown; recipientPhone?: unknown; notes?: unknown; street?: unknown; pin?: unknown }, expectedVersion?: number): Promise<DocResult<DeliveryView>> {
     return await this.db.transaction(async (tx): Promise<DocResult<DeliveryView>> => {
       const [row] = await tx.select().from(deliveries).where(and(eq(deliveries.id, id), eq(deliveries.companyId, actor.companyId))).for('update');
       if (row === undefined) return fail('not_found', 'That delivery could not be found.');
@@ -445,8 +447,18 @@ export class DeliveryDocuments {
           street = { from, to };
         }
       }
-      await tx.update(deliveries).set({ ...next, version: row.version + 1, updatedAt: new Date() }).where(eq(deliveries.id, id));
-      await this.event(tx, id, 'amend', actor, row.status, row.status, { detail: { recipientName: next.recipientName, recipientPhone: next.recipientPhone, ...(street === null ? {} : { streetFrom: street.from, streetTo: street.to }) } });
+      // The pin is changed only when it is sent: a place, or null to take it off; anything else is refused.
+      let moved: { from: GeoPoint | null; to: GeoPoint | null } | null = null;
+      if (input.pin !== undefined) {
+        if (input.pin !== null && !isGeoPoint(input.pin)) return fail('bad_input', 'That is not a place on the earth. Paste the two numbers, or a link from a map app.');
+        const to: GeoPoint | null = input.pin;
+        const from = row.destination.pin;
+        const same = (from === null && to === null) || (from !== null && to !== null && from.latitude === to.latitude && from.longitude === to.longitude);
+        if (!same) moved = { from, to };
+      }
+      const destination = moved === null ? row.destination : { ...row.destination, pin: moved.to, positionFrom: moved.to === null ? ('none' as const) : ('pin' as const), approximate: false };
+      await tx.update(deliveries).set({ ...next, ...(moved === null ? {} : { destination }), version: row.version + 1, updatedAt: new Date() }).where(eq(deliveries.id, id));
+      await this.event(tx, id, 'amend', actor, row.status, row.status, { detail: { recipientName: next.recipientName, recipientPhone: next.recipientPhone, ...(street === null ? {} : { streetFrom: street.from, streetTo: street.to }), ...(moved === null ? {} : { pinFrom: moved.from, pinTo: moved.to }) } });
       return { ok: true, data: await this.viewIn(tx, actor.companyId, id) };
     });
   }
