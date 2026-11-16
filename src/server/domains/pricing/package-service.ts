@@ -5,6 +5,7 @@ import type { Actor } from '@/server/kernel/context';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { ReasonCodes, ReasonInput } from '@/server/kernel/reason-codes/service';
 import { CATEGORY_SLOT_LIMIT } from '@/lib/package-choices';
+import { orderModeOf, type PackageOrderMode } from './domain/package-order-mode';
 import { PricingConfigError } from './config-service';
 import type { KitAllocation } from './domain/kits';
 import { belowCostWhenCheapest, cheapestSelection, checkPackage, servingPrice, type PackageDef, type PackagePricingMode, type ShortStockMode } from './domain/packages';
@@ -101,6 +102,8 @@ export interface PackageView {
   rules: PackageRules;
   /** The customer may write a note on each serving. */
   allowNote: boolean;
+  /** How the web shop takes an order for it: the cart, a quote request, or either. */
+  orderMode: PackageOrderMode;
   /** The price of the cheapest valid selection (the "from" price), and whether it sells for less than it costs. */
   from: { price: number | null; cost: number; belowCost: boolean };
   /** Options that cannot be chosen now (switched off or deleted). */
@@ -117,6 +120,8 @@ export interface PackageInput {
   rules?: PackageRules;
   /** Left out, the setting stays as it is (off for a new package). */
   allowNote?: boolean;
+  /** Left out, the setting stays as it is (the cart for a new package). */
+  orderMode?: PackageOrderMode;
   slots: {
     name: string;
     helpText?: string;
@@ -354,6 +359,7 @@ export class PackageConfigService {
         isActive: pkg.isActive,
         version: pkg.version,
         allowNote: pkg.allowNote,
+        orderMode: orderModeOf(pkg.orderMode),
         rules: {
           minServings: pkg.minServings,
           maxServings: pkg.maxServings,
@@ -483,7 +489,7 @@ export class PackageConfigService {
       if (before === undefined) {
         const [row] = await tx
           .insert(productPackages)
-          .values({ companyId, productId: input.productId, pricingMode: input.pricingMode, allocation: input.allocation, shortStockMode: input.shortStockMode, isActive: input.isActive ?? true, ...ruleColumns(input.rules), ...(input.allowNote === undefined ? {} : { allowNote: input.allowNote }), createdBy: actor.id ?? 'system' })
+          .values({ companyId, productId: input.productId, pricingMode: input.pricingMode, allocation: input.allocation, shortStockMode: input.shortStockMode, isActive: input.isActive ?? true, ...ruleColumns(input.rules), ...(input.allowNote === undefined ? {} : { allowNote: input.allowNote }), ...(input.orderMode === undefined ? {} : { orderMode: input.orderMode }), createdBy: actor.id ?? 'system' })
           .returning({ id: productPackages.id });
         if (row === undefined) throw new Error('the package was not saved');
         packageId = row.id;
@@ -491,7 +497,7 @@ export class PackageConfigService {
         packageId = before.id;
         await tx
           .update(productPackages)
-          .set({ pricingMode: input.pricingMode, allocation: input.allocation, shortStockMode: input.shortStockMode, isActive: input.isActive ?? true, ...ruleColumns(input.rules), ...(input.allowNote === undefined ? {} : { allowNote: input.allowNote }), version: before.version + 1, updatedAt: new Date() })
+          .set({ pricingMode: input.pricingMode, allocation: input.allocation, shortStockMode: input.shortStockMode, isActive: input.isActive ?? true, ...ruleColumns(input.rules), ...(input.allowNote === undefined ? {} : { allowNote: input.allowNote }), ...(input.orderMode === undefined ? {} : { orderMode: input.orderMode }), version: before.version + 1, updatedAt: new Date() })
           .where(eq(productPackages.id, packageId));
         // Slots go with their options. Orders and quotes keep their own copy of what was chosen, so nothing sold is touched.
         await tx.delete(packageSlots).where(eq(packageSlots.packageId, packageId));
@@ -550,7 +556,7 @@ export class PackageConfigService {
             slots: input.slots.length,
             options: input.slots.reduce((n, s) => n + s.options.length, 0),
             isActive: input.isActive ?? true,
-            ...(input.allowNote === undefined ? {} : { allowNote: input.allowNote }),
+            ...(input.allowNote === undefined ? {} : { allowNote: input.allowNote }), ...(input.orderMode === undefined ? {} : { orderMode: input.orderMode }),
             ...(input.rules === undefined ? {} : { rules: input.rules }),
           },
         },

@@ -49,4 +49,16 @@ describe('parsePackageInput', () => {
       expect(result.ok && result.input.slots[0]?.source).toBeUndefined();
     });
   });
+
+  describe('how shoppers order it', () => {
+    const base = { productId: 'p1', pricingMode: 'base_plus_differences', allocation: 'list_price', shortStockMode: 'hide', slots: [{ name: 'Fish', minPicks: 1, maxPicks: 1, options: [{ productId: 'f', quantity: 1 }] }] };
+    it('keeps a valid order mode and leaves an unknown or missing one out (the setting then stays as it is)', () => {
+      const quote = parsePackageInput({ ...base, orderMode: 'quote' });
+      expect(quote.ok && quote.input.orderMode).toBe('quote');
+      const odd = parsePackageInput({ ...base, orderMode: 'sell-for-free' });
+      expect(odd.ok && 'orderMode' in odd.input).toBe(false);
+      const none = parsePackageInput(base);
+      expect(none.ok && 'orderMode' in none.input).toBe(false);
+    });
+  });
 });

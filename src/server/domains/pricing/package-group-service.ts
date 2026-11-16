@@ -1,4 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { allowsCart, quoteOnlyRefusal } from './domain/package-order-mode';
 import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { packageGroupEntries, packageGroupOrders } from '@/server/db/drizzle/schema';
@@ -84,6 +85,7 @@ export class PackageGroupService {
   async create(companyId: string, organiser: { customerId: string; name: string }, input: { productId: string; title: unknown; forDate: unknown; closesAt: unknown }): Promise<Outcome<{ token: string; id: string }>> {
     const builder = await this.shop.builder(companyId, input.productId);
     if (builder === null) return { ok: false, error: 'That is not a package that can be ordered.' };
+    if (!allowsCart(builder.package.orderMode)) return { ok: false, error: quoteOnlyRefusal(builder.package.name) };
     const [open] = await this.db
       .select({ n: sql<string>`count(*)` })
       .from(packageGroupOrders)

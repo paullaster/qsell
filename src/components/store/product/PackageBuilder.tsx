@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Check, Minus, Plus, ShoppingCart, Zap } from 'lucide-react';
+import { Check, FileText, Minus, Plus, ShoppingCart, Zap } from 'lucide-react';
 import { checkPackageLine, optionsToShow, type ShopOption, type ShopPackage, type ShopSlot } from '@/server/domains/pricing/domain/package-shop';
 import { packageBuilderAction } from '@/server/domains/pricing/package-shop-actions';
 import { MAX_SERVINGS, type PackagePick } from '@/lib/package-cart';
@@ -52,10 +52,14 @@ interface Props {
   initial?: { picks: readonly PackagePick[]; servings: number; note?: string };
   money: (amount: number) => string;
   /** Takes the choices; returns the problem in words, or null when they were accepted. `intent` is `buy` for the second button. */
-  onSubmit: (picks: PackagePick[], servings: number, intent: 'add' | 'buy', note: string) => Promise<string | null>;
+  onSubmit: (picks: PackagePick[], servings: number, intent: 'add' | 'buy' | 'quote', note: string) => Promise<string | null>;
   submitLabel?: string;
   /** The second button ("Buy now"); none when left out. */
   buyLabel?: string;
+  /** A button that asks for a quote instead of ordering ('Request a quote'); none when left out. */
+  quoteLabel?: string;
+  /** The package is sold by quote request only: no Add to cart. */
+  quoteOnly?: boolean;
   /** Ask the server again what stock allows when the servings change (the shop does; a quote does not look at stock). */
   watchStock?: boolean;
   servingsLabel?: string;
@@ -69,7 +73,7 @@ interface Props {
  * The step-by-step builder for a configurable package: one group of cards per slot, a live price and a button. One component for
  * the shop, the staff screens and the quote; the screen decides what pressing the button does. The server checks everything again.
  */
-export function PackageBuilder({ productName, builder, initial, money, onSubmit, submitLabel = 'Add to cart', buyLabel, watchStock = true, servingsLabel = 'Servings', fixedServings = false, noteLabel = 'Note for each serving (optional)' }: Props) {
+export function PackageBuilder({ productName, builder, initial, money, onSubmit, submitLabel = 'Add to cart', buyLabel, quoteLabel, quoteOnly = false, watchStock = true, servingsLabel = 'Servings', fixedServings = false, noteLabel = 'Note for each serving (optional)' }: Props) {
   const pkg = builder.package;
   const [available, setAvailable] = useState<Set<string>>(() => new Set(builder.available));
   const [chosen, setChosen] = useState<Chosen>(() => startingChoices(pkg, new Set(builder.available), initial));
@@ -131,7 +135,7 @@ export function PackageBuilder({ productName, builder, initial, money, onSubmit,
     });
   };
 
-  const submit = async (intent: 'add' | 'buy') => {
+  const submit = async (intent: 'add' | 'buy' | 'quote') => {
     if (!checked.ok) return;
     setBusy(true);
     setProblem(null);
@@ -237,17 +241,19 @@ export function PackageBuilder({ productName, builder, initial, money, onSubmit,
       <p className="sr-only" role="status">{announce}</p>
       {problem === null ? null : <p role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">{problem}</p>}
 
-      <div className={`grid grid-cols-1 gap-2 ${buyLabel === undefined ? '' : 'min-[420px]:grid-cols-2'}`}>
-        <button
-          type="button"
-          disabled={!checked.ok || busy}
-          onClick={() => void submit('add')}
-          className="flex min-h-12 cursor-pointer items-center justify-center gap-2 rounded-xl border border-line-strong bg-surface-sunken px-4 py-2.5 text-sm font-semibold text-fg-strong transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <ShoppingCart className="h-4 w-4 text-indigo-400" aria-hidden="true" />
-          {submitLabel}
-        </button>
-        {buyLabel !== undefined ? (
+      <div className={`grid grid-cols-1 gap-2 ${buyLabel === undefined || quoteOnly ? '' : 'min-[420px]:grid-cols-2'}`}>
+        {quoteOnly ? null : (
+          <button
+            type="button"
+            disabled={!checked.ok || busy}
+            onClick={() => void submit('add')}
+            className="flex min-h-12 cursor-pointer items-center justify-center gap-2 rounded-xl border border-line-strong bg-surface-sunken px-4 py-2.5 text-sm font-semibold text-fg-strong transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <ShoppingCart className="h-4 w-4 text-indigo-400" aria-hidden="true" />
+            {submitLabel}
+          </button>
+        )}
+        {buyLabel !== undefined && !quoteOnly ? (
           <button
             type="button"
             disabled={!checked.ok || busy}
@@ -258,8 +264,20 @@ export function PackageBuilder({ productName, builder, initial, money, onSubmit,
             {buyLabel}
           </button>
         ) : null}
+        {quoteLabel === undefined ? null : (
+          <button
+            type="button"
+            data-testid="package-request-quote"
+            disabled={!checked.ok || busy}
+            onClick={() => void submit('quote')}
+            className={`flex min-h-12 cursor-pointer items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${quoteOnly ? 'bg-indigo-600 font-bold text-white shadow-lg shadow-indigo-600/20 hover:bg-indigo-500' : 'border border-line-strong bg-surface-sunken text-fg-strong hover:bg-hover min-[420px]:col-span-2'}`}
+          >
+            <FileText className="h-4 w-4" aria-hidden="true" />
+            {quoteLabel}
+          </button>
+        )}
       </div>
-      {checked.ok || reason === null ? null : <p className="text-xs text-fg-muted">{submitLabel} is off: {reason}</p>}
+      {checked.ok || reason === null ? null : <p className="text-xs text-fg-muted">{quoteOnly ? (quoteLabel ?? submitLabel) : submitLabel} is off: {reason}</p>}
     </div>
   );
 }

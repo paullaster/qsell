@@ -1,3 +1,4 @@
+import type { PackageOrderMode } from './package-order-mode';
 import { canonicalSelection, PACKAGE_LIMITS, servingPrice, type CanonicalPick, type PackageDef, type PackagePricingMode, type RawPick, type ShortStockMode } from './packages';
 
 /**
@@ -38,6 +39,8 @@ export interface ShopPackage {
   version: number;
   /** The customer may write a note on a serving. */
   allowNote: boolean;
+  /** Add to cart, Request a quote, or both. */
+  orderMode: PackageOrderMode;
   slots: ShopSlot[];
 }
 

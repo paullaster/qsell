@@ -1,5 +1,6 @@
 import { PACKAGE_LIMITS, PRICING_MODES, type ShortStockMode } from './packages';
 import type { KitAllocation } from './kits';
+import { orderModeOf, PACKAGE_ORDER_MODES } from './package-order-mode';
 import { rulesProblem, type PackageInput, type PackageRules } from '../package-service';
 
 /**
@@ -92,5 +93,5 @@ export function parsePackageInput(raw: unknown): ParsedPackage {
   }
   const parsed = parseRules(i.rules);
   if (!parsed.ok) return { ok: false, error: parsed.error };
-  return { ok: true, input: { productId, pricingMode, allocation, shortStockMode, isActive: i.isActive !== false, ...(typeof i.allowNote === 'boolean' ? { allowNote: i.allowNote } : {}), ...(parsed.rules === undefined ? {} : { rules: parsed.rules }), slots } };
+  return { ok: true, input: { productId, pricingMode, allocation, shortStockMode, isActive: i.isActive !== false, ...(typeof i.allowNote === 'boolean' ? { allowNote: i.allowNote } : {}), ...(PACKAGE_ORDER_MODES.some((m) => m === i.orderMode) ? { orderMode: orderModeOf(i.orderMode) } : {}), ...(parsed.rules === undefined ? {} : { rules: parsed.rules }), slots } };
 }

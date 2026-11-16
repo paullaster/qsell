@@ -4873,6 +4873,8 @@ export const salesQuotes = pgTable(
     sentBy: text('sent_by'),
     acceptedAt: timestamp('accepted_at', { withTimezone: true }),
     rejectedAt: timestamp('rejected_at', { withTimezone: true }),
+    /** Where the quote came from: `staff` (made in the admin) or `shop` (a shopper asked for it on the web shop). */
+    source: text('source').$type<'staff' | 'shop'>().notNull().default('staff'),
     convertedOrderId: text('converted_order_id').references(() => orders.id, {
       onDelete: 'set null',
     }),
@@ -4890,6 +4892,7 @@ export const salesQuotes = pgTable(
     uniqueIndex('sales_quotes_company_number_uidx').on(t.companyId, t.quoteNumber),
     index('sales_quotes_company_status_idx').on(t.companyId, t.status, t.createdAt),
     index('sales_quotes_customer_idx').on(t.customerId, t.createdAt),
+    check('sales_quotes_source_chk', sql`${t.source} IN ('staff', 'shop')`),
   ],
 );
 
@@ -6648,12 +6651,15 @@ export const productPackages = pgTable(
     audience: text('audience').$type<'anyone' | 'signed_in' | 'groups'>().notNull().default('anyone'),
     /** The customer may write a short note on each serving ("no pepper"), kept with the selection and shown on the preparation sheet. */
     allowNote: boolean('allow_note').notNull().default(false),
+    /** How the web shop takes an order for it: `cart`, `quote` (a quote request only) or `either`. */
+    orderMode: text('order_mode').$type<'cart' | 'quote' | 'either'>().notNull().default('cart'),
     createdBy: text('created_by').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex('product_packages_product_uidx').on(t.productId),
+    check('product_packages_order_mode_chk', sql`${t.orderMode} IN ('cart', 'quote', 'either')`),
     check('product_packages_audience_chk', sql`${t.audience} IN ('anyone', 'signed_in', 'groups')`),
     check('product_packages_rules_chk', sql`(${t.minServings} IS NULL OR ${t.minServings} >= 1) AND (${t.maxServings} IS NULL OR ${t.maxServings} >= 1) AND (${t.minServings} IS NULL OR ${t.maxServings} IS NULL OR ${t.minServings} <= ${t.maxServings}) AND (${t.noticeMinutes} IS NULL OR ${t.noticeMinutes} >= 0) AND (${t.closesDaysBefore} IS NULL OR ${t.closesDaysBefore} >= 0) AND (${t.closesAtMinute} IS NULL OR (${t.closesAtMinute} >= 0 AND ${t.closesAtMinute} < 1440)) AND (${t.dailyLimit} IS NULL OR ${t.dailyLimit} >= 1)`),
     index('product_packages_company_idx').on(t.companyId),

@@ -4,6 +4,7 @@ import { orders, packageInstancePicks, packageInstances, productPackages, produc
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import { canonicalSelection, orderingProblem, packageComponentDefs, servingCost, type CanonicalPick, type LocalMoment, type OrderingRules, type RawPick } from './domain/packages';
 import { checkPackageBasket, resolveStoredPicks, storedPicks, type PackageLineInput, type ShopPackage, type StoredPick } from './domain/package-shop';
+import { allowsCart, quoteOnlyRefusal } from './domain/package-order-mode';
 import type { Kit, KitComponent } from './kit-service';
 import type { PackageShopService } from './package-shop-service';
 import { toDefinition, type PackageView } from './package-service';
@@ -169,6 +170,8 @@ export class PackageOrderService {
       if (!check.ok) return { ok: false, error: check.problems.join(' '), code: check.problems.some((p) => /sold out/i.test(p)) ? 'out_of_stock' : 'package_choice' };
 
       const preview = ctx.previewOnly === true;
+      // A package sold by quote request cannot be ordered through the cart; staff documents (the quote itself, once it is accepted) can.
+      if (ctx.staff !== true && !allowsCart(view.orderMode)) return { ok: false, error: quoteOnlyRefusal(pkg.name), code: 'package_rule' };
       // Who may order.
       const { audience, groupIds } = view.rules;
       if (!preview && audience === 'signed_in' && !ctx.signedIn) return { ok: false, error: `${pkg.name} can be ordered only by signed-in customers. Please sign in.`, code: 'package_rule' };

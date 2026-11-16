@@ -214,6 +214,9 @@ For a business that makes what it sells to order (meals, catering, assembled set
   - If an **Approval Workflow** for credit override is configured, the order status halts in `Pending Credit Approval` and alerts the Credit Manager.
   - If no approval workflow exists, order creation is **blocked** with the error: *"Customer credit limit exceeded by KES [Amount]. Payment required before placement."*
 
+### Quotes requested on the web shop
+A package set to **Request a quote** (or **Either**) in **Pricing → Packages** lets a shopper ask for a quote from the product page. It arrives as a draft quote with **Requested on the web shop** in place of *Created by* (list and detail), the shopper's name, email and phone, the date they need it and their message in the internal notes. The price is worked out from the package, never typed by the shopper. Staff review, send and convert it like any other quote. See the packages section of guide 05 for the setting.
+
 ### Packages on a Quote
 - A package line reads as its choices ("Express lunch: Large fish, Ugali and Sukuma") in the editor, the PDF and the email. The server works out the price, the tax (each chosen part at its own rate, like a kit) and the cost (what the chosen parts cost); the margin and the price floor use those figures.
 - The quote keeps the choices by the slot's name and the part, not by internal ids. A package changed after the quote was made does not stop the quote being understood; if a chosen part is no longer offered, **converting the quote stops and names it** ("Large fish is no longer offered in Fish"), the quote can be reopened, the part replaced and saved again. Stock is not looked at when quoting; it is looked at, with the package's ordering rules (servings, notice, closing time, days, daily limit, who may order) and the date in **Needed On**, when the quote becomes an order. The quote's price stands even if the package's base price has moved.

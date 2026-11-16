@@ -42,6 +42,9 @@ export const RATE_RULES = {
   /** Looking up an order by its number and the phone or email it was placed with: the number and contact cannot be guessed. */
   order_lookup_ip: { limit: 30, seconds: 600 },
   order_lookup_order: { limit: 8, seconds: 600 },
+  /** A shopper asking for a quote for a package: per address, and per email or phone so one person cannot fill the staff's quote list. */
+  shop_quote_request_ip: { limit: 10, seconds: 3600 },
+  shop_quote_request_contact: { limit: 5, seconds: 3600 },
   /** Group orders: starting one (per address), opening a link and choosing in one (per address and per link, so a link cannot be hammered or filled with names). */
   group_create_ip: { limit: 10, seconds: 3600 },
   group_view_ip: { limit: 120, seconds: 600 },

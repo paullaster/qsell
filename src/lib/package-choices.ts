@@ -1,4 +1,5 @@
 import { KIT_ALLOCATIONS } from '@/server/domains/pricing/domain/kits';
+import type { PackageOrderMode } from '@/server/domains/pricing/domain/package-order-mode';
 import type { PackagePricingMode, ShortStockMode } from '@/server/domains/pricing/domain/packages';
 
 export interface PackageChoice {
@@ -25,6 +26,12 @@ export const PACKAGE_AUDIENCE_CHOICES: PackageChoice[] = [
   { id: 'anyone', label: 'Anyone' },
   { id: 'signed_in', label: 'Signed-in customers only' },
   { id: 'groups', label: 'Only customers in the groups I choose' },
+];
+
+export const PACKAGE_ORDER_MODE_CHOICES: (PackageChoice & { id: PackageOrderMode })[] = [
+  { id: 'cart', label: 'Add to cart and pay at checkout (usual)' },
+  { id: 'quote', label: 'Request a quote only: we send the price first' },
+  { id: 'either', label: 'Either: the shopper chooses Add to cart or Request a quote' },
 ];
 
 export const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;

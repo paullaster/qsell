@@ -3,6 +3,7 @@
 import { Suspense, use } from 'react';
 import type { PublicProduct } from '@/types/index';
 import type { ShopBuilder } from '@/server/domains/pricing/package-shop-service';
+import { allowsCart } from '@/server/domains/pricing/domain/package-order-mode';
 import { ProductPurchase } from '@/components/store/product/ProductPurchase';
 import { ShopPackageBuilder } from '@/components/store/product/ShopPackageBuilder';
 import { PackageOrderAgain } from '@/components/store/product/PackageOrderAgain';
@@ -15,11 +16,12 @@ function Choice({ product, builder }: { product: PublicProduct; builder: Promise
   if (!found.offered) {
     return <p role="status" className="rounded-xl border border-line bg-surface p-4 text-sm font-medium text-fg-muted">{product.name} is not available right now. Please check back soon.</p>;
   }
+  const cartAllowed = allowsCart(found.package.orderMode);
   return (
     <div className="space-y-4">
-      <PackageOrderAgain productId={product.id} />
+      {cartAllowed ? <PackageOrderAgain productId={product.id} /> : null}
       <ShopPackageBuilder productName={product.name} builder={found} />
-      <StartGroupOrder productId={product.id} />
+      {cartAllowed ? <StartGroupOrder productId={product.id} /> : null}
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, isNull, or } from 'drizzle-orm';
+import { allowsCart } from './domain/package-order-mode';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { orders, packageInstancePicks, packageInstances, products } from '@/server/db/drizzle/schema';
 import type { StockAvailability } from '@/server/domains/stock/availability';
@@ -82,6 +83,8 @@ export class PackageShopService {
     const { packages, stock } = await this.load(companyId, [productId]);
     const pkg = packages.get(productId);
     if (pkg === undefined) return null;
+    // A quote promises nothing from the shelves, so a package sold only by quote request shows every option.
+    if (!allowsCart(pkg.orderMode)) return { package: pkg, available: pkg.slots.flatMap((slot) => slot.options.map((o) => o.id)), offered: true };
     const count = Number.isInteger(servings) && servings >= 1 && servings <= 1000 ? servings : 1;
     const available = new Set<string>();
     for (const slot of pkg.slots) {
@@ -183,6 +186,7 @@ export function toShopPackage(view: PackageView): ShopPackage {
     shortStockMode: view.shortStockMode,
     version: view.version,
     allowNote: view.allowNote,
+    orderMode: view.orderMode,
     slots: view.slots.map((slot) => ({
       id: slot.id,
       name: slot.name,

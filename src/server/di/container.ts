@@ -21,6 +21,7 @@ import { PackageShopService } from '@/server/domains/pricing/package-shop-servic
 import { PackageOrderService } from '@/server/domains/pricing/package-order-service';
 import { PreparationService } from '@/server/domains/pricing/preparation-service';
 import { PackageGroupService } from '@/server/domains/pricing/package-group-service';
+import { PackageQuoteRequestService } from '@/server/domains/pricing/package-quote-request-service';
 import { PriceGuardConfigService } from '@/server/domains/pricing/guard-config-service';
 import type { EmailPort, InvoicePdfPort } from '@/server/ports/communications';
 import { PdfKitInvoiceAdapter } from '@/server/adapters/pdf/pdfkit-invoice.adapter';
@@ -382,6 +383,7 @@ export interface AppContainer {
   packageOrders: PackageOrderService;
   preparation: PreparationService;
   packageGroups: PackageGroupService;
+  packageQuoteRequests: PackageQuoteRequestService;
   rebates: RebateService;
   rebateConfig: RebateConfigService;
   loyalty: LoyaltyService;
@@ -600,6 +602,7 @@ export function getContainer(): AppContainer {
   const packageOrders = new PackageOrderService(drizzleDb, packageShop);
   const preparation = new PreparationService(drizzleDb);
   const packageGroups = new PackageGroupService(drizzleDb, packageShop, packageOrders);
+  const packageQuoteRequests = new PackageQuoteRequestService(drizzleDb, packageShop, packageOrders);
   const insights = new InsightsService(drizzleDb, priceGuard, packageConfig);
   const pricingConfig = new PricingConfigService(
     drizzleDb,
@@ -774,6 +777,7 @@ export function getContainer(): AppContainer {
     packageOrders,
     preparation,
     packageGroups,
+    packageQuoteRequests,
     rebates,
     rebateConfig: new RebateConfigService(drizzleDb, decisionLog, reasonCodes, rebates, approvals),
     loyalty,

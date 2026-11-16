@@ -119,6 +119,8 @@ export interface QuoteInput {
   customerReference?: string | null;
   /** The date it is needed (`YYYY-MM-DD`); packages with ordering rules are checked against it when the quote becomes an order. */
   neededOn?: string | null;
+  /** Where the quote comes from; kept when it is first made and never changed by an edit. A shopper's request is `shop`. */
+  source?: 'staff' | 'shop';
   publicNotes?: string | null;
   internalNotes?: string | null;
   discountPercent: number;
@@ -1349,7 +1351,7 @@ export class SalesQuoteService {
         explicitFloorNet: explicit == null ? null : toNetUnit(i, explicit),
       };
     });
-    const verdict = await getContainer().priceGuard.assess(companyId, userId, guardLines);
+    const verdict = await getContainer().priceGuard.assess(companyId, UUID_TEXT.test(userId) ? userId : null, guardLines);
     if (verdict.blocked.length > 0) throw new Error(verdict.blocked[0]);
     lines.forEach((l, i) => {
       const { quotedAsKit: _stale, quotedAsPackage: _stalePackage, ...trace } = l.priceTrace ?? handTypedTrace(l, input.currency);
@@ -1485,7 +1487,7 @@ export class SalesQuoteService {
         );
         const [created] = await tx
           .insert(salesQuotes)
-          .values({ ...header, id: quoteId, quoteNumber: number, createdBy: userId })
+          .values({ ...header, id: quoteId, quoteNumber: number, createdBy: userId, source: input.source ?? 'staff' })
           .returning();
         quote = created!;
       }

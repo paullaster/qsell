@@ -4,7 +4,7 @@ import { use, useId, useState } from 'react';
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import { packagesScreenAction, removePackageAction, savePackageAction } from '@/server/domains/pricing/package-actions';
 import type { PackageView } from '@/server/domains/pricing/package-service';
-import { CATEGORY_SLOT_LIMIT, PACKAGE_SLOT_SOURCE_CHOICES, labelOfPackageChoice, minutesOfTime, PACKAGE_AUDIENCE_CHOICES, PACKAGE_PRICING_CHOICES, PACKAGE_SHORT_STOCK_CHOICES, PACKAGE_SPLIT_CHOICES, rulesWords, timeOfMinutes, WEEKDAY_NAMES } from '@/lib/package-choices';
+import { CATEGORY_SLOT_LIMIT, PACKAGE_SLOT_SOURCE_CHOICES, labelOfPackageChoice, minutesOfTime, PACKAGE_AUDIENCE_CHOICES, PACKAGE_ORDER_MODE_CHOICES, PACKAGE_PRICING_CHOICES, PACKAGE_SHORT_STOCK_CHOICES, PACKAGE_SPLIT_CHOICES, rulesWords, timeOfMinutes, WEEKDAY_NAMES } from '@/lib/package-choices';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
@@ -48,6 +48,7 @@ interface Draft {
   shortStockMode: string;
   isActive: boolean;
   allowNote: boolean;
+  orderMode: string;
   /** The rules of ordering, as typed (empty = no rule). Notice is in hours, closing time as HH:MM. */
   minServings: string;
   maxServings: string;
@@ -64,7 +65,7 @@ interface Draft {
 const newKey = (): string => globalThis.crypto.randomUUID();
 const blankOption = (): OptionDraft => ({ key: newKey(), choice: null, quantity: '1', difference: '0', ownPrice: '', isDefault: false, weight: '' });
 const blankSlot = (): SlotDraft => ({ key: newKey(), name: '', helpText: '', minPicks: '1', maxPicks: '1', allowRepeats: false, included: false, source: 'list', category: null, categoryDifference: '0', categoryOwnPrice: '', categoryQuantity: '1', options: [blankOption()] });
-const blankDraft = (): Draft => ({ editing: false, product: null, pricingMode: 'base_plus_differences', allocation: 'list_price', shortStockMode: 'hide', isActive: true, allowNote: false, minServings: '', maxServings: '', noticeHours: '', closesDaysBefore: '', closesAt: '', weekdays: [], dailyLimit: '', audience: 'anyone', groups: [], slots: [blankSlot()] });
+const blankDraft = (): Draft => ({ editing: false, product: null, pricingMode: 'base_plus_differences', allocation: 'list_price', shortStockMode: 'hide', isActive: true, allowNote: false, orderMode: 'cart', minServings: '', maxServings: '', noticeHours: '', closesDaysBefore: '', closesAt: '', weekdays: [], dailyLimit: '', audience: 'anyone', groups: [], slots: [blankSlot()] });
 
 const draftOf = (pkg: PackageView): Draft => ({
   editing: true,
@@ -74,6 +75,7 @@ const draftOf = (pkg: PackageView): Draft => ({
   shortStockMode: pkg.shortStockMode,
   isActive: pkg.isActive,
   allowNote: pkg.allowNote,
+  orderMode: pkg.orderMode,
   minServings: pkg.rules.minServings === null ? '' : String(pkg.rules.minServings),
   maxServings: pkg.rules.maxServings === null ? '' : String(pkg.rules.maxServings),
   noticeHours: pkg.rules.noticeMinutes === null ? '' : String(pkg.rules.noticeMinutes / 60),
@@ -116,6 +118,7 @@ function payloadOf(draft: Draft): unknown {
     shortStockMode: draft.shortStockMode,
     isActive: draft.isActive,
     allowNote: draft.allowNote,
+    orderMode: draft.orderMode,
     rules: {
       minServings: optional(draft.minServings),
       maxServings: optional(draft.maxServings),
@@ -203,6 +206,7 @@ function Body({ initial, canManage }: { initial: PackageView[]; canManage: boole
                   <div className="flex flex-wrap items-center gap-1.5">
                     <Chip tone={pkg.isActive ? 'green' : 'gray'}>{pkg.isActive ? 'In use' : 'Not in use'}</Chip>
                     <Chip tone="sky">{pkg.pricingMode === 'summed' ? 'Options added up' : 'Base price + differences'}</Chip>
+                    {pkg.orderMode === 'cart' ? null : <Chip tone="sky">{pkg.orderMode === 'quote' ? 'Quote request only' : 'Cart or quote request'}</Chip>}
                     {pkg.from.price === null ? <Chip tone="amber">No price yet</Chip> : <Chip tone="gray">From {money(pkg.from.price)}</Chip>}
                     {rulesWords(pkg.rules).map((w) => <Chip key={w} tone="sky">{w}</Chip>)}
                     {pkg.from.belowCost ? <Chip tone="red">Cheapest choice sells below cost</Chip> : null}
@@ -291,6 +295,11 @@ function Editor({ initial, onCancel, onSaved }: { initial: Draft; onCancel: () =
         <input type="checkbox" className="size-4" checked={draft.allowNote} onChange={(e) => setDraft((d) => ({ ...d, allowNote: e.target.checked }))} />
         Customers can write a note on each serving (for example &quot;no pepper&quot;); it is kept with the order and shown on the preparation sheet
       </label>
+
+      <ChoicePicker label="How shoppers order it on the web shop" source="package-order-modes" clearable={false} choice={{ id: draft.orderMode, label: labelOfPackageChoice(PACKAGE_ORDER_MODE_CHOICES, draft.orderMode) }} onChoice={(c) => c !== null && setDraft((d) => ({ ...d, orderMode: c.id }))} />
+      <p className="text-xs text-fg-muted">
+        Quote requests arrive in Quotes as drafts marked &quot;Requested on the web shop&quot;. You check the price, send the quote, and when the customer accepts it becomes an order. A package sold by quote only cannot be put in the cart or ordered as a group.
+      </p>
 
       <fieldset className="space-y-3 rounded-lg border border-line p-3">
         <legend className="px-1 text-xs font-bold tracking-wider text-fg-subtle uppercase">Rules of ordering (leave empty for no rule)</legend>

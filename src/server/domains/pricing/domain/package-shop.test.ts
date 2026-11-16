@@ -9,6 +9,7 @@ const lunch: ShopPackage = {
   shortStockMode: 'hide',
   version: 1,
   allowNote: true,
+  orderMode: 'cart',
   slots: [
     {
       id: 'fish', name: 'Fish', helpText: '', minPicks: 1, maxPicks: 1, allowRepeats: false, included: false,
