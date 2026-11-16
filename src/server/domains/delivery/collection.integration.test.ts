@@ -208,6 +208,35 @@ describe.skipIf(!has(url))('collecting an order from a branch (database)', () =>
       expect(await c.orderCollections.collectWithCode(staff(), w.order.id, w.code)).toMatchObject({ ok: false, reason: 'order_closed' });
     });
 
+    it('closes the collection with its order: no reminder, no flag, no code, no hand-over, and takes it back if the order is reopened; earlier ones are closed by the sweep', async () => {
+      const day = 86_400_000;
+      const w = await waiting();
+      await c.orderCollections.markReady(staff(), w.order.id);
+      await db.update(schema.orderCollections).set({ readyAt: new Date(Date.now() - 5 * day) }).where(eq(schema.orderCollections.orderId, w.order.id));
+      expect((await c.orderCollections.leftAtCounter(companyId, [w.order.id])).size).toBe(1);
+      await OrderStages.move(db, w.order.id, 'cancelled', 'cancelled', { reasonCode: 'cancelled', message: 'test' });
+      const state = async () => (await c.orderCollections.view(companyId, w.order.id))?.status;
+      expect(await state()).toBe('cancelled');
+      expect((await c.orderCollections.leftAtCounter(companyId, [w.order.id])).size).toBe(0);
+      expect(await c.orderCollections.codeFor(companyId, w.order.id)).toBeNull();
+      expect(await c.orderCollections.remindNow(staff(), w.order.id)).toMatchObject({ ok: false, reason: 'order_closed' });
+      expect(await c.orderCollections.markReady(staff(), w.order.id)).toMatchObject({ ok: false });
+      expect(await c.orderCollections.reissue(staff(), w.order.id, 'lost the phone')).toMatchObject({ ok: false, reason: 'order_closed' });
+      await c.orderCollections.remindUncollected();
+      const sent = await db.select().from(schema.deliveryMessages).where(and(eq(schema.deliveryMessages.orderId, w.order.id), eq(schema.deliveryMessages.kind, 'collection_reminder')));
+      expect(sent).toHaveLength(0);
+      // The order is put back to work: the collection is ready again, as it was.
+      await OrderStages.move(db, w.order.id, 'released_for_fulfilment', 'succeeded', {});
+      expect(await state()).toBe('ready');
+      // An order that was cancelled before collections followed it is closed by the sweep.
+      const old = await waiting();
+      await db.update(schema.orders).set({ status: 'cancelled' }).where(eq(schema.orders.id, old.order.id));
+      expect(await state()).toBe('ready');
+      expect(await c.orderCollections.closeForClosedOrders()).toBeGreaterThanOrEqual(1);
+      expect((await c.orderCollections.view(companyId, old.order.id))?.status).toBe('cancelled');
+      expect(await c.orderCollections.closeForClosedOrders()).toBe(0);
+    });
+
     describe('telling the customer it is ready', () => {
       const sentMail: { to: string; text: string }[] = [];
       const texted: { to: string; text: string }[] = [];

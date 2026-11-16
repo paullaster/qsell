@@ -210,6 +210,32 @@ test.describe('collecting an order from a branch', () => {
     }
   });
 
+  test('an order cancelled while it waits at the counter is closed: no flag, no reminder button and no way to hand it over', async ({ page }, testInfo) => {
+    test.slow();
+    const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}`;
+    const email = `cancelled-${tag.toLowerCase()}@example.test`;
+    const branchName = deliveryTool('open', tag).branchName ?? '';
+    try {
+      const orderNumber = await placeCollectedOrder(page, branchName, email);
+      deliveryTool('pay', orderNumber);
+      deliveryTool('collection-ready', orderNumber, '4');
+      deliveryTool('cancel-order', orderNumber);
+      await open(page, '/admin/orders', /Customer Orders/);
+      await page.getByLabel('Search orders').fill(orderNumber);
+      const row = page.locator('tr, li').filter({ hasText: orderNumber }).filter({ has: page.getByRole('button', { name: /Manage/ }) }).first();
+      await expect(row).toBeVisible({ timeout: 60_000 });
+      await expect(row).not.toContainText('At counter');
+      await openOrder(page, orderNumber);
+      const panel = page.getByRole('region', { name: 'Collection' });
+      await expect(panel).toContainText('Cancelled', { timeout: 30_000 });
+      await expect(panel.getByRole('button', { name: 'Remind the customer now' })).toHaveCount(0);
+      await expect(panel.getByRole('button', { name: 'Hand over', exact: true })).toHaveCount(0);
+      await noHorizontalScroll(page);
+    } finally {
+      deliveryTool('close', tag);
+    }
+  });
+
   test('without a code, a person allowed to may hand the order over after an ID check, saying what was seen and why', async ({ page }, testInfo) => {
     test.slow();
     const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}`;

@@ -50,6 +50,8 @@ export type CollectionOutcome = { ok: true; view: CollectionView } | { ok: false
 /** Whole days an order has waited at the counter since it was marked ready. */
 export const waitedDays = (readyAt: Date, now: Date): number => Math.max(0, Math.floor((now.getTime() - readyAt.getTime()) / 86_400_000));
 
+const CLOSED_WORDS = 'This order was cancelled or refunded, so it is not handed over.';
+
 const fail = (reason: CollectionRefusal, message: string, attemptsLeft?: number): CollectionOutcome => ({ ok: false, reason, message, ...(attemptsLeft === undefined ? {} : { attemptsLeft }) });
 
 /** The order states from which an order is not handed over, with what to say. */
@@ -250,7 +252,7 @@ export class OrderCollections {
       const [row] = await tx.select().from(orderCollections).where(and(eq(orderCollections.orderId, orderId), eq(orderCollections.companyId, actor.companyId))).for('update');
       if (row === undefined) return { ok: false as const, reason: 'not_found' as const, message: 'That order is not waiting to be collected.' };
       if (row.status === 'collected') return { ok: false as const, reason: 'already_collected' as const, message: 'This order has already been collected.' };
-      if (row.status === 'cancelled') return { ok: false as const, reason: 'not_collectable' as const, message: 'This order is not waiting to be collected.' };
+      if (row.status === 'cancelled') return { ok: false as const, reason: 'order_closed' as const, message: CLOSED_WORDS };
       const code = this.newCode();
       await tx
         .update(orderCollections)
@@ -283,6 +285,7 @@ export class OrderCollections {
       const [row] = await tx.select({ status: orderCollections.status, readyAt: orderCollections.readyAt }).from(orderCollections).where(and(eq(orderCollections.orderId, orderId), eq(orderCollections.companyId, actor.companyId))).for('update');
       if (row === undefined) return fail('not_found', 'That order is not waiting to be collected.');
       if (row.status === 'collected') return fail('already_collected', 'This order has already been collected.');
+      if (row.status === 'cancelled') return fail('order_closed', CLOSED_WORDS);
       if ((row.status !== 'ready' && row.status !== 'locked') || row.readyAt === null) return fail('not_collectable', 'Only an order that is ready at the counter can be reminded. Mark it ready first.');
       if (waitedDays(row.readyAt, now) < 1) return fail('bad_input', 'This order was marked ready less than a day ago. A reminder can go once it has waited a day.');
       const [had] = await tx
@@ -303,6 +306,8 @@ export class OrderCollections {
    * reminder drops out of the search. Returns how many reminders were queued.
    */
   async remindUncollected(now: Date = new Date(), limit = 200): Promise<number> {
+    // Orders cancelled, refunded or failed before collections followed their order are closed first, so none is reminded.
+    await this.closeForClosedOrders();
     const first = sql`coalesce(${deliveryTextSettings.collectionReminderFirstDays}, ${DEFAULT_REMINDERS.firstDays})`;
     const stages = sql`case when ${deliveryTextSettings.companyId} is null then 2 when ${deliveryTextSettings.collectionReminderSecondDays} is null then 1 else 2 end`;
     const candidates = await this.db
@@ -350,10 +355,20 @@ export class OrderCollections {
     return queued;
   }
 
+  /** Closes collections still open for an order that is cancelled, refunded or failed. Idempotent; returns how many it closed. */
+  async closeForClosedOrders(): Promise<number> {
+    const closed = await this.db
+      .update(orderCollections)
+      .set({ status: 'cancelled', updatedAt: new Date() })
+      .where(and(inArray(orderCollections.status, ['waiting', 'ready', 'locked']), sql`exists (select 1 from ${orders} o where o.id = ${orderCollections.orderId} and o.status in ('cancelled','refunded','failed'))`))
+      .returning({ id: orderCollections.orderId });
+    return closed.length;
+  }
+
   private statusProblem(status: CollectionStatus): CollectionOutcome | null {
     if (status === 'collected') return fail('already_collected', 'This order has already been collected.');
     if (status === 'locked') return fail('locked', 'This order’s code is locked. Give the customer a new code first.', 0);
-    if (status !== 'waiting' && status !== 'ready') return fail('not_collectable', 'This order is not waiting to be collected.');
+    if (status === 'cancelled') return fail('order_closed', CLOSED_WORDS);
     return null;
   }
 

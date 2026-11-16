@@ -173,6 +173,17 @@ async function markCollectionReady(orderNumber: string, daysAgo: string): Promis
   return { ready: orderNumber, daysAgo };
 }
 
+/** Cancels an order the way the order's own stage writer does, so a test can see what the counter shows for it. */
+async function cancelOrder(orderNumber: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { orders } = await import('@/server/db/drizzle/schema');
+  const { OrderStages } = await import('@/server/domains/orders/stages');
+  const [order] = await db.select({ id: orders.id }).from(orders).where(eq(orders.orderNumber, orderNumber));
+  if (order === undefined) throw new Error(`e2e fixture: no order ${orderNumber}`);
+  await OrderStages.move(db, order.id, 'cancelled', 'cancelled', { reasonCode: 'cancelled', message: 'e2e' });
+  return { cancelled: orderNumber };
+}
+
 /**
  * Makes a delivery for the whole of an order and takes it to ready to go, as a person would on its screen, so a test of the dispatch
  * board need not click through all of that. Prints the delivery number.
@@ -351,6 +362,7 @@ async function main(): Promise<void> {
   if (command === 'collection') result = await collection(tag);
   if (command === 'ready') result = await ready(tag, extra);
   if (command === 'collection-ready' && extra !== undefined) result = await markCollectionReady(tag, extra);
+  if (command === 'cancel-order') result = await cancelOrder(tag);
   if (command === 'advance' && extra !== undefined) result = await advance(tag, extra);
   if (command === 'set-email' && extra !== undefined) result = await setEmail(tag, extra);
   if (command === 'messages') result = await messages(tag);
