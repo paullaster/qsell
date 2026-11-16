@@ -24,7 +24,8 @@ test.describe('the address follows the place chosen at checkout', () => {
     const savedStreet = `${tag} Saved Close`;
     try {
       await context.grantPermissions(['geolocation']);
-      await context.setGeolocation({ latitude: -1.2921, longitude: 36.8219 });
+      // A laptop's place can be kilometres out: the device says so, and the checkout passes it on.
+      await context.setGeolocation({ latitude: -1.2921, longitude: 36.8219, accuracy: 2400 });
       await signInAsShopper(page, shopper);
       await cartWithSalt(page);
       await page.goto('/checkout');
@@ -43,15 +44,19 @@ test.describe('the address follows the place chosen at checkout', () => {
       await expect(street).toBeVisible();
       await expect(street).not.toHaveValue(savedStreet);
       await expect(section.getByRole('status').filter({ hasText: 'Delivery from' })).toBeVisible({ timeout: 30_000 });
+      await expect(section.getByRole('status').filter({ hasText: 'within about 2.4 km' })).toContainText('Drag the pin to your door');
 
       // Choosing the saved address again puts back its own place (it has none), so the pin is gone and the charge is for the written address.
       await saved.getByRole('button', { name: new RegExp(savedStreet) }).click();
       await expect(section.getByRole('button', { name: 'Remove the pin' })).toHaveCount(0);
       await expect(saved.getByRole('button', { pressed: true })).toContainText(savedStreet);
+      await expect(section.getByText('within about 2.4 km')).toHaveCount(0);
 
-      // Their location again; the street cannot be left empty, and is asked for next to the pin.
+      // Their location again, this time a precise one (nothing is said); the street cannot be left empty, and is asked for next to the pin.
+      await context.setGeolocation({ latitude: -1.2921, longitude: 36.8219, accuracy: 8 });
       await section.getByRole('button', { name: 'Use my location' }).click();
       await expect(section.getByRole('button', { name: 'Remove the pin' })).toBeVisible({ timeout: 30_000 });
+      await expect(section.getByText('Your device is only sure')).toHaveCount(0);
       await expect(street).not.toHaveValue(savedStreet);
       await street.fill('');
       await page.getByLabel(/number to pay from$/).fill('0733 555 666');

@@ -134,7 +134,7 @@ function AddressBook({ start }: { start: CustomerAddress[] }) {
         setLocating(false);
         setLocationNote('We could not get your location. Allow location for this site, or save the address in words.');
       },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
     );
   };
 

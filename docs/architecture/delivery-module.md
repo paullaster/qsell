@@ -1061,3 +1061,9 @@ No migration. §74 showed the days an order had waited only inside one order. `O
 
 **Verified.** Database: only the order ready for 4 days is flagged (a fresh one, one not yet ready and a collected one are not), another company and an empty page give nothing, and the list action carries the days on that row only. Browser: just marked ready shows no label; three days later the list says "At counter 3 days", without scroll on desktop and phone. Not built: a filter or sort for orders left too long; telling a branch manager by message.
 
+## 83. The checkout says how sure the device is of the place (2026-11-16)
+
+No migration. "Use my location" took whatever the device answered as the delivery place; a laptop or a phone indoors can be kilometres out, and the shopper was never told. The hook now keeps `locate.accuracyM` (the device's own `coords.accuracy`) beside the pin it made, and clears it for any other pin (a dropped or dragged one, a searched place, a saved address's restored place) or when the pin is removed. `lib/geo-accuracy.accuracyNote` turns it into words only when it is worse than 200 m (about the precision of a pin placed by hand): "Your device is only sure of where you are to within about 2.4 km. Drag the pin to your door, or search for your place by name, so the rider comes to the right spot." It is shown in the delivery section as a status under the location button.
+
+**Verified.** Unit: nothing at or under 200 m, nothing when the device did not say, metres below a kilometre and kilometres above. Browser (the device's accuracy is set by the test): a 2.4 km answer shows the note and its advice; choosing a saved address removes it; a precise answer says nothing. Not built: refusing a pin whose accuracy is very poor; drawing the accuracy circle on the map.
+
