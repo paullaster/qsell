@@ -36,6 +36,8 @@ const reasons = (key: string, permission: PermissionKey, narrow?: SQL): LookupSo
 
 export const REASON_LOOKUP_SOURCES: LookupSource[] = [
   reasons('numbering-reasons', 'numbering:manage'),
+  reasons('email-routing-reasons', 'email_routing:manage'),
+  reasons('selling-reasons', 'selling_settings:manage'),
   reasons('approval-config-reasons', 'approvals:manage'),
   reasons('approval-reasons', 'approvals:act'),
   reasons('pricing-reasons', 'pricing:read', sql`(jsonb_array_length(${reasonCodes.appliesTo}) = 0 or ${reasonCodes.appliesTo} @> '["pricing_configuration"]'::jsonb)`),

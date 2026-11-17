@@ -144,6 +144,9 @@ export interface AddressFields {
   countyOrState: string;
   postalCode: string;
   country: string;
+  /** The place on the map for this address (both or neither); the browser reads it from the device, the server checks it. */
+  latitude: number | null;
+  longitude: number | null;
   isDefault: boolean;
 }
 
@@ -156,6 +159,8 @@ export const blankAddress: AddressFields = {
   countyOrState: '',
   postalCode: '',
   country: 'Kenya',
+  latitude: null,
+  longitude: null,
   isDefault: false,
 };
 
@@ -168,6 +173,15 @@ const REQUIRED: [keyof AddressFields, string, number][] = [
   ['countyOrState', 'County or state', 100],
   ['country', 'Country', 100],
 ];
+
+/** The place on the map sent with an address: both numbers on the earth, or neither. Anything else is refused in words. */
+function readPlace(latitude: unknown, longitude: unknown): { ok: true; latitude: number | null; longitude: number | null } | { ok: false; error: string } {
+  const empty = (v: unknown): boolean => v === null || v === undefined;
+  if (empty(latitude) && empty(longitude)) return { ok: true, latitude: null, longitude: null };
+  const good = typeof latitude === 'number' && typeof longitude === 'number' && Number.isFinite(latitude) && Number.isFinite(longitude) && Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180;
+  if (!good) return { ok: false, error: 'The place on the map is not valid. Use your location again, or remove it.' };
+  return { ok: true, latitude: Math.round(latitude * 1e6) / 1e6, longitude: Math.round(longitude * 1e6) / 1e6 };
+}
 
 /** The address cleaned up, or the first thing wrong with it in plain words. Never trusts the browser. */
 export function readAddress(
@@ -189,6 +203,8 @@ export function readAddress(
     return { ok: false, error: 'Enter a phone number with digits only, for example 0712 345 678.' };
   }
   if (text('postalCode').length > 20) return { ok: false, error: 'The postal code is too long.' };
+  const place = readPlace(source.latitude, source.longitude);
+  if (!place.ok) return { ok: false, error: place.error };
   return {
     ok: true,
     address: {
@@ -200,6 +216,8 @@ export function readAddress(
       countyOrState: text('countyOrState'),
       postalCode: text('postalCode'),
       country: text('country'),
+      latitude: place.latitude,
+      longitude: place.longitude,
       isDefault: source.isDefault === true,
     },
   };

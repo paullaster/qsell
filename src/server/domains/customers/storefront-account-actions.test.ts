@@ -8,6 +8,11 @@ const addAddress = vi.fn();
 const updateAddress = vi.fn();
 const deleteAddress = vi.fn();
 const setDefaultAddress = vi.fn();
+const forOrder = vi.fn();
+const tokenFor = vi.fn();
+const collectionView = vi.fn();
+const codeFor = vi.fn();
+const visitsForCustomer = vi.fn();
 
 vi.mock('@/auth', () => ({ auth: (...args: unknown[]) => auth(...args) as unknown }));
 vi.mock('@/server/domains/access-control/guard', () => ({
@@ -27,6 +32,10 @@ vi.mock('@/server/di/container', () => ({
   getContainer: () => ({
     companySettings: { ensureSeeded: () => Promise.resolve({ id: 'co-1' }) },
     orders: { pageForOwner, getById },
+    trackedOrders: { forOrder },
+    trackingLinks: { tokenFor },
+    orderCollections: { view: collectionView, codeFor },
+    orderVisits: { forCustomer: visitsForCustomer },
     customers: {
       ensureStorefrontCustomer: () =>
         Promise.resolve({
@@ -159,6 +168,58 @@ describe('one order', () => {
   });
 });
 
+describe('where my order is', () => {
+  const base = { id: 'o1', orderNumber: 'SO-1', userId: 'acct-1', tradeCustomerId: null };
+  it('asks the shopper to sign in, and says not found for someone else’s order exactly as for a missing one', async () => {
+    auth.mockResolvedValue(null);
+    expect(await actions.myOrderTrackingAction('o1')).toMatchObject({ ok: false, code: 'SIGN_IN' });
+    signedIn();
+    getById.mockResolvedValue({ ...base, userId: 'someone-else' });
+    const theirs = await actions.myOrderTrackingAction('o1');
+    getById.mockResolvedValue(null);
+    expect(theirs).toEqual(await actions.myOrderTrackingAction('nope'));
+    expect(theirs).toMatchObject({ ok: false, code: 'ORDER_NOT_FOUND' });
+    expect(forOrder).not.toHaveBeenCalled();
+    expect(tokenFor).not.toHaveBeenCalled();
+  });
+  it('says nothing for an order with no delivery to follow', async () => {
+    signedIn();
+    getById.mockResolvedValue(base);
+    forOrder.mockResolvedValue(null);
+    expect(await actions.myOrderTrackingAction('o1')).toEqual({ ok: true, data: null });
+  });
+  it('gives a delivery in the customer’s words with the page that follows it, and no address, phone or code', async () => {
+    signedIn();
+    getById.mockResolvedValue(base);
+    forOrder.mockResolvedValue({ storeName: 'Shop', orderNumber: 'SO-1', placedAt: '2026-11-15T08:00:00Z', kind: 'delivery', state: 'in_progress', waiting: [], collection: null, deliveries: [{ number: 'DLV-1', status: 'out_for_delivery', items: [], courier: null, receivedBy: null, deliveredAt: null, failedAttempts: 0, handoverCode: '4821', canReschedule: false, scheduledFor: null, window: { start: '2026-11-16T10:00:00Z', end: '2026-11-16T12:00:00Z' } }] });
+    tokenFor.mockResolvedValue('tok123');
+    const answer = await actions.myOrderTrackingAction('o1');
+    expect(answer).toMatchObject({ ok: true, data: { kind: 'delivery', headline: 'Your order is on its way to you', link: expect.stringContaining('/track/tok123') as string, deliveries: [{ number: 'DLV-1', words: 'On its way', window: { start: '2026-11-16T10:00:00Z' } }] } });
+    expect(JSON.stringify(answer)).not.toContain('4821');
+  });
+  it('words an order to be collected, and leaves out the link when it has been turned off', async () => {
+    signedIn();
+    getById.mockResolvedValue(base);
+    forOrder.mockResolvedValue({ storeName: 'Shop', orderNumber: 'SO-1', placedAt: '2026-11-15T08:00:00Z', kind: 'collection', state: 'not_started', waiting: [], deliveries: [], collection: { branchName: 'Westlands Branch', status: 'ready' } });
+    tokenFor.mockResolvedValue(null);
+    collectionView.mockResolvedValue({ branch: { name: 'Westlands Branch', address: '5 Moi Avenue, Nairobi', phone: '0711000000' } });
+    codeFor.mockResolvedValue('ABCDEF');
+    // The owner is given the branch and their own code; the code is looked up only for an order that is theirs.
+    expect(await actions.myOrderTrackingAction('o1')).toMatchObject({ ok: true, data: { kind: 'collection', headline: 'Your order is ready to collect', detail: expect.stringContaining('Westlands Branch') as string, deliveries: [], link: null, collection: { branchName: 'Westlands Branch', address: '5 Moi Avenue, Nairobi', phone: '0711000000', code: 'ABCDEF' } } });
+    expect(codeFor).toHaveBeenCalledWith('co-1', 'o1');
+    // Once it is collected the code is no longer given (the service answers null).
+    codeFor.mockResolvedValue(null);
+    expect(await actions.myOrderTrackingAction('o1')).toMatchObject({ ok: true, data: { collection: { code: null } } });
+  });
+  it('never looks up a collection code for an order that is not the shopper’s', async () => {
+    signedIn();
+    getById.mockResolvedValue({ ...base, userId: 'someone-else' });
+    await actions.myOrderTrackingAction('o1');
+    expect(codeFor).not.toHaveBeenCalled();
+    expect(collectionView).not.toHaveBeenCalled();
+  });
+});
+
 describe('my addresses', () => {
   it('requires a session', async () => {
     auth.mockResolvedValue(null);
@@ -201,5 +262,37 @@ describe('my addresses', () => {
     setDefaultAddress.mockRejectedValue(new Error('relation x does not exist'));
     const result = await actions.makeMyAddressDefaultAction('ad-1');
     expect(JSON.stringify(result)).not.toContain('relation');
+  });
+});
+
+describe('the visits of my order', () => {
+  const base = { id: 'o1', orderNumber: 'SO-1', userId: 'acct-1', tradeCustomerId: null };
+  it('asks the shopper to sign in, and never reads the visits of an order that is not theirs, saying not found exactly as for a missing one', async () => {
+    auth.mockResolvedValue(null);
+    expect(await actions.myOrderVisitsAction('o1')).toMatchObject({ ok: false, code: 'SIGN_IN' });
+    signedIn();
+    getById.mockResolvedValue({ ...base, userId: 'someone-else' });
+    const theirs = await actions.myOrderVisitsAction('o1');
+    getById.mockResolvedValue(null);
+    expect(theirs).toEqual(await actions.myOrderVisitsAction('nope'));
+    expect(theirs).toMatchObject({ ok: false, code: 'ORDER_NOT_FOUND' });
+    expect(visitsForCustomer).not.toHaveBeenCalled();
+  });
+  it('gives when, where and how it stands in the customer’s words, and nothing else', async () => {
+    signedIn();
+    getById.mockResolvedValue(base);
+    visitsForCustomer.mockResolvedValue([{ status: 'crew_assigned', startsAt: '2026-11-20T06:00:00.000Z', endsAt: '2026-11-20T09:00:00.000Z', address: 'Kileleshwa, Gate 4', crew: [{ name: 'Otieno' }], contactPhone: '0700111222' }]);
+    const answer = await actions.myOrderVisitsAction('o1');
+    expect(answer).toEqual({ ok: true, data: [{ state: 'booked', words: 'Booked, and your crew is assigned.', startsAt: '2026-11-20T06:00:00.000Z', endsAt: '2026-11-20T09:00:00.000Z', address: 'Kileleshwa, Gate 4' }] });
+    expect(JSON.stringify(answer)).not.toContain('Otieno');
+    expect(JSON.stringify(answer)).not.toContain('0700111222');
+    visitsForCustomer.mockResolvedValue([]);
+    expect(await actions.myOrderVisitsAction('o1')).toEqual({ ok: true, data: [] });
+  });
+  it('says so in words when the visits cannot be read', async () => {
+    signedIn();
+    getById.mockResolvedValue(base);
+    visitsForCustomer.mockRejectedValue(new Error('db down'));
+    expect(await actions.myOrderVisitsAction('o1')).toEqual({ ok: false, error: 'The visit could not be checked just now.' });
   });
 });

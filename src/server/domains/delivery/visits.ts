@@ -1,6 +1,6 @@
-import { and, asc, eq, inArray, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { orderVisitCrew, orderVisitItems, orderVisitMaterials, orderVisits, orders, products, stockLocations, users } from '@/server/db/drizzle/schema';
+import { mediaAssets, orderVisitCrew, orderVisitItems, orderVisitMaterials, orderVisitPhotos, orderVisits, orders, products, stockLocations, users } from '@/server/db/drizzle/schema';
 import { checkCrew, checkItems, checkWindow, checklistProblem, nextVisitStatus, reasonProblem, signOffProblem, type VisitAction, type VisitStatus } from '@/lib/visit';
 import type { StockLedger } from '@/server/domains/stock/ledger';
 import { StockError } from '@/server/domains/stock/errors';
@@ -8,7 +8,7 @@ import { OrderStages } from '@/server/domains/orders/stages';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { decodeCursor, encodeCursor } from '@/server/domains/lookups/request';
 import type { DocRefusal, DocResult } from './documents';
-import { orderReadinessProblem } from './order-readiness';
+import { VISIT_ORDER_CLOSED_REASON, orderReadinessProblem } from './order-readiness';
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
@@ -33,12 +33,30 @@ export interface VisitView {
   crew: { userId: string; name: string }[];
   items: { id: string; label: string; done: boolean }[];
   materials: MaterialView[];
+  photos: PhotoView[];
   startedAt: string | null;
   completedAt: string | null;
   signedOffAt: string | null;
   signedOffBy: string | null;
   cancelReason: string | null;
   version: number;
+}
+
+/** Where the photos the crew takes on a visit are kept. Private: a signed, expiring link is given only after an access check. */
+export const VISIT_PHOTO_PURPOSE = 'visit_photo';
+export const MAX_VISIT_PHOTOS = 20;
+export const PHOTO_KINDS = ['before', 'after', 'other'] as const;
+export type PhotoKind = (typeof PHOTO_KINDS)[number];
+
+export interface PhotoView {
+  id: string;
+  kind: PhotoKind;
+  caption: string | null;
+  /** The crew member who took it, or the office. */
+  by: string;
+  at: string;
+  /** The photo can still be taken off the visit (the work is not signed off, and it is the person's own or they are the scheduler). */
+  canRemove: boolean;
 }
 
 export interface MaterialView {
@@ -106,7 +124,8 @@ export class OrderVisits {
     return rows.length === ids.length ? new Map(rows.map((r) => [r.id, r.name])) : null;
   }
 
-  private async viewsIn(db: DrizzleDb | Tx, companyId: string, where: SQL | undefined, limit: number): Promise<VisitView[]> {
+  /** `viewer`: who is looking, which decides what they may still take off (their own photos, or any when they are the scheduler). Nobody, and nothing can be taken off. */
+  private async viewsIn(db: DrizzleDb | Tx, companyId: string, where: SQL | undefined, limit: number, viewer: { userId: string; crewOnly: boolean } | null = null): Promise<VisitView[]> {
     const rows = await db
       .select({ v: orderVisits, orderNumber: orders.orderNumber })
       .from(orderVisits)
@@ -116,7 +135,7 @@ export class OrderVisits {
       .limit(limit);
     if (rows.length === 0) return [];
     const ids = rows.map((r) => r.v.id);
-    const [crew, items, materials] = await Promise.all([
+    const [crew, items, materials, photos] = await Promise.all([
       db.select().from(orderVisitCrew).where(inArray(orderVisitCrew.visitId, ids)).orderBy(asc(orderVisitCrew.addedAt), asc(orderVisitCrew.name)),
       db.select().from(orderVisitItems).where(inArray(orderVisitItems.visitId, ids)).orderBy(asc(orderVisitItems.position)),
       db
@@ -126,6 +145,7 @@ export class OrderVisits {
         .innerJoin(stockLocations, eq(stockLocations.id, orderVisitMaterials.locationId))
         .where(inArray(orderVisitMaterials.visitId, ids))
         .orderBy(asc(orderVisitMaterials.createdAt), asc(orderVisitMaterials.id)),
+      db.select().from(orderVisitPhotos).where(inArray(orderVisitPhotos.visitId, ids)).orderBy(asc(orderVisitPhotos.createdAt), asc(orderVisitPhotos.id)),
     ]);
     const undone = new Set(materials.map((r) => r.m.reversesId).filter((x): x is string => x !== null));
     return rows.map(({ v, orderNumber }) => ({
@@ -144,6 +164,16 @@ export class OrderVisits {
       materials: materials
         .filter((r) => r.m.visitId === v.id)
         .map((r) => ({ id: r.m.id, productId: r.m.productId, productName: r.productName, locationName: r.locationName, quantity: Number(r.m.quantity), note: r.m.note, givenBack: undone.has(r.m.id), canGiveBack: Number(r.m.quantity) > 0 && !undone.has(r.m.id), at: r.m.createdAt.toISOString() })),
+      photos: photos
+        .filter((p) => p.visitId === v.id)
+        .map((p) => ({
+          id: p.id,
+          kind: p.kind,
+          caption: p.caption,
+          by: crew.find((c) => c.visitId === v.id && c.userId === p.takenBy)?.name ?? 'The office',
+          at: p.createdAt.toISOString(),
+          canRemove: viewer !== null && (v.status === 'on_site' || v.status === 'completed') && (!viewer.crewOnly || p.takenBy === viewer.userId),
+        })),
       startedAt: v.startedAt?.toISOString() ?? null,
       completedAt: v.completedAt?.toISOString() ?? null,
       signedOffAt: v.signedOffAt?.toISOString() ?? null,
@@ -155,7 +185,7 @@ export class OrderVisits {
 
   async view(actor: VisitActor, id: string): Promise<VisitView | null> {
     if (!UUID.test(id)) return null;
-    const [view] = await this.viewsIn(this.db, actor.companyId, eq(orderVisits.id, id), 1);
+    const [view] = await this.viewsIn(this.db, actor.companyId, eq(orderVisits.id, id), 1, actor);
     if (view === undefined) return null;
     return actor.crewOnly && !view.crew.some((c) => c.userId === actor.userId) ? null : view;
   }
@@ -172,7 +202,7 @@ export class OrderVisits {
     const state = live ? sql`${orderVisits.status} NOT IN ('signed_off','cancelled')` : eq(orderVisits.status, status);
     const after = typeof input.cursor === 'string' && input.cursor !== '' ? decodeCursor(input.cursor) : null;
     const seek = after === null || !UUID.test(after.id) || Number.isNaN(new Date(after.k).getTime()) ? sql`true` : sql`(${orderVisits.startsAt}, ${orderVisits.id}) > (${after.k}::timestamptz, ${after.id}::uuid)`;
-    const rows = await this.viewsIn(this.db, actor.companyId, and(state, mine, seek), PAGE + 1);
+    const rows = await this.viewsIn(this.db, actor.companyId, and(state, mine, seek), PAGE + 1, actor);
     const page = rows.slice(0, PAGE);
     const last = page[page.length - 1];
     return { rows: page, nextCursor: rows.length > PAGE && last !== undefined ? encodeCursor({ k: last.startsAt, id: last.id }) : null };
@@ -241,7 +271,7 @@ export class OrderVisits {
       if (crew !== null) await tx.insert(orderVisitCrew).values(crew.ids.map((userId) => ({ visitId: made.id, userId, name: names.get(userId) ?? '' })));
       await this.note(tx, actor, orderId, made.id, 'booked', { startsAt: window.start.toISOString(), endsAt: window.end.toISOString(), crew: crew?.ids ?? [] });
       if (crew !== null) await this.dispatched(tx, actor, orderId, made.id);
-      const [view] = await this.viewsIn(tx, actor.companyId, eq(orderVisits.id, made.id), 1);
+      const [view] = await this.viewsIn(tx, actor.companyId, eq(orderVisits.id, made.id), 1, actor);
       if (view === undefined) throw new Error('The visit vanished.');
       return { ok: true, data: view };
     });
@@ -337,6 +367,31 @@ export class OrderVisits {
     });
   }
 
+  /**
+   * What the customer of an order may see of its visits: when, where (the address they gave), and how it stands. Never the crew, a
+   * contact's phone, the notes, the checklist, the materials or the photos. The caller has already checked that the order is theirs.
+   */
+  async forCustomer(companyId: string, orderId: string): Promise<{ status: VisitStatus; startsAt: string; endsAt: string; address: string }[]> {
+    const rows = await this.db
+      .select({ status: orderVisits.status, startsAt: orderVisits.startsAt, endsAt: orderVisits.endsAt, address: orderVisits.address })
+      .from(orderVisits)
+      .where(and(eq(orderVisits.companyId, companyId), eq(orderVisits.orderId, orderId)))
+      .orderBy(asc(orderVisits.startsAt), asc(orderVisits.id))
+      .limit(20);
+    return rows.map((r) => ({ status: r.status, startsAt: r.startsAt.toISOString(), endsAt: r.endsAt.toISOString(), address: r.address }));
+  }
+
+  /** Cancels visits that have not started for an order that is cancelled, refunded or failed (visits booked before they followed their order). Idempotent; returns how many. */
+  async closeForClosedOrders(): Promise<number> {
+    const at = this.clock();
+    const closed = await this.db
+      .update(orderVisits)
+      .set({ status: 'cancelled', cancelledAt: at, cancelReason: VISIT_ORDER_CLOSED_REASON, version: sql`${orderVisits.version} + 1`, updatedAt: at })
+      .where(and(inArray(orderVisits.status, ['scheduled', 'crew_assigned']), sql`exists (select 1 from ${orders} o where o.id = ${orderVisits.orderId} and o.status in ('cancelled','refunded','failed'))`))
+      .returning({ id: orderVisits.id });
+    return closed.length;
+  }
+
   async cancel(actor: VisitActor, id: string, input: { reason: unknown; expectedVersion: unknown }): Promise<DocResult<VisitView>> {
     const why = reasonProblem(input.reason, 'the visit is cancelled');
     if (why !== null) return fail('bad_input', why);
@@ -353,7 +408,7 @@ export class OrderVisits {
   }
 
   /** Materials are used while the crew is on site, and until the work is signed off. */
-  private async materialsOpen(tx: Tx, actor: VisitActor, id: string): Promise<typeof orderVisits.$inferSelect> {
+  private async materialsOpen(tx: Tx, actor: VisitActor, id: string, what = 'Materials are recorded'): Promise<typeof orderVisits.$inferSelect> {
     if (!UUID.test(id)) throw new Refused(fail('not_found', 'That visit could not be found.'));
     const [row] = await tx.select().from(orderVisits).where(and(eq(orderVisits.id, id), eq(orderVisits.companyId, actor.companyId))).for('update');
     if (row === undefined) throw new Refused(fail('not_found', 'That visit could not be found.'));
@@ -361,7 +416,7 @@ export class OrderVisits {
       const [mine] = await tx.select({ u: orderVisitCrew.userId }).from(orderVisitCrew).where(and(eq(orderVisitCrew.visitId, id), eq(orderVisitCrew.userId, actor.userId)));
       if (mine === undefined) throw new Refused(fail('not_found', 'That visit could not be found.'));
     }
-    if (row.status !== 'on_site' && row.status !== 'completed') throw new Refused(fail('not_allowed', 'Materials are recorded once the crew is on site, until the work is signed off.'));
+    if (row.status !== 'on_site' && row.status !== 'completed') throw new Refused(fail('not_allowed', `${what} once the crew is on site, until the work is signed off.`));
     return row;
   }
 
@@ -418,8 +473,67 @@ export class OrderVisits {
     });
   }
 
+  /**
+   * Keeps a photo the person just took on the visit. The photo must be theirs (they uploaded it), private, of the right kind and not used
+   * for anything yet; anything else is refused in the same words, so an id from the browser cannot be used to learn about or borrow another
+   * photo. Until the work is signed off, at most 20 a visit.
+   */
+  async addPhoto(actor: VisitActor, id: string, input: { photoId: unknown; kind: unknown; caption?: unknown }): Promise<DocResult<VisitView>> {
+    const kind = PHOTO_KINDS.find((k) => k === input.kind);
+    if (kind === undefined) return fail('bad_input', 'Say what the photo shows: before the work, after it, or something else.');
+    const bad = fail('bad_input', 'That photo could not be used. Take it again.');
+    if (typeof input.photoId !== 'string' || input.photoId === '' || input.photoId.length > 100) return bad;
+    const photoId = input.photoId;
+    const caption = text(input.caption, 200);
+    return await this.run(async (tx) => {
+      const row = await this.materialsOpen(tx, actor, id, 'Photos are kept');
+      const [kept] = await tx.select({ n: sql<number>`count(*)::int` }).from(orderVisitPhotos).where(eq(orderVisitPhotos.visitId, id));
+      if ((kept?.n ?? 0) >= MAX_VISIT_PHOTOS) return fail('not_allowed', `A visit keeps at most ${String(MAX_VISIT_PHOTOS)} photos. Take one off before adding another.`);
+      const [asset] = await tx
+        .select({ id: mediaAssets.id })
+        .from(mediaAssets)
+        .where(and(eq(mediaAssets.id, photoId), eq(mediaAssets.purpose, VISIT_PHOTO_PURPOSE), eq(mediaAssets.visibility, 'private'), eq(mediaAssets.createdBy, actor.userId), isNull(mediaAssets.deletedAt)));
+      if (asset === undefined) return bad;
+      const [used] = await tx.select({ visitId: orderVisitPhotos.visitId }).from(orderVisitPhotos).where(eq(orderVisitPhotos.mediaId, photoId));
+      // The same picture sent again (a retry after a poor connection, or the same bytes uploaded twice) is already on this visit: nothing is added twice. On another visit it is not shared.
+      if (used !== undefined) return used.visitId === id ? await this.reloaded(tx, actor, id) : bad;
+      await tx.insert(orderVisitPhotos).values({ visitId: id, mediaId: photoId, kind, caption, takenBy: actor.userId });
+      // A photo that is kept is no longer an unused upload, so the sweep leaves it.
+      await tx.update(mediaAssets).set({ status: 'ready', updatedAt: new Date() }).where(eq(mediaAssets.id, photoId));
+      await this.note(tx, actor, row.orderId, id, 'photo_added', { kind });
+      return await this.reloaded(tx, actor, id);
+    });
+  }
+
+  /** Takes a photo off the visit, until the work is signed off: the crew only their own, the scheduler any. The picture is then no longer kept. */
+  async removePhoto(actor: VisitActor, id: string, photoId: string, input: { reason: unknown }): Promise<DocResult<VisitView>> {
+    if (!UUID.test(photoId)) return fail('not_found', 'That photo could not be found.');
+    const why = reasonProblem(input.reason, 'the photo is taken off');
+    if (why !== null) return fail('bad_input', why);
+    const reason = String(input.reason).trim().slice(0, 200);
+    return await this.run(async (tx) => {
+      const row = await this.materialsOpen(tx, actor, id, 'Photos are changed');
+      const [photo] = await tx.select().from(orderVisitPhotos).where(and(eq(orderVisitPhotos.id, photoId), eq(orderVisitPhotos.visitId, id))).for('update');
+      if (photo === undefined) return fail('not_found', 'That photo is not on this visit.');
+      if (actor.crewOnly && photo.takenBy !== actor.userId) return fail('not_allowed', 'Only the person who took a photo, or the scheduler, can take it off.');
+      await tx.delete(orderVisitPhotos).where(eq(orderVisitPhotos.id, photoId));
+      await tx.update(mediaAssets).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(mediaAssets.id, photo.mediaId));
+      await this.note(tx, actor, row.orderId, id, 'photo_removed', { kind: photo.kind }, reason);
+      return await this.reloaded(tx, actor, id);
+    });
+  }
+
+  /** The stored picture of a photo of a visit this person may see, for a short-lived link; null when there is none. */
+  async photoMedia(actor: VisitActor, visitId: string, photoId: string): Promise<string | null> {
+    if (!UUID.test(visitId) || !UUID.test(photoId)) return null;
+    const visible = await this.view(actor, visitId);
+    if (visible === null) return null;
+    const [photo] = await this.db.select({ mediaId: orderVisitPhotos.mediaId }).from(orderVisitPhotos).where(and(eq(orderVisitPhotos.id, photoId), eq(orderVisitPhotos.visitId, visitId)));
+    return photo?.mediaId ?? null;
+  }
+
   private async reloaded(tx: Tx, actor: VisitActor, id: string): Promise<DocResult<VisitView>> {
-    const [view] = await this.viewsIn(tx, actor.companyId, eq(orderVisits.id, id), 1);
+    const [view] = await this.viewsIn(tx, actor.companyId, eq(orderVisits.id, id), 1, actor);
     if (view === undefined) throw new Error('The visit vanished while it was locked.');
     return { ok: true, data: view };
   }

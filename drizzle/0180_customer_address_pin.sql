@@ -1,0 +1,3 @@
+ALTER TABLE "customer_addresses" ADD COLUMN "latitude" numeric(9, 6);--> statement-breakpoint
+ALTER TABLE "customer_addresses" ADD COLUMN "longitude" numeric(9, 6);--> statement-breakpoint
+ALTER TABLE "customer_addresses" ADD CONSTRAINT "customer_addresses_pin_chk" CHECK (("customer_addresses"."latitude" is null and "customer_addresses"."longitude" is null) or ("customer_addresses"."latitude" is not null and "customer_addresses"."longitude" is not null and "customer_addresses"."latitude" between -90 and 90 and "customer_addresses"."longitude" between -180 and 180));

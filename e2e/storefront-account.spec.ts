@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { noHorizontalScroll } from './support/page';
+import { noHorizontalScroll, noInnerHorizontalScroll } from './support/page';
 import { attemptTag, makeShopper, signInAsShopper } from './support/vendors';
 
 test.describe('a shopper’s account', () => {
@@ -7,6 +7,7 @@ test.describe('a shopper’s account', () => {
 
   test('orders, addresses and the way back all work; payment methods are gone; others’ orders stay hidden', async ({
     page,
+    context,
   }, testInfo) => {
     test.slow();
     const shopper = makeShopper(attemptTag(testInfo.project.name, testInfo.retry), 12);
@@ -105,6 +106,27 @@ test.describe('a shopper’s account', () => {
     await page.getByRole('button', { name: 'Save address' }).click();
     await expect(page.getByText('Office')).toBeVisible({ timeout: 30_000 });
     await noHorizontalScroll(page);
+
+    // A place on the map can be saved with an address from the device's location, and is dropped when the words change.
+    await context.grantPermissions(['geolocation']);
+    await context.setGeolocation({ latitude: -1.2921, longitude: 36.8219 });
+    const office = page.getByRole('list', { name: 'Your addresses' }).getByRole('listitem').filter({ hasText: 'Office' });
+    await expect(office).not.toContainText('Place on the map saved');
+    await office.getByRole('button', { name: 'Change' }).click();
+    const place = page.getByRole('group', { name: 'Place on the map' });
+    await expect(place).toContainText('None yet');
+    await place.getByRole('button', { name: 'Use my current location' }).click();
+    await expect(place).toContainText('Saved with this address: -1.29210, 36.82190', { timeout: 30_000 });
+    await page.getByRole('button', { name: 'Save address' }).click();
+    await expect(office).toContainText('Place on the map saved', { timeout: 30_000 });
+    await office.getByRole('button', { name: 'Change' }).click();
+    await expect(place).toContainText('Saved with this address');
+    await fill('Street or building', '11 Haile Selassie');
+    await expect(place).toContainText('None yet');
+    await expect(place.getByRole('alert')).toContainText('The place on the map was removed');
+    await noInnerHorizontalScroll(page);
+    await page.getByRole('button', { name: 'Save address' }).click();
+    await expect(office).not.toContainText('Place on the map saved', { timeout: 30_000 });
     await page.getByRole('button', { name: 'Use for delivery' }).click();
     await expect(page.getByText('Delivery address updated.')).toBeVisible({ timeout: 30_000 });
     await page.getByRole('button', { name: 'Remove address Home' }).click();

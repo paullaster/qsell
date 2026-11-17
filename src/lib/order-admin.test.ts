@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  COUNTER_WAIT_FILTERS,
   FULFILMENT_STATUSES,
   ORDER_STATUSES,
   STATUS_FILTERS,
   addressLine,
+  counterWaitDays,
   heldForApproval,
   isOrderPaid,
   money,
@@ -51,5 +53,13 @@ describe('the admin orders screen', () => {
       addressLine({ street: '1 Rd', city: 'Nairobi', countyOrState: 'Nairobi', country: 'Kenya' }),
     ).toBe('1 Rd, Nairobi, Nairobi, Kenya');
     expect(addressLine(null)).toBe('No shipping address on file');
+  });
+
+  it('turns a counter-wait choice into days, and a made-up one into nothing', () => {
+    expect(counterWaitDays('1')).toBe(1);
+    expect(counterWaitDays('3')).toBe(3);
+    expect(counterWaitDays('7')).toBe(7);
+    for (const bad of ['0', '2', 'banana', '', null, undefined]) expect(counterWaitDays(bad)).toBeNull();
+    expect(COUNTER_WAIT_FILTERS.map((f) => f.days)).toEqual([1, 3, 7]);
   });
 });

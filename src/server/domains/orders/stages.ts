@@ -1,6 +1,7 @@
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, orderStageEvents, orders, paymentAttempts, type OrderRow } from '@/server/db/drizzle/schema';
+import { branches, orderCollections, orderStageEvents, orderVisits, orders, paymentAttempts, type OrderRow } from '@/server/db/drizzle/schema';
+import { VISIT_ORDER_CLOSED_REASON } from '@/server/domains/delivery/order-readiness';
 import { currentContext } from '@/server/kernel/context';
 import { backfillEvents } from '@/lib/order-stage-backfill';
 import {
@@ -196,6 +197,8 @@ export class OrderStages {
     for (const column of clears) set[column] = null;
     const [updated] = await tx.update(orders).set(set).where(eq(orders.id, orderId)).returning();
     if (updated === undefined) return { recorded: false, order: null };
+    const movedTo = changes.status?.to;
+    if (movedTo !== undefined && movedTo !== null) await OrderStages.followCollection(tx, orderId, movedTo);
 
     const ctx = currentContext();
     const actor = options.actor ?? actorFromContext();
@@ -228,6 +231,28 @@ export class OrderStages {
       })
       .returning({ id: orderStageEvents.id, sequence: orderStageEvents.sequence });
     return { recorded: true, order: updated, event };
+  }
+
+  /**
+   * An order the customer collects follows the order: when the order is cancelled, refunded or failed, what waits at the counter is
+   * closed, and a visit not yet started is cancelled (no reminders, no code, not flagged as left), and if the order is reopened it goes back to waiting or ready, whichever it was.
+   * A collected order stays collected.
+   */
+  private static async followCollection(tx: Tx, orderId: string, status: string): Promise<void> {
+    if (status === 'cancelled' || status === 'refunded' || status === 'failed') {
+      await tx.update(orderCollections).set({ status: 'cancelled', updatedAt: new Date() }).where(and(eq(orderCollections.orderId, orderId), inArray(orderCollections.status, ['waiting', 'ready', 'locked'])));
+      // A visit that has not started is cancelled too, so no crew is sent for an order that is gone. One already on site is left to a person.
+      const at = new Date();
+      await tx
+        .update(orderVisits)
+        .set({ status: 'cancelled', cancelledAt: at, cancelReason: VISIT_ORDER_CLOSED_REASON, version: sql`${orderVisits.version} + 1`, updatedAt: at })
+        .where(and(eq(orderVisits.orderId, orderId), inArray(orderVisits.status, ['scheduled', 'crew_assigned'])));
+    } else {
+      await tx
+        .update(orderCollections)
+        .set({ status: sql`case when ${orderCollections.readyAt} is null then 'waiting' else 'ready' end`, failedAttempts: 0, updatedAt: new Date() })
+        .where(and(eq(orderCollections.orderId, orderId), eq(orderCollections.status, 'cancelled')));
+    }
   }
 
   /** The non-stage fields of an order, saved on their own when a stage had nothing new to record. */

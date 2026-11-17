@@ -9,6 +9,9 @@ import type { CustomerAddressRow } from '@/server/db/drizzle/schema';
 import type { CustomerAccount, CustomerAddress, Order } from '@/types/index';
 import type { CustomerAddressInput } from './master-service';
 import { ownsOrder, readAddress, toCustomerOrder, type CustomerOrder, type OrderOwner } from '@/lib/storefront-account';
+import { CUSTOMER_STATUS_WORDS, HEADLINE, collectionWords } from '@/lib/tracking-view';
+import { customerVisitWords, type CustomerVisitState } from '@/lib/visit-customer';
+import { resolvePublicBaseUrl } from '@/server/domains/auth/account-service';
 
 function mapAddress(row: CustomerAddressRow): CustomerAddress {
   return {
@@ -21,6 +24,8 @@ function mapAddress(row: CustomerAddressRow): CustomerAddress {
     countyOrState: row.countyOrState,
     postalCode: row.postalCode || undefined,
     country: row.country,
+    latitude: row.latitude === null ? null : Number(row.latitude),
+    longitude: row.longitude === null ? null : Number(row.longitude),
     isDefault: row.isDefault,
   };
 }
@@ -333,6 +338,80 @@ export async function myOrderAction(id: string): Promise<AccountResult<CustomerO
   } catch (error) {
     console.error('[storefront] my order', error);
     return { ok: false, error: 'This order could not be loaded. Please try again.' };
+  }
+}
+
+/** Where an order's delivery stands, in the customer's words, for the order page. Never an address, a phone number or a code. */
+export interface MyOrderTracking {
+  headline: string;
+  detail: string | null;
+  kind: 'delivery' | 'collection';
+  deliveries: { number: string; words: string; window: { start: string; end: string } | null; receivedBy: string | null }[];
+  /** The page that follows the order and can be shared with whoever receives it; null when it has been turned off. */
+  link: string | null;
+  /** For an order to be collected: where, and the code to show at the counter. The code is the owner's own, only until the order is collected, and is never in the shareable page. */
+  collection: { branchName: string; address: string; phone: string | null; code: string | null } | null;
+}
+
+/** How one of the signed-in shopper's own orders is getting to them (with the collection code, for their own order only); null for an order that has no delivery to follow. */
+export async function myOrderTrackingAction(id: string): Promise<AccountResult<MyOrderTracking | null>> {
+  try {
+    const mine = await ownerOf();
+    if (!mine) return NEEDS_SIGN_IN;
+    const c = getContainer();
+    const order = typeof id === 'string' && id !== '' ? await c.orders.getById(id) : null;
+    if (!order || !ownsOrder(order, mine.owner)) return { ok: false, error: 'This order was not found.', code: 'ORDER_NOT_FOUND' };
+    const company = await c.companySettings.ensureSeeded();
+    const tracked = await c.trackedOrders.forOrder(company.id, order.id);
+    if (tracked === null) return { ok: true, data: null };
+    const token = await c.trackingLinks.tokenFor(company.id, order.id);
+    const link = token === null ? null : `${resolvePublicBaseUrl(company.publicBaseUrl)}/track/${token}`;
+    if (tracked.kind === 'collection') {
+      const words = tracked.collection === null ? { headline: 'You will collect this order', detail: '' } : collectionWords(tracked.collection);
+      const [view, code] = await Promise.all([c.orderCollections.view(company.id, order.id), c.orderCollections.codeFor(company.id, order.id)]);
+      const where = view === null ? null : { branchName: view.branch.name, address: view.branch.address, phone: view.branch.phone, code };
+      return { ok: true, data: { headline: words.headline, detail: words.detail === '' ? null : words.detail, kind: 'collection', deliveries: [], link, collection: where } };
+    }
+    return {
+      ok: true,
+      data: {
+        headline: HEADLINE[tracked.state],
+        detail: null,
+        kind: 'delivery',
+        deliveries: tracked.deliveries.map((d) => ({ number: d.number, words: CUSTOMER_STATUS_WORDS[d.status], window: d.window ?? null, receivedBy: d.receivedBy })),
+        link,
+        collection: null,
+      },
+    };
+  } catch (error) {
+    console.error('[storefront] my order tracking', error);
+    return { ok: false, error: 'The delivery could not be checked just now.' };
+  }
+}
+
+/** A visit of the shopper's own order as they may see it: when, where and how it stands. Never the crew, a phone number or a note. */
+export interface MyVisit {
+  state: CustomerVisitState;
+  words: string;
+  startsAt: string;
+  endsAt: string;
+  address: string;
+}
+
+/** The scheduled visits (an installation, a site job) of one of the signed-in shopper's own orders, soonest first. */
+export async function myOrderVisitsAction(id: string): Promise<AccountResult<MyVisit[]>> {
+  try {
+    const mine = await ownerOf();
+    if (!mine) return NEEDS_SIGN_IN;
+    const c = getContainer();
+    const order = typeof id === 'string' && id !== '' ? await c.orders.getById(id) : null;
+    if (!order || !ownsOrder(order, mine.owner)) return { ok: false, error: 'This order was not found.', code: 'ORDER_NOT_FOUND' };
+    const company = await c.companySettings.ensureSeeded();
+    const visits = await c.orderVisits.forCustomer(company.id, order.id);
+    return { ok: true, data: visits.map((v) => ({ ...customerVisitWords(v.status), startsAt: v.startsAt, endsAt: v.endsAt, address: v.address })) };
+  } catch (error) {
+    console.error('[storefront] my order visits', error);
+    return { ok: false, error: 'The visit could not be checked just now.' };
   }
 }
 

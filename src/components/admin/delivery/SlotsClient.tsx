@@ -1,6 +1,7 @@
 'use client';
 
 import { use, useId, useState } from 'react';
+import Link from 'next/link';
 import { closeDayAction, createSlotAction, removeLeadTimeAction, reopenDayAction, setLeadTimeAction, setShopperChoiceAction, setSlaSettingsAction, setSlotActiveAction, slotsScreenAction, updateSlotAction } from '@/server/domains/delivery/slot-actions';
 import type { SlotView } from '@/server/domains/delivery/slots';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
@@ -49,7 +50,7 @@ function Body({ initial }: { initial: Screen }) {
       </section>
       <ClosedDays closed={data.closed} onChanged={(t) => void reload(t)} onError={fail} />
       <LeadTimes leads={data.leads} onChanged={(t) => void reload(t)} onError={fail} />
-      <SlaPanel sla={data.sla} onChanged={(t) => void reload(t)} onError={fail} />
+      <SlaPanel textsGoThrough={data.textsGoThrough} sla={data.sla} onChanged={(t) => void reload(t)} onError={fail} />
     </div>
   );
 }
@@ -354,21 +355,26 @@ function ShopperChoicePanel({ choice, onChanged, onError }: { choice: Screen['sh
 }
 
 /** When a delivery is told it is at risk, and when a late one goes up to the supervisor. */
-function SlaPanel({ sla, onChanged, onError }: { sla: Screen['sla']; onChanged: (text: string) => void; onError: (text: string) => void }) {
+function SlaPanel({ sla, textsGoThrough, onChanged, onError }: { sla: Screen['sla']; textsGoThrough: Screen['textsGoThrough']; onChanged: (text: string) => void; onError: (text: string) => void }) {
   const uid = useId();
   const [atRisk, setAtRisk] = useState(String(sla.atRiskMinutes));
   const [escalate, setEscalate] = useState(String(sla.escalateAfterMinutes));
   const [dispatchTo, setDispatchTo] = useState(sla.notifyDispatch.join(', '));
   const [supervisorTo, setSupervisorTo] = useState(sla.notifySupervisor.join(', '));
+  const [dispatchPhones, setDispatchPhones] = useState(sla.notifyDispatchPhones.join(', '));
+  const [supervisorPhones, setSupervisorPhones] = useState(sla.notifySupervisorPhones.join(', '));
+  const [textRider, setTextRider] = useState(sla.textTheRider);
   const [busy, setBusy] = useState(false);
   const save = async () => {
     setBusy(true);
-    const r = await attempt(setSlaSettingsAction({ atRiskMinutes: Number(atRisk), escalateAfterMinutes: Number(escalate), notifyDispatch: dispatchTo, notifySupervisor: supervisorTo, expectedVersion: sla.version }));
+    const r = await attempt(setSlaSettingsAction({ atRiskMinutes: Number(atRisk), escalateAfterMinutes: Number(escalate), notifyDispatch: dispatchTo, notifySupervisor: supervisorTo, notifyDispatchPhones: dispatchPhones, notifySupervisorPhones: supervisorPhones, textTheRider: textRider, expectedVersion: sla.version }));
     setBusy(false);
     if (r.ok) {
       // What was saved, not what was typed: the server writes addresses in lower case and once each.
       setDispatchTo(r.data.notifyDispatch.join(', '));
       setSupervisorTo(r.data.notifySupervisor.join(', '));
+      setDispatchPhones(r.data.notifyDispatchPhones.join(', '));
+      setSupervisorPhones(r.data.notifySupervisorPhones.join(', '));
       onChanged('Saved. The Late deliveries screen uses these from now on.');
     } else onError(r.error);
   };
@@ -397,11 +403,32 @@ function SlaPanel({ sla, onChanged, onError }: { sla: Screen['sla']; onChanged: 
         <Field id={`${uid}-s`} label="Mail the supervisors when it has been late too long">
           <input id={`${uid}-s`} type="text" inputMode="email" className={fieldClass} value={supervisorTo} onChange={(e) => setSupervisorTo(e.target.value)} placeholder="supervisor@example.com" autoComplete="off" />
         </Field>
+        <Field id={`${uid}-dp`} label="Text the dispatchers when a delivery is at risk or late" hint="Mobile numbers, separated by commas.">
+          <input id={`${uid}-dp`} type="text" inputMode="tel" className={fieldClass} value={dispatchPhones} onChange={(e) => setDispatchPhones(e.target.value)} placeholder="0712 345 678, 0722 111 222" autoComplete="off" />
+        </Field>
+        <Field id={`${uid}-sp`} label="Text the supervisors when it has been late too long" hint="Mobile numbers, separated by commas.">
+          <input id={`${uid}-sp`} type="text" inputMode="tel" className={fieldClass} value={supervisorPhones} onChange={(e) => setSupervisorPhones(e.target.value)} placeholder="0733 000 111" autoComplete="off" />
+        </Field>
+        <label htmlFor={`${uid}-tr`} className="flex min-h-11 cursor-pointer items-center gap-3 self-end text-sm text-fg">
+          <input id={`${uid}-tr`} type="checkbox" className="h-5 w-5 accent-indigo-600" checked={textRider} onChange={(e) => setTextRider(e.target.checked)} />
+          Also text the rider whose run holds the delivery
+        </label>
         <button type="submit" className={`${primaryClass} self-end`} disabled={busy}>
           Save
         </button>
       </div>
-      <p className="text-xs text-fg-muted">Addresses are separated by commas, up to ten for each. Each level is mailed once for a delivery and a window. Leave empty to send no mail; the Late deliveries screen shows everything either way.</p>
+      <p className="text-xs text-fg-muted">Addresses and numbers are separated by commas, up to ten for each. Each level is mailed and texted once for a delivery and a window. Leave a list empty to send nothing to it; the Late deliveries screen shows everything either way. The rider is texted on the number saved on their rider record, for at risk and late (not for the supervisor level).</p>
+      <p role="status" className="text-xs text-fg-muted">
+        {textsGoThrough === null ? (
+          <>
+            No SMS provider is connected, so no text can be sent yet. <Link className="font-semibold underline" href="/admin/settings/sms">
+              Connect one in Settings › SMS providers
+            </Link>.
+          </>
+        ) : (
+          `Texts go through the connection called “${textsGoThrough}”. A text that cannot be sent for three hours is dropped, because by then it is no use.`
+        )}
+      </p>
     </form>
   );
 }

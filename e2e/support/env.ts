@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os';
 import { e2eDatabaseUrl } from './database';
 import { E2E_ADMIN_EMAIL, E2E_ADMIN_PASSWORD, E2E_SUFFIX, E2E_URL } from './constants';
 
@@ -30,6 +31,9 @@ export function e2eEnvironment(): Record<string, string> {
     CLOUDINARY_CLOUD_NAME: '',
     CLOUDINARY_API_KEY: '',
     CLOUDINARY_API_SECRET: '',
+    // Pictures sent during a run are kept on local disk in a throwaway folder, never with a real provider the developer's `.env` may name.
+    MEDIA_DRIVER: 'local',
+    MEDIA_LOCAL_DIR: `${tmpdir()}/qsell-e2e-media${E2E_SUFFIX}`,
     // Provider credentials are sealed with this key; a run that sets none gets a fixed one that guards nothing real.
     DATA_ENCRYPTION_KEY: inherited.DATA_ENCRYPTION_KEY ?? 'e2e-only-data-encryption-key-not-for-deployment',
     // The suite signs in far more often than any person would; the limiter itself is tested against the database.

@@ -8,9 +8,12 @@ import { useStore } from '@/components/store/StoreContext';
 import type { ShopBasketView } from '@/server/domains/orders/shop-basket-actions';
 
 /** The lines of an order with tax, shipping and the total, as the shopper will be charged. */
-export function OrderSummary({ lines, basket = null, delivery = null, collecting = false }: { lines: CartLine[]; /** What the server says the basket comes to, with promotions; the figures below use it when it is there. */ basket?: ShopBasketView | null; delivery?: { gross: number; net: number; tax: number; branchName: string } | null; /** The order is collected from the branch, not delivered. */ collecting?: boolean }) {
+export function OrderSummary({ lines, packages = [], basket = null, delivery = null, collecting = false }: { lines: CartLine[]; /** Package lines as the shop priced them, to be listed with the rest. */ packages?: { id: string; summary: string; servings: number; total: number }[]; /** What the server says the basket comes to, with promotions; the figures below use it when it is there. */ basket?: ShopBasketView | null; delivery?: { gross: number; net: number; tax: number; branchName: string } | null; /** The order is collected from the branch, not delivered. */ collecting?: boolean }) {
   const { money } = useStore();
-  const totals = cartTotals(lines);
+  const baseTotals = cartTotals(lines);
+  // Until the server has answered, a package is shown at the price the shop gave it; its tax is worked out by the server.
+  const packageSum = packages.reduce((n, p) => n + p.total, 0);
+  const totals = { ...baseTotals, subtotal: baseTotals.subtotal + packageSum, totalAmount: baseTotals.totalAmount + packageSum };
   const taxRows = basket === null ? cartTaxRows(lines) : [{ key: 'tax', label: 'Tax', amount: basket.tax }];
   const subtotal = basket === null ? totals.subtotal : basket.subtotal;
   const goodsTotal = basket === null ? totals.totalAmount : basket.goodsTotal;
@@ -18,6 +21,15 @@ export function OrderSummary({ lines, basket = null, delivery = null, collecting
   return (
     <div className="space-y-4">
       <ul className="space-y-3" aria-label="Items in your order">
+        {packages.map((p) => (
+          <li key={p.id} data-testid="summary-package" className="flex items-center justify-between gap-3 text-sm">
+            <div className="min-w-0">
+              <div className="font-medium break-words text-fg-strong">{p.summary}</div>
+              <div className="text-xs text-fg-muted">{p.servings} {p.servings === 1 ? 'serving' : 'servings'}</div>
+            </div>
+            <span className="shrink-0 font-mono text-fg-strong">{money(p.total)}</span>
+          </li>
+        ))}
         {lines.map(({ product, quantity }) => (
           <li key={product.id} className="flex items-center justify-between gap-3 text-sm">
             <div className="flex min-w-0 items-center gap-3">

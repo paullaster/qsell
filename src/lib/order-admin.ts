@@ -30,6 +30,18 @@ export const STATUS_FILTERS: readonly StatusChoice[] = [
   { id: 'refunded', label: 'Refunded' },
 ];
 
+/** How long an order to be collected may have waited at the counter, to narrow the orders list by. */
+export const COUNTER_WAIT_FILTERS: readonly { id: string; label: string; days: number }[] = [
+  { id: '1', label: 'At the counter 1 day or more', days: 1 },
+  { id: '3', label: 'At the counter 3 days or more', days: 3 },
+  { id: '7', label: 'At the counter 7 days or more', days: 7 },
+];
+
+/** The days a counter-wait choice stands for, or null when it is not one of the choices (so a made-up value narrows nothing). */
+export function counterWaitDays(id: string | null | undefined): number | null {
+  return COUNTER_WAIT_FILTERS.find((f) => f.id === id)?.days ?? null;
+}
+
 /** The states a person can move an order to by hand. */
 export const FULFILMENT_STATUSES: readonly StatusChoice[] = [
   { id: 'pending', label: 'Pending payment' },

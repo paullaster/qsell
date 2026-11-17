@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { isGeoPoint, type GeoPoint } from '@/lib/geo';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { branches, courierAccounts, deliveries, deliveryAttemptLines, deliveryAttempts, deliveryEvents, deliveryProofs, deliveryRiderSettings, deliveryRiders, deliveryShipments, deliveryLines, deliveryReturns, orderDeliveries, orderItems, orders, products, stockReservations, stockSettings, unitsOfMeasure, type ReturnEffects } from '@/server/db/drizzle/schema';
 import {
@@ -38,15 +39,15 @@ import { StockError } from '@/server/domains/stock/errors';
 import { codeFromBytes, isProofRule, usesCode } from '@/lib/delivery-proof';
 import { kindForStep, messageKey } from '@/lib/delivery-messages';
 import type { DeliveryMessages } from './messages';
-import { orderReadinessProblem } from './order-readiness';
+import { DELIVERY_ORDER_CLOSED_REASON, orderReadinessProblem } from './order-readiness';
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
 export interface DocActor {
   companyId: string;
   userId: string;
-  /** The customer, acting through their own tracking link, has no account: their steps are recorded as theirs, without an id. */
-  kind?: 'customer';
+  /** The customer, acting through their own tracking link, has no account: their steps are recorded as theirs, without an id. The system is the worker acting on its own (a sweep), also without an id. */
+  kind?: 'customer' | 'system';
 }
 
 export type DocRefusal = 'not_found' | 'bad_input' | 'not_allowed' | 'conflict' | 'order_not_ready' | 'nothing_left' | 'wrong_method';
@@ -126,6 +127,8 @@ export interface DeliveryView {
   statusWords: string;
   branch: { id: string; name: string };
   destination: DestinationRecord;
+  /** The street or building the customer wrote for the order, which the rider and the courier are given first. */
+  street: string | null;
   recipientName: string | null;
   recipientPhone: string | null;
   notes: string | null;
@@ -169,8 +172,10 @@ export interface OrderDeliveries {
   /** Per product: ordered, on live deliveries, delivered and still open, with the product's name. */
   lines: (OrderDeliveryStatus['lines'][number] & { productName: string; sku: string; decimals: number })[];
   deliveries: { id: string; number: string; status: DeliveryStatus; statusWords: string; lineCount: number }[];
-  /** Whether the order is one that gets a delivery document at all, and if not why. */
-  eligible: { ok: true } | { ok: false; reason: string };
+  /** Whether the order is one that gets a delivery document at all, and if not why. `needsPlan`: it was never planned for delivery (taken by staff, or from a quote), and staff can plan it. */
+  eligible: { ok: true } | { ok: false; reason: string; needsPlan?: true };
+  /** For an order that needs its delivery planned: the address it was taken with, to start the form from. */
+  prefill: { county: string; town: string; street: string } | null;
 }
 
 const PAGE = 25;
@@ -417,16 +422,63 @@ export class DeliveryDocuments {
     return await this.step(actor, id, 'cancel', expectedVersion, () => Promise.resolve({ set: { closedAt: new Date() }, note: reason, reasonCode: 'cancelled' }));
   }
 
-  /** Corrections that do not change the state: who receives it and any note, until it goes out. */
-  async amend(actor: DocActor, id: string, input: { recipientName?: unknown; recipientPhone?: unknown; notes?: unknown }, expectedVersion?: number): Promise<DocResult<DeliveryView>> {
+  /**
+   * Deliveries of an order that was cancelled, refunded or failed, and that have not gone out, are cancelled as the system with that as the
+   * reason, through the same step as a person's cancel (so the history, the decision log, the order's timeline and the courier booking
+   * all follow). One that is already out for delivery is left to the rider, who can still fail or deliver it. Returns how many it cancelled.
+   */
+  async closeForClosedOrders(limit = 100): Promise<number> {
+    const due = await this.db
+      .select({ id: deliveries.id, companyId: deliveries.companyId })
+      .from(deliveries)
+      .where(and(inArray(deliveries.status, ['draft', 'released', 'picking', 'packed', 'ready']), sql`exists (select 1 from ${orders} o where o.id = ${deliveries.orderId} and o.status in ('cancelled','refunded','failed'))`))
+      .orderBy(deliveries.createdAt)
+      .limit(limit);
+    let cancelled = 0;
+    for (const d of due) {
+      const done = await this.cancel({ companyId: d.companyId, userId: 'system', kind: 'system' }, d.id, { reason: DELIVERY_ORDER_CLOSED_REASON });
+      if (done.ok) cancelled += 1;
+    }
+    return cancelled;
+  }
+
+  /**
+   * Corrections that do not change the state, until it goes out: who receives it, any note, and the street or building the order was
+   * written with, and the pin of the place (put on a delivery that has none, moved, or taken off). The street is only words, and neither it nor
+   * the pin changes the charge, which was worked out when the order was planned.
+   */
+  async amend(actor: DocActor, id: string, input: { recipientName?: unknown; recipientPhone?: unknown; notes?: unknown; street?: unknown; pin?: unknown }, expectedVersion?: number): Promise<DocResult<DeliveryView>> {
     return await this.db.transaction(async (tx): Promise<DocResult<DeliveryView>> => {
       const [row] = await tx.select().from(deliveries).where(and(eq(deliveries.id, id), eq(deliveries.companyId, actor.companyId))).for('update');
       if (row === undefined) return fail('not_found', 'That delivery could not be found.');
       if (expectedVersion !== undefined && expectedVersion !== row.version) return fail('conflict', 'Someone else changed this delivery while you were looking. Reload it to see their change.');
       if (row.status === 'out_for_delivery' || isOver(row.status)) return fail('not_allowed', 'A delivery that has gone out, or is finished, cannot be changed.');
       const next = { recipientName: text(input.recipientName, 120), recipientPhone: text(input.recipientPhone, 40), notes: text(input.notes, 300) };
-      await tx.update(deliveries).set({ ...next, version: row.version + 1, updatedAt: new Date() }).where(eq(deliveries.id, id));
-      await this.event(tx, id, 'amend', actor, row.status, row.status, { detail: { recipientName: next.recipientName, recipientPhone: next.recipientPhone } });
+      // The street is changed only when it is sent: an amend that leaves it out leaves it as it was.
+      let street: { from: string | null; to: string } | null = null;
+      if (input.street !== undefined) {
+        const to = text(input.street, 200);
+        if (to === null || to.length < 3) return fail('bad_input', 'Write the street or building the delivery goes to, at least three letters.');
+        const [placed] = await tx.select({ address: orders.shippingAddress }).from(orders).where(eq(orders.id, row.orderId)).for('update');
+        if (placed === undefined) return fail('not_found', 'The order of this delivery could not be found.');
+        const from = typeof placed.address.street === 'string' ? placed.address.street.trim() : null;
+        if (from !== to) {
+          await tx.update(orders).set({ shippingAddress: { ...placed.address, street: to }, updatedAt: new Date() }).where(eq(orders.id, row.orderId));
+          street = { from, to };
+        }
+      }
+      // The pin is changed only when it is sent: a place, or null to take it off; anything else is refused.
+      let moved: { from: GeoPoint | null; to: GeoPoint | null } | null = null;
+      if (input.pin !== undefined) {
+        if (input.pin !== null && !isGeoPoint(input.pin)) return fail('bad_input', 'That is not a place on the earth. Paste the two numbers, or a link from a map app.');
+        const to: GeoPoint | null = input.pin;
+        const from = row.destination.pin;
+        const same = (from === null && to === null) || (from !== null && to !== null && from.latitude === to.latitude && from.longitude === to.longitude);
+        if (!same) moved = { from, to };
+      }
+      const destination = moved === null ? row.destination : { ...row.destination, pin: moved.to, positionFrom: moved.to === null ? ('none' as const) : ('pin' as const), approximate: false };
+      await tx.update(deliveries).set({ ...next, ...(moved === null ? {} : { destination }), version: row.version + 1, updatedAt: new Date() }).where(eq(deliveries.id, id));
+      await this.event(tx, id, 'amend', actor, row.status, row.status, { detail: { recipientName: next.recipientName, recipientPhone: next.recipientPhone, ...(street === null ? {} : { streetFrom: street.from, streetTo: street.to }), ...(moved === null ? {} : { pinFrom: moved.from, pinTo: moved.to }) } });
       return { ok: true, data: await this.viewIn(tx, actor.companyId, id) };
     });
   }
@@ -481,7 +533,7 @@ export class DeliveryDocuments {
       if (kind !== null) await this.messages.enqueueIn(tx, { companyId: actor.companyId, orderId: row.orderId, deliveryId: id, kind, key: messageKey(id, kind, action === 'fail_attempt' ? row.failedAttempts + 1 : row.failedAttempts) });
       for (const stage of stages) {
         await OrderStages.moveIn(tx, row.orderId, stage, stage === 'delivery_attempted' || stage === 'delivery_failed' ? 'failed' : 'succeeded', {
-          actor: { type: 'user', id: actor.userId },
+          actor: actor.kind === 'system' ? { type: 'system', id: null } : { type: 'user', id: actor.userId },
           ref: { type: 'delivery_stage', id: `${id}:${stage}:${String(row.failedAttempts)}:${String(row.version)}` },
           message: `${row.number} · ${ACTION_WORDS[action]}${outcome.note === undefined || outcome.note === null ? '' : `: ${outcome.note}`}`,
           ...(outcome.stageReason === undefined ? {} : { reasonCode: outcome.stageReason }),
@@ -489,7 +541,7 @@ export class DeliveryDocuments {
         });
       }
       if (action === 'cancel' || action === 'return' || action === 'fail_attempt') {
-        await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery', id }, action: `delivery.${action}`, actor: { type: 'user', id: actor.userId }, from: row.status, to, reason: { ...(outcome.reasonCode === undefined || outcome.reasonCode === null ? {} : { code: outcome.reasonCode }), text: outcome.note ?? null } }, tx);
+        await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery', id }, action: `delivery.${action}`, actor: actor.kind === 'system' ? { type: 'system', id: null } : { type: 'user', id: actor.userId }, from: row.status, to, reason: { ...(outcome.reasonCode === undefined || outcome.reasonCode === null ? {} : { code: outcome.reasonCode }), text: outcome.note ?? null } }, tx);
       }
       return { ok: true, data: await this.viewIn(tx, actor.companyId, id) };
     });
@@ -721,7 +773,7 @@ export class DeliveryDocuments {
   private async viewIn(db: Tx | DrizzleDb, companyId: string, id: string, nullable: true): Promise<DeliveryView | null>;
   private async viewIn(db: Tx | DrizzleDb, companyId: string, id: string, nullable = false): Promise<DeliveryView | null> {
     const [row] = await db
-      .select({ d: deliveries, orderNumber: orders.orderNumber, customerName: orders.customerName, branchName: branches.name })
+      .select({ d: deliveries, orderNumber: orders.orderNumber, customerName: orders.customerName, address: orders.shippingAddress, branchName: branches.name })
       .from(deliveries)
       .innerJoin(orders, eq(orders.id, deliveries.orderId))
       .innerJoin(branches, eq(branches.id, deliveries.branchId))
@@ -767,6 +819,7 @@ export class DeliveryDocuments {
       statusWords: STATUS_WORDS[d.status],
       branch: { id: d.branchId, name: row.branchName },
       destination: d.destination,
+      street: typeof row.address.street === 'string' && row.address.street.trim() !== '' ? row.address.street.trim() : null,
       recipientName: d.recipientName,
       recipientPhone: d.recipientPhone,
       notes: d.notes,
@@ -878,7 +931,7 @@ export class DeliveryDocuments {
 
   /** An order's deliveries and what it has left, for its own screen. Null when there is no such order. */
   async forOrder(companyId: string, orderId: string): Promise<OrderDeliveries | null> {
-    const [order] = await this.db.select({ id: orders.id, status: orders.status, paymentStatus: orders.paymentStatus, approvalStatus: orders.approvalStatus, paymentMethod: orders.paymentMethod }).from(orders).where(eq(orders.id, orderId));
+    const [order] = await this.db.select({ id: orders.id, status: orders.status, paymentStatus: orders.paymentStatus, approvalStatus: orders.approvalStatus, paymentMethod: orders.paymentMethod, address: orders.shippingAddress }).from(orders).where(eq(orders.id, orderId));
     if (order === undefined) return null;
     const [chosen] = await this.db.select({ method: orderDeliveries.method }).from(orderDeliveries).where(and(eq(orderDeliveries.orderId, orderId), eq(orderDeliveries.companyId, companyId)));
     const ordered = await this.db
@@ -895,10 +948,13 @@ export class DeliveryDocuments {
       .where(and(eq(deliveries.orderId, orderId), eq(deliveries.companyId, companyId)))
       .orderBy(asc(deliveries.createdAt));
     let eligible: OrderDeliveries['eligible'] = { ok: true };
-    if (chosen === undefined) eligible = { ok: false, reason: 'This order has no delivery.' };
+    if (chosen === undefined) eligible = orderReadinessProblem(order)?.reason === 'order_closed' ? { ok: false, reason: 'This order was cancelled or refunded.' } : { ok: false, reason: 'This order has no delivery plan yet.', needsPlan: true };
     else if (!isDocumentMethod(chosen.method)) eligible = { ok: false, reason: chosen.method === 'pickup' ? 'This order is collected from a branch.' : 'This kind of delivery is not made here yet.' };
     else if (orderReadinessProblem(order)?.reason === 'order_closed') eligible = { ok: false, reason: 'This order was cancelled or refunded.' };
+    const needsPlan = !eligible.ok && eligible.needsPlan === true;
+    const written = needsPlan ? order.address : undefined;
     return {
+      prefill: written === undefined ? null : { county: written.countyOrState, town: written.city, street: written.street },
       state: status.state,
       lines: status.lines.map((l) => ({ ...l, productName: names.get(l.productId)?.name ?? l.productId, sku: names.get(l.productId)?.sku ?? '', decimals: decimals.get(l.productId)?.decimals ?? 3 })),
       deliveries: list.map((d) => ({ id: d.id, number: d.number, status: d.status, statusWords: STATUS_WORDS[d.status], lineCount: d.lineCount })),

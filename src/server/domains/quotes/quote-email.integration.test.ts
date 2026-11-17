@@ -36,7 +36,7 @@ describe.skipIf(!has(url))('sending a quote by email (database)', () => {
     await db.update(schema.companySettings).set({ email }).where(eq(schema.companySettings.id, companyId));
   };
 
-  const quote = async () => {
+  const quote = async (over: Record<string, unknown> = {}) => {
     const id = `prod_${randomUUID()}`;
     await db.insert(schema.products).values({ id, sku: `T-${randomUUID().slice(0, 8)}`.toUpperCase(), stockCode: `TS-${randomUUID().slice(0, 8)}`.toUpperCase(), name: 'Mailed', slug: `t-${randomUUID()}`, itemTypeId, price: '100', costPrice: '50', taxRate: '0', isTaxInclusive: true, stockQuantity: 100 });
     const customerEmail = `${randomUUID()}@customer.test`;
@@ -50,6 +50,7 @@ describe.skipIf(!has(url))('sending a quote by email (database)', () => {
       deliveryAddress: { street: '1', city: 'N', countyOrState: 'N', country: 'KE' },
       sections: [],
       lines: [{ productId: id, quantity: 1, unitPrice: 100, discountPercent: 0 }],
+      ...over,
     } as never);
     return { made, customerEmail };
   };
@@ -95,7 +96,7 @@ describe.skipIf(!has(url))('sending a quote by email (database)', () => {
     expect(handed()).toMatchObject({
       from: `"${tradingName}" <mailer@mail.test>`,
       replyTo: 'sales@acme-trading.test',
-      envelope: { from: 'mailer@mail.test', to: customerEmail },
+      envelope: { from: 'mailer@mail.test', to: [customerEmail] },
       to: customerEmail,
     });
     expect(handed()).not.toHaveProperty('sender');
@@ -110,7 +111,7 @@ describe.skipIf(!has(url))('sending a quote by email (database)', () => {
     expect(handed()).toMatchObject({
       from: `"${tradingName}" <sales@acme-trading.test>`,
       sender: 'mailer@mail.test',
-      envelope: { from: 'mailer@mail.test', to: customerEmail },
+      envelope: { from: 'mailer@mail.test', to: [customerEmail] },
     });
   });
 
@@ -159,5 +160,75 @@ describe.skipIf(!has(url))('sending a quote by email (database)', () => {
     const productId = (await svc.get(made.id))?.lines.at(0)?.productId;
     const hidden = await svc.create(userId, { ...hiddenInput, lines: [{ productId, quantity: 1, unitPrice: 100, discountPercent: 0 }] } as never);
     expect(hidden.showBillingAddress).toBe(false);
+  });
+
+  it('goes to the people set up in Email routing: several to, a copy for the sender, a blind copy, and answers to a chosen address', async () => {
+    await company('sales@acme-trading.test');
+    sender = { mailbox: 'mailer@mail.test', fromName: null, policy: 'mailbox' };
+    const colleague = nth(await db.insert(schema.users).values({ email: `c-${randomUUID()}@t.test`, passwordHash: 'x', name: 'Colleague', role: 'manager' }).returning(), 0);
+    const actor = { type: 'user' as const, id: 'quote-email-test' };
+    await c.emailRoutes.save(companyId, 'quote_sent', { enabled: true, to: [{ kind: 'customer' }, { kind: 'staff', userId: colleague.id }], cc: [{ kind: 'actor' }], bcc: [{ kind: 'company' }], replyTo: [{ kind: 'address', address: 'accounts@acme-trading.test' }, { kind: 'staff', userId: colleague.id }] }, actor, { code: 'POLICY_CHANGE' });
+    try {
+      const { made, customerEmail } = await quote();
+      await svc.send(userId, made.id);
+      const sent = handed();
+      expect(sent.to).toEqual([customerEmail, colleague.email]);
+      expect(sent.cc).toEqual([(await db.select().from(schema.users).where(eq(schema.users.id, userId)))[0]?.email]);
+      expect(sent.bcc).toEqual(['sales@acme-trading.test']);
+      expect(sent.replyTo).toBe(`accounts@acme-trading.test, ${colleague.email}`);
+      const event = (await svc.get(made.id))?.events.find((e) => e.eventType === 'sent');
+      expect(JSON.stringify(event?.details)).toContain(colleague.email);
+    } finally {
+      await c.emailRoutes.reset(companyId, 'quote_sent', actor, { code: 'POLICY_CHANGE' });
+    }
+  });
+
+  it('is not sent when Email routing has switched quote emails off, and says so', async () => {
+    const actor = { type: 'user' as const, id: 'quote-email-test' };
+    await c.emailRoutes.save(companyId, 'quote_sent', { enabled: false }, actor, { code: 'POLICY_CHANGE' });
+    try {
+      const { made } = await quote();
+      await expect(svc.send(userId, made.id)).rejects.toThrow('switched off in Settings, Email routing');
+      expect((await svc.get(made.id))?.status).toBe('draft');
+    } finally {
+      await c.emailRoutes.reset(companyId, 'quote_sent', actor, { code: 'POLICY_CHANGE' });
+    }
+  });
+
+  it('shows the business emails the company chose for its quotes, or the quote\'s own, on the document and in the email, and the company email when nothing is chosen', async () => {
+    await company('sales@acme-trading.test');
+    const actor = { type: 'user' as const, id: 'quote-email-test' };
+    const why = { code: 'POLICY_CHANGE' };
+    const pdf = vi.spyOn(c.invoicePdf, 'generate');
+    const printed = () => (pdf.mock.calls.at(-1)?.[0] as { company: { email: string } }).company.email;
+    try {
+      const plain = (await quote()).made;
+      await svc.send(userId, plain.id);
+      expect(printed()).toBe('sales@acme-trading.test');
+      expect(String(handed().html)).toContain('Questions? Contact sales@acme-trading.test');
+
+      await c.emailRoutes.save(companyId, 'quote_document_staff', { shown: [{ kind: 'address', address: 'accounts@acme-trading.test' }, { kind: 'company' }] }, actor, why);
+      const chosen = (await quote()).made;
+      await svc.send(userId, chosen.id);
+      expect(printed()).toBe('accounts@acme-trading.test, sales@acme-trading.test');
+      expect(String(handed().html)).toContain('Questions? Contact accounts@acme-trading.test, sales@acme-trading.test');
+
+      // A quote with its own list shows that list; one a shopper asked for follows the web shop setting, which is still the company email.
+      const own = (await quote({ contactEmails: [{ kind: 'address', address: 'only@acme-trading.test' }, { kind: 'staff', userId: 'not-a-uuid' }] })).made;
+      expect(own.contactEmails).toEqual([{ kind: 'address', address: 'only@acme-trading.test' }]);
+      await svc.send(userId, own.id);
+      expect(printed()).toBe('only@acme-trading.test');
+      const fromShop = (await quote()).made;
+      await db.update(schema.salesQuotes).set({ source: 'shop' }).where(eq(schema.salesQuotes.id, fromShop.id));
+      await svc.send(userId, fromShop.id);
+      expect(printed()).toBe('sales@acme-trading.test');
+
+      // Emptying the quote's own list goes back to the company's choice.
+      const emptied = (await quote({ contactEmails: [] })).made;
+      expect(emptied.contactEmails).toBeNull();
+    } finally {
+      pdf.mockRestore();
+      await c.emailRoutes.reset(companyId, 'quote_document_staff', actor, why);
+    }
   });
 });

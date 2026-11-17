@@ -5,6 +5,7 @@ import { auth } from '@/auth';
 import { getContainer } from '@/server/di/container';
 import { parseCouponCodes, PAYMENT_PROVIDERS } from '@/lib/checkout-input';
 import { isRecord } from '@/lib/values';
+import { readBasketItems } from '@/lib/basket-items';
 import { clientAddress, waitMessage } from '@/lib/rate-limit';
 import { previewShopBasket, type BasketPromotions } from './basket-preview';
 
@@ -22,9 +23,8 @@ export interface ShopBasketView {
  */
 export async function shopBasketAction(raw: unknown): Promise<{ ok: true; data: ShopBasketView } | { ok: false; error: string }> {
   if (!isRecord(raw)) return { ok: false, error: 'Your basket could not be read.' };
-  const items = Array.isArray(raw.items) ? raw.items.slice(0, 100) : [];
-  const lines = items.flatMap((i) => (isRecord(i) && typeof i.productId === 'string' && i.productId.length <= 100 && typeof i.quantity === 'number' && Number.isFinite(i.quantity) && i.quantity > 0 && i.quantity < 1_000_000 ? [{ productId: i.productId, quantity: i.quantity }] : []));
-  if (lines.length === 0 || lines.length !== items.length) return { ok: false, error: 'Your basket could not be read.' };
+  const lines = readBasketItems(raw.items);
+  if (lines === null || lines.length === 0) return { ok: false, error: 'Your basket could not be read.' };
   const coupons = parseCouponCodes(raw.couponCodes);
   if (!coupons.ok) return { ok: false, error: coupons.error };
   const method = PAYMENT_PROVIDERS.find((p) => p === raw.paymentMethod) ?? null;

@@ -65,6 +65,17 @@ export function ProductCard({ product, preloadImage = false }: ProductCardProps)
         <div className="space-y-3 border-t border-line pt-3">
           <Price product={product} />
           {hint === '' ? null : <p className="text-xs text-fg-muted">{hint}</p>}
+          {product.isPackage === true ? (
+            <div className="relative z-10">
+              <Link
+                href={href}
+                aria-label={`Choose options for ${product.name}`}
+                className="flex min-h-11 w-full touch-manipulation items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-md shadow-indigo-600/20 transition-all hover:bg-indigo-500"
+              >
+                Choose options
+              </Link>
+            </div>
+          ) : (
           <div className="relative z-10 grid grid-cols-2 gap-2">
             <button
               type="button"
@@ -87,6 +98,7 @@ export function ProductCard({ product, preloadImage = false }: ProductCardProps)
               <span>Buy now</span>
             </button>
           </div>
+          )}
         </div>
       </div>
     </article>

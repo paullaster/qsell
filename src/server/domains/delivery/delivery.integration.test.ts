@@ -360,7 +360,7 @@ describe.skipIf(!has(url))('delivery zones and methods (database)', () => {
         expect(page?.options.map((o) => o.id)).toEqual([mine?.id]);
         expect(groups?.permission).toBe('deliveries:read');
         const channels = await source('delivery-channels')?.search({ companyId, query: '', limit: 20, after: null, filters: {} });
-        expect(channels?.options.map((o) => o.label).sort()).toEqual(['Credit sales', 'Point of sale', 'Sales orders', 'Web shop']);
+        expect(channels?.options.map((o) => o.label).sort()).toEqual(['Credit sales', 'Point of sale', 'Sales invoices', 'Sales orders', 'Web shop']);
       } finally {
         await db.delete(schema.customerGroups).where(inArray(schema.customerGroups.id, [mine?.id ?? '', theirs?.id ?? '']));
       }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { byKind, costPostingLines, courierChargeProblem, dayPayKey, deliveryPayKey, isCostKind, isPayoutMethodKind, isRiderPay, money, marginCents, payoutPostingLines, payoutProblem, readPayRules, readPeriod, retryAfterSeconds, runningCostProblem, sharePercent, reversalKey, totalCents } from './delivery-cost';
+import { byKind, costPostingLines, courierChargeProblem, dayPayKey, deliveryPayKey, fuelEconomy, fuelFiguresProblem, isCostKind, isPayoutMethodKind, isRiderPay, money, marginCents, payoutPostingLines, payoutProblem, readPayRules, readPeriod, retryAfterSeconds, runningCostProblem, sharePercent, reversalKey, totalCents } from './delivery-cost';
 
 describe('rider pay rules', () => {
   it('are two amounts, each nothing or more, kept to the cent', () => {
@@ -104,5 +104,33 @@ describe('fuel and vehicle costs', () => {
     expect(byKind([{ kind: 'fuel', cents: 100 }, { kind: 'vehicle', cents: 250 }, { kind: 'fuel', cents: -100 }])).toMatchObject({ fuel: 0, vehicle: 250, other: 0 });
     expect(isRiderPay('fuel')).toBe(false);
     expect(isCostKind('vehicle')).toBe(true);
+  });
+});
+
+describe('fuel figures', () => {
+  it('are optional: nothing given is fine for any kind', () => {
+    expect(fuelFiguresProblem('fuel', undefined, undefined)).toEqual({ litres: null, km: null });
+    expect(fuelFiguresProblem('vehicle', '', null)).toEqual({ litres: null, km: null });
+  });
+
+  it('read litres to the hundredth and kilometres to a tenth, either one alone or both', () => {
+    expect(fuelFiguresProblem('fuel', 40.456, 512.34)).toEqual({ litres: 40.46, km: 512.3 });
+    expect(fuelFiguresProblem('fuel', 30, undefined)).toEqual({ litres: 30, km: null });
+    expect(fuelFiguresProblem('fuel', undefined, 120)).toEqual({ litres: null, km: 120 });
+  });
+
+  it('refuse zero, negative, silly or rounded-to-nothing figures, and figures for a kind that is not fuel', () => {
+    for (const bad of [0, -3, Number.NaN, 5000, '40', 0.001]) expect(fuelFiguresProblem('fuel', bad, undefined)).toHaveProperty('error');
+    for (const bad of [0, -3, 50_000, 0.04]) expect(fuelFiguresProblem('fuel', undefined, bad)).toHaveProperty('error');
+    expect(fuelFiguresProblem('vehicle', 10, undefined)).toEqual({ error: 'Litres and kilometres are only for fuel.' });
+    expect(fuelFiguresProblem('other', undefined, 10)).toHaveProperty('error');
+  });
+
+  it('work out kilometres to the litre and the fuel cost of a kilometre, and say nothing when there is nothing to divide by', () => {
+    expect(fuelEconomy({ costWithKm: 1_200_000, km: 400, litresWithKm: 40, kmWithLitres: 400 })).toEqual({ kmPerLitre: 10, costPerKm: 30 });
+    expect(fuelEconomy({ costWithKm: 500_000, km: 300, litresWithKm: 0, kmWithLitres: 0 })).toEqual({ kmPerLitre: null, costPerKm: 16.67 });
+    expect(fuelEconomy({ costWithKm: 0, km: 0, litresWithKm: 0, kmWithLitres: 0 })).toEqual({ kmPerLitre: null, costPerKm: null });
+    // Fills taken back cancel out and leave nothing to divide.
+    expect(fuelEconomy({ costWithKm: 0, km: 0, litresWithKm: 0, kmWithLitres: 0 }).costPerKm).toBeNull();
   });
 });

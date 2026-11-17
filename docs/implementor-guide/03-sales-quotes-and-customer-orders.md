@@ -102,6 +102,16 @@ graph LR
   5. **Collection Panel (`OrderCollectionPanel`)**: Payment method, gateway reference, M-Pesa receipt code, and door cash collection status.
   6. **KRA Invoice Preview (`OrderInvoicePreview`)**: Electronic tax invoice details, KRA digital signature code, and QR verification code.
 
+### Sub-Module 2A: Preparation sheet (`/admin/orders/preparation`)
+For a business that makes what it sells to order (meals, catering, assembled sets), the sheet says **what has to be made for a day**. Permission: *orders read*. It is read from the exact choices saved with each order that holds a configurable package (guide 05, Packages), not from the order lines, which fold the parts of different servings together and no longer say which fish went with which ugali.
+- **Day**: pick a date (it opens on today), press **Today**, press a day in the strip of the coming days that have orders (each shows its servings), or press **Orders with no date** for orders of packages that did not ask for one. The date is the one the order is for (the delivery time the shopper chose, or the date on the quote or order).
+- **Totals**: servings in how many orders; servings of each package; and each chosen part with the **portions** wanted (servings times picks, so *Large fish 9*) and, when a part comes in more than one unit per portion, the **units** (*Ugali 12 (24 units)*), most wanted first.
+- **Under the totals**, grouped by **delivery time** (earliest first, orders with no time last) and by package: every order's own choices as "9 × Large fish and Ugali", with the order number, the customer, and the payment state when it is not paid. Identical choices on different orders stay as separate lines, because each has its own order to prepare for.
+- A **cancelled order is not on the sheet**; if its servings were counted before, the totals drop by them at once. One sheet shows up to 2,000 selections and says so when there are more.
+- **Print** prints only the sheet (the menu and top bar are left out) so it can be pinned in the kitchen. The screen works on a phone.
+- A **customer's note** on a serving ("no pepper", where the package takes notes) is printed under its selection in amber, so it cannot be missed.
+- **Not built yet**: a per-package filter and a count of what is already made.
+
 ### Sub-Module 3: Customers (`/admin/customers`)
 - **Customer Directory**: Tabular list showing Account Code, Customer Name, Account Type (`Cash` or `Credit`), Phone, Email, City, Balance Owed, and Status (`Active`, `Suspended`).
 - **Customer Card Details**:
@@ -135,6 +145,9 @@ graph LR
 | **Product Line: Qty** | Number of units quoted. | Decimal / Integer | **Required** | Must be $> 0$. Validated against unit of measure decimals. |
 | **Product Line: Price** | Unit selling price. | Currency (KES) | **Required** | Defaults to price list. Cannot violate price floor. |
 | **Product Line: Discount** | Line-item discount percentage. | Percentage (0-100%) | Optional | Capped by user's role override limit. |
+| **Needed On** | The date the goods or the meal are needed. Packages with notice, closing-time, day-of-week or daily-limit rules are checked against it when the quote becomes an order. | Date (YYYY-MM-DD) | Optional (needed for such packages) | Without it, a quote of a package with date rules is refused at conversion with "choose the date you need it". |
+| **Add a package** (button) | Sells a configurable package (such as an express lunch) on the quote, choosing its options with the same builder the shop uses. | Dialog: package picker, then the builder | Optional | Only active packages are offered. Every option can be chosen whatever stock says (a quote promises nothing from the shelves). The line's price is set by the package (base price plus what the choices add, or the choices added up) and cannot be typed; a discount percentage can still be given. |
+| **Package line: Change choices** | Reopens the builder on the choices kept on the line. | Button on the line | n/a | A part the package no longer offers is named and left empty so a replacement can be chosen. |
 | **Notes / Terms** | Commercial stipulations on quote. | Text (Max 500 chars) | Optional | Printed on proforma footer (e.g., *"Lead time 7 days"*). |
 
 ### Customer Card Fields (`/admin/customers/new`)
@@ -201,6 +214,33 @@ graph LR
   - If an **Approval Workflow** for credit override is configured, the order status halts in `Pending Credit Approval` and alerts the Credit Manager.
   - If no approval workflow exists, order creation is **blocked** with the error: *"Customer credit limit exceeded by KES [Amount]. Payment required before placement."*
 
+### Quotes requested on the web shop
+A package set to **Request a quote** (or **Either**) in **Pricing → Packages** lets a shopper ask for a quote from the product page. It arrives as a draft quote with **Requested on the web shop** in place of *Created by* (list and detail), the shopper's name, email and phone, the date they need it and their message in the internal notes. The price is worked out from the package, never typed by the shopper. Staff review, send and convert it like any other quote. The company's own email address is alerted when a request arrives (and the shopper gets a confirmation if they gave an email address), so keep that address set in Company Setup. See the packages section of guide 05 for the setting.
+
+### Sales Orders (`/admin/sales-orders`)
+Where staff **take an order for a customer**: by phone, at the counter for later, or for an account. Behind two permissions: *Sales orders: read* (the list) and *Sales orders: create* (taking one).
+- **The list**: the sales orders staff took, newest first, 25 at a time with **Show more**; **Find a sales order** searches the order number or the customer's name. Each row shows the number, customer, date, total, status, payment status and **Waiting for approval** when it is held. **Open in Customer Orders** is where an order is processed (courier, packing, delivery).
+- **New sales order**: choose the **customer** (search by name, number, email or phone). The card under it shows where they stand: a credit account with its days, the **limit, what is owed and what is available**, **blocked** and **overdue** warnings; a cash customer says so. Add **products** (search; the list price shows) and **packages** (the same builder the shop uses, every option choosable; a package is sold in whole servings). Choose the **expected payment** (a label: M-Pesa, Pesapal, Jenga, KCB Buni; the money is received by receipt) and, if needed, the day it is **needed on**. Where the company's setting allows it, **Hold the stock until this order is paid** appears. **Place order**.
+- **What happens when you place it**: the server prices the order for that customer (the browser never sends a price) and applies the company's **Selling Documents** settings for sales orders: the credit check and limit, what happens over it, the credit days on the invoice's due date, approval, discounts, when the stock leaves and whether the tax invoice is made with the order. A refusal is shown in words ("… would exceed the credit limit of …") and nothing is placed. When an approval is needed the order is placed **waiting for approval** and says so.
+- **On account is not a choice here**: a customer's credit comes from their account (limit and days), whatever the expected payment. Selling to an account customer by "on account" belongs to the Credit Sales module.
+- **Related documents**: an order's details (in Customer Orders) show **Related documents**: the quote it was made from, and the invoices raised for it, with numbers, totals and dates. A quote that has become an order shows **Became the order** with its number. Deliveries and credit notes have their own panels on the order.
+
+### Sales Invoices (`/admin/sales-invoices`)
+Where staff **find, check and raise invoices**. Behind three permissions: *Sales invoices: read* (the list and an invoice's detail), *create* (raise an invoice) and *send* (send it again, print or download it).
+- **The list**: every invoice document, newest first, 25 at a time with **Show more**. **Find an invoice** searches the invoice number, the order number or the customer; the **Kind** choice narrows to *Tax invoices*, *Proforma* or *Delivery* invoices. Each row shows the number, kind, order, customer, date, total and three things: **how KRA signing stands** (*Signed with KRA*, *Being signed*, *Waiting to be signed*, *Not signed*, *Signing failed*, or *Not considered yet*), **what has been paid** (*Paid*, *Partly paid*, *Unpaid*, or *Credited* when credit notes cover all of it) and any **amount credited**. Payment follows the order's payment status, which receipts keep up to date.
+- **Open** shows the invoice's detail: the kind and status chips, the order and customer, whether and when it was emailed, **what was invoiced** (lines and total), its **credit notes** (number, amount, KRA status, date), and the **signing log** (each time KRA signing looked at the invoice and what it decided, newest first). **Send again by email** (to the customer's email on the order; the invoice keeps its number) and **Download PDF** need the *send* permission.
+- **Raise an invoice**: choose an **order to invoice** (search by order number or customer) and press **Raise invoice**. Only orders with no tax invoice yet are offered, and not those waiting for or refused by approval, cancelled or failed. The invoice is for the whole order. The invoicing rules hold: a tax invoice cannot be raised while the order waits for approval, the number is gap-free per branch, and KRA signing never holds the invoice up. An order that already has one is refused in words.
+- **A signed invoice is never edited or deleted**: it is corrected by a credit note (from the order's details). Raising an invoice for part of an order, or one invoice per delivery, is a later module (partial billing).
+
+### Who is written to, and which contacts a quote shows
+The email staff send with **Send via Email** goes where **Settings, Email Routing** says for *Quote sent to the customer*: by default to the customer with replies to the company email, and it can be set to write to several people, copy the sender or others, blind-copy the manager and answer to a chosen address. The "Questions? Contact …" emails on the quote PDF, the public quote page and the email follow the company's setting for quotes made by staff, or for quotes asked for on the web shop. A single quote can override them: in the quote editor, **Business contacts shown on this quote**. A quote with no email for the customer can still be sent when Email Routing names other people to write to; if nobody can be found, the message says to add a customer email, and if the company switched quote emails off, it says so.
+
+### Packages on a Quote
+- A package line reads as its choices ("Express lunch: Large fish, Ugali and Sukuma") in the editor, the PDF and the email. The server works out the price, the tax (each chosen part at its own rate, like a kit) and the cost (what the chosen parts cost); the margin and the price floor use those figures.
+- The quote keeps the choices by the slot's name and the part, not by internal ids. A package changed after the quote was made does not stop the quote being understood; if a chosen part is no longer offered, **converting the quote stops and names it** ("Large fish is no longer offered in Fish"), the quote can be reopened, the part replaced and saved again. Stock is not looked at when quoting; it is looked at, with the package's ordering rules (servings, notice, closing time, days, daily limit, who may order) and the date in **Needed On**, when the quote becomes an order. The quote's price stands even if the package's base price has moved.
+- A **note** can be written on a package line of a quote when the package takes notes; it is kept with the line and goes on to the order and the preparation sheet.
+- Two lines of one package with different choices stay two lines, also on the order; the exact selection of each is saved with the order for the preparation sheet.
+
 ### Stage Immutability & Reversals
 - Once an order stage timestamp is recorded in the append-only event log, it can **never** be edited or deleted.
 - If an order must be cancelled after dispatch:
@@ -218,4 +258,6 @@ graph LR
 | 2 | Issue a Sales Quote with a 10% line discount. | Proforma calculates discount and VAT accurately; status shows Draft/Sent. | [ ] |
 | 3 | Convert Quote to Order. | Order created with identical lines; Quote status transitions to Converted. | [ ] |
 | 4 | Attempt to place an order exceeding Credit Customer's limit. | System blocks or routes to Credit Approval queue as configured. | [ ] |
+| 4b | Place two package orders for the same day, cancel one, open **Preparation sheet** for that day. | Totals and each order's choices show for the kept order only; Print leaves out the menu. | [ ] |
+| 4a | If the company sells packages: quote one with **Add a package**, change its choices, convert the quote. | The line reads as its choices; the order's parts add up to the quote's total; a package with a daily limit refuses a second quote for the same date once full. | [ ] |
 | 5 | Verify Order Timeline Events. | Placement, payment, and dispatch timestamps render accurately in order modal. | [ ] |

@@ -1,0 +1,3 @@
+ALTER TABLE "products" ADD COLUMN "sold_only_in_packages" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "products" ADD CONSTRAINT "products_package_only_hidden_chk" CHECK (NOT "products"."sold_only_in_packages" OR NOT "products"."show_on_web_shop");--> statement-breakpoint
+ALTER TABLE "products" ADD CONSTRAINT "products_package_only_not_packaging_chk" CHECK (NOT "products"."sold_only_in_packages" OR NOT "products"."is_checkout_packaging");

@@ -1,5 +1,5 @@
 import { and, eq, isNull } from 'drizzle-orm';
-import { FULFILMENT_STATUSES, STATUS_FILTERS } from '@/lib/order-admin';
+import { COUNTER_WAIT_FILTERS, FULFILMENT_STATUSES, STATUS_FILTERS } from '@/lib/order-admin';
 import { drizzleDb } from '@/server/db/drizzle/client';
 import {
   currencies,
@@ -34,6 +34,10 @@ import { DIMENSION_LOOKUP_SOURCES } from '@/server/domains/dimensions/lookup-sou
 import { UNIT_LOOKUP_SOURCES } from '@/server/domains/units/lookup-sources';
 import { STOCK_LOOKUP_SOURCES } from '@/server/domains/stock/lookup-sources';
 import { DELIVERY_LOOKUP_SOURCES } from '@/server/domains/delivery/lookup-sources';
+import { SMS_LOOKUP_SOURCES } from '@/server/domains/sms/lookup-sources';
+import { PRICING_LOOKUP_SOURCES } from '@/server/domains/pricing/lookup-sources';
+import { SELLING_LOOKUP_SOURCES } from '@/server/domains/selling/lookup-sources';
+import { EMAIL_ROUTING_LOOKUP_SOURCES } from '@/server/domains/email-routing/lookup-sources';
 import { VENDOR_LOOKUP_SOURCES } from '@/server/domains/vendors/lookup-sources';
 
 /** The non-empty strings joined with a dot, or null when there are none. */
@@ -276,6 +280,16 @@ const orderStatuses = staticSource({
   },
 });
 
+/** How long an order may have waited at the counter, to narrow the admin orders list by. */
+const orderCounterWaits = staticSource({
+  key: 'order-counter-waits',
+  permission: 'orders:read',
+  items: ({ filters }) => {
+    acceptFilters(filters, {});
+    return COUNTER_WAIT_FILTERS.map((f) => ({ id: f.id, label: f.label, description: null }));
+  },
+});
+
 /** The states a person can move an order to by hand. */
 const orderFulfilmentStatuses = staticSource({
   key: 'order-fulfilment-statuses',
@@ -312,6 +326,7 @@ const SOURCES: ReadonlyMap<string, LookupSource> = registry(
     quoteStatuses,
     templateStatuses,
     orderStatuses,
+    orderCounterWaits,
     orderFulfilmentStatuses,
     inventoryKinds,
     ...PAYMENT_LOOKUP_SOURCES,
@@ -321,6 +336,10 @@ const SOURCES: ReadonlyMap<string, LookupSource> = registry(
     ...UNIT_LOOKUP_SOURCES,
     ...STOCK_LOOKUP_SOURCES,
     ...DELIVERY_LOOKUP_SOURCES,
+    ...SMS_LOOKUP_SOURCES,
+    ...PRICING_LOOKUP_SOURCES,
+    ...EMAIL_ROUTING_LOOKUP_SOURCES,
+    ...SELLING_LOOKUP_SOURCES,
     ...REASON_LOOKUP_SOURCES,
     ...NUMBERING_LOOKUP_SOURCES,
     ...APPROVAL_LOOKUP_SOURCES,

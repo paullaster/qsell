@@ -8,9 +8,9 @@ import { sql } from 'drizzle-orm';
 import { E2E_SHOPPER_PASSWORD } from './constants';
 
 async function main(): Promise<void> {
-  const [tag, count] = process.argv.slice(2);
+  const [tag, count, saved] = process.argv.slice(2);
   if (tag === undefined || count === undefined)
-    throw new Error('usage: shopper-fixture <tag> <orders>');
+    throw new Error('usage: shopper-fixture <tag> <orders> [saved]');
   const { getContainer } = await import('@/server/di/container');
   const { UserRepository } = await import('@/server/domains/auth/user-repository');
   const { StorefrontCustomerService } =
@@ -31,11 +31,15 @@ async function main(): Promise<void> {
     customerStoreId: customer.id,
     emailVerified: true,
   });
-  await container.customers.ensureStorefrontCustomer(company.id, {
+  const card = await container.customers.ensureStorefrontCustomer(company.id, {
     name,
     email,
     phone: '0711000111',
   });
+  // With `saved`, the shopper already has one address in their book, written and with no place on the map.
+  if (saved === 'saved') {
+    await container.customers.addAddress(card.id, { label: 'Home', recipientName: name, recipientPhone: '0711000111', street: `${tag} Saved Close`, city: 'Nairobi', countyOrState: 'Nairobi', country: 'Kenya', isDefault: true });
+  }
 
   const numbers: string[] = [];
   const insert = async (n: number, userId: string, label: string): Promise<void> => {

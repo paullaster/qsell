@@ -10,6 +10,7 @@ export const SIGNING_MODULES = [
   'sales_order',
   'credit_sale',
   'pos_cash_sale',
+  'sales_invoice',
 ] as const;
 export type SigningModule = (typeof SIGNING_MODULES)[number];
 
@@ -18,6 +19,7 @@ export const SIGNING_MODULE_LABELS: Record<SigningModule, string> = {
   sales_order: 'Sales orders',
   credit_sale: 'Credit sales',
   pos_cash_sale: 'POS cash sales',
+  sales_invoice: 'Sales invoices',
 };
 
 export function isSigningModule(value: string): value is SigningModule {

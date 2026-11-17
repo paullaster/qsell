@@ -120,6 +120,14 @@ describe('readAddress', () => {
       address: { label: 'Home', country: 'Kenya', isDefault: false },
     });
   });
+  it('keeps a place on the map to six places, or none, and refuses half a place or one off the earth', () => {
+    expect(readAddress(good)).toMatchObject({ ok: true, address: { latitude: null, longitude: null } });
+    expect(readAddress({ ...good, latitude: -1.29210049, longitude: 36.8219 })).toMatchObject({ ok: true, address: { latitude: -1.2921, longitude: 36.8219 } });
+    expect(readAddress({ ...good, latitude: -1.2, longitude: null })).toMatchObject({ ok: false, error: expect.stringContaining('place on the map') as string });
+    expect(readAddress({ ...good, latitude: 95, longitude: 36.8 }).ok).toBe(false);
+    expect(readAddress({ ...good, latitude: '-1.2', longitude: '36.8' }).ok).toBe(false);
+    expect(readAddress({ ...good, latitude: Number.NaN, longitude: 36.8 }).ok).toBe(false);
+  });
   it('says which field is missing', () => {
     const result = readAddress({ ...good, street: '  ' });
     expect(result.ok).toBe(false);

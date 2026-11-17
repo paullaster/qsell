@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cleanDisplayName, formatAddress, isDeliverableAddress, resolveSender, type SenderConfig } from './sender';
+import { cleanDisplayName, formatAddress, isDeliverableAddress, replyToList, resolveSender, type SenderConfig } from './sender';
 
 const mailbox: SenderConfig = { mailbox: 'mailer@mail.test', fromName: null, policy: 'mailbox' };
 const business: SenderConfig = { ...mailbox, policy: 'business' };
@@ -92,5 +92,22 @@ describe('the envelope', () => {
     for (const config of [mailbox, business]) {
       expect(resolveSender(config, { sender: { name: 'A', address: 'a@b.co' }, replyTo: 'c@d.co' }).envelopeFrom).toBe('mailer@mail.test');
     }
+  });
+});
+
+describe('several Reply-To addresses', () => {
+  it('keeps every real address once, in order, and drops the rest', () => {
+    expect(replyToList(['Sales@acme.co.ke', 'bad address', 'sales@acme.co.ke', 'accounts@acme.co.ke'])).toEqual(['Sales@acme.co.ke', 'accounts@acme.co.ke']);
+    expect(replyToList(undefined)).toEqual([]);
+    expect(replyToList('one@acme.co.ke')).toEqual(['one@acme.co.ke']);
+  });
+
+  it('sends answers to all of them, and never to the mailbox itself', () => {
+    expect(resolveSender(mailbox, { sender: { address: 'sales@acme.co.ke' }, replyTo: ['a@acme.co.ke', 'MAILER@mail.test', 'b@acme.co.ke'] }).replyTo).toBe('a@acme.co.ke, b@acme.co.ke');
+    expect(resolveSender(mailbox, { sender: { address: 'sales@acme.co.ke' }, replyTo: ['MAILER@mail.test'] }).replyTo).toBeNull();
+  });
+
+  it('under the business policy uses the list as asked', () => {
+    expect(resolveSender({ ...mailbox, policy: 'business' }, { sender: { address: 'sales@acme.co.ke' }, replyTo: ['a@acme.co.ke', 'b@acme.co.ke'] }).replyTo).toBe('a@acme.co.ke, b@acme.co.ke');
   });
 });

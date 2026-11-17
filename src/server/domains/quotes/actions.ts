@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { canPermission, requirePermission } from '@/server/domains/access-control/guard';
+import { getContainer } from '@/server/di/container';
 import { parseQuoteListRequest } from './quote-list';
 import { parseTemplateListRequest } from './template-list';
 import { runQuoteAction } from './run';
@@ -11,6 +12,8 @@ import type { Product } from '@/types/index';
 import { listTradeCustomersAction } from '@/server/domains/customers/master-actions';
 import type { KitAllocation } from '@/server/domains/pricing/domain/kits';
 import { SalesQuoteService, type QuoteInput, type QuoteTemplateInput } from './service';
+import { readSources } from '@/server/domains/email-routing/email-routes';
+import type { LabelledSource } from '@/server/domains/email-routing/email-route-service';
 import { SectionTemplateService } from './section-template-service';
 
 /** Product ids are text keys (`prod_<uuid>`), not bare UUIDs; this only keeps absurd input from reaching the lookup. */
@@ -99,7 +102,7 @@ export async function getQuoteCatalogueProductAction(id: unknown): Promise<Catal
   await requirePermission('quotes:read');
   if (typeof id !== 'string' || !PRODUCT_ID.test(id)) return null;
   const product = await getProductAction(id);
-  return product === null ? null : toCatalogueProduct(product);
+  return product === null || product.soldOnlyInPackages === true ? null : toCatalogueProduct(product);
 }
 
 /**
@@ -117,8 +120,16 @@ export async function getSalesQuoteEditorDataAction() {
   ]);
   // Only what the editors use: descriptions, specifications and media would make a long catalogue
   // slow to open, and nothing on the screen shows them.
-  const slim = products.map(toCatalogueProduct);
+  const slim = products.filter((p) => p.soldOnlyInPackages !== true).map(toCatalogueProduct);
   return { products: slim, settings, kits };
+}
+
+/** The words and addresses for a quote's own list of business emails, so the editor can show who they are. The list is untrusted. */
+export async function describeQuoteContactsAction(raw: unknown): Promise<LabelledSource[]> {
+  await requirePermission('quotes:read');
+  const sources = readSources(raw);
+  if (sources.length === 0) return [];
+  return await getContainer().emailRoutes.describe((await getContainer().companySettings.ensureSeeded()).id, sources);
 }
 
 /** One page of the quote templates list; the request is untrusted. */
@@ -348,4 +359,18 @@ export async function getSalesQuoteCapabilitiesAction() {
     canPermission('products:update'),
   ]);
   return { canCreate, canUpdate, canApprove, canDelete, canConfigure, canEditProducts };
+}
+
+
+/** Staff: the builder for a package product on a quote. Every option can be chosen whatever stock says, because a quote promises nothing from the shelves. */
+export async function quotePackageBuilderAction(productId: unknown): Promise<{ ok: true; data: Awaited<ReturnType<ReturnType<typeof getContainer>['packageShop']['staffBuilder']>> } | { ok: false; error: string }> {
+  await requirePermission('quotes:read');
+  if (typeof productId !== 'string' || productId.length === 0 || productId.length > 100) return { ok: true, data: null };
+  try {
+    const container = getContainer();
+    return { ok: true, data: await container.packageShop.staffBuilder((await container.companySettings.ensureSeeded()).id, productId) };
+  } catch (error) {
+    console.error('[quotes] package builder', error);
+    return { ok: false, error: 'Could not open the package. Please try again.' };
+  }
 }

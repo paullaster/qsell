@@ -55,3 +55,22 @@ export function computeCheckoutTotals(
     totalAmount: subtotal + taxRounded + shippingFee,
   };
 }
+
+/** What lines come to, to the cent and not rounded to whole shillings: net and tax, as a quote works them out. */
+export function exactTotals(lines: PricedLine[]): { subtotal: number; tax: number } {
+  let net = 0;
+  let tax = 0;
+  for (const line of lines) {
+    const gross = line.unitPrice * line.quantity;
+    const rate = Math.max(0, Number.isFinite(line.taxRate) ? line.taxRate : 0);
+    if (line.isTaxInclusive && rate > 0) {
+      const lineNet = gross / (1 + rate / 100);
+      net += lineNet;
+      tax += gross - lineNet;
+    } else {
+      net += gross;
+      tax += gross * (rate / 100);
+    }
+  }
+  return { subtotal: Math.round(net * 100) / 100, tax: Math.round(tax * 100) / 100 };
+}

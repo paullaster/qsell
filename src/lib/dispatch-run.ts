@@ -76,6 +76,7 @@ export interface RunStopFacts {
   units: number;
   value: number;
   weightKg: number | null;
+  volumeLitres: number | null;
 }
 
 export interface RunTotals {
@@ -85,18 +86,24 @@ export interface RunTotals {
   /** Null when no product on the run has a weight; otherwise the weight of those that do, and how many stops lack one. */
   weightKg: number | null;
   stopsWithoutWeight: number;
+  /** The same for the space goods take, in litres. */
+  volumeLitres: number | null;
+  stopsWithoutVolume: number;
 }
 
 const round3 = (n: number): number => Math.round(n * 1000) / 1000;
 
 export function runTotals(stops: readonly RunStopFacts[]): RunTotals {
   const weighed = stops.filter((s) => s.weightKg !== null);
+  const measured = stops.filter((s) => s.volumeLitres !== null);
   return {
     stops: stops.length,
     units: round3(stops.reduce((n, s) => n + s.units, 0)),
     value: Math.round(stops.reduce((n, s) => n + s.value, 0) * 100) / 100,
     weightKg: weighed.length === 0 ? null : round3(weighed.reduce((n, s) => n + (s.weightKg ?? 0), 0)),
     stopsWithoutWeight: stops.length - weighed.length,
+    volumeLitres: measured.length === 0 ? null : round3(measured.reduce((n, s) => n + (s.volumeLitres ?? 0), 0)),
+    stopsWithoutVolume: stops.length - measured.length,
   };
 }
 

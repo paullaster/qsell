@@ -7,6 +7,7 @@ import { useStore } from '@/components/store/StoreContext';
 import type { ShopDelivery } from '@/components/store/checkout/useShopDelivery';
 import { DeliveryTimes } from '@/components/store/checkout/DeliveryTimes';
 import { PickupSection } from '@/components/store/checkout/PickupSection';
+import { accuracyNote } from '@/lib/geo-accuracy';
 
 // The map is drawn only in the browser, and only for a shop whose map service has one.
 const MapPicker = dynamic(() => import('@/components/store/checkout/MapPicker').then((m) => m.MapPicker), {
@@ -79,6 +80,11 @@ export function DeliverySection({ delivery, recipient, onRecipient, notes, onNot
       {delivery.locate.error === null ? null : (
         <p role="alert" className="text-sm text-red-700">
           {delivery.locate.error}
+        </p>
+      )}
+      {delivery.pin === null || accuracyNote(delivery.locate.accuracyM) === null ? null : (
+        <p role="status" className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-fg-strong">
+          {accuracyNote(delivery.locate.accuracyM)}
         </p>
       )}
 

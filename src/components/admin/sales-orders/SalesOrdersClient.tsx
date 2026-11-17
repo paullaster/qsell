@@ -1,0 +1,91 @@
+'use client';
+
+import { Suspense, use, useState } from 'react';
+import Link from 'next/link';
+import { Plus } from 'lucide-react';
+import { salesOrdersPageAction } from '@/server/domains/selling/sales-order-actions';
+import type { SalesOrderRow } from '@/server/domains/selling/sales-order-service';
+import { Chip, LoadFailed, PageHeader, PageSkeleton, buttonClass, fieldClass, primaryClass } from '@/components/ui/screen-kit';
+import { useDebouncedValue } from '@/components/ui/useDebouncedValue';
+import { usePagedList } from '@/components/ui/usePagedList';
+import { SalesOrderEditor } from './SalesOrderEditor';
+
+type FirstPage = Awaited<ReturnType<typeof salesOrdersPageAction>>;
+
+export function SalesOrdersClient({ firstPromise }: { firstPromise: Promise<FirstPage> }) {
+  return (
+    <div className="mx-auto max-w-5xl space-y-5 p-4 sm:p-6">
+      <Suspense fallback={<PageSkeleton label="Loading the sales orders" />}>
+        <Loaded firstPromise={firstPromise} />
+      </Suspense>
+    </div>
+  );
+}
+
+function Loaded({ firstPromise }: { firstPromise: Promise<FirstPage> }) {
+  const first = use(firstPromise);
+  if (!first.ok) return <LoadFailed error={first.error} />;
+  return <Body first={first} />;
+}
+
+const STATUS_TONE: Record<string, 'green' | 'amber' | 'red' | 'sky' | 'gray'> = { pending: 'amber', processing: 'sky', shipped: 'sky', delivered: 'green', cancelled: 'red' };
+
+function Body({ first }: { first: Extract<FirstPage, { ok: true }> }) {
+  const [typed, setTyped] = useState('');
+  const query = useDebouncedValue(typed, 300);
+  const [creating, setCreating] = useState(false);
+  const [placed, setPlaced] = useState<string | null>(null);
+  const list = usePagedList<SalesOrderRow, { query: string }>({
+    filters: { query },
+    initialPage: { ok: true, data: { rows: first.data.rows, nextCursor: first.data.nextCursor } },
+    load: async (filters, cursor) => {
+      const result = await salesOrdersPageAction({ query: filters.query, cursor });
+      return result.ok ? { ok: true, data: { rows: result.data.rows, nextCursor: result.data.nextCursor } } : result;
+    },
+  });
+  return (
+    <>
+      <PageHeader
+        title="Sales orders"
+        intro="Orders staff take for a customer: by phone, at the counter for later, or for an account. The customer's credit and the company's settings are applied when you place one."
+        actions={first.data.canCreate && !creating ? <button type="button" className={primaryClass} onClick={() => { setPlaced(null); setCreating(true); }}><Plus className="mr-1 inline h-4 w-4" aria-hidden="true" />New sales order</button> : null}
+      />
+      {placed === null ? null : <p role="status" className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-fg" data-testid="order-placed">{placed}</p>}
+      {creating ? (
+        <SalesOrderEditor
+          onCancel={() => setCreating(false)}
+          onPlaced={(text) => {
+            setCreating(false);
+            setPlaced(text);
+            list.reload();
+          }}
+        />
+      ) : null}
+      <div>
+        <label htmlFor="sales-order-search" className="mb-1 block text-sm font-medium text-fg-muted">Find a sales order</label>
+        <input id="sales-order-search" type="search" className={fieldClass} placeholder="Order number or customer" value={typed} onChange={(e) => setTyped(e.target.value)} maxLength={100} />
+      </div>
+      {list.phase === 'error' ? <p role="alert" className="text-sm text-red-700">{list.error} <button type="button" className={buttonClass} onClick={list.retry}>Try again</button></p> : null}
+      {list.phase === 'loading' ? <p role="status" className="text-sm text-fg-muted">Loading sales orders…</p> : null}
+      {list.phase !== 'loading' && list.phase !== 'error' && list.rows.length === 0 ? <p className="rounded-xl border border-line bg-surface-raised p-8 text-center text-sm text-fg-muted" data-testid="sales-orders-empty">{query === '' ? 'No sales orders yet.' : 'No sales orders match.'}</p> : null}
+      <ul className="space-y-2" aria-label="Sales orders" data-testid="sales-orders">
+        {list.rows.map((row) => (
+          <li key={row.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface-raised p-4" data-testid="sales-order">
+            <div className="min-w-0">
+              <p className="font-semibold break-words text-fg-strong">{row.orderNumber}</p>
+              <p className="text-sm break-words text-fg-muted">{row.customerName} · {new Date(row.createdAt).toLocaleDateString()}</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-mono text-sm font-semibold text-fg-strong">{row.currency} {row.total.toLocaleString()}</span>
+              <Chip tone={STATUS_TONE[row.status] ?? 'gray'}>{row.status}</Chip>
+              <Chip tone={row.paymentStatus === 'paid' ? 'green' : 'gray'}>{row.paymentStatus.replaceAll('_', ' ')}</Chip>
+              {row.approvalStatus === 'pending' ? <Chip tone="amber">Waiting for approval</Chip> : null}
+              <Link href="/admin/orders" className="min-h-10 content-center text-sm font-medium text-indigo-600 underline">Open in Customer Orders</Link>
+            </div>
+          </li>
+        ))}
+      </ul>
+      {list.cursor === null ? null : <button type="button" className={buttonClass} disabled={list.phase === 'more'} onClick={list.loadMore}>{list.phase === 'more' ? 'Loading…' : 'Show more'}</button>}
+    </>
+  );
+}

@@ -76,15 +76,50 @@ export const providerSendOperation = async (payload: { operationId: string }) =>
 export const deliveryMessagesSweep = async (_payload: unknown, helpers: JobHelpers) => {
   const sent = await getContainer().deliveryMessages.flush(50);
   if (sent > 0) helpers.logger.info(`Delivery messages sent: ${String(sent)}`);
+  // Orders left at the counter for days are reminded about; a failure here never stops the sending above.
+  const reminded = await getContainer().orderCollections.remindUncollected().catch((error: unknown) => {
+    helpers.logger.error(`Collection reminders: ${String(error)}`);
+    return 0;
+  });
+  if (reminded > 0) helpers.logger.info(`Collection reminders queued: ${String(reminded)}`);
+  // Visits booked for an order that has since been cancelled are cancelled, so no crew is sent.
+  const visits = await getContainer().orderVisits.closeForClosedOrders().catch((error: unknown) => {
+    helpers.logger.error(`Visits for closed orders: ${String(error)}`);
+    return 0;
+  });
+  if (visits > 0) helpers.logger.info(`Visits cancelled for closed orders: ${String(visits)}`);
+  // The same for deliveries that have not gone out.
+  const deliveries = await getContainer().deliveryDocuments.closeForClosedOrders().catch((error: unknown) => {
+    helpers.logger.error(`Deliveries for closed orders: ${String(error)}`);
+    return 0;
+  });
+  if (deliveries > 0) helpers.logger.info(`Deliveries cancelled for closed orders: ${String(deliveries)}`);
+};
+
+/** Worker cron task: issue the stock of staff documents whose moment has come (paid, or approved), so a held document leaves the shelf soon after it is paid. */
+export const stockReleaseSweep = async (_payload: unknown, helpers: JobHelpers) => {
+  const { InventoryReservationService } = await import('@/server/domains/inventory/reservation-service');
+  const issued = await InventoryReservationService.issueDue(100);
+  if (issued > 0) helpers.logger.info(`Stock issued for ${String(issued)} paid or approved documents`);
 };
 
 /** A mail to a shopper about their order (placed, payment received). A failure is thrown so the worker tries again later. */
 export const shopOrderEmail = async (payload: unknown, helpers: JobHelpers) => {
-  const { orderId, kind } = (payload ?? {}) as { orderId?: unknown; kind?: unknown };
+  const { orderId, kind, audience } = (payload ?? {}) as { orderId?: unknown; kind?: unknown; audience?: unknown };
   if (typeof orderId !== 'string' || typeof kind !== 'string') return;
   const { sendOrderEmail } = await import('@/server/domains/orders/order-emails');
-  const outcome = await sendOrderEmail(orderId, kind);
-  helpers.logger.info(`Order mail ${kind} for ${orderId}: ${outcome}`);
+  const to = audience === 'staff' ? 'staff' : 'customer';
+  const outcome = await sendOrderEmail(orderId, kind, to);
+  helpers.logger.info(`Order mail ${kind} (${to}) for ${orderId}: ${outcome}`);
+};
+
+/** A mail about a quote a shopper asked for (the confirmation, or the alert to the staff). A failure is thrown so the worker tries again later. */
+export const shopQuoteRequestEmail = async (payload: unknown, helpers: JobHelpers) => {
+  const { quoteId, kind } = (payload ?? {}) as { quoteId?: unknown; kind?: unknown };
+  if (typeof quoteId !== 'string' || typeof kind !== 'string') return;
+  const { sendQuoteRequestEmail } = await import('@/server/domains/quotes/quote-request-emails');
+  const outcome = await sendQuoteRequestEmail(quoteId, kind);
+  helpers.logger.info(`Quote request mail ${kind} for ${quoteId}: ${outcome}`);
 };
 
 /** Looks for carts left behind and queues one reminder for each. */
@@ -411,6 +446,18 @@ export const deliverySlaScan = async (_payload: unknown, helpers: JobHelpers) =>
     return 0;
   });
   if (mailed > 0) helpers.logger.info(`Delivery lateness mails sent: ${String(mailed)}`);
+  // The alerts on phones go the same way: a push service that is down never stops the scan or the mails.
+  const alerted = await c.deliveryPush.flush(50).catch((error: unknown) => {
+    helpers.logger.error(`Delivery lateness alerts: ${String(error)}`);
+    return 0;
+  });
+  if (alerted > 0) helpers.logger.info(`Delivery lateness alerts sent: ${String(alerted)}`);
+  // And the text messages, through the company's own SMS provider; with none connected they wait and are then left unsent.
+  const texted = await c.deliverySlaTexts.flush(20).catch((error: unknown) => {
+    helpers.logger.error(`Delivery lateness texts: ${String(error)}`);
+    return 0;
+  });
+  if (texted > 0) helpers.logger.info(`Delivery lateness texts sent: ${String(texted)}`);
 };
 
 /** Worker cron task: parcels are booked with their couriers, asked about on the road and cancelled when their delivery is; a courier that is down never stops the rest. */
@@ -527,7 +574,9 @@ export const tasks = {
   'provider-send-operation': providerSendOperation,
   'provider-sweep': providerSweep,
   'delivery-messages-sweep': deliveryMessagesSweep,
+  'stock-release-sweep': stockReleaseSweep,
   'shop-order-email': shopOrderEmail,
+  'shop-quote-request-email': shopQuoteRequestEmail,
   'shop-cart-reminder-sweep': shopCartReminderSweep,
   'shop-cart-reminder': shopCartReminder,
   'newsletter-slice': newsletterSlice,

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { noHorizontalScroll, noInnerHorizontalScroll, noNativeSelect, open } from './support/page';
+import { followLink, noHorizontalScroll, noInnerHorizontalScroll, noNativeSelect, open } from './support/page';
 import { pick } from './support/quotes';
 import { deliveryTool } from './support/delivery-fixtures';
 import { placeDeliveredOrder } from './support/delivery-shop';
@@ -27,11 +27,15 @@ test.describe('delivery vehicles', () => {
       await form.getByRole('button', { name: 'Add the vehicle' }).click();
       await expect(page.getByRole('alert').filter({ hasText: 'The weight limit is more than nothing' })).toBeVisible({ timeout: 30_000 });
       await form.getByLabel('Most weight it carries (kg)').fill('25');
+      await form.getByLabel('Most space it holds (litres)').fill('big');
+      await form.getByRole('button', { name: 'Add the vehicle' }).click();
+      await expect(page.getByRole('alert').filter({ hasText: 'The volume limit is more than nothing' })).toBeVisible({ timeout: 30_000 });
+      await form.getByLabel('Most space it holds (litres)').fill('1200');
       await form.getByLabel('Most stops on a run').fill('1');
       await form.getByRole('button', { name: 'Add the vehicle' }).click();
       await expect(page.getByText('The vehicle is added.')).toBeVisible({ timeout: 30_000 });
       const row = page.getByRole('list', { name: 'Vehicle list' }).getByRole('listitem').filter({ hasText: bike });
-      await expect(row).toContainText('up to 25 kg · 1 stop a run');
+      await expect(row).toContainText('up to 25 kg · up to 1,200 litres · 1 stop a run');
       await expect(row).toContainText('In use');
 
       // The same name in another case is the same vehicle.
@@ -125,6 +129,47 @@ test.describe('delivery vehicles', () => {
       await pick(page, plan.getByRole('combobox', { name: 'Rider' }), name, new RegExp(name));
       await plan.getByRole('button', { name: 'Plan the run' }).click();
       await expect(page.getByText(new RegExp(`^Run RUN-.* is planned in ${vehicle}\\.`))).toBeVisible({ timeout: 30_000 });
+      const planned = (await page.getByText(new RegExp(`^Run RUN-.* is planned in ${vehicle}\\.`)).textContent()) ?? '';
+      const runNumber = /(RUN-[\w-]+)/.exec(planned)?.[1] ?? '';
+      expect(runNumber).not.toBe('');
+
+      // Another rider with a different usual vehicle: giving the planned run to them brings their vehicle, since the run was only following the first rider's.
+      const second = `Second ${tag}`;
+      const other = `Achola ${tag}`;
+      await open(page, '/admin/delivery/vehicles', 'Vehicles');
+      const addAgain = page.getByRole('form', { name: 'Add a vehicle' });
+      await addAgain.getByLabel('Name or number plate').fill(second);
+      await addAgain.getByRole('button', { name: 'Add the vehicle' }).click();
+      await expect(page.getByText('The vehicle is added.')).toBeVisible({ timeout: 30_000 });
+      await open(page, '/admin/delivery/riders', 'Riders');
+      const again = page.getByRole('form', { name: 'Make an account for a rider' });
+      await again.getByLabel('Name').fill(other);
+      await again.getByLabel('Email to sign in with').fill(`e2e-second-${tag}@example.test`.toLowerCase());
+      await again.getByLabel('Phone').fill('0722 555 777');
+      await again.getByLabel('First password').fill('E2eSecondFirst-Pass1');
+      await pick(page, again.getByRole('combobox', { name: 'Usual vehicle (optional)' }), second, new RegExp(second));
+      await again.getByRole('button', { name: 'Create the account' }).click();
+      await expect(page.getByText(new RegExp(`${other} has an account`))).toBeVisible({ timeout: 30_000 });
+      await open(page, '/admin/delivery/dispatch', 'Dispatch board');
+      const runLink = page.getByRole('region', { name: 'Runs to do' }).getByRole('link', { name: runNumber });
+      await followLink(runLink, page, /\/admin\/delivery\/runs\//, page.getByRole('heading', { name: new RegExp(`^Run ${runNumber}`), level: 2 }));
+      await pick(page, page.getByRole('combobox', { name: 'Give the run to another rider' }), other, new RegExp(other));
+      await page.getByRole('button', { name: 'Give the run', exact: true }).click();
+      await expect(page.getByText('The run is with the new rider.')).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByText(new RegExp(`${other} · ${second} ·`))).toBeVisible({ timeout: 30_000 });
+      await noHorizontalScroll(page);
+
+      // The first rider's usual vehicle is then stopped; giving the run back to them cannot bring it, and the screen says so in words rather than doing nothing.
+      await open(page, '/admin/delivery/vehicles', 'Vehicles');
+      const first = page.getByRole('list', { name: 'Vehicle list' }).getByRole('listitem').filter({ hasText: vehicle });
+      await first.getByRole('button', { name: 'Stop using' }).click();
+      await expect(page.getByText(`${vehicle} is stopped.`)).toBeVisible({ timeout: 30_000 });
+      await open(page, '/admin/delivery/dispatch', 'Dispatch board');
+      await followLink(page.getByRole('region', { name: 'Runs to do' }).getByRole('link', { name: runNumber }), page, /\/admin\/delivery\/runs\//, page.getByRole('heading', { name: new RegExp(`^Run ${runNumber}`), level: 2 }));
+      await pick(page, page.getByRole('combobox', { name: 'Give the run to another rider' }), name, new RegExp(name));
+      await page.getByRole('button', { name: 'Give the run', exact: true }).click();
+      await expect(page.getByText(new RegExp(`${name}'s usual vehicle is stopped.*keeps ${second}`))).toBeVisible({ timeout: 30_000 });
+      await noHorizontalScroll(page);
     } finally {
       // This test switched own-account riders on; other specs expect the default (staff only), so it is put back.
       riderTool('reset', tag);

@@ -65,7 +65,7 @@ export function QuoteDetails({
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Summary
             label="Created by"
-            value={quote.createdByName ?? '—'}
+            value={quote.source === 'shop' ? 'Requested on the web shop' : (quote.createdByName ?? '—')}
             detail={new Date(quote.createdAt).toLocaleString()}
           />
           <Summary
@@ -73,6 +73,9 @@ export function QuoteDetails({
             value={quote.sentAt === null ? 'Not emailed yet' : (quote.sentByName ?? 'Unknown')}
             detail={quote.sentAt === null ? undefined : new Date(quote.sentAt).toLocaleString()}
           />
+          {quote.convertedOrderNumber === undefined || quote.convertedOrderNumber === null ? null : (
+            <Summary label="Became the order" value={quote.convertedOrderNumber} detail="Find it in Sales Orders or Customer Orders" />
+          )}
           <Summary
             label="Customer"
             value={quote.customerName}

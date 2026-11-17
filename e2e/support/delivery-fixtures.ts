@@ -122,7 +122,7 @@ async function billing(mode: string): Promise<Record<string, string>> {
 async function order(orderNumber: string): Promise<Record<string, string>> {
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
   const [row] = await db.execute<Record<string, string | null>>(sql`
-    SELECT o.shipping_fee, o.tax, o.total_amount, o.subtotal, o.status AS order_status, d.method, b.name AS branch, d.charge_amount, d.charge_net, d.charge_tax, d.tax_rate, d.recipient_name, d.recipient_phone, d.notes, d.choice->>'reason' AS reason,
+    SELECT o.shipping_fee, o.tax, o.total_amount, o.subtotal, o.status AS order_status, d.method, b.name AS branch, d.charge_amount, d.charge_net, d.charge_tax, d.tax_rate, d.recipient_name, d.recipient_phone, d.notes, d.choice->>'reason' AS reason, o.shipping_address->>'street' AS ship_street, o.shipping_address->>'city' AS ship_city, d.destination::text AS destination,
            (SELECT string_agg(e.stage, ',' ORDER BY e.sequence) FROM order_stage_events e WHERE e.order_id = o.id) AS stages
     FROM orders o LEFT JOIN order_deliveries d ON d.order_id = o.id LEFT JOIN branches b ON b.id = o.branch_id
     WHERE o.order_number = ${orderNumber}`);
@@ -156,6 +156,61 @@ async function collection(orderNumber: string): Promise<Record<string, string>> 
   const [row] = await db.select().from(orderCollections).where(eq(orderCollections.orderId, order.id));
   const code = await c.orderCollections.codeFor(company.id, order.id);
   return { orderStatus: order.status, status: row?.status ?? '', how: row?.collectedHow ?? '', attempts: String(row?.failedAttempts ?? 0), code: code ?? '' };
+}
+
+/** Marks an order's collection ready, as the counter does, and makes it have been ready `daysAgo` days, so a test need not wait for the time to pass. */
+async function markCollectionReady(orderNumber: string, daysAgo: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { orders, orderCollections } = await import('@/server/db/drizzle/schema');
+  const c = getContainer();
+  const company = await c.companySettings.ensureSeeded();
+  const [order] = await db.select({ id: orders.id }).from(orders).where(eq(orders.orderNumber, orderNumber));
+  if (order === undefined) throw new Error(`e2e fixture: no order ${orderNumber}`);
+  const done = await c.orderCollections.markReady({ companyId: company.id, userId: 'e2e' }, order.id);
+  if (!done.ok) throw new Error(`e2e fixture: ${done.message}`);
+  await db.update(orderCollections).set({ readyAt: new Date(Date.now() - Number(daysAgo) * 86_400_000 - 60_000) }).where(eq(orderCollections.orderId, order.id));
+  return { ready: orderNumber, daysAgo };
+}
+
+/** Cancels an order the way the order's own stage writer does, so a test can see what the counter shows for it. */
+async function cancelOrder(orderNumber: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { orders } = await import('@/server/db/drizzle/schema');
+  const { OrderStages } = await import('@/server/domains/orders/stages');
+  const [order] = await db.select({ id: orders.id }).from(orders).where(eq(orders.orderNumber, orderNumber));
+  if (order === undefined) throw new Error(`e2e fixture: no order ${orderNumber}`);
+  await OrderStages.move(db, order.id, 'cancelled', 'cancelled', { reasonCode: 'cancelled', message: 'e2e' });
+  return { cancelled: orderNumber };
+}
+
+/** Books a visit for an order, two days ahead, with a note and a contact phone the customer must never see. */
+async function bookVisit(orderNumber: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { orders } = await import('@/server/db/drizzle/schema');
+  const c = getContainer();
+  const company = await c.companySettings.ensureSeeded();
+  const [order] = await db.select({ id: orders.id }).from(orders).where(eq(orders.orderNumber, orderNumber));
+  if (order === undefined) throw new Error(`e2e fixture: no order ${orderNumber}`);
+  const at = (hour: number): string => {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() + 2);
+    d.setUTCHours(hour, 0, 0, 0);
+    return d.toISOString();
+  };
+  const made = await c.orderVisits.book({ companyId: company.id, userId: 'e2e', crewOnly: false }, { orderId: order.id, startsAt: at(6), endsAt: at(9), address: 'Kileleshwa, Nairobi, Gate 4', contactName: 'Gate Keeper', contactPhone: '0700123456', notes: 'Dog in the yard', items: ['Fit the unit'] });
+  if (!made.ok) throw new Error(`e2e fixture: ${made.message}`);
+  return { visit: made.data.id };
+}
+
+/** Runs the sweep that cancels deliveries and visits of orders that were cancelled, as the worker does every minute. */
+async function closeForClosedOrders(): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const c = getContainer();
+  const deliveries = await c.deliveryDocuments.closeForClosedOrders();
+  const visits = await c.orderVisits.closeForClosedOrders();
+  return { deliveries: String(deliveries), visits: String(visits) };
 }
 
 /**
@@ -207,6 +262,32 @@ async function advance(id: string, number: string): Promise<Record<string, strin
     if (!r.ok) throw new Error(`e2e fixture: ${r.message}`);
   }
   return { number, id };
+}
+
+/** A paid order for one salt taken by staff for the fixture's branch, with no delivery plan, as a converted quote is. */
+async function unplannedOrder(tag: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { products, branches } = await import('@/server/db/drizzle/schema');
+  const { OrderWriteService } = await import('@/server/domains/orders/write-service');
+  const { OrderStages } = await import('@/server/domains/orders/stages');
+  const [branch] = await db.select({ id: branches.id }).from(branches).where(eq(branches.code, `E${tag}`.slice(0, 20)));
+  const [salt] = await db.select({ id: products.id }).from(products).where(eq(products.name, 'Salt 500g'));
+  if (branch === undefined || salt === undefined) throw new Error('e2e fixture: the branch or the seeded products are not there');
+  const orderNumber = `E2E-UP-${tag}`.toUpperCase();
+  const made = await OrderWriteService.createOrder({
+    orderNumber,
+    customerName: `Quote Buyer ${tag}`,
+    customerEmail: `quote-${tag}@example.test`.toLowerCase(),
+    customerPhone: '0711000888',
+    shippingAddress: { street: '7 Kimathi Street', city: 'Nairobi', countyOrState: 'Nairobi', country: 'Kenya' },
+    items: [{ productId: salt.id, quantity: 1 }],
+    currency: 'KES',
+    paymentMethod: 'mpesa_daraja',
+    branchId: branch.id,
+  });
+  if (!made.success || made.order === undefined) throw new Error(`e2e fixture: the order was refused: ${made.error ?? 'no reason'}`);
+  await OrderStages.move(db, made.order.id, 'payment_confirmed', 'succeeded', {});
+  return { orderNumber, orderId: made.order.id };
 }
 
 /** A paid order for one salt that is to be sent by courier from the fixture's branch, placed the way the shop places it. */
@@ -309,11 +390,16 @@ async function main(): Promise<void> {
   if (command === 'pay') result = await pay(tag);
   if (command === 'collection') result = await collection(tag);
   if (command === 'ready') result = await ready(tag, extra);
+  if (command === 'collection-ready' && extra !== undefined) result = await markCollectionReady(tag, extra);
+  if (command === 'book-visit') result = await bookVisit(tag);
+  if (command === 'close-closed') result = await closeForClosedOrders();
+  if (command === 'cancel-order') result = await cancelOrder(tag);
   if (command === 'advance' && extra !== undefined) result = await advance(tag, extra);
   if (command === 'set-email' && extra !== undefined) result = await setEmail(tag, extra);
   if (command === 'messages') result = await messages(tag);
   if (command === 'deliver-promised' && extra !== undefined) result = await deliverPromised(tag, extra);
   if (command === 'courier-order') result = await courierOrder(tag);
+  if (command === 'unplanned-order') result = await unplannedOrder(tag);
   if (command === 'courier-charge' && extra !== undefined) result = await courierCharge(tag, extra.split('|')[0] ?? '', extra.split('|')[1] ?? '0');
   if (command === 'service') result = { id: await serviceItem(), name: SERVICE_NAME };
   if (result === null) throw new Error('usage: delivery-fixtures open|close|order|billing|service|pay|collection <tag>');

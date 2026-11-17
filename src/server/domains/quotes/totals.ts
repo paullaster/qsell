@@ -1,4 +1,5 @@
 import { effectiveStandardPrice } from '@/lib/standard-price';
+import type { StoredPick } from '@/server/domains/pricing/domain/package-shop';
 import { kitCost, kitTax, type KitTaxShape } from '@/server/domains/pricing/domain/kits';
 
 /** One line as the totals see it. */
@@ -14,6 +15,10 @@ export interface TotalsLine {
   unitId?: string | null;
   /** What the line is worth before discounts when a price was typed per unit: that price times the typed quantity, exactly. */
   exactAmount?: number;
+  /** A package line is a kit of its own choices; this is that kit (the product's own kit, if any, is not used). */
+  kit?: KitTaxShape;
+  /** The choices of a package line, by slot name and part; the server turns them into `unitPrice` and `kit` before the totals are worked out. */
+  package?: { picks: StoredPick[] };
 }
 
 /** What the totals need to know about a product. */
@@ -72,7 +77,7 @@ export function computeQuoteTotals(
     const gross = (line.exactAmount ?? unit * line.quantity) * discount;
     const rate = product?.taxRate ?? 0;
     const inclusive = product?.isTaxInclusive !== false;
-    const kit = kits.get(line.productId);
+    const kit = line.kit ?? kits.get(line.productId);
     const split = kit
       ? kitTax(gross, line.quantity, kit, inclusive)
       : {

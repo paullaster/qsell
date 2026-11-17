@@ -91,7 +91,7 @@ describe.skipIf(!has(url))('stock per location (database)', () => {
     it('are made, found, changed, and refused when the code is taken or the branch is not the company’s', async () => {
       const code = `W${randomUUID().slice(0, 6)}`;
       const made = await c.stockLocations.create(companyId, { code, name: 'Second warehouse', kind: 'warehouse', branchId });
-      expect(made).toMatchObject({ code, branchId, isDefault: false, sellsChannels: ['ecommerce', 'sales_order', 'credit_sale', 'pos_cash_sale'] });
+      expect(made).toMatchObject({ code, branchId, isDefault: false, sellsChannels: ['ecommerce', 'sales_order', 'credit_sale', 'pos_cash_sale', 'sales_invoice'] });
       expect(await codeOf(c.stockLocations.create(companyId, { code: code.toLowerCase(), name: 'Again', kind: 'store' }))).toBe('DUPLICATE_CODE');
       expect(await codeOf(c.stockLocations.create(companyId, { code: 'X1', name: 'Nowhere', kind: 'store', branchId: randomUUID() }))).toBe('BAD_BRANCH');
       expect(await codeOf(c.stockLocations.create(companyId, { code: 'X2', name: 'Bad', kind: 'shed' }))).toBe('BAD_LOCATION');

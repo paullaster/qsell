@@ -68,6 +68,24 @@ export async function orderDeliveriesAction(orderId: unknown) {
   });
 }
 
+/**
+ * Plans the delivery of an order that was never planned at the checkout (taken by staff, or converted from a quote): its branch and its
+ * delivery charge are the ones already on the order, and staff say how it goes and where. Everything is checked again on the server.
+ */
+export async function planOrderDeliveryAction(raw: unknown) {
+  return await runDelivery(
+    'deliveries:fulfil',
+    async (ctx) => {
+      const i = objectOf(raw);
+      const planned = await getContainer().orderDeliveries.planStaffOrder({ companyId: ctx.companyId, userId: ctx.userId }, idOf(i.orderId, 'order'), { method: i.method, county: i.county, town: i.town, area: i.area, recipientName: i.recipientName, recipientPhone: i.recipientPhone, notes: i.notes });
+      if (planned.ok) return { branchName: planned.branchName };
+      const codes = { not_found: 'NOT_FOUND', not_allowed: 'NOT_ALLOWED', bad_input: 'BAD_INPUT' } as const;
+      throw new DeliveryError(planned.message, codes[planned.reason]);
+    },
+    PATHS,
+  );
+}
+
 export async function createDeliveryAction(raw: unknown) {
   return await runDelivery(
     'deliveries:fulfil',
@@ -136,7 +154,7 @@ export async function deliveryStepAction(raw: unknown) {
         case 'receive_return':
           return dataOf(await docs.receiveReturn(actor, id, { lines: i.lines, note: i.note }));
         case 'amend':
-          return dataOf(await docs.amend(actor, id, { recipientName: i.recipientName, recipientPhone: i.recipientPhone, notes: i.notes }, version));
+          return dataOf(await docs.amend(actor, id, { recipientName: i.recipientName, recipientPhone: i.recipientPhone, notes: i.notes, ...(i.street === undefined ? {} : { street: i.street }), ...(i.pin === undefined ? {} : { pin: i.pin }) }, version));
         default:
           throw new DeliveryError('That step is not one this delivery has.', 'BAD_INPUT');
       }

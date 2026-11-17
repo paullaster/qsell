@@ -184,6 +184,7 @@ function AdminProductModalForm({
     template === null ? '' : String(template.lowStockThreshold),
   );
   const [weight, setWeight] = useState(template?.weight == null ? '' : String(template.weight));
+  const [volume, setVolume] = useState(template?.volumeLitres == null ? '' : String(template.volumeLitres));
   const [baseUnit, setBaseUnit] = useState<Choice | null>(() =>
     template === null
       ? null
@@ -207,6 +208,7 @@ function AdminProductModalForm({
   const [isActive, setIsActive] = useState(template?.isActive ?? true);
   const [showOnWebShop, setShowOnWebShop] = useState(template?.showOnWebShop ?? true);
   const [isCheckoutPackaging, setIsCheckoutPackaging] = useState(template?.isCheckoutPackaging ?? false);
+  const [soldOnlyInPackages, setSoldOnlyInPackages] = useState(template?.soldOnlyInPackages ?? false);
   const [inventoryKindChoice, setInventoryKindChoice] = useState<Choice | null>(() => {
     const id = template?.inventoryKind ?? initialItemTypes?.find((type) => type.isDefault)?.defaultInventoryKind ?? 'inventory';
     const option = INVENTORY_KIND_OPTIONS.find((candidate) => candidate.id === id);
@@ -366,6 +368,7 @@ function AdminProductModalForm({
     } else if (
       m.includes('stock') ||
       m.includes('weight') ||
+      m.includes('litres') ||
       m.includes('unit') ||
       m.includes('decimal') ||
       m.includes('whole number')
@@ -512,6 +515,7 @@ function AdminProductModalForm({
     const stock = stockQuantity.trim() === '' ? 0 : Number(stockQuantity);
     const lowThreshold = lowStockThreshold.trim() === '' ? 0 : Number(lowStockThreshold);
     const weightValue = weight.trim() === '' ? undefined : Number(weight);
+    const volumeValue = volume.trim() === '' ? undefined : Number(volume);
 
     try {
       const productPayload = {
@@ -542,6 +546,7 @@ function AdminProductModalForm({
         stockQuantity: Number.isFinite(stock) ? stock : 0,
         lowStockThreshold: Number.isFinite(lowThreshold) ? lowThreshold : 0,
         weight: weightValue !== undefined && Number.isFinite(weightValue) ? weightValue : undefined,
+        volumeLitres: volumeValue !== undefined && Number.isFinite(volumeValue) ? volumeValue : undefined,
         ...(baseUnit === null ? {} : { baseUnitId: baseUnit.id }),
         ...(unitsToSave === undefined ? {} : { packagings: unitsToSave }),
         specifications: specifications.map(({ key, value }) => ({ key, value })),
@@ -551,8 +556,9 @@ function AdminProductModalForm({
         description: description.trim(),
         tags,
         isActive,
-        showOnWebShop,
+        showOnWebShop: soldOnlyInPackages ? false : showOnWebShop,
         isCheckoutPackaging,
+        soldOnlyInPackages,
         packagingFits: packagingFits.map(({ productId, capacity }) => ({ productId, capacity: Number(capacity) })),
       };
 
@@ -1068,6 +1074,10 @@ function AdminProductModalForm({
                       className={`${fieldClass} font-mono`}
                     />
                   </div>
+                  <div>
+                    <label className={labelClass}>{`Space it takes${baseUnit?.meta?.code === undefined ? '' : ` per ${baseUnit.meta.code}`} (litres)`}</label>
+                    <input type="number" step="0.1" min={0} value={volume} onChange={(e) => setVolume(e.target.value)} placeholder="e.g. 40 (1,000 litres is a cubic metre)" className={`${fieldClass} font-mono`} />
+                  </div>
                 </div>
               </div>
             ) : null}
@@ -1219,11 +1229,27 @@ function AdminProductModalForm({
                     </select>
                   </div>
                   <div className="flex items-start gap-3 rounded-lg border border-line bg-surface-raised p-3">
-                    <input id="product-show-on-web-shop" type="checkbox" checked={showOnWebShop} onChange={(event) => setShowOnWebShop(event.target.checked)} className="mt-0.5 h-4 w-4 accent-indigo-600" />
+                    <input id="product-show-on-web-shop" type="checkbox" checked={showOnWebShop && !soldOnlyInPackages} disabled={soldOnlyInPackages} onChange={(event) => setShowOnWebShop(event.target.checked)} className="mt-0.5 h-4 w-4 accent-indigo-600 disabled:opacity-50" />
                     <label htmlFor="product-show-on-web-shop" className="text-sm font-medium text-fg-strong">
                       Show in the web shop
                       <span className="mt-0.5 block text-[11px] font-normal text-fg-subtle">
                         Turn off to sell this product only through quotes and staff orders. Whether it is sold at all is decided by its business classification.
+                      </span>
+                    </label>
+                  </div>
+                  <div className="flex items-start gap-3 rounded-lg border border-line bg-surface-raised p-3">
+                    <input
+                      id="product-sold-only-in-packages"
+                      type="checkbox"
+                      checked={soldOnlyInPackages}
+                      disabled={isCheckoutPackaging}
+                      onChange={(event) => setSoldOnlyInPackages(event.target.checked)}
+                      className="mt-0.5 h-4 w-4 accent-indigo-600 disabled:opacity-50"
+                    />
+                    <label htmlFor="product-sold-only-in-packages" className="text-sm font-medium text-fg-strong">
+                      Sold only inside packages
+                      <span className="mt-0.5 block text-[11px] font-normal text-fg-subtle">
+                        For a part that a package offers as a choice (such as brown ugali) but that nobody should buy on its own. It keeps its stock, cost and tax, but it is not listed, not found by search and cannot be ordered, quoted or invoiced by itself. It needs a selling price. Not available for checkout packaging.
                       </span>
                     </label>
                   </div>

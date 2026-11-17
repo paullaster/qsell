@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import type { BasketItem } from '@/lib/basket-items';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GeoPoint } from '@/lib/geo';
 import type { ShopSlotOffer } from '@/lib/delivery-slot';
 import { useDebouncedValue } from '@/components/ui/useDebouncedValue';
@@ -17,6 +18,9 @@ interface Answer {
   outcome: { ok: true; quote: ShopDeliveryQuote } | { ok: false; error: string };
 }
 
+/** What happened to the place the shopper chose: they chose one (so the written address no longer describes it), and later, what the map calls it. */
+export type PinEvent = { phase: 'chosen'; point: GeoPoint } | { phase: 'named'; point: GeoPoint; place: ShopPinPlace };
+
 export interface ShopDelivery {
   /** null while the shop's delivery options are being read; `off` when the shop has no delivery rules to offer. */
   options: ShopDeliveryOptions | null;
@@ -25,13 +29,15 @@ export interface ShopDelivery {
   method: Method;
   setMethod: (m: Method) => void;
   pin: GeoPoint | null;
-  setPin: (p: GeoPoint | null) => void;
+  /** Chooses the place. `restored` is for a saved address that carries its own place: nothing is looked up and nobody is told a new place was chosen. */
+  setPin: (p: GeoPoint | null, options?: { restored?: boolean; accuracyM?: number | null }) => void;
   quote: QuotePhase;
   /** The words of the pin's address, offered to fill the address fields. */
   named: ShopPinPlace | null;
   nameNotice: string | null;
   search: { text: string; setText: (t: string) => void; run: () => void; results: ShopPlace[]; busy: boolean; error: string | null };
-  locate: { run: () => void; busy: boolean; error: string | null };
+  /** `accuracyM`: how far out the device says its place may be, while the pin is the device's own place. */
+  locate: { run: () => void; busy: boolean; error: string | null; accuracyM: number | null };
   /** Collecting from a branch: the branches this basket can be collected from, and the one chosen. */
   /** The delivery times on offer for this basket and place, and the one the shopper chose (none until they choose; the order does not need one). */
   slots: { phase: SlotsPhase; chosen: { slotId: string; day: string } | null; choose: (slot: { slotId: string; day: string } | null) => void };
@@ -39,12 +45,14 @@ export interface ShopDelivery {
 }
 
 interface Input {
-  items: { productId: string; quantity: number }[];
+  items: BasketItem[];
   county: string;
   town: string;
   area: string;
   country: string;
   couponCodes?: string[];
+  /** Told when the shopper chooses a place and when it has been named, so the written address can follow the place the charge is worked out for. */
+  onPin?: (event: PinEvent) => void;
 }
 
 /** The question the server is asked, from the request the hook keeps as text: the same one for the price and for the delivery times. */
@@ -72,6 +80,7 @@ export function useShopDelivery(input: Input): ShopDelivery {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [locating, setLocating] = useState(false);
   const [locateError, setLocateError] = useState<string | null>(null);
+  const [accuracyM, setAccuracyM] = useState<number | null>(null);
   const [slotAnswer, setSlotAnswer] = useState<({ key: string } & ({ offer: ShopSlotOffer } | { error: string })) | null>(null);
   const [chosenSlot, setChosenSlot] = useState<{ slotId: string; day: string } | null>(null);
   const [chosenBranch, setChosenBranch] = useState<string | null>(null);
@@ -157,14 +166,29 @@ export function useShopDelivery(input: Input): ShopDelivery {
     else slots = 'offer' in slotAnswer ? { phase: 'ok', offer: slotAnswer.offer } : { phase: 'error', error: slotAnswer.error };
   }
 
-  const setPin = useCallback((p: GeoPoint | null) => {
+  // The newest handler, read when an answer arrives (the answer comes later than the render that asked).
+  const told = useRef(input.onPin);
+  useEffect(() => {
+    told.current = input.onPin;
+  });
+  const naming = useRef(0);
+  const setPin = useCallback((p: GeoPoint | null, options?: { restored?: boolean; accuracyM?: number | null }) => {
+    naming.current += 1;
+    // Only the device's own place is as rough as the device says; any other pin was put there by a person.
+    setAccuracyM(p === null ? null : (options?.accuracyM ?? null));
+    const turn = naming.current;
     setPinState(p);
     setNamed(null);
     setNameNotice(null);
-    if (p === null) return;
+    if (p === null || options?.restored === true) return;
+    told.current?.({ phase: 'chosen', point: p });
     void shopNamePinAction(p).then((r) => {
-      if (r.ok && r.data !== null) setNamed(r.data);
-      else if (!r.ok) setNameNotice(r.error);
+      // An answer for a place the shopper has since moved away from is of no use.
+      if (turn !== naming.current) return;
+      if (r.ok && r.data !== null) {
+        setNamed(r.data);
+        told.current?.({ phase: 'named', point: p, place: r.data });
+      } else if (!r.ok) setNameNotice(r.error);
     });
   }, []);
 
@@ -190,16 +214,17 @@ export function useShopDelivery(input: Input): ShopDelivery {
       return;
     }
     setLocating(true);
+    // A fresh reading every time: the shopper pressed the button to say where they are now, not where the device last was.
     navigator.geolocation.getCurrentPosition(
       (position) => {
         setLocating(false);
-        setPin({ latitude: Math.round(position.coords.latitude * 1e6) / 1e6, longitude: Math.round(position.coords.longitude * 1e6) / 1e6 });
+        setPin({ latitude: Math.round(position.coords.latitude * 1e6) / 1e6, longitude: Math.round(position.coords.longitude * 1e6) / 1e6 }, { accuracyM: position.coords.accuracy });
       },
       () => {
         setLocating(false);
         setLocateError('We could not get your location. Allow location for this site, or drop a pin on the map.');
       },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
     );
   };
 
@@ -215,7 +240,7 @@ export function useShopDelivery(input: Input): ShopDelivery {
     named,
     nameNotice,
     search: { text, setText, run, results, busy: searching, error: searchError },
-    locate: { run: locateMe, busy: locating, error: locateError },
+    locate: { run: locateMe, busy: locating, error: locateError, accuracyM },
     slots: { phase: slots, chosen: slotsOn ? chosenSlot : null, choose: setChosenSlot },
     pickup: {
       points: points !== null && 'list' in points && points.key === basketKey ? points.list : null,

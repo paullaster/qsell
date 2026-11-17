@@ -1,7 +1,9 @@
 import { expect, test } from '@playwright/test';
 import { noHorizontalScroll, noInnerHorizontalScroll, noNativeSelect, open } from './support/page';
 import { pick } from './support/quotes';
+import { deliveryTool } from './support/delivery-fixtures';
 import { riderTool } from './support/rider-fixtures';
+import { pngOf } from './support/png';
 
 /** The text a date-time box takes, for some days from now at a whole hour. */
 const boxTime = (days: number, hour: number): string => {
@@ -10,7 +12,7 @@ const boxTime = (days: number, hour: number): string => {
 };
 
 test.describe('visits', () => {
-  test('an office books a visit for a paid order, names the crew, and the crew ticks the checklist, does the work and has it signed off', async ({ page }, testInfo) => {
+  test('an office books a visit for a paid order, names the crew, and the crew ticks the checklist, does the work and has it signed off', async ({ page, context, playwright }, testInfo) => {
     test.slow();
     const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}`;
     const orderNumber = riderTool('paid-order', tag).orderNumber ?? '';
@@ -75,6 +77,47 @@ test.describe('visits', () => {
     await expect(page.getByText('The material is back in stock.')).toBeVisible({ timeout: 30_000 });
     await expect(materials).toContainText('Was given back', { timeout: 30_000 });
     await expect(materials).toContainText('Given back 2 × Salt 500g');
+
+    // The photo route: refused without a sign-in, without a file and for a file that is not a picture; kept for a picture.
+    const url = `${String(testInfo.project.use.baseURL)}/api/visits/photo`;
+    const anonymous = await playwright.request.newContext({ storageState: { cookies: [], origins: [] } });
+    expect((await anonymous.post(url, { multipart: { file: { name: 'a.png', mimeType: 'image/png', buffer: pngOf(Date.now() % 1000 + 1) } } })).status()).toBe(401);
+    await anonymous.dispose();
+    expect((await page.request.post(url, { multipart: { other: 'x' } })).status()).toBe(400);
+    expect((await page.request.post(url, { multipart: { file: { name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('not a picture') } } })).status()).toBe(400);
+    const sent = await page.request.post(url, { multipart: { file: { name: 'door.png', mimeType: 'image/png', buffer: pngOf(Date.now() % 1000 + 2) } } });
+    expect(sent.status()).toBe(200);
+    expect(((await sent.json()) as { data: { photoId: string } }).data.photoId).toMatch(/\S/);
+
+    // Photos: asked for before anything is sent, kept with what they show, opened by a short-lived link, and taken off with a reason.
+    const adding = card.getByRole('form', { name: `Add a photo to order ${orderNumber}` });
+    await adding.getByRole('button', { name: 'Add the photo' }).click();
+    await expect(page.getByRole('alert').filter({ hasText: 'Take or choose a photo first.' })).toBeVisible({ timeout: 30_000 });
+    await adding.getByLabel('Take or choose a photo').setInputFiles({ name: 'unit.png', mimeType: 'image/png', buffer: pngOf(Date.now() % 1000 + 3) });
+    await adding.getByLabel('Before the work').check();
+    await adding.getByLabel('A few words about it (optional)').fill('Old unit in place');
+    await adding.getByRole('button', { name: 'Add the photo' }).click();
+    await expect(page.getByText('The photo is kept with the visit.')).toBeVisible({ timeout: 30_000 });
+    const photos = card.getByRole('list', { name: `Photo list for order ${orderNumber}` });
+    await expect(photos).toContainText('Before the work', { timeout: 30_000 });
+    await expect(photos).toContainText('Old unit in place');
+    const [opened] = await Promise.all([context.waitForEvent('page'), photos.getByRole('button', { name: 'Open the photo' }).click()]);
+    await opened.waitForLoadState('domcontentloaded');
+    expect(opened.url()).not.toBe('about:blank');
+    await opened.close();
+    await photos.getByLabel('Why it is being taken off').fill('Blurred');
+    await photos.getByRole('button', { name: 'Take off the before the work photo' }).click();
+    await photos.getByRole('button', { name: 'Confirm: Take off the before the work photo' }).click();
+    await expect(page.getByText('The photo is taken off the visit.')).toBeVisible({ timeout: 30_000 });
+    await expect(card).toContainText('No photo has been taken on this visit yet.', { timeout: 30_000 });
+    // One that stays until the work is signed off.
+    await adding.getByLabel('Take or choose a photo').setInputFiles({ name: 'done.png', mimeType: 'image/png', buffer: pngOf(Date.now() % 1000 + 4) });
+    await adding.getByLabel('After the work').check();
+    await adding.getByRole('button', { name: 'Add the photo' }).click();
+    await expect(photos).toContainText('After the work', { timeout: 30_000 });
+    await noInnerHorizontalScroll(page);
+    await noHorizontalScroll(page);
+
     await card.getByRole('button', { name: 'Mark the work done' }).click();
     await expect(page.getByRole('alert').filter({ hasText: '2 items are not ticked on the checklist yet.' })).toBeVisible({ timeout: 30_000 });
     await card.getByRole('checkbox', { name: 'Fit the unit' }).click();
@@ -98,6 +141,10 @@ test.describe('visits', () => {
     await page.getByRole('button', { name: 'Signed off' }).click();
     const done = page.getByRole('list', { name: 'Visit list' }).getByRole('listitem').filter({ hasText: `Order ${orderNumber}` }).first();
     await expect(done).toContainText('signed off by Mama Wanjiku', { timeout: 30_000 });
+    // The photo is still there to look at, and can no longer be taken off.
+    await expect(done.getByRole('list', { name: `Photo list for order ${orderNumber}` })).toContainText('After the work');
+    await expect(done.getByRole('button', { name: /Take off the/ })).toHaveCount(0);
+    await expect(done.getByRole('form', { name: `Add a photo to order ${orderNumber}` })).toHaveCount(0);
     await expect(done.getByRole('button', { name: /^Cancel the visit/ })).toHaveCount(0);
     await noNativeSelect(page);
     await noHorizontalScroll(page);
@@ -136,9 +183,33 @@ test.describe('visits', () => {
     await card.getByRole('button', { name: `Cancel the visit for order ${orderNumber}` }).click();
     await card.getByRole('button', { name: `Confirm: Cancel the visit for order ${orderNumber}` }).click();
     await expect(page.getByText('The visit is cancelled.')).toBeVisible({ timeout: 30_000 });
+    // The list is read again after a cancel and goes back to Coming up; a tab chosen before that is lost, so wait for it to settle.
+    await expect(card).toHaveCount(0, { timeout: 30_000 });
     await page.getByRole('button', { name: 'Cancelled' }).click();
     const gone = page.getByRole('list', { name: 'Visit list' }).getByRole('listitem').filter({ hasText: `Order ${orderNumber}` }).first();
     await expect(gone).toContainText('cancelled: Customer is travelling', { timeout: 30_000 });
+    await noHorizontalScroll(page);
+    await noInnerHorizontalScroll(page);
+  });
+  test('a visit that has not started is cancelled with its order, so no crew is sent', async ({ page }, testInfo) => {
+    test.slow();
+    const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}C`;
+    const orderNumber = riderTool('paid-order', tag).orderNumber ?? '';
+    await open(page, '/admin/delivery/visits', 'Visits');
+    const form = page.getByRole('form', { name: 'Book a visit' });
+    await pick(page, form.getByRole('combobox', { name: 'Order' }), orderNumber, new RegExp(orderNumber));
+    await form.getByLabel('Starts (Nairobi time)').fill(boxTime(3, 9));
+    await form.getByLabel('Ends (Nairobi time)').fill(boxTime(3, 12));
+    await form.getByLabel('Address the crew goes to').fill('Westlands, Nairobi');
+    await form.getByLabel('Checklist, one item to a line').fill('Measure up');
+    await form.getByRole('button', { name: 'Book the visit' }).click();
+    const list = page.getByRole('list', { name: 'Visit list' });
+    await expect(list.getByRole('listitem').filter({ hasText: `Order ${orderNumber}` }).first()).toContainText('Booked', { timeout: 30_000 });
+    deliveryTool('cancel-order', orderNumber);
+    await open(page, '/admin/delivery/visits', 'Visits');
+    await page.getByRole('button', { name: 'Cancelled' }).click();
+    const gone = list.getByRole('listitem').filter({ hasText: `Order ${orderNumber}` }).first();
+    await expect(gone).toContainText('The order was cancelled or refunded, so the visit is cancelled.', { timeout: 30_000 });
     await noHorizontalScroll(page);
     await noInnerHorizontalScroll(page);
   });

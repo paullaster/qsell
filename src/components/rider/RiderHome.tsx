@@ -2,11 +2,12 @@
 
 import { use, useEffect } from 'react';
 import Link from 'next/link';
-import type { myRunsAction } from '@/server/domains/delivery/rider-app-actions';
+import { myAlertsStateAction, turnOffMyAlertsAction, turnOnMyAlertsAction, type myRunsAction } from '@/server/domains/delivery/rider-app-actions';
 import type { RiderRunItem } from '@/server/domains/delivery/rider-runs';
 import { Chip } from '@/components/ui/screen-kit';
 import type { RunStatus } from '@/lib/dispatch-run';
 import { OfflineBar } from './OfflineBar';
+import { AlertsToggle } from '@/components/push/AlertsToggle';
 import { keepRunScreen } from './RegisterWorker';
 
 const TONE: Record<RunStatus, 'green' | 'amber' | 'red' | 'sky' | 'gray'> = { planned: 'sky', started: 'amber', completed: 'green', cancelled: 'gray' };
@@ -43,6 +44,15 @@ function Home({ data }: { data: Extract<Awaited<ReturnType<typeof myRunsAction>>
           You are holding <strong>KSh {held}</strong> in cash collected at doors. Hand it in to the shop.
         </p>
       ) : null}
+      <AlertsToggle
+        title="Alerts"
+        help="Get an alert on this phone when one of your deliveries is at risk or running late, even when the app is closed."
+        workerUrl="/rider-sw.js"
+        scope="/rider"
+        load={myAlertsStateAction}
+        turnOn={turnOnMyAlertsAction}
+        turnOff={turnOffMyAlertsAction}
+      />
       <Link href="/rider/pay" className="flex min-h-12 items-center justify-between gap-3 rounded-xl border border-line bg-surface-raised p-4 text-sm font-semibold text-fg-strong">
         <span>My pay</span>
         <span aria-hidden="true">→</span>

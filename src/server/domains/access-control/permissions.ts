@@ -454,6 +454,12 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'Set the delivery slots each branch offers, with their room and cut-offs, and close days on which no slot is offered',
   },
+  'sms:manage': {
+    resource: 'sms',
+    action: 'manage',
+    category: 'Company & Settings',
+    description: 'Connect the SMS providers the company sends text messages with, keep their keys, choose the one messages go through, and send a test message',
+  },
   'couriers:manage': {
     resource: 'couriers',
     action: 'manage',
@@ -548,6 +554,48 @@ export const PERMISSIONS = {
     action: 'manage',
     category: 'Company & Settings',
     description: 'Manage number series and which series numbers each document',
+  },
+  'email_routing:manage': {
+    resource: 'email_routing',
+    action: 'manage',
+    category: 'Company & Settings',
+    description: 'Choose who receives the business emails (quotes and web shop orders), who is copied, where replies go, and which business emails a quote shows',
+  },
+  'sales_orders:read': {
+    resource: 'sales_orders',
+    action: 'read',
+    category: 'Orders & Sales',
+    description: 'See the sales orders staff have taken',
+  },
+  'sales_orders:create': {
+    resource: 'sales_orders',
+    action: 'create',
+    category: 'Orders & Sales',
+    description: 'Take a sales order for a customer, with products and packages, and see the customer\'s credit position',
+  },
+  'sales_invoices:read': {
+    resource: 'sales_invoices',
+    action: 'read',
+    category: 'Orders & Sales',
+    description: 'See the invoices raised for sales: how each stands (signed with KRA, paid, credited), its credit notes and its signing log',
+  },
+  'sales_invoices:create': {
+    resource: 'sales_invoices',
+    action: 'create',
+    category: 'Orders & Sales',
+    description: 'Raise the tax invoice of an order that has none',
+  },
+  'sales_invoices:send': {
+    resource: 'sales_invoices',
+    action: 'send',
+    category: 'Orders & Sales',
+    description: 'Send an invoice to the customer again by email, and print or download it',
+  },
+  'selling_settings:manage': {
+    resource: 'selling_settings',
+    action: 'manage',
+    category: 'Company & Settings',
+    description: 'Choose how sales orders, sales invoices, credit sales and cash sales behave: the credit check, credit days, when stock is released, approval and invoicing',
   },
   'gl_accounts:read': {
     resource: 'gl_accounts',

@@ -1,5 +1,6 @@
 import type { PaymentProvider } from '@/types/index';
 import { isRecord } from '@/lib/values';
+import { readBasketItem, type BasketItem } from '@/lib/basket-items';
 import { resolvePaymentPhone } from '@/lib/payment-phone';
 import { toKenyanMsisdn } from '@/lib/phone';
 import { readGeoPoint, type GeoPoint } from '@/lib/geo';
@@ -29,7 +30,7 @@ export interface CheckoutInput {
   paymentPhone?: string;
   buyerKraPin?: string;
   shippingAddress: { street: string; city: string; countyOrState: string; country: string };
-  items: { productId: string; quantity: number }[];
+  items: BasketItem[];
   paymentMethod: PaymentProvider;
   /** Promo codes the shopper typed (at most 5). The server decides whether each can be used. */
   couponCodes?: string[];
@@ -141,16 +142,14 @@ export function parseCheckoutInput(raw: unknown): Parsed {
   if (!Array.isArray(raw.items) || raw.items.length === 0) return { ok: false, error: 'Your cart is empty.' };
   if (raw.items.length > MAX_ITEMS) return { ok: false, error: 'There are too many different items in your cart.' };
   const items: CheckoutInput['items'] = [];
-  for (const item of raw.items) {
-    if (!isRecord(item) || typeof item.productId !== 'string' || item.productId === '' || item.productId.length > 100) {
-      return { ok: false, error: 'Something in your cart could not be read. Please remove it and add it again.' };
+  for (const entry of raw.items) {
+    const item = readBasketItem(entry);
+    if (item === null) {
+      return { ok: false, error: isRecord(entry) && typeof entry.productId === 'string' && entry.productId !== '' && entry.package === undefined ? 'One of the quantities in your cart is not valid.' : 'Something in your cart could not be read. Please remove it and add it again.' };
     }
-    if (typeof item.quantity !== 'number' || !Number.isFinite(item.quantity) || item.quantity <= 0 || item.quantity > 1_000_000) {
-      return { ok: false, error: 'One of the quantities in your cart is not valid.' };
-    }
-    // The same product twice is one line.
-    const same = items.find((line) => line.productId === item.productId);
-    if (same === undefined) items.push({ productId: item.productId, quantity: item.quantity });
+    // The same product twice is one line; a package line is its own line, whatever else is the same.
+    const same = item.package === undefined ? items.find((line) => line.productId === item.productId && line.package === undefined) : undefined;
+    if (same === undefined) items.push(item);
     else same.quantity += item.quantity;
   }
   return {

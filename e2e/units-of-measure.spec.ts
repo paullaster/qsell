@@ -140,6 +140,7 @@ test.describe('units of measure', () => {
     const unit = dialog.getByRole('combobox', { name: /Unit of measure/ });
     await expect(unit).toHaveValue(/PCS/, { timeout: 30_000 });
     await expect(dialog.getByText(/Shipping Weight per PCS/)).toBeVisible();
+    await expect(dialog.getByText(/Space it takes per PCS \(litres\)/)).toBeVisible();
 
     // An alternate unit: 1 crate = 12 pieces.
     await dialog.getByRole('button', { name: 'Add a unit' }).click();

@@ -120,13 +120,20 @@ export interface EmailAttachment {
 }
 
 export interface EmailMessage {
+  /** The first address written to. */
   to: string;
+  /** Further addresses written to besides `to` (a mail to several staff). */
+  toMore?: readonly string[];
+  /** Copied: seen by everyone. */
+  cc?: readonly string[];
+  /** Blind-copied: gets the mail without being shown to the others. */
+  bcc?: readonly string[];
   subject: string;
   html: string;
   text?: string;
   attachments?: EmailAttachment[];
-  /** Where an answer should go, when it is not the business address given in `sender`. Left off when it is not a real address. */
-  replyTo?: string;
+  /** Where an answer should go (one address or several), when it is not the business address given in `sender`. Addresses that are not real are left off. */
+  replyTo?: string | readonly string[];
   /**
    * The business this mail speaks for: its name and its own address. How that appears (as From, or as the display name and Reply-To
    * of the instance's mailbox) is decided by the deployment's settings, because mail servers differ on what From they accept.

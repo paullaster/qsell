@@ -282,8 +282,8 @@ function QuoteRow({
       </td>
       <td role="cell" className="block px-4 py-1.5 text-xs md:table-cell md:py-3">
         <div className="text-fg-muted">
-          <span className="mr-1 font-medium text-fg">Created by</span>
-          {quote.createdByName ?? '—'}
+          <span className="mr-1 font-medium text-fg">{quote.source === 'shop' ? 'Source' : 'Created by'}</span>
+          {quote.source === 'shop' ? 'Requested on the web shop' : (quote.createdByName ?? '—')}
         </div>
         <div className="mt-0.5 text-fg-muted">
           <span className="mr-1 font-medium text-fg">Emailed by</span>
