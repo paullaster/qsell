@@ -8,7 +8,7 @@ import { OrderStages } from '@/server/domains/orders/stages';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { decodeCursor, encodeCursor } from '@/server/domains/lookups/request';
 import type { DocRefusal, DocResult } from './documents';
-import { orderReadinessProblem } from './order-readiness';
+import { VISIT_ORDER_CLOSED_REASON, orderReadinessProblem } from './order-readiness';
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
@@ -365,6 +365,17 @@ export class OrderVisits {
       await this.note(tx, actor, row.orderId, id, 'signed_off', { signedOffBy: name });
       return await this.reloaded(tx, actor, id);
     });
+  }
+
+  /** Cancels visits that have not started for an order that is cancelled, refunded or failed (visits booked before they followed their order). Idempotent; returns how many. */
+  async closeForClosedOrders(): Promise<number> {
+    const at = this.clock();
+    const closed = await this.db
+      .update(orderVisits)
+      .set({ status: 'cancelled', cancelledAt: at, cancelReason: VISIT_ORDER_CLOSED_REASON, version: sql`${orderVisits.version} + 1`, updatedAt: at })
+      .where(and(inArray(orderVisits.status, ['scheduled', 'crew_assigned']), sql`exists (select 1 from ${orders} o where o.id = ${orderVisits.orderId} and o.status in ('cancelled','refunded','failed'))`))
+      .returning({ id: orderVisits.id });
+    return closed.length;
   }
 
   async cancel(actor: VisitActor, id: string, input: { reason: unknown; expectedVersion: unknown }): Promise<DocResult<VisitView>> {

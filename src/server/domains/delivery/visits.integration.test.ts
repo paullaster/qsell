@@ -231,6 +231,33 @@ describe.skipIf(!has(url))('booked visits (database)', () => {
     expect(failed).toMatchObject({ outcome: 'failed', reasonCode: 'visit_cancelled' });
   });
 
+  it('is cancelled with its order when the visit has not started, and a visit already on site is left to a person', async () => {
+    const a = await staff();
+    const planned = await must(book(await order()));
+    const crewed = await must(book(await order(), { crewIds: [a] }));
+    const there = await onSite();
+    const stillOpen = await must(book(await order()));
+    for (const v of [planned, crewed, there.v]) {
+      await OrderStages.move(db, v.orderId, 'cancelled', 'cancelled', { reasonCode: 'cancelled', message: 'test' });
+    }
+    const read = async (id: string) => ({ data: await c.orderVisits.view(office(), id) });
+    for (const v of [planned, crewed]) {
+      const after = await read(v.id);
+      expect(after.data).toMatchObject({ status: 'cancelled', cancelReason: expect.stringContaining('cancelled or refunded') as string, version: v.version + 1 });
+      // The order's own timeline already says it was cancelled, and no failed delivery is added for a crew that never went.
+      expect(await stagesOf(v.orderId)).not.toContain('delivery_failed:failed');
+    }
+    expect((await read(there.v.id)).data?.status).toBe('on_site');
+    expect((await read(stillOpen.id)).data?.status).toBe('scheduled');
+    // A visit booked before visits followed their order is cancelled by the sweep, once.
+    await db.update(schema.orders).set({ status: 'cancelled' }).where(eq(schema.orders.id, stillOpen.orderId));
+    expect(await c.orderVisits.closeForClosedOrders()).toBeGreaterThanOrEqual(1);
+    expect((await read(stillOpen.id)).data?.status).toBe('cancelled');
+    expect(await c.orderVisits.closeForClosedOrders()).toBe(0);
+    // And a cancelled order cannot be given a new visit.
+    expect(await book(planned.orderId)).toMatchObject({ ok: false, reason: 'order_not_ready' });
+  });
+
   it('is acted on by the crew it names and no one else with the crew permission, and never deleted', async () => {
     const orderId = await order();
     const a = await staff();

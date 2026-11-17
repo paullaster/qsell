@@ -101,6 +101,8 @@ const SEED_ROLES: SeedRole[] = [
       'numbering:manage',
       'email_routing:manage',
       'selling_settings:manage',
+      'sales_orders:read',
+      'sales_orders:create',
       'approvals:manage',
       'approvals:act',
       'approvals:request',
