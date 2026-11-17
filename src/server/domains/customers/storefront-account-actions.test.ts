@@ -12,6 +12,7 @@ const forOrder = vi.fn();
 const tokenFor = vi.fn();
 const collectionView = vi.fn();
 const codeFor = vi.fn();
+const visitsForCustomer = vi.fn();
 
 vi.mock('@/auth', () => ({ auth: (...args: unknown[]) => auth(...args) as unknown }));
 vi.mock('@/server/domains/access-control/guard', () => ({
@@ -34,6 +35,7 @@ vi.mock('@/server/di/container', () => ({
     trackedOrders: { forOrder },
     trackingLinks: { tokenFor },
     orderCollections: { view: collectionView, codeFor },
+    orderVisits: { forCustomer: visitsForCustomer },
     customers: {
       ensureStorefrontCustomer: () =>
         Promise.resolve({
@@ -260,5 +262,37 @@ describe('my addresses', () => {
     setDefaultAddress.mockRejectedValue(new Error('relation x does not exist'));
     const result = await actions.makeMyAddressDefaultAction('ad-1');
     expect(JSON.stringify(result)).not.toContain('relation');
+  });
+});
+
+describe('the visits of my order', () => {
+  const base = { id: 'o1', orderNumber: 'SO-1', userId: 'acct-1', tradeCustomerId: null };
+  it('asks the shopper to sign in, and never reads the visits of an order that is not theirs, saying not found exactly as for a missing one', async () => {
+    auth.mockResolvedValue(null);
+    expect(await actions.myOrderVisitsAction('o1')).toMatchObject({ ok: false, code: 'SIGN_IN' });
+    signedIn();
+    getById.mockResolvedValue({ ...base, userId: 'someone-else' });
+    const theirs = await actions.myOrderVisitsAction('o1');
+    getById.mockResolvedValue(null);
+    expect(theirs).toEqual(await actions.myOrderVisitsAction('nope'));
+    expect(theirs).toMatchObject({ ok: false, code: 'ORDER_NOT_FOUND' });
+    expect(visitsForCustomer).not.toHaveBeenCalled();
+  });
+  it('gives when, where and how it stands in the customer’s words, and nothing else', async () => {
+    signedIn();
+    getById.mockResolvedValue(base);
+    visitsForCustomer.mockResolvedValue([{ status: 'crew_assigned', startsAt: '2026-11-20T06:00:00.000Z', endsAt: '2026-11-20T09:00:00.000Z', address: 'Kileleshwa, Gate 4', crew: [{ name: 'Otieno' }], contactPhone: '0700111222' }]);
+    const answer = await actions.myOrderVisitsAction('o1');
+    expect(answer).toEqual({ ok: true, data: [{ state: 'booked', words: 'Booked, and your crew is assigned.', startsAt: '2026-11-20T06:00:00.000Z', endsAt: '2026-11-20T09:00:00.000Z', address: 'Kileleshwa, Gate 4' }] });
+    expect(JSON.stringify(answer)).not.toContain('Otieno');
+    expect(JSON.stringify(answer)).not.toContain('0700111222');
+    visitsForCustomer.mockResolvedValue([]);
+    expect(await actions.myOrderVisitsAction('o1')).toEqual({ ok: true, data: [] });
+  });
+  it('says so in words when the visits cannot be read', async () => {
+    signedIn();
+    getById.mockResolvedValue(base);
+    visitsForCustomer.mockRejectedValue(new Error('db down'));
+    expect(await actions.myOrderVisitsAction('o1')).toEqual({ ok: false, error: 'The visit could not be checked just now.' });
   });
 });

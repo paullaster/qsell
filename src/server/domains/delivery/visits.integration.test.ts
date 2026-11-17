@@ -258,6 +258,23 @@ describe.skipIf(!has(url))('booked visits (database)', () => {
     expect(await book(planned.orderId)).toMatchObject({ ok: false, reason: 'order_not_ready' });
   });
 
+  it('shows the customer only when, where and how it stands, soonest first, for their own order', async () => {
+    const a = await staff();
+    const o = await order();
+    const first = await must(book(o, { crewIds: [a], notes: 'Dog in the yard', contactPhone: '0799888777' }));
+    expect(first.status).toBe('crew_assigned');
+    const seen = await c.orderVisits.forCustomer(companyId, o);
+    expect(seen).toEqual([{ status: 'crew_assigned', startsAt: first.startsAt, endsAt: first.endsAt, address: 'Kileleshwa, Nairobi, Gate 4' }]);
+    expect(JSON.stringify(seen)).not.toMatch(/Dog in the yard|0799888777|crewIds|userId/);
+    // Cancelled visits are still told, and a replacement is listed after it by time.
+    await must(c.orderVisits.cancel(office(), first.id, { reason: 'Customer is travelling', expectedVersion: first.version }));
+    await must(book(o, { startsAt: day(5, 8), endsAt: day(5, 11) }));
+    expect((await c.orderVisits.forCustomer(companyId, o)).map((v) => v.status)).toEqual(['cancelled', 'scheduled']);
+    // Another company's id, or another order, shows nothing.
+    expect(await c.orderVisits.forCustomer(randomUUID(), o)).toEqual([]);
+    expect(await c.orderVisits.forCustomer(companyId, await order())).toEqual([]);
+  });
+
   it('is acted on by the crew it names and no one else with the crew permission, and never deleted', async () => {
     const orderId = await order();
     const a = await staff();

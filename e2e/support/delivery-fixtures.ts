@@ -184,6 +184,26 @@ async function cancelOrder(orderNumber: string): Promise<Record<string, string>>
   return { cancelled: orderNumber };
 }
 
+/** Books a visit for an order, two days ahead, with a note and a contact phone the customer must never see. */
+async function bookVisit(orderNumber: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { orders } = await import('@/server/db/drizzle/schema');
+  const c = getContainer();
+  const company = await c.companySettings.ensureSeeded();
+  const [order] = await db.select({ id: orders.id }).from(orders).where(eq(orders.orderNumber, orderNumber));
+  if (order === undefined) throw new Error(`e2e fixture: no order ${orderNumber}`);
+  const at = (hour: number): string => {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() + 2);
+    d.setUTCHours(hour, 0, 0, 0);
+    return d.toISOString();
+  };
+  const made = await c.orderVisits.book({ companyId: company.id, userId: 'e2e', crewOnly: false }, { orderId: order.id, startsAt: at(6), endsAt: at(9), address: 'Kileleshwa, Nairobi, Gate 4', contactName: 'Gate Keeper', contactPhone: '0700123456', notes: 'Dog in the yard', items: ['Fit the unit'] });
+  if (!made.ok) throw new Error(`e2e fixture: ${made.message}`);
+  return { visit: made.data.id };
+}
+
 /** Runs the sweep that cancels deliveries and visits of orders that were cancelled, as the worker does every minute. */
 async function closeForClosedOrders(): Promise<Record<string, string>> {
   const { getContainer } = await import('@/server/di/container');
@@ -371,6 +391,7 @@ async function main(): Promise<void> {
   if (command === 'collection') result = await collection(tag);
   if (command === 'ready') result = await ready(tag, extra);
   if (command === 'collection-ready' && extra !== undefined) result = await markCollectionReady(tag, extra);
+  if (command === 'book-visit') result = await bookVisit(tag);
   if (command === 'close-closed') result = await closeForClosedOrders();
   if (command === 'cancel-order') result = await cancelOrder(tag);
   if (command === 'advance' && extra !== undefined) result = await advance(tag, extra);
