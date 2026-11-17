@@ -258,6 +258,41 @@ describe.skipIf(!has(url))('booked visits (database)', () => {
     expect(await book(planned.orderId)).toMatchObject({ ok: false, reason: 'order_not_ready' });
   });
 
+  it('tells the customer by mail when a visit is booked, moved or cancelled: when, with no address, phone or note, once for each change, and not when it no longer applies', async () => {
+    const { DeliveryMessages } = await import('./messages');
+    const sent: { to: string; subject: string; text: string }[] = [];
+    const flusher = new DeliveryMessages(db, { name: 'test', send: (m: { to: string; subject: string; text?: string }) => { sent.push({ to: m.to, subject: m.subject, text: m.text ?? '' }); return Promise.resolve({ messageId: 'x', provider: 'test' }); } }, c.companySettings, { tokenFor: () => Promise.resolve('tok9') });
+    const o = await order();
+    const queued = async (kind: string) => (await db.select().from(schema.deliveryMessages).where(and(eq(schema.deliveryMessages.orderId, o), eq(schema.deliveryMessages.kind, kind)))).filter((m) => m.channel === 'email');
+    const v = await must(book(o, { notes: 'Dog in the yard', contactPhone: '0799888777' }));
+    expect((await queued('visit_booked')).map((m) => m.messageKey)).toEqual([`${v.id}:visit_booked:1`]);
+    await flusher.flush(500);
+    const mine = (): typeof sent => sent.filter((m) => m.subject.includes(v.orderNumber));
+    const mail = mine().filter((m) => m.subject.includes('is booked'));
+    expect(mail).toHaveLength(1);
+    expect(mail[0]?.text).toMatch(/\d{2}:\d{2} to \d{2}:\d{2}/);
+    expect(mail[0]?.text).toContain('/profile/orders');
+    expect(mail[0]?.text).not.toMatch(/Dog in the yard|0799888777|Kileleshwa|Gate 4/);
+    // Moved: a message of its own for each move; a refused move (a stale copy) sends nothing.
+    const moved = await must(c.orderVisits.reschedule(office(), v.id, { startsAt: day(6, 8), endsAt: day(6, 11), reason: 'Customer asked for later', expectedVersion: v.version }));
+    expect(await c.orderVisits.reschedule(office(), v.id, { startsAt: day(7, 8), endsAt: day(7, 11), reason: 'Stale copy', expectedVersion: v.version })).toMatchObject({ ok: false, reason: 'conflict' });
+    expect((await queued('visit_moved')).map((m) => m.messageKey)).toEqual([`${v.id}:visit_moved:${String(v.version + 1)}`]);
+    // Cancelled: told; and the booking and move messages still waiting are not sent late for a visit that is gone.
+    await must(c.orderVisits.cancel(office(), v.id, { reason: 'Customer is travelling', expectedVersion: moved.version }));
+    sent.length = 0;
+    await flusher.flush(500);
+    expect(mine().some((m) => m.subject.includes('was cancelled'))).toBe(true);
+    expect(mine().some((m) => m.subject.includes('has moved'))).toBe(false);
+    const skipped = (await queued('visit_moved')).concat(await queued('visit_booked')).filter((m) => m.status === 'skipped' || m.status === 'sent');
+    expect(skipped.length).toBeGreaterThanOrEqual(1);
+    // The order's own cancellation closes visits quietly: no second message for it.
+    const other = await order();
+    const open = await must(book(other));
+    await OrderStages.move(db, other, 'cancelled', 'cancelled', { reasonCode: 'cancelled', message: 'test' });
+    expect((await db.select().from(schema.deliveryMessages).where(and(eq(schema.deliveryMessages.orderId, other), eq(schema.deliveryMessages.kind, 'visit_cancelled')))).length).toBe(0);
+    expect(open.status).toBe('scheduled');
+  });
+
   it('shows the customer only when, where and how it stands, soonest first, for their own order', async () => {
     const a = await staff();
     const o = await order();

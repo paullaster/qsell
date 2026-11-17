@@ -188,6 +188,11 @@ test.describe('visits', () => {
     await page.getByRole('button', { name: 'Cancelled' }).click();
     const gone = page.getByRole('list', { name: 'Visit list' }).getByRole('listitem').filter({ hasText: `Order ${orderNumber}` }).first();
     await expect(gone).toContainText('cancelled: Customer is travelling', { timeout: 30_000 });
+    // The customer was told of each change: booked, moved and cancelled.
+    const told = deliveryTool('messages', orderNumber).list;
+    expect(told).toMatch(/visit_booked:/);
+    expect(told).toMatch(/visit_moved:/);
+    expect(told).toMatch(/visit_cancelled:/);
     await noHorizontalScroll(page);
     await noInnerHorizontalScroll(page);
   });

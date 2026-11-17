@@ -125,8 +125,8 @@ export function checkSlaSettings(raw: { atRiskMinutes?: unknown; escalateAfterMi
 }
 
 /** The window as the customer is told it: "Thu 5 Nov, 09:00 to 12:00" (Nairobi time). */
-export function windowWords(start: Date, end: Date): string {
-  const day = start.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Africa/Nairobi' });
-  const time = (d: Date): string => d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Africa/Nairobi' });
+export function windowWords(start: Date, end: Date, timeZone = 'Africa/Nairobi'): string {
+  const day = start.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone });
+  const time = (d: Date): string => d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone });
   return `${day}, ${time(start)} to ${time(end)}`;
 }

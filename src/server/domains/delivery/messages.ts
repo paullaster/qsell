@@ -1,8 +1,9 @@
 import { and, desc, eq, inArray, lte, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, deliveries, deliveryEvents, deliveryMessages, orderCollections, orders } from '@/server/db/drizzle/schema';
+import { branches, deliveries, deliveryEvents, deliveryMessages, orderCollections, orderVisits, orders } from '@/server/db/drizzle/schema';
 import { MAX_DELIVERY_ATTEMPTS } from '@/lib/delivery-document';
-import { isMessageKind, messageContent, quietEndsAt, textContent, type MessageFacts, type MessageKind } from '@/lib/delivery-messages';
+import { isMessageKind, isVisitMessageKind, messageContent, quietEndsAt, textContent, visitOfMessageKey, type MessageFacts, type MessageKind } from '@/lib/delivery-messages';
+import { windowWords } from '@/lib/delivery-sla';
 import { showCollectionCode } from '@/lib/collection-code';
 import { decryptCredentials } from '@/server/domains/payments/crypto';
 import { internationalPhone, maskedPhone } from '@/lib/sms-providers';
@@ -203,6 +204,46 @@ export class DeliveryMessages {
     return { facts, orderNumber: row.orderNumber };
   }
 
+  private async factsFor(m: typeof deliveryMessages.$inferSelect, kind: MessageKind, tradingName: string, url: string, base: string): Promise<{ facts: MessageFacts; orderNumber: string }> {
+    if (kind === 'ready_for_collection' || kind === 'collection_reminder') return await this.collectionFacts(m, tradingName, url);
+    // A visit is not on the tracking page: the message points at the customer's own orders, where the visit is shown.
+    if (isVisitMessageKind(kind)) return await this.visitFacts(m, kind, tradingName, `${base}/profile/orders`);
+    return await this.deliveryFacts(m, kind, tradingName, url);
+  }
+
+  /**
+   * What a visit message says: the day and hours as they stand now, with no address, phone number or note. One that no longer applies is
+   * skipped rather than sent late: a booking or a move for a visit that has since been cancelled, signed off or has already passed, and a
+   * cancellation for a visit that is not cancelled.
+   */
+  private async visitFacts(m: typeof deliveryMessages.$inferSelect, kind: 'visit_booked' | 'visit_moved' | 'visit_cancelled', tradingName: string, url: string): Promise<{ facts: MessageFacts; orderNumber: string }> {
+    const visitId = visitOfMessageKey(m.messageKey);
+    if (visitId === null) throw new Error('This message names no visit.');
+    const [row] = await this.db
+      .select({ status: orderVisits.status, startsAt: orderVisits.startsAt, endsAt: orderVisits.endsAt, orderNumber: orders.orderNumber, customerName: orders.customerName })
+      .from(orderVisits)
+      .innerJoin(orders, eq(orders.id, orderVisits.orderId))
+      .where(and(eq(orderVisits.id, visitId), eq(orderVisits.companyId, m.companyId), eq(orderVisits.orderId, m.orderId)));
+    if (row === undefined) throw new Error('The visit of this message is gone.');
+    if (kind === 'visit_cancelled' && row.status !== 'cancelled') throw new MessageNotNeeded('The visit is not cancelled any more.');
+    if (kind !== 'visit_cancelled' && (row.status === 'cancelled' || row.status === 'signed_off' || row.endsAt.getTime() < Date.now())) throw new MessageNotNeeded('The visit is no longer coming up.');
+    const facts: MessageFacts = {
+      tradingName,
+      firstName: row.customerName.trim().split(/\s+/)[0] ?? '',
+      orderNumber: row.orderNumber,
+      deliveryNumber: '',
+      trackUrl: url,
+      courierName: null,
+      receivedBy: null,
+      handoverCode: null,
+      reasonCode: null,
+      triesLeft: null,
+      collection: null,
+      visit: { window: windowWords(row.startsAt, row.endsAt, DEFAULT_BUSINESS_TIMEZONE) },
+    };
+    return { facts, orderNumber: row.orderNumber };
+  }
+
   /** A text that falls in the company's quiet hours waits for them to end; mail never waits. Null means send now. */
   private async heldForMorning(m: typeof deliveryMessages.$inferSelect, now: Date, memo: Map<string, Date | null>): Promise<Date | null> {
     if (m.channel !== 'sms' || this.texting === null) return null;
@@ -221,7 +262,7 @@ export class DeliveryMessages {
     const base = resolvePublicBaseUrl(settings.publicBaseUrl);
     // With the link turned off the message still goes, pointing at the shop's own "Track my order".
     const url = token === null ? `${base}/` : `${base}/track/${token}`;
-    const { facts, orderNumber } = kind === 'ready_for_collection' || kind === 'collection_reminder' ? await this.collectionFacts(m, settings.tradingName, url) : await this.deliveryFacts(m, kind, settings.tradingName, url);
+    const { facts, orderNumber } = await this.factsFor(m, kind, settings.tradingName, url, base);
     const content = messageContent(kind, facts);
     if (m.channel === 'sms') {
       const sender = await this.texting?.sender(m.companyId);
@@ -230,8 +271,10 @@ export class DeliveryMessages {
       return;
     }
     const footer = `You are receiving this because you placed order ${orderNumber}. Please do not forward it: the link shows your order.`;
-    const html = layout({ heading: content.heading, greeting: content.greeting, body: content.body, cta: content.cta, actionUrl: url, footer, details: content.details });
-    const text = `${content.heading}\n\n${content.greeting}\n\n${content.body}\n\n${content.details.map(([k, v]) => `${k}: ${v}`).join('\n')}\n\n${content.cta}: ${url}\n\n${footer}`;
+    // A visit is not on the tracking page: its message points at the customer's own orders, where the visit is shown.
+    const actionUrl = isVisitMessageKind(kind) ? `${base}/profile/orders` : url;
+    const html = layout({ heading: content.heading, greeting: content.greeting, body: content.body, cta: content.cta, actionUrl, footer, details: content.details });
+    const text = `${content.heading}\n\n${content.greeting}\n\n${content.body}\n\n${content.details.map(([k, v]) => `${k}: ${v}`).join('\n')}\n\n${content.cta}: ${actionUrl}\n\n${footer}`;
     await this.email.send({ to: m.recipient, subject: content.subject, html, text });
   }
 
