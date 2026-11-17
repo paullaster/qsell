@@ -97,6 +97,8 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
     subModules: [
       'Sales Quotes',
       'Sales Orders',
+      'Credit Sales',
+      'Shifts',
       'Sales Invoices',
       'Customer Orders',
       'Preparation sheet',
@@ -350,6 +352,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'Email Routing',
       'Selling Documents',
       'Business Time Zone',
+      'Registers',
     ],
   },
   {

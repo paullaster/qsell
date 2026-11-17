@@ -1,5 +1,5 @@
 {
-  "id": "a11ebbfb-f609-4317-9d58-478ff173b4e7",
+  "id": "9a506512-932f-4fff-98a0-5cc010e8a55d",
   "prevId": "dcc0964c-8fa4-4bbe-b8ec-38f6e6b2c334",
   "version": "7",
   "dialect": "postgresql",
@@ -6512,13 +6512,6 @@
           "notNull": true,
           "default": "'{}'::jsonb"
         },
-        "timezone": {
-          "name": "timezone",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'Africa/Nairobi'"
-        },
         "is_active": {
           "name": "is_active",
           "type": "boolean",
@@ -6577,12 +6570,7 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {
-        "company_settings_timezone_chk": {
-          "name": "company_settings_timezone_chk",
-          "value": "\"company_settings\".\"timezone\" ~ '^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$' AND char_length(\"company_settings\".\"timezone\") <= 64"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.courier_accounts": {
@@ -26988,6 +26976,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "invoice_when_approved": {
+          "name": "invoice_when_approved",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         },
         "source_quote_id": {
           "name": "source_quote_id",

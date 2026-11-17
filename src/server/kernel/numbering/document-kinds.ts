@@ -150,6 +150,11 @@ export const DOCUMENT_KINDS = {
     fiscal: false,
     suggested: { code: 'BIN', prefix: 'BIN-{YY}-', digits: 8, reset: 'yearly', blockSize: 50 },
   },
+  z_report: {
+    label: 'Till shift Z report',
+    fiscal: true,
+    suggested: { code: 'ZRP', prefix: 'Z-{BRANCH}-{YY}-', digits: 6, reset: 'yearly', blockSize: 1 },
+  },
   cash_count: {
     label: 'Cash count',
     fiscal: false,

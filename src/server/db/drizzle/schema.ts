@@ -3194,6 +3194,8 @@ export const orders = pgTable(
     salesModule: text('sales_module').$type<SigningModule>().notNull().default('ecommerce'),
     /** When this order's reserved stock is issued, decided when it was placed (a staff document's kind, or Hold until paid); null follows the stock module's own setting, as web shop orders always have. */
     stockRelease: text('stock_release').$type<'on_issue' | 'on_payment' | 'on_delivery'>(),
+    /** Its tax invoice is to be made automatically once an approval that held it releases it (decided when it was placed). */
+    invoiceWhenApproved: boolean('invoice_when_approved').notNull().default(false),
     /** The quote this order was made from, when it was (the quote shows its order the other way, in `converted_order_id`). */
     sourceQuoteId: uuid('source_quote_id').references((): AnyPgColumn => salesQuotes.id, { onDelete: 'set null' }),
     /** 'none' until approvals apply; 'pending'/'rejected'/'draft' block the order from moving on. */
@@ -4660,6 +4662,106 @@ export const reconciliationLogs = pgTable(
 );
 
 /** Per-company gross-margin approval floor for sales quotes. */
+/**
+ * A till: where cash sales are rung up, in one branch. A person works a shift on it (docs/architecture/selling-documents.md section 4.5).
+ */
+export const registers = pgTable(
+  'registers',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    branchId: uuid('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'restrict' }),
+    name: text('name').notNull(),
+    isActive: boolean('is_active').notNull().default(true),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('registers_branch_name_uidx').on(t.companyId, t.branchId, t.name)],
+);
+
+/**
+ * One person's period on one register: opened with a counted float, closed with a counted declaration, a difference with its reason, and
+ * a Z report number. One open shift per register and per person; a closed shift is never changed (a trigger refuses).
+ */
+export const shifts = pgTable(
+  'shifts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    registerId: uuid('register_id')
+      .notNull()
+      .references(() => registers.id, { onDelete: 'restrict' }),
+    branchId: uuid('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'restrict' }),
+    status: text('status').$type<'open' | 'closed'>().notNull().default('open'),
+    openedBy: text('opened_by').notNull(),
+    openedAt: timestamp('opened_at', { withTimezone: true }).notNull().defaultNow(),
+    openingFloat: numeric('opening_float', { precision: 14, scale: 2 }).notNull(),
+    openingCounted: jsonb('opening_counted').$type<{ value: number; count: number }[]>().notNull().default([]),
+    closedBy: text('closed_by'),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    declaredCash: numeric('declared_cash', { precision: 14, scale: 2 }),
+    closingCounted: jsonb('closing_counted').$type<{ value: number; count: number }[]>().notNull().default([]),
+    expectedCash: numeric('expected_cash', { precision: 14, scale: 2 }),
+    variance: numeric('variance', { precision: 14, scale: 2 }),
+    varianceReason: text('variance_reason'),
+    /** What the shift's figures were when it closed (paid in, paid out, cash sales), kept so the Z report never changes. */
+    closingFigures: jsonb('closing_figures').$type<Record<string, number>>(),
+    zNumber: text('z_number'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('shifts_one_open_per_register_uidx').on(t.registerId).where(sql`${t.status} = 'open'`),
+    uniqueIndex('shifts_one_open_per_person_uidx').on(t.openedBy).where(sql`${t.status} = 'open'`),
+    uniqueIndex('shifts_z_number_uidx').on(t.zNumber).where(sql`${t.zNumber} IS NOT NULL`),
+    index('shifts_company_opened_idx').on(t.companyId, t.openedAt),
+    check('shifts_status_chk', sql`${t.status} IN ('open', 'closed')`),
+    check('shifts_closed_chk', sql`(${t.status} = 'open' AND ${t.closedAt} IS NULL) OR (${t.status} = 'closed' AND ${t.closedAt} IS NOT NULL AND ${t.declaredCash} IS NOT NULL AND ${t.zNumber} IS NOT NULL)`),
+    check('shifts_float_chk', sql`${t.openingFloat} >= 0`),
+  ],
+);
+
+/** Cash put into a till or taken out of it during a shift, each with its reason. */
+export const shiftMovements = pgTable(
+  'shift_movements',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    shiftId: uuid('shift_id')
+      .notNull()
+      .references(() => shifts.id, { onDelete: 'restrict' }),
+    kind: text('kind').$type<'paid_in' | 'paid_out'>().notNull(),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    reason: text('reason').notNull(),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('shift_movements_shift_idx').on(t.shiftId, t.createdAt),
+    check('shift_movements_kind_chk', sql`${t.kind} IN ('paid_in', 'paid_out')`),
+    check('shift_movements_amount_chk', sql`${t.amount} > 0`),
+  ],
+);
+
+/** How far a till may be out before only a supervisor can close its shift: an amount or a percent, either is enough. */
+export const shiftSettings = pgTable('shift_settings', {
+  companyId: uuid('company_id')
+    .primaryKey()
+    .references(() => companySettings.id, { onDelete: 'cascade' }),
+  toleranceAmount: numeric('tolerance_amount', { precision: 14, scale: 2 }).notNull().default('100'),
+  tolerancePercent: numeric('tolerance_percent', { precision: 7, scale: 3 }).notNull().default('1'),
+  version: integer('version').notNull().default(1),
+  updatedBy: text('updated_by').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 /**
  * How each selling document type (sales order, sales invoice, credit sale, cash sale) behaves for this company: the credit check, credit
  * days, when stock is released, approval, invoice timing (docs/architecture/selling-documents.md section 4.6). Read through the pure

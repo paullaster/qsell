@@ -579,6 +579,48 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'Take a sales order for a customer, with products and packages, and see the customer\'s credit position',
   },
+  'credit_sales:read': {
+    resource: 'credit_sales',
+    action: 'read',
+    category: 'Orders & Sales',
+    description: 'See the credit sales: sales to a customer\'s account, invoiced at once',
+  },
+  'credit_sales:create': {
+    resource: 'credit_sales',
+    action: 'create',
+    category: 'Orders & Sales',
+    description: 'Make a sale to a customer\'s account, with the credit limit, credit days and approval of the company\'s settings',
+  },
+  'registers:manage': {
+    resource: 'registers',
+    action: 'manage',
+    category: 'Company & Settings',
+    description: 'Set up the tills of each branch and how far a till may be out before a supervisor must close its shift',
+  },
+  'shifts:read': {
+    resource: 'shifts',
+    action: 'read',
+    category: 'Orders & Sales',
+    description: 'See till shifts and their X and Z reports',
+  },
+  'shifts:open': {
+    resource: 'shifts',
+    action: 'open',
+    category: 'Orders & Sales',
+    description: 'Open a shift on a till with a counted float, and put cash in or take it out during it',
+  },
+  'shifts:close': {
+    resource: 'shifts',
+    action: 'close',
+    category: 'Orders & Sales',
+    description: 'Close your own shift with a counted declaration and see its Z report',
+  },
+  'shifts:supervise': {
+    resource: 'shifts',
+    action: 'supervise',
+    category: 'Orders & Sales',
+    description: 'Close another person\'s shift, and close a shift whose till is out by more than the company allows',
+  },
   'sales_invoices:read': {
     resource: 'sales_invoices',
     action: 'read',
