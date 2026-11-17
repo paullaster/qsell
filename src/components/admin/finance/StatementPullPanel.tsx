@@ -6,6 +6,7 @@ import {
   statementPullSetupAction,
 } from '@/server/domains/finance/bank-statement-actions';
 import { Field, LoadFailed, buttonClass, fieldClass, primaryClass, attempt } from './ui';
+import { useWhen } from '@/components/business-time';
 
 type Setup = Extract<Awaited<ReturnType<typeof statementPullSetupAction>>, { ok: true }>['data'];
 
@@ -27,6 +28,7 @@ export function StatementPullPanel({
   onClose: () => void;
   onDone: (text: string) => void;
 }) {
+  const when = useWhen();
   const uid = useId();
   const [from, setFrom] = useState(daysBefore(setup.today, 7));
   const [to, setTo] = useState(setup.today);
@@ -99,7 +101,7 @@ export function StatementPullPanel({
       </div>
       {setup.last === null ? null : (
         <p className="text-xs text-fg-muted">
-          Last pull: {new Date(setup.last.at).toLocaleString()}, {setup.last.from} to{' '}
+          Last pull: {when(setup.last.at)}, {setup.last.from} to{' '}
           {setup.last.to}, {setup.last.lines} new lines.
         </p>
       )}

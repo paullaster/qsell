@@ -5,6 +5,7 @@ import { use, useState } from 'react';
 import { vendorRfqsAction } from '@/server/domains/vendors/rfq-portal-actions';
 import { VENDOR_STAGE } from '@/lib/rfq';
 import { Chip, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, type Notice } from '@/components/ui/screen-kit';
+import { useWhen } from '@/components/business-time';
 
 type Page = Extract<Awaited<ReturnType<typeof vendorRfqsAction>>, { ok: true }>['data'];
 
@@ -14,6 +15,7 @@ export function RfqsListClient({ initialPromise }: { initialPromise: ReturnType<
 }
 
 function ListView({ initial }: { initial: Page }) {
+  const when = useWhen();
   const [rows, setRows] = useState(initial.rows);
   const [next, setNext] = useState(initial.next);
   const [busy, setBusy] = useState(false);
@@ -41,7 +43,7 @@ function ListView({ initial }: { initial: Page }) {
             return (
               <li key={r.id}>
                 <Link href={`/vendor/rfqs/${r.id}`} className={`${cardClass} flex min-h-10 flex-wrap items-center justify-between gap-2 hover:bg-hover`}>
-                  <span className="min-w-0"><span className="block text-sm font-bold text-fg-strong">{r.number ?? ''} · {r.title}</span><span className="block text-xs text-fg-muted">{r.category} · due {new Date(r.deadline).toLocaleString()}</span></span>
+                  <span className="min-w-0"><span className="block text-sm font-bold text-fg-strong">{r.number ?? ''} · {r.title}</span><span className="block text-xs text-fg-muted">{r.category} · due {when(r.deadline)}</span></span>
                   <Chip tone={s.tone}>{s.label}</Chip>
                 </Link>
               </li>

@@ -12,6 +12,7 @@ import { needsComment } from '@/lib/receipt-detail';
 import { has, historyDetail, historyHeadline, historyReason, submitMessage } from '@/lib/finance-history';
 import type { Choice } from '@/lib/payment-options';
 import { Chip, Field, LoadFailed, Message, PageHeader, buttonClass, cardClass, dangerClass, fieldClass, money, primaryClass, today, type Notice, attempt } from './ui';
+import { useWhen } from '@/components/business-time';
 
 type View = Extract<Awaited<ReturnType<typeof refundDetailAction>>, { ok: true }>['data'];
 const words = (s: string) => s.replace(/_/g, ' ');
@@ -22,6 +23,7 @@ export function RefundDetailClient({ viewPromise }: { viewPromise: ReturnType<ty
 }
 
 function RefundDetailView({ view }: { view: View }) {
+  const businessWhen = useWhen();
   const router = useRouter();
   const note = useSearchParams().get('note');
   const [panel, setPanel] = useState<null | 'cancel' | 'pay' | 'reverse'>(null);
@@ -111,7 +113,7 @@ function RefundDetailView({ view }: { view: View }) {
       <section className={`${cardClass} space-y-3`} aria-label="Evidence of payment">
         <h2 className="text-sm font-bold text-fg-strong">Evidence of payment</h2>
         <p className="text-xs text-fg-muted">A payment slip, bank confirmation, M-Pesa message or signed receipt. Payment cannot be recorded without at least one.</p>
-        {view.attachments.length === 0 ? <p className="text-sm text-fg-muted">Nothing attached yet.</p> : <ul className="space-y-1 text-sm">{view.attachments.map((a) => <li key={a.id}>{has(a.url) ? <a className="font-semibold text-indigo-600 hover:underline" href={a.url} target="_blank" rel="noreferrer">{a.fileName}</a> : a.fileName} <span className="text-xs text-fg-muted">· {new Date(a.createdAt).toLocaleString()}</span></li>)}</ul>}
+        {view.attachments.length === 0 ? <p className="text-sm text-fg-muted">Nothing attached yet.</p> : <ul className="space-y-1 text-sm">{view.attachments.map((a) => <li key={a.id}>{has(a.url) ? <a className="font-semibold text-indigo-600 hover:underline" href={a.url} target="_blank" rel="noreferrer">{a.fileName}</a> : a.fileName} <span className="text-xs text-fg-muted">· {businessWhen(a.createdAt)}</span></li>)}</ul>}
         {view.can.attach && s !== 'cancelled' && s !== 'rejected' ? (
           <div>
             <label htmlFor="ev-file" className="text-xs font-semibold text-fg-muted">Add a photo or screenshot</label>
@@ -144,7 +146,7 @@ function RefundDetailView({ view }: { view: View }) {
           {view.events.map((e) => (
             <li key={e.id} className="border-l-2 border-line pl-3">
               <p className="font-semibold text-fg-strong">{historyHeadline(e)}</p>
-              <p className="text-xs text-fg-muted">{historyDetail(e, (iso) => new Date(iso).toLocaleString())}{has(e.reasonCode) ? ` · ${historyReason(e)}` : ''}</p>
+              <p className="text-xs text-fg-muted">{historyDetail(e, (iso) => businessWhen(iso))}{has(e.reasonCode) ? ` · ${historyReason(e)}` : ''}</p>
             </li>
           ))}
         </ol>

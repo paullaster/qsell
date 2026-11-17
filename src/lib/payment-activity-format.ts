@@ -11,11 +11,6 @@ const text = (value: string | number | boolean | null | undefined): string => (t
 
 export { words };
 
-/** A time as the viewer's locale writes it, or nothing. */
-export function when(iso: string | null | undefined): string {
-  return iso === null || iso === undefined || iso === '' ? '' : new Date(iso).toLocaleString();
-}
-
 /** The detail line of a row from the activity lists: only the facts it has, each after a dot. */
 export function rowDetail(r: ActivityRow, formatAmount: (amount: string) => string): string {
   const parts: [unknown, string][] = [

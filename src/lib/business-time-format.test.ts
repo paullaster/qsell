@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dayOf, whenIn } from './business-time-format';
+import { dateIn, dayOf, whenIn, whenOrBlank } from './business-time-format';
 
 describe('writing an instant for people in the business zone', () => {
   it('writes the date and time in the zone given, not the machine\'s', () => {
@@ -10,6 +10,18 @@ describe('writing an instant for people in the business zone', () => {
     // Near midnight the day itself changes with the zone.
     expect(whenIn('2026-12-31T22:30:00.000Z', 'Africa/Nairobi')).toBe('1 Jan 2027, 01:30');
     expect(whenIn('2026-12-31T22:30:00.000Z', 'America/New_York')).toBe('31 Dec 2026, 17:30');
+  });
+
+  it('writes nothing for a missing time', () => {
+    expect(whenOrBlank(null, 'UTC')).toBe('');
+    expect(whenOrBlank(undefined, 'UTC')).toBe('');
+    expect(whenOrBlank('', 'UTC')).toBe('');
+    expect(whenOrBlank('2026-10-14T10:00:00Z', 'Africa/Nairobi')).toBe('14 Oct 2026, 13:00');
+  });
+
+  it('writes the date an instant falls on in the zone, which can differ from the machine\'s', () => {
+    expect(dateIn('2026-12-31T22:30:00.000Z', 'Africa/Nairobi')).toBe('1 Jan 2027');
+    expect(dateIn('2026-12-31T22:30:00.000Z', 'America/New_York')).toBe('31 Dec 2026');
   });
 
   it('writes a plain day the same wherever the business is', () => {

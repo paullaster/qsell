@@ -2,6 +2,7 @@
 
 import { useSyncExternalStore } from 'react';
 import { orElse } from '@/lib/values';
+import { useWhen } from '@/components/business-time';
 
 export const fieldClass =
   'min-h-10 w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong focus:border-indigo-500 focus:outline-none disabled:opacity-60';
@@ -90,6 +91,7 @@ export function ago(iso: string, now = Date.now()): string {
 }
 
 export function When({ iso }: { iso: string }) {
+  const when = useWhen();
   // The server draws a blank and the browser fills it in once it has the clock, so both agree on what first appears.
   const text = useSyncExternalStore(
     () => () => undefined,
@@ -97,7 +99,7 @@ export function When({ iso }: { iso: string }) {
     () => '',
   );
   return (
-    <time dateTime={iso} title={new Date(iso).toLocaleString('en-KE')}>
+    <time dateTime={iso} title={when(iso)}>
       {orElse(text, ' ')}
     </time>
   );

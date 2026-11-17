@@ -7,6 +7,7 @@ import { closeInvoiceAction, recallInvoiceAction, saveInvoiceAction, submitInvoi
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
 import { INVOICE_STATE, invoiceTotals, type InvoiceState } from '@/lib/supplier-invoice';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
+import { useWhen } from '@/components/business-time';
 
 type View = Extract<Awaited<ReturnType<typeof vendorInvoiceAction>>, { ok: true }>['data'];
 
@@ -49,6 +50,7 @@ async function upload(file: File): Promise<{ id: string; name: string } | string
 }
 
 function Detail({ view }: { view: View }) {
+  const when = useWhen();
   const router = useRouter();
   const uid = useId();
   const state = INVOICE_STATE[view.state];
@@ -255,7 +257,7 @@ function Detail({ view }: { view: View }) {
         <h2 className="text-sm font-bold text-fg-strong">Progress</h2>
         {view.timeline.length === 0 ? <p className="text-sm text-fg-muted">Nothing has happened yet.</p> : (
           <ol className="mt-1 space-y-1 text-sm text-fg">
-            {view.timeline.map((e) => <li key={`${e.event}-${e.at}`}>{EVENT_WORDS[e.event] ?? e.event} <span className="text-xs text-fg-muted">· {new Date(e.at).toLocaleString()}</span>{e.note === '' ? null : <span className="block text-xs text-fg-muted">{e.note}</span>}</li>)}
+            {view.timeline.map((e) => <li key={`${e.event}-${e.at}`}>{EVENT_WORDS[e.event] ?? e.event} <span className="text-xs text-fg-muted">· {when(e.at)}</span>{e.note === '' ? null : <span className="block text-xs text-fg-muted">{e.note}</span>}</li>)}
           </ol>
         )}
       </section>

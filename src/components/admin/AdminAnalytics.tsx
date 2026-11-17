@@ -14,6 +14,7 @@ import {
   CreditCard,
 } from 'lucide-react';
 import { type DashboardAnalytics, type UserProfile } from '@/types/index';
+import { useDate } from '@/components/business-time';
 
 interface AdminAnalyticsProps {
   analyticsPromise: Promise<DashboardAnalytics>;
@@ -21,6 +22,7 @@ interface AdminAnalyticsProps {
 }
 
 export function AdminAnalytics({ analyticsPromise, userProfilesPromise }: AdminAnalyticsProps) {
+  const date = useDate();
   const analytics = use(analyticsPromise);
   const users = use(userProfilesPromise);
 
@@ -152,7 +154,7 @@ export function AdminAnalytics({ analyticsPromise, userProfilesPromise }: AdminA
                   </span>
                 </td>
                 <td className="px-4 py-3.5 text-right font-mono text-[11px] text-fg-subtle">
-                  {new Date(u.createdAt).toLocaleDateString()}
+                  {date(u.createdAt)}
                 </td>
               </tr>
             ))}

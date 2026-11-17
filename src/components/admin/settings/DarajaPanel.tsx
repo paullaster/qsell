@@ -7,7 +7,8 @@ import type { paymentSetupAction } from '@/server/domains/finance/payment-setup-
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { ALLOCATION_MODES, TIMEOUT_RESPONSES, VALIDATION_ANSWERS, VERIFICATION_MODES, labelOf, words, type Choice } from '@/lib/payment-options';
 import { fieldHint, fieldInputMode, fieldText, operationInput, runButtonLabel, settingsPatch } from '@/lib/mpesa-settings-form';
-import { shortReason, when } from '@/lib/payment-activity-format';
+import { useWhen } from '@/components/business-time';
+import { shortReason } from '@/lib/payment-activity-format';
 import { Chip, Field, Message, buttonClass, cardClass, fieldClass, primaryClass, type Notice, attempt } from '../finance/ui';
 
 type Setup = Extract<Awaited<ReturnType<typeof paymentSetupAction>>, { ok: true }>['data'];
@@ -218,6 +219,7 @@ function DarajaRunOperation({ providerId, daraja: d, onRan }: { providerId: stri
 }
 
 function DarajaOperationLog({ log }: { log: LoggedRequest[] }) {
+  const when = useWhen();
   if (log.length === 0) return null;
   return (
     <div>

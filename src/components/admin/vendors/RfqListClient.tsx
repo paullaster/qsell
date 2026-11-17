@@ -7,6 +7,7 @@ import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { RFQ_STATUS } from '@/lib/rfq';
 import type { Choice } from '@/lib/payment-options';
 import { Chip, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
+import { useWhen } from '@/components/business-time';
 
 type Page = Extract<Awaited<ReturnType<typeof rfqListAction>>, { ok: true }>['data'];
 type Row = Page['rows'][number];
@@ -17,6 +18,7 @@ export function RfqListClient({ initialPromise }: { initialPromise: ReturnType<t
 }
 
 function ListView({ initial }: { initial: Page }) {
+  const when = useWhen();
   const [rows, setRows] = useState<Row[]>(initial.rows);
   const [next, setNext] = useState(initial.next);
   const [status, setStatus] = useState<Choice | null>(null);
@@ -50,7 +52,7 @@ function ListView({ initial }: { initial: Page }) {
             return (
               <li key={r.id}>
                 <Link href={`/admin/vendors/rfqs/${r.id}`} className={`${cardClass} flex min-h-10 flex-wrap items-center justify-between gap-2 hover:bg-hover`}>
-                  <span className="min-w-0"><span className="block text-sm font-bold text-fg-strong">{r.number ?? 'Draft'} · {r.title}</span><span className="block text-xs text-fg-muted">{r.categoryName} · {r.invited} invited · due {new Date(r.deadline).toLocaleString()}</span></span>
+                  <span className="min-w-0"><span className="block text-sm font-bold text-fg-strong">{r.number ?? 'Draft'} · {r.title}</span><span className="block text-xs text-fg-muted">{r.categoryName} · {r.invited} invited · due {when(r.deadline)}</span></span>
                   <Chip tone={s.tone}>{s.label}</Chip>
                 </Link>
               </li>

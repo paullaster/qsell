@@ -29,6 +29,7 @@ import { StatementPullPanel } from './StatementPullPanel';
 import { StatementSettingsPanel, type SettingsLoads } from './StatementSettingsPanel';
 import { CustomerReceiptPanel, FindEntriesPanel, IncomePanel, ReasonPanel, SplitChargePanel, VendorPaymentPanel, type CandidateEntry } from './StatementLinePanels';
 import { Chip, LoadFailed, Message, PageHeader, buttonClass, cardClass, dangerClass, money, primaryClass, type Notice, attempt } from './ui';
+import { useDate } from '@/components/business-time';
 
 export type WorkbenchView = Extract<Awaited<ReturnType<typeof statementWorkbenchAction>>, { ok: true }>['data'];
 type Line = WorkbenchView['lines'][number];
@@ -42,6 +43,7 @@ export function StatementWorkbenchClient({ viewPromise }: { viewPromise: ReturnT
 }
 
 function StatementWorkbench({ initial }: { initial: WorkbenchView }) {
+  const date = useDate();
   const [view, setView] = useState(initial);
   const [filter, setFilter] = useState<Filter>('open');
   const [panel, setPanel] = useState<Panel>(null);
@@ -239,7 +241,7 @@ function StatementWorkbench({ initial }: { initial: WorkbenchView }) {
       {view.imports.length > 0 ? (
         <section className={`${cardClass} space-y-2`} aria-label="Imported files">
           <h2 className="text-sm font-bold text-fg-strong">Imported files</h2>
-          <ul className="text-xs">{view.imports.map((i) => <li key={i.id} className="py-1">{i.fileName} · {i.lines} lines · {i.from} to {i.to} · in {money(i.in)}, out {money(i.out)} · {new Date(i.at).toLocaleDateString()}</li>)}</ul>
+          <ul className="text-xs">{view.imports.map((i) => <li key={i.id} className="py-1">{i.fileName} · {i.lines} lines · {i.from} to {i.to} · in {money(i.in)}, out {money(i.out)} · {date(i.at)}</li>)}</ul>
         </section>
       ) : null}
     </div>

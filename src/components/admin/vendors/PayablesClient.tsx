@@ -8,6 +8,7 @@ import { use, useId, useState } from 'react';
 import { type advancesOutstandingAction, ageingAction, lastPayablesRevaluationAction, revalueForeignPayablesAction, runPayablesCheckAction, type payablesCheckAction } from '@/server/domains/vendors/payment-actions';
 import { AGE_BUCKETS, fromCents } from '@/lib/vendor-payment';
 import { Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, type Notice } from '@/components/ui/screen-kit';
+import { useWhen } from '@/components/business-time';
 
 const GROUP_HEAD = { vendor: 'Vendor', category: 'Category', posting_group: 'Posting group' } as const;
 
@@ -114,6 +115,7 @@ function AdvancesOutstanding({ data }: { data: Advances }) {
 
 /** The vendor ledger against the payables and prepayments accounts: the last check, and a button to check now. */
 function BooksCheck({ first }: { first: Check | null }) {
+  const when = useWhen();
   const [check, setCheck] = useState<Check | null>(first);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState('');
@@ -137,7 +139,7 @@ function BooksCheck({ first }: { first: Check | null }) {
       {problem === '' ? null : <p role="alert" className="text-sm text-red-600">{problem}</p>}
       {check === null ? <p className="text-sm text-fg-muted">It has not been checked yet. It is checked every night.</p> : (
         <>
-          <p className="text-sm text-fg" role="status">{check.ok ? 'The vendor ledger agrees with the books.' : `${String(check.differences)} ${check.differences === 1 ? 'difference' : 'differences'} found. Each one is a defect to look into.`} <span className="text-xs text-fg-muted">Checked {new Date(check.ranAt).toLocaleString()}{check.ranBy === 'system' ? ' (nightly)' : ''}.</span></p>
+          <p className="text-sm text-fg" role="status">{check.ok ? 'The vendor ledger agrees with the books.' : `${String(check.differences)} ${check.differences === 1 ? 'difference' : 'differences'} found. Each one is a defect to look into.`} <span className="text-xs text-fg-muted">Checked {when(check.ranAt)}{check.ranBy === 'system' ? ' (nightly)' : ''}.</span></p>
           {check.rows.length === 0 ? null : (
             <ul className="divide-y divide-line text-sm" aria-label="Accounts checked">
               {check.rows.map((r) => (

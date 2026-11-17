@@ -9,6 +9,7 @@ import { Modal } from '@/components/ui/Modal';
 import { ProductEditLink } from '@/components/admin/ProductEditLink';
 import { hasText, joinPresent, money, orElse } from '@/lib/quote-display';
 import { statusText } from '@/lib/quote-statuses';
+import { useDate, useWhen } from '@/components/business-time';
 
 export function QuoteDetails({
   quote,
@@ -50,6 +51,8 @@ export function QuoteDetails({
   onConvert: () => void;
   onPreview: () => void;
 }) {
+  const when = useWhen();
+  const date = useDate();
   const floorMiss = Number(quote.grossMarginPercent) < Number(quote.minimumMarginPercent);
   return (
     <Modal title={`${quote.quoteNumber} · ${statusText(quote.status)}`} onClose={onClose} extraWide>
@@ -66,12 +69,12 @@ export function QuoteDetails({
           <Summary
             label="Created by"
             value={quote.source === 'shop' ? 'Requested on the web shop' : (quote.createdByName ?? '—')}
-            detail={new Date(quote.createdAt).toLocaleString()}
+            detail={when(quote.createdAt)}
           />
           <Summary
             label="Emailed to customer by"
             value={quote.sentAt === null ? 'Not emailed yet' : (quote.sentByName ?? 'Unknown')}
-            detail={quote.sentAt === null ? undefined : new Date(quote.sentAt).toLocaleString()}
+            detail={quote.sentAt === null ? undefined : when(quote.sentAt)}
           />
           {quote.convertedOrderNumber === undefined || quote.convertedOrderNumber === null ? null : (
             <Summary label="Became the order" value={quote.convertedOrderNumber} detail="Find it in Sales Orders or Customer Orders" />
@@ -84,7 +87,7 @@ export function QuoteDetails({
           <Summary
             label="Quote total"
             value={money(Number(quote.totalAmount), quote.currency)}
-            detail={`Valid until ${quote.validUntil ? new Date(quote.validUntil).toLocaleDateString() : 'no expiry'}`}
+            detail={`Valid until ${quote.validUntil ? date(quote.validUntil) : 'no expiry'}`}
           />
           <Summary
             label="Internal gross margin"
@@ -266,7 +269,7 @@ export function QuoteDetails({
                   {event.eventType.replaceAll('_', ' ')}
                 </span>
                 <time className="text-xs text-fg-muted">
-                  {new Date(event.createdAt).toLocaleString()}
+                  {when(event.createdAt)}
                 </time>
               </li>
             ))}

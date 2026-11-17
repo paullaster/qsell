@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { FileText } from 'lucide-react';
 import { orderDocumentsAction } from '@/server/domains/selling/order-documents-actions';
 import type { RelatedDocuments } from '@/server/domains/selling/order-documents-service';
+import { useDate } from '@/components/business-time';
 
 const money = (currency: string, amount: number): string => `${currency} ${amount.toLocaleString()}`;
 const INVOICE_WORDS: Record<string, string> = { tax_invoice: 'Tax invoice', proforma: 'Proforma invoice', delivery_invoice: 'Delivery invoice' };
@@ -14,6 +15,7 @@ const INVOICE_WORDS: Record<string, string> = { tax_invoice: 'Tax invoice', prof
  * invoiced), and nothing to people who may not see orders.
  */
 export function OrderDocumentsPanel({ orderId }: { orderId: string }) {
+  const date = useDate();
   const [docs, setDocs] = useState<RelatedDocuments | null>(null);
   useEffect(() => {
     let live = true;
@@ -32,7 +34,7 @@ export function OrderDocumentsPanel({ orderId }: { orderId: string }) {
         {docs.quote === null ? null : <li data-testid="order-document-quote">Quote <span className="font-semibold">{docs.quote.number}</span> ({docs.quote.status.replaceAll('_', ' ')}, {money(docs.quote.currency, docs.quote.total)}): this order was made from it</li>}
         <li className="font-semibold text-fg-strong">Order {docs.orderNumber}</li>
         {docs.invoices.map((i) => (
-          <li key={i.number} data-testid="order-document-invoice">{INVOICE_WORDS[i.type] ?? i.type.replaceAll('_', ' ')} <span className="font-semibold">{i.number}</span> ({money(i.currency, i.total)}, {new Date(i.createdAt).toLocaleDateString()}{i.emailed ? ', emailed' : ''})</li>
+          <li key={i.number} data-testid="order-document-invoice">{INVOICE_WORDS[i.type] ?? i.type.replaceAll('_', ' ')} <span className="font-semibold">{i.number}</span> ({money(i.currency, i.total)}, {date(i.createdAt)}{i.emailed ? ', emailed' : ''})</li>
         ))}
       </ol>
     </section>

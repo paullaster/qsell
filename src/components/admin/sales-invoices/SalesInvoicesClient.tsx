@@ -12,6 +12,7 @@ import { usePagedList } from '@/components/ui/usePagedList';
 import type { Choice } from '@/lib/payment-options';
 import { SalesOrderEditor } from '@/components/admin/sales-orders/SalesOrderEditor';
 import { SalesInvoiceDetail } from './SalesInvoiceDetail';
+import { useDate } from '@/components/business-time';
 
 type FirstPage = Awaited<ReturnType<typeof salesInvoicesPageAction>>;
 type Kind = '' | 'tax_invoice' | 'proforma' | 'delivery_invoice';
@@ -40,6 +41,7 @@ function Loaded({ firstPromise }: { firstPromise: Promise<FirstPage> }) {
 }
 
 function Body({ first }: { first: Extract<FirstPage, { ok: true }> }) {
+  const date = useDate();
   const [typed, setTyped] = useState('');
   const query = useDebouncedValue(typed, 300);
   const [kind, setKind] = useState<Kind>('');
@@ -115,7 +117,7 @@ function Body({ first }: { first: Extract<FirstPage, { ok: true }> }) {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0">
                 <p className="font-semibold break-words text-fg-strong">{row.invoiceNumber}</p>
-                <p className="text-sm break-words text-fg-muted">{INVOICE_KIND_WORDS[row.kind] ?? row.kind}{row.salesModule === 'sales_invoice' ? ' (direct sale)' : ''} · order {row.orderNumber} · {row.customerName} · {new Date(row.createdAt).toLocaleDateString()}</p>
+                <p className="text-sm break-words text-fg-muted">{INVOICE_KIND_WORDS[row.kind] ?? row.kind}{row.salesModule === 'sales_invoice' ? ' (direct sale)' : ''} · order {row.orderNumber} · {row.customerName} · {date(row.createdAt)}</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-mono text-sm font-semibold text-fg-strong">{row.currency} {row.total.toLocaleString()}</span>

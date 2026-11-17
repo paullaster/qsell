@@ -12,7 +12,7 @@ import {
 } from '@/server/domains/finance/payment-setup-actions';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { METHOD_KINDS, PROVIDER_ENVIRONMENTS, labelOf, savedHint, type Choice } from '@/lib/payment-options';
-import { when } from '@/lib/payment-activity-format';
+import { useWhen } from '@/components/business-time';
 import { Chip, Field, Message, buttonClass, cardClass, dangerClass, fieldClass, primaryClass, type Notice, attempt } from '../finance/ui';
 import { CAPABILITY_LABEL, CREDENTIAL_FIELDS } from './payment-credential-fields';
 import { DarajaPanel } from './DarajaPanel';
@@ -24,6 +24,7 @@ type Provider = Setup['providers'][number];
 
 /** One provider: the connection and its shared credentials, and the payment methods that go through it. */
 export function PaymentProviderCard({ setup, provider: p, open, onToggle, onChanged }: { setup: Setup; provider: Provider; open: boolean; onToggle: () => void; onChanged: (text?: string) => void }) {
+  const when = useWhen();
   const uid = useId();
   const can = setup.can;
   const manual = p.isSystem;

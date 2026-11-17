@@ -10,6 +10,7 @@ import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { ADVANCE_STATUS, emptyPoHeader, emptyPoLine, orderTotals, PO_STATUS, toMoney, type PoHeaderForm, type PoLineForm } from '@/lib/purchase-order';
 import type { Choice } from '@/lib/payment-options';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, dangerClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
+import { useWhen } from '@/components/business-time';
 
 type View = Extract<Awaited<ReturnType<typeof poAction>>, { ok: true }>['data'];
 type Result = { ok: true } | { ok: false; error: string };
@@ -35,6 +36,7 @@ function Check({ id, label, hint, checked, onChange, disabled }: { id: string; l
 }
 
 function Editor({ view, today }: { view: View | null; today: string }) {
+  const when = useWhen();
   const uid = useId();
   const router = useRouter();
   const draft = view === null || view.status === 'draft';
@@ -242,13 +244,13 @@ function Editor({ view, today }: { view: View | null; today: string }) {
       ) : null}
 
       {view === null || view.versions.length <= 1 ? null : (
-        <section className={cardClass} aria-label="Versions"><h3 className="text-sm font-bold text-fg-strong">Versions</h3><ul className="mt-1 text-sm">{view.versions.map((v) => <li key={v.version}>Version {v.version}: {v.reason ?? ''} <span className="text-xs text-fg-muted">({new Date(v.at).toLocaleString()})</span></li>)}</ul></section>
+        <section className={cardClass} aria-label="Versions"><h3 className="text-sm font-bold text-fg-strong">Versions</h3><ul className="mt-1 text-sm">{view.versions.map((v) => <li key={v.version}>Version {v.version}: {v.reason ?? ''} <span className="text-xs text-fg-muted">({when(v.at)})</span></li>)}</ul></section>
       )}
       {view === null ? null : (
         <section aria-label="History" className={cardClass}>
           <h3 className="text-sm font-bold text-fg-strong">History</h3>
           <ol className="mt-2 space-y-2 text-xs">
-            {view.events.map((e) => <li key={e.id} className="border-t border-line pt-2 first:border-0 first:pt-0"><p className="font-semibold text-fg-strong">{e.event.replace(/_/g, ' ')}</p><p className="text-fg-muted">{new Date(e.at).toLocaleString()} · {e.actor}{e.reason === null ? '' : ` · ${e.reason}`}</p></li>)}
+            {view.events.map((e) => <li key={e.id} className="border-t border-line pt-2 first:border-0 first:pt-0"><p className="font-semibold text-fg-strong">{e.event.replace(/_/g, ' ')}</p><p className="text-fg-muted">{when(e.at)} · {e.actor}{e.reason === null ? '' : ` · ${e.reason}`}</p></li>)}
           </ol>
         </section>
       )}

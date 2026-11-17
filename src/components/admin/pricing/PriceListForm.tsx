@@ -14,16 +14,14 @@ import {
   primaryButtonClass,
   type Message,
 } from '../approvals/shared';
+import { useBusinessTimeZone } from '@/components/business-time';
+import { fromBusinessInput, toBusinessInput } from '@/lib/visit';
 import { ScopeEditor } from './ScopeEditor';
 
-/** ISO time → the value a datetime-local input wants (local time, no seconds). */
-export const toLocalInput = (iso: string | null | undefined) => {
-  if (!iso) return '';
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-};
-export const fromLocalInput = (v: string) => (v ? new Date(v).toISOString() : null);
+/** ISO time → the value a datetime-local input wants: the wall clock of the business's time zone, no seconds. */
+export const toLocalInput = (iso: string | null | undefined, timeZone: string) => (iso === null || iso === undefined || iso === '' ? '' : toBusinessInput(iso, timeZone));
+/** What was typed in a datetime-local input, read on the business's clock (not the browser's), as an instant. */
+export const fromLocalInput = (v: string, timeZone: string) => (v === '' ? null : fromBusinessInput(v, timeZone));
 
 export interface FormResult {
   ok: boolean;
@@ -50,6 +48,7 @@ export function PriceListForm({
   onCancel?: () => void;
 }) {
   const uid = useId();
+  const timeZone = useBusinessTimeZone();
   const [v, setV] = useState({
     code: initial?.code ?? '',
     name: initial?.name ?? '',
@@ -59,8 +58,8 @@ export function PriceListForm({
     taxInclusive: initial?.taxInclusive ?? true,
     quantityMode: initial?.quantityMode ?? ('all_units' as const),
     priority: initial?.priority ?? 0,
-    validFrom: toLocalInput(initial?.validFrom),
-    validTo: toLocalInput(initial?.validTo),
+    validFrom: toLocalInput(initial?.validFrom, timeZone),
+    validTo: toLocalInput(initial?.validTo, timeZone),
     scopes: initial?.scopes ?? {},
   });
   const [reason, setReason] = useState<ReasonValue>({ code: '', text: '' });
@@ -83,8 +82,8 @@ export function PriceListForm({
         taxInclusive: v.taxInclusive,
         quantityMode: v.quantityMode,
         priority: Number(v.priority) || 0,
-        validFrom: fromLocalInput(v.validFrom),
-        validTo: fromLocalInput(v.validTo),
+        validFrom: fromLocalInput(v.validFrom, timeZone),
+        validTo: fromLocalInput(v.validTo, timeZone),
         scopes: v.scopes,
       },
       reason,
@@ -216,7 +215,7 @@ export function PriceListForm({
         <div className="hidden sm:block" />
         <div>
           <label htmlFor={`${uid}-from`} className={labelClass}>
-            In force from
+            In force from (business time)
           </label>
           <input
             id={`${uid}-from`}
@@ -228,7 +227,7 @@ export function PriceListForm({
         </div>
         <div>
           <label htmlFor={`${uid}-to`} className={labelClass}>
-            Until (leave empty for no end)
+            Until, business time (leave empty for no end)
           </label>
           <input
             id={`${uid}-to`}
