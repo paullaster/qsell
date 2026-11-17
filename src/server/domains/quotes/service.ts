@@ -17,6 +17,7 @@ import {
   salesQuoteEvents,
   salesQuoteLines,
   salesQuotes,
+  orders,
   salesQuoteSettings,
   salesQuoteTemplateEvents,
   salesQuoteTemplateLines,
@@ -203,6 +204,8 @@ export interface QuoteListPage {
 export interface SalesQuote extends SalesQuoteRow {
   /** Past its valid-until date while still open. */
   expired: boolean;
+  /** The number of the order this quote became, once it has. */
+  convertedOrderNumber?: string | null;
   createdByName: string | null;
   sentByName: string | null;
   lines: (typeof salesQuoteLines.$inferSelect)[];
@@ -825,8 +828,10 @@ export class SalesQuoteService {
         .orderBy(desc(salesQuoteEvents.createdAt)),
     ]);
     const names = await staffNames([quote.createdBy, quote.sentBy]);
+    const [made] = quote.convertedOrderId === null ? [] : await drizzleDb.select({ number: orders.orderNumber }).from(orders).where(eq(orders.id, quote.convertedOrderId)).limit(1);
     return {
       ...quote,
+      convertedOrderNumber: made?.number ?? null,
       expired: isQuoteExpired(quote, new Date()),
       createdByName: nameOf(names, quote.createdBy),
       sentByName: nameOf(names, quote.sentBy),
@@ -1845,6 +1850,8 @@ export class SalesQuoteService {
         // conversion gets the same number back.
         // A quote only ever has a proforma; signing starts once it is a sales order.
         salesModule: 'sales_order',
+        // The order keeps the quote it came from, so it can show where it started.
+        sourceQuoteId: id,
         // How a sales order behaves for the company (credit check, credit days, approval): the same as one entered by staff.
         selling: await getContainer().sellingSettings.get((await getContainer().companySettings.ensureSeeded()).id, 'sales_order'),
         // Staff placing it: approvals (if configured) are asked on their behalf.

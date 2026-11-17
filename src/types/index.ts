@@ -371,6 +371,8 @@ export interface Order {
   salesModule?: 'ecommerce' | 'sales_order' | 'credit_sale' | 'pos_cash_sale' | 'sales_invoice';
   /** When the reserved stock is issued (decided when the order was placed); absent follows the stock module's setting. */
   stockRelease?: 'on_issue' | 'on_payment' | 'on_delivery' | null;
+  /** The quote this order was made from. */
+  sourceQuoteId?: string | null;
   createdAt: string;
   updatedAt: string;
   /** The discounts applied when the order was priced (rules, coupons, amounts). */
