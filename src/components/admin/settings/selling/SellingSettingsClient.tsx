@@ -85,6 +85,7 @@ function Summary({ type, onChange }: { type: SellingTypeView; onChange: () => vo
             </dd>
           </div>
         ))}
+        {s.invoice === 'with_document' && s.approval === 'workflow' ? <div className="contents"><dt className="text-fg-muted">Invoice after approval</dt><dd className="text-fg">{s.invoiceAfterApproval ? 'Made automatically once approved' : 'Staff raise it after approval'}</dd></div> : null}
         <div className="contents"><dt className="text-fg-muted">Hold until paid</dt><dd className="text-fg">{s.allowHoldUntilPaid ? 'Staff may hold a document until it is paid' : 'Not offered'}</dd></div>
       </dl>
     </div>
@@ -140,6 +141,12 @@ function Editor({ type, onCancel, onSaved }: { type: SellingTypeView; onCancel: 
         {values.creditCheck === 'limit_and_overdue' ? days(`${uid}-overdue`, 'An invoice overdue by more than (days)', 'overdueDays') : null}
         {values.creditDays === 'fixed' ? days(`${uid}-fixed`, 'Credit days for every customer', 'fixedDays') : null}
       </div>
+      {values.invoice === 'with_document' && values.approval === 'workflow' ? (
+        <label className="flex min-h-10 cursor-pointer items-center gap-2 text-sm">
+          <input type="checkbox" className="size-4" checked={values.invoiceAfterApproval} onChange={(e) => set('invoiceAfterApproval', e.target.checked)} />
+          If approval holds the document, make its invoice automatically once it is approved
+        </label>
+      ) : null}
       <label className="flex min-h-10 cursor-pointer items-center gap-2 text-sm">
         <input type="checkbox" className="size-4" checked={values.allowHoldUntilPaid} disabled={type.type === 'pos_cash_sale'} onChange={(e) => set('allowHoldUntilPaid', e.target.checked)} />
         Staff may switch on &quot;Hold until paid&quot; for a single document (stock is kept until payment is received)

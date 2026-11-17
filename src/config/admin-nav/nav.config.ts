@@ -115,6 +115,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'sales_orders:read',
       },
       {
+        id: 'credit-sales',
+        title: 'Credit Sales',
+        name: 'credit-sales',
+        href: '/admin/credit-sales',
+        description: 'Sell to a customer\'s account: their credit position, limit and days, and the invoice on account',
+        icon: 'Wallet',
+        permission: 'credit_sales:read',
+      },
+      {
         id: 'sales-invoices',
         title: 'Sales Invoices',
         name: 'sales-invoices',

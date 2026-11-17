@@ -3188,6 +3188,8 @@ export const orders = pgTable(
     salesModule: text('sales_module').$type<SigningModule>().notNull().default('ecommerce'),
     /** When this order's reserved stock is issued, decided when it was placed (a staff document's kind, or Hold until paid); null follows the stock module's own setting, as web shop orders always have. */
     stockRelease: text('stock_release').$type<'on_issue' | 'on_payment' | 'on_delivery'>(),
+    /** Its tax invoice is to be made automatically once an approval that held it releases it (decided when it was placed). */
+    invoiceWhenApproved: boolean('invoice_when_approved').notNull().default(false),
     /** The quote this order was made from, when it was (the quote shows its order the other way, in `converted_order_id`). */
     sourceQuoteId: uuid('source_quote_id').references((): AnyPgColumn => salesQuotes.id, { onDelete: 'set null' }),
     /** 'none' until approvals apply; 'pending'/'rejected'/'draft' block the order from moving on. */

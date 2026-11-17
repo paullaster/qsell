@@ -573,6 +573,18 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'Take a sales order for a customer, with products and packages, and see the customer\'s credit position',
   },
+  'credit_sales:read': {
+    resource: 'credit_sales',
+    action: 'read',
+    category: 'Orders & Sales',
+    description: 'See the credit sales: sales to a customer\'s account, invoiced at once',
+  },
+  'credit_sales:create': {
+    resource: 'credit_sales',
+    action: 'create',
+    category: 'Orders & Sales',
+    description: 'Make a sale to a customer\'s account, with the credit limit, credit days and approval of the company\'s settings',
+  },
   'sales_invoices:read': {
     resource: 'sales_invoices',
     action: 'read',

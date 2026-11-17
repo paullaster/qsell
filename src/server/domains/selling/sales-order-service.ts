@@ -42,7 +42,7 @@ export interface SalesOrderRow {
 const text = (value: string | null | undefined, fallback: string): string => (value === null || value === undefined || value.trim() === '' ? fallback : value.trim());
 
 /** The kinds of document this service places: an order for later, or a sale invoiced directly. Each behaves by the company's settings for its kind. */
-export type PlacedKind = 'sales_order' | 'sales_invoice';
+export type PlacedKind = 'sales_order' | 'sales_invoice' | 'credit_sale';
 
 /** Sales orders taken by staff: placing one (through the order writer, with the company's settings for the kind), the customer's credit position, and the list. */
 export class SalesOrderService {
@@ -99,8 +99,9 @@ export class SalesOrderService {
       }),
       currency: 'KES',
       // How they are expected to pay is a label: money is received by receipt, and a customer's credit comes from their account, not from this.
-      paymentMethod: input.paymentMethod,
-      salesModule: kind,
+      paymentMethod: kind === 'credit_sale' ? 'on_account' : input.paymentMethod,
+      // A credit sale is an order on account, which the writer turns into a credit sale; the staff channel is still named so staff rules apply.
+      salesModule: kind === 'credit_sale' ? 'sales_order' : kind,
       requestedBy: who.userId,
       selling,
       holdUntilPaid: input.holdUntilPaid,
@@ -111,7 +112,7 @@ export class SalesOrderService {
   }
 
   /** The sales orders staff took, newest first (the next page begins at `cursor`), narrowed by words or by status. */
-  async page(companyId: string, input: { query?: string; status?: string; cursor?: string | null }): Promise<{ rows: SalesOrderRow[]; nextCursor: string | null }> {
+  async page(companyId: string, input: { query?: string; status?: string; cursor?: string | null }, kind: 'sales_order' | 'credit_sale' = 'sales_order'): Promise<{ rows: SalesOrderRow[]; nextCursor: string | null }> {
     const query = (input.query ?? '').trim().slice(0, 100);
     const after = typeof input.cursor === 'string' && input.cursor !== '' ? decodeCursor(input.cursor) : null;
     const pattern = `%${escapeLike(query)}%`;
@@ -130,7 +131,7 @@ export class SalesOrderService {
       .from(orders)
       .where(
         and(
-          eq(orders.salesModule, 'sales_order'),
+          eq(orders.salesModule, kind),
           input.status === undefined || input.status === '' ? undefined : eq(orders.status, input.status),
           query === '' ? undefined : sql`(${orders.orderNumber} ILIKE ${pattern} OR ${orders.customerName} ILIKE ${pattern})`,
           after === null ? undefined : sql`(${orders.createdAt}, ${orders.id}) < (${after.k}::timestamptz, ${after.id})`,

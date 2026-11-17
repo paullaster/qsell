@@ -29,6 +29,8 @@ export interface SellingSettings {
   approval: (typeof APPROVAL_RULES)[number];
   invoice: (typeof INVOICE_TIMINGS)[number];
   discounts: (typeof DISCOUNT_RULES)[number];
+  /** When the invoice is made with the document but approval held it, make it automatically once it is approved (otherwise staff raise it). */
+  invoiceAfterApproval: boolean;
   /** Staff may switch "Hold until paid" on for one document, whatever the type's stock release says. */
   allowHoldUntilPaid: boolean;
 }
@@ -98,7 +100,7 @@ export interface SellingTypeDef {
   limits: Partial<Record<EnumSetting, readonly string[]>>;
 }
 
-const base: SellingSettings = { creditCheck: 'limit', overdueDays: 30, noAccount: 'allow', overLimit: 'hold', creditDays: 'customer', fixedDays: 30, stockRelease: 'on_delivery', approval: 'workflow', invoice: 'later', discounts: 'allowed', allowHoldUntilPaid: true };
+const base: SellingSettings = { creditCheck: 'limit', overdueDays: 30, noAccount: 'allow', overLimit: 'hold', creditDays: 'customer', fixedDays: 30, stockRelease: 'on_delivery', approval: 'workflow', invoice: 'later', discounts: 'allowed', invoiceAfterApproval: true, allowHoldUntilPaid: true };
 
 export const SELLING_TYPE_DEFS: readonly SellingTypeDef[] = [
   { type: 'sales_order', label: 'Sales orders', description: 'An order staff take for later collection or delivery.', defaults: base, limits: {} },
@@ -132,6 +134,7 @@ export function readSellingSettings(type: SellingType, raw: unknown): SellingSet
   }
   out.overdueDays = days(raw.overdueDays) ?? defaults.overdueDays;
   out.fixedDays = days(raw.fixedDays) ?? defaults.fixedDays;
+  out.invoiceAfterApproval = typeof raw.invoiceAfterApproval === 'boolean' ? raw.invoiceAfterApproval : defaults.invoiceAfterApproval;
   out.allowHoldUntilPaid = typeof raw.allowHoldUntilPaid === 'boolean' && defOf(type).defaults.allowHoldUntilPaid ? raw.allowHoldUntilPaid : defaults.allowHoldUntilPaid;
   return out;
 }
@@ -155,6 +158,8 @@ export function checkSellingInput(type: SellingType, raw: unknown): CheckedSetti
   if (fixed === null) return { ok: false, error: 'The fixed credit days must be a whole number from 0 to 365.' };
   out.overdueDays = overdue;
   out.fixedDays = fixed;
+  if (typeof raw.invoiceAfterApproval !== 'boolean') return { ok: false, error: 'Say whether the invoice is made automatically once the document is approved.' };
+  out.invoiceAfterApproval = raw.invoiceAfterApproval;
   if (typeof raw.allowHoldUntilPaid !== 'boolean') return { ok: false, error: 'Say whether staff may hold a document until it is paid.' };
   if (raw.allowHoldUntilPaid && !defOf(type).defaults.allowHoldUntilPaid) return { ok: false, error: `${defOf(type).label} cannot be held until paid.` };
   out.allowHoldUntilPaid = raw.allowHoldUntilPaid;

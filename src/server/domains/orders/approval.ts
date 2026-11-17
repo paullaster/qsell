@@ -48,11 +48,20 @@ export function orderApprovalHandler(db: DrizzleDb): DocumentHandler {
     onReleased: async (orderId, tx) => {
       await setStatus('approved', 'approval_approved', 'succeeded')(orderId, tx);
       // Stock that was to leave when the document was issued (or when it is paid, and it has been) leaves now that it is approved.
-      const [o] = await tx.select({ release: orders.stockRelease, payment: orders.paymentStatus }).from(orders).where(eq(orders.id, orderId)).limit(1);
+      const [o] = await tx.select({ release: orders.stockRelease, payment: orders.paymentStatus, invoice: orders.invoiceWhenApproved }).from(orders).where(eq(orders.id, orderId)).limit(1);
       if (o?.release === 'on_issue' || (o?.release === 'on_payment' && o.payment === 'paid')) {
         afterCommit(tx, async () => {
           const { InventoryReservationService } = await import('@/server/domains/inventory/reservation-service');
           await InventoryReservationService.fulfilOrder(orderId);
+        });
+      }
+      // A document whose invoice is made with it, held by approval, gets its tax invoice now that it is approved (when the company chose that).
+      if (o?.invoice === true) {
+        afterCommit(tx, async () => {
+          const { getContainer } = await import('@/server/di/container');
+          const { invoices } = getContainer();
+          if ((await invoices.listForOrder(orderId)).some((i) => i.documentType === 'tax_invoice')) return;
+          await invoices.generatePdf(orderId, 'tax_invoice');
         });
       }
     },
