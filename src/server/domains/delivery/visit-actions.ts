@@ -33,8 +33,17 @@ export async function visitsPageAction(raw?: unknown) {
   });
 }
 
+/** The customer is told now rather than at the next sweep; a failure to send never fails the change. */
+function tellCustomer(): void {
+  void getContainer().deliveryMessages.flush(5).catch((e: unknown) => console.error('[visits.messages] flush', e));
+}
+
 export async function bookVisitAction(raw: unknown) {
-  return await runDelivery('visits:manage', async (ctx) => dataOf(await getContainer().orderVisits.book(await actorOf(ctx), objectOf(raw))), PATHS);
+  return await runDelivery('visits:manage', async (ctx) => {
+    const done = dataOf(await getContainer().orderVisits.book(await actorOf(ctx), objectOf(raw)));
+    tellCustomer();
+    return done;
+  }, PATHS);
 }
 
 export async function assignCrewAction(raw: unknown) {
@@ -47,14 +56,18 @@ export async function assignCrewAction(raw: unknown) {
 export async function moveVisitAction(raw: unknown) {
   return await runDelivery('visits:manage', async (ctx) => {
     const i = objectOf(raw);
-    return dataOf(await getContainer().orderVisits.reschedule(await actorOf(ctx), idOf(i.id, 'visit'), { startsAt: i.startsAt, endsAt: i.endsAt, reason: i.reason, expectedVersion: i.expectedVersion }));
+    const done = dataOf(await getContainer().orderVisits.reschedule(await actorOf(ctx), idOf(i.id, 'visit'), { startsAt: i.startsAt, endsAt: i.endsAt, reason: i.reason, expectedVersion: i.expectedVersion }));
+    tellCustomer();
+    return done;
   }, PATHS);
 }
 
 export async function cancelVisitAction(raw: unknown) {
   return await runDelivery('visits:manage', async (ctx) => {
     const i = objectOf(raw);
-    return dataOf(await getContainer().orderVisits.cancel(await actorOf(ctx), idOf(i.id, 'visit'), { reason: i.reason, expectedVersion: i.expectedVersion }));
+    const done = dataOf(await getContainer().orderVisits.cancel(await actorOf(ctx), idOf(i.id, 'visit'), { reason: i.reason, expectedVersion: i.expectedVersion }));
+    tellCustomer();
+    return done;
   }, PATHS);
 }
 

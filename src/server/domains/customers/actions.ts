@@ -12,6 +12,7 @@ import { ownsOrder, readAddress, toCustomerOrder, type CustomerOrder, type Order
 import { CUSTOMER_STATUS_WORDS, HEADLINE, collectionWords } from '@/lib/tracking-view';
 import { customerVisitWords, type CustomerVisitState } from '@/lib/visit-customer';
 import { resolvePublicBaseUrl } from '@/server/domains/auth/account-service';
+import { DEFAULT_BUSINESS_TIMEZONE } from '@/server/kernel/numbering/business-date';
 
 function mapAddress(row: CustomerAddressRow): CustomerAddress {
   return {
@@ -395,6 +396,8 @@ export interface MyVisit {
   words: string;
   startsAt: string;
   endsAt: string;
+  /** The business's timezone, in which the day and hours are written (the shop's, not the server's or the browser's). */
+  timeZone: string;
   address: string;
 }
 
@@ -408,7 +411,7 @@ export async function myOrderVisitsAction(id: string): Promise<AccountResult<MyV
     if (!order || !ownsOrder(order, mine.owner)) return { ok: false, error: 'This order was not found.', code: 'ORDER_NOT_FOUND' };
     const company = await c.companySettings.ensureSeeded();
     const visits = await c.orderVisits.forCustomer(company.id, order.id);
-    return { ok: true, data: visits.map((v) => ({ ...customerVisitWords(v.status), startsAt: v.startsAt, endsAt: v.endsAt, address: v.address })) };
+    return { ok: true, data: visits.map((v) => ({ ...customerVisitWords(v.status), startsAt: v.startsAt, endsAt: v.endsAt, timeZone: DEFAULT_BUSINESS_TIMEZONE, address: v.address })) };
   } catch (error) {
     console.error('[storefront] my order visits', error);
     return { ok: false, error: 'The visit could not be checked just now.' };

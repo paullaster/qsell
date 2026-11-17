@@ -9,6 +9,8 @@ import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { decodeCursor, encodeCursor } from '@/server/domains/lookups/request';
 import type { DocRefusal, DocResult } from './documents';
 import { VISIT_ORDER_CLOSED_REASON, orderReadinessProblem } from './order-readiness';
+import { visitMessageKey } from '@/lib/delivery-messages';
+import type { DeliveryMessages } from './messages';
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
@@ -103,6 +105,8 @@ export class OrderVisits {
     private readonly decisions: DecisionLog,
     private readonly ledger: StockLedger,
     private readonly clock: () => Date = () => new Date(),
+    /** Tells the customer by mail when a visit is booked, moved or cancelled; none in a test that does not need it. */
+    private readonly messages: Pick<DeliveryMessages, 'enqueueIn'> | null = null,
   ) {}
 
   private async run<T>(work: (tx: Tx) => Promise<DocResult<T>>): Promise<DocResult<T>> {
@@ -271,6 +275,7 @@ export class OrderVisits {
       if (crew !== null) await tx.insert(orderVisitCrew).values(crew.ids.map((userId) => ({ visitId: made.id, userId, name: names.get(userId) ?? '' })));
       await this.note(tx, actor, orderId, made.id, 'booked', { startsAt: window.start.toISOString(), endsAt: window.end.toISOString(), crew: crew?.ids ?? [] });
       if (crew !== null) await this.dispatched(tx, actor, orderId, made.id);
+      await this.messages?.enqueueIn(tx, { companyId: actor.companyId, orderId, deliveryId: null, kind: 'visit_booked', key: visitMessageKey(made.id, 'visit_booked', 1) });
       const [view] = await this.viewsIn(tx, actor.companyId, eq(orderVisits.id, made.id), 1, actor);
       if (view === undefined) throw new Error('The visit vanished.');
       return { ok: true, data: view };
@@ -307,6 +312,7 @@ export class OrderVisits {
       const row = await this.locked(tx, actor, id, 'reschedule', input.expectedVersion);
       await tx.update(orderVisits).set({ startsAt: window.start, endsAt: window.end, version: row.version + 1, updatedAt: this.clock() }).where(eq(orderVisits.id, id));
       await this.note(tx, actor, row.orderId, id, 'moved', { from: row.startsAt.toISOString(), startsAt: window.start.toISOString(), endsAt: window.end.toISOString() }, String(input.reason).trim());
+      await this.messages?.enqueueIn(tx, { companyId: actor.companyId, orderId: row.orderId, deliveryId: null, kind: 'visit_moved', key: visitMessageKey(id, 'visit_moved', row.version + 1) });
       return await this.reloaded(tx, actor, id);
     });
   }
@@ -403,6 +409,7 @@ export class OrderVisits {
       // A crew had been sent: that is a delivery that did not happen, with its reason, on the order's timeline.
       if (row.status !== 'scheduled') await OrderStages.moveIn(tx, row.orderId, 'delivery_failed', 'failed', { actor: { type: 'user', id: actor.userId }, reasonCode: 'visit_cancelled', message: `The visit was cancelled: ${reason}`, ref: { type: 'visit', id }, detail: { method: 'scheduled_visit' } });
       await this.note(tx, actor, row.orderId, id, 'cancelled', {}, reason);
+      await this.messages?.enqueueIn(tx, { companyId: actor.companyId, orderId: row.orderId, deliveryId: null, kind: 'visit_cancelled', key: visitMessageKey(id, 'visit_cancelled', row.version + 1) });
       return await this.reloaded(tx, actor, id);
     });
   }

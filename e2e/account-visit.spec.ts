@@ -11,6 +11,8 @@ test.describe('a visit booked for the customer, on their own order page', () => 
     const shopper = makeShopper(attemptTag(testInfo.project.name, testInfo.retry), 1);
     const orderNumber = shopper.numbers[0] ?? '';
     deliveryTool('book-visit', orderNumber);
+    // The customer was told it is booked.
+    expect(deliveryTool('messages', orderNumber).list).toMatch(/visit_booked:/);
     await signInAsShopper(page, shopper);
     await page.goto('/profile/orders');
     const mine = page.getByRole('list', { name: 'Your orders' });
@@ -37,5 +39,7 @@ test.describe('a visit booked for the customer, on their own order page', () => 
     deliveryTool('close-closed', 'x');
     await page.reload();
     await expect(page.getByRole('region', { name: 'Your visit' })).toContainText('Cancelled.', { timeout: 60_000 });
+    // The order's own cancellation is what the customer is told; the visit is closed with it quietly.
+    expect(deliveryTool('messages', orderNumber).list).not.toMatch(/visit_cancelled:/);
   });
 });

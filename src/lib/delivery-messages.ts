@@ -1,8 +1,19 @@
 import type { DeliveryAction } from './delivery-document';
 
 /** The messages a customer gets as their delivery moves. Pure: the words and the rules; the sending is the server's. */
-export const MESSAGE_KINDS = ['out_for_delivery', 'delivered', 'part_delivered', 'attempt_failed', 'returned', 'slot_not_kept', 'ready_for_collection', 'collection_reminder'] as const;
+export const MESSAGE_KINDS = ['out_for_delivery', 'delivered', 'part_delivered', 'attempt_failed', 'returned', 'slot_not_kept', 'ready_for_collection', 'collection_reminder', 'visit_booked', 'visit_moved', 'visit_cancelled'] as const;
 export type MessageKind = (typeof MESSAGE_KINDS)[number];
+/** The messages about a visit (an installation or site job). Mail only: they are not offered as text messages. */
+export const VISIT_MESSAGE_KINDS = ['visit_booked', 'visit_moved', 'visit_cancelled'] as const;
+export type VisitMessageKind = (typeof VISIT_MESSAGE_KINDS)[number];
+export const isVisitMessageKind = (value: unknown): value is VisitMessageKind => typeof value === 'string' && (VISIT_MESSAGE_KINDS as readonly string[]).includes(value);
+
+/** One message for one change to one visit: the visit's version at the change is part of the key, so a retry is the same message and a second move is a new one. */
+export const visitMessageKey = (visitId: string, kind: VisitMessageKind, version: number): string => `${visitId}:${kind}:${String(version)}`;
+
+/** The visit a message key is about, or null when it is not a visit message's key. */
+export const visitOfMessageKey = (key: string): string | null => /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):visit_(?:booked|moved|cancelled):\d+(?::sms)?$/.exec(key)?.[1] ?? null;
+
 export const isMessageKind = (value: unknown): value is MessageKind => typeof value === 'string' && (MESSAGE_KINDS as readonly string[]).includes(value);
 
 /** Which message, if any, a delivery step sends. `whole` is whether the order is now delivered in full, for a delivery that arrived. */
@@ -14,7 +25,7 @@ export function kindForStep(action: DeliveryAction, whole: boolean): MessageKind
 const SENT_BY_STEP: Partial<Record<DeliveryAction, MessageKind>> = { dispatch: 'out_for_delivery', fail_attempt: 'attempt_failed', return: 'returned' };
 
 /** What each message is, for the shop's own list of what was sent. */
-export const KIND_WORDS: Record<MessageKind, string> = { out_for_delivery: 'On its way', delivered: 'Delivered', part_delivered: 'Part delivered', attempt_failed: 'Could not deliver', returned: 'Coming back to us', slot_not_kept: 'Chosen time not kept', ready_for_collection: 'Ready to collect', collection_reminder: 'Still waiting to be collected' };
+export const KIND_WORDS: Record<MessageKind, string> = { out_for_delivery: 'On its way', delivered: 'Delivered', part_delivered: 'Part delivered', attempt_failed: 'Could not deliver', returned: 'Coming back to us', slot_not_kept: 'Chosen time not kept', ready_for_collection: 'Ready to collect', collection_reminder: 'Still waiting to be collected', visit_booked: 'Visit booked', visit_moved: 'Visit moved', visit_cancelled: 'Visit cancelled' };
 
 /** One message for one thing that happened, however often the step is retried: the same key is the same message. */
 export const messageKey = (deliveryId: string, kind: MessageKind, attempt: number): string => `${deliveryId}:${kind}:${String(attempt)}`;
@@ -47,6 +58,8 @@ export interface MessageFacts {
   /** How many tries are left, when a delivery failed and can be tried again. */
   triesLeft: number | null;
   /** For an order collected from a branch: where, and the code to show at the counter (as the customer reads it). Null for a delivery. */
+  /** For a visit: the day and hours, in the business's time, written out. */
+  visit?: { window: string } | null;
   collection: { branchName: string; code: string; /** True when this is a new code sent after the first one, so the old one no longer works. */ renewed?: boolean; /** For the reminder: whole days the order has been waiting. */ waitingDays?: number; /** The last reminder we send. */ lastReminder?: boolean } | null;
 }
 
@@ -116,6 +129,12 @@ export function messageContent(kind: MessageKind, f: MessageFacts): MessageConte
         cta: 'See my order',
       };
     }
+    case 'visit_booked':
+      return { subject: `Your visit for order ${f.orderNumber} is booked · ${store}`, heading: 'Your visit is booked', greeting, body: `We have booked a visit for your order${f.visit == null ? '' : ` on ${f.visit.window}`}. We will assign the crew before then. If the time does not suit you, please contact us.`, details: f.visit == null ? [['Order', f.orderNumber]] : [['Order', f.orderNumber], ['When', f.visit.window]], cta: 'See my order' };
+    case 'visit_moved':
+      return { subject: `Your visit for order ${f.orderNumber} has moved · ${store}`, heading: 'Your visit has moved', greeting, body: `The visit for your order has moved${f.visit == null ? '' : ` to ${f.visit.window}`}. If the new time does not suit you, please contact us.`, details: f.visit == null ? [['Order', f.orderNumber]] : [['Order', f.orderNumber], ['New time', f.visit.window]], cta: 'See my order' };
+    case 'visit_cancelled':
+      return { subject: `Your visit for order ${f.orderNumber} was cancelled · ${store}`, heading: 'Your visit was cancelled', greeting, body: `The visit for your order${f.visit == null ? '' : ` on ${f.visit.window}`} was cancelled. Please contact us if you would like another time.`, details: f.visit == null ? [['Order', f.orderNumber]] : [['Order', f.orderNumber], ['Was', f.visit.window]], cta: 'See my order' };
     case 'returned':
       return { subject: `Your order ${f.orderNumber} is coming back to us · ${store}`, heading: 'We could not deliver, and it is coming back to us', greeting, body: 'We were not able to deliver your order and it is being returned to us. Please contact us so we can arrange another delivery or put it right.', details: base, cta: 'See my delivery' };
   }
@@ -176,6 +195,12 @@ export function textContent(kind: MessageKind, f: MessageFacts): string {
         return `${hello} we could not deliver your ${shop}${order} and it is coming back to us. ${link}`;
       case 'slot_not_kept':
         return `${hello} we could not keep the delivery time you chose for your ${shop}${order}. We will agree another time with you. ${link}`;
+      case 'visit_booked':
+        return `${hello} a visit is booked for your ${shop}${order}${f.visit == null ? '' : ` on ${f.visit.window}`}. ${link}`;
+      case 'visit_moved':
+        return `${hello} the visit for your ${shop}${order} has moved${f.visit == null ? '' : ` to ${f.visit.window}`}. ${link}`;
+      case 'visit_cancelled':
+        return `${hello} the visit for your ${shop}${order}${f.visit == null ? '' : ` on ${f.visit.window}`} was cancelled. ${link}`;
     }
   };
   const named = (name: string): string => (name === '' ? '' : `${name} `);

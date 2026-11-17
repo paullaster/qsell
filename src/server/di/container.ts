@@ -735,7 +735,7 @@ export function getContainer(): AppContainer {
     deliveryPerformance: new DeliveryPerformanceReports(drizzleDb),
     riderPay: new RiderPay(drizzleDb),
     riderPins: new RiderPins(drizzleDb, decisionLog, deliveryServices.deliveryRiders),
-    orderVisits: new OrderVisits(drizzleDb, decisionLog, stockLedger),
+    orderVisits: new OrderVisits(drizzleDb, decisionLog, stockLedger, undefined, deliveryServices.deliveryMessages),
     deliverySlots: deliveryServices.deliverySlots,
     deliverySla: new DeliverySla(drizzleDb, decisionLog, undefined, deliveryPush, deliverySlaTexts),
     deliverySlaNotices: new DeliverySlaNotices(drizzleDb, email, companySettings),
