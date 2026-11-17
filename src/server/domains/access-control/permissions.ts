@@ -609,6 +609,12 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'Ring up a counter sale in your own open shift, take the payment and give the receipt',
   },
+  'cash_sales:return': {
+    resource: 'cash_sales',
+    action: 'return',
+    category: 'Orders & Sales',
+    description: 'Take goods back from a counter sale: a credit note, the goods back into stock and the money handed back',
+  },
   'shifts:open': {
     resource: 'shifts',
     action: 'open',

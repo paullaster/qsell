@@ -93,7 +93,7 @@ describe.skipIf(url === undefined || url === '')('counter sales (database)', () 
     expect(sold.sale.receiptNumber).toMatch(/^RCT-/);
     expect(sold.sale.tenders).toEqual([expect.objectContaining({ kind: 'cash', applied: 200, handedOver: 500 })]);
     const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, sold.sale.orderId));
-    expect(order).toMatchObject({ salesModule: 'pos_cash_sale', paymentStatus: 'paid', shiftId, paymentMethod: 'counter' });
+    expect(order).toMatchObject({ salesModule: 'pos_cash_sale', paymentStatus: 'paid', shiftId, paymentMethod: 'counter', tradeCustomerId: await c.cashSales.walkIn(companyId) });
     expect(await stockOf(product)).toEqual({ stock: 98, reserved: 0 });
     const report = await c.shifts.report(companyId, shiftId);
     expect(report).toMatchObject({ cashSales: 200, expectedCash: 1200, takings: { count: 1, cash: 200, mobileMoney: 0, card: 0 } });

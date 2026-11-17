@@ -61,10 +61,12 @@ export interface ShiftFigures {
   paidOut: number;
   /** Cash taken for sales in the shift (from the cash sales recorded against it). */
   cashSales: number;
+  /** Cash handed back to customers at the till for returned sales (left out where there are none). */
+  cashRefunds?: number;
 }
 
-/** What the till should hold now: the float, plus cash sales and cash put in, less cash taken out. */
-export const expectedCash = (f: ShiftFigures): number => round2(f.openingFloat + f.cashSales + f.paidIn - f.paidOut);
+/** What the till should hold now: the float, plus cash sales and cash put in, less cash taken out and cash refunded to customers. */
+export const expectedCash = (f: ShiftFigures): number => round2(f.openingFloat + f.cashSales + f.paidIn - f.paidOut - (f.cashRefunds ?? 0));
 
 /** The difference at the close: what was counted less what the till should hold (negative is short). */
 export const varianceOf = (declared: number, expected: number): number => round2(declared - expected);

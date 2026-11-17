@@ -3,10 +3,11 @@
 import { Suspense, use, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Package, Trash2 } from 'lucide-react';
-import { cashSaleReceiptAction, cashSalesMoreAction, cashSalePackageBuilderAction, cashSalesScreenAction, completeCashSaleAction, priceCashSaleAction, type CashSalesScreen, type SaleRow } from '@/server/domains/selling/cash-sales/cash-sale-actions';
+import { finishReturnAction, cashSaleReceiptAction, cashSalesMoreAction, cashSalePackageBuilderAction, cashSalesScreenAction, completeCashSaleAction, priceCashSaleAction, type CashSalesScreen, type SaleRow } from '@/server/domains/selling/cash-sales/cash-sale-actions';
 import type { SaleSummary } from '@/server/domains/selling/cash-sales/cash-sale-service';
 import { planTenders, type TenderKind } from '@/server/domains/selling/cash-sales/tender-rules';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { ReturnPanel } from './ReturnPanel';
 import { Chip, Field, LoadFailed, PageHeader, PageSkeleton, buttonClass, cardClass, fieldClass, primaryClass } from '@/components/ui/screen-kit';
 import { useDebouncedValue } from '@/components/ui/useDebouncedValue';
 import { QuotePackageDialog, type ChosenPackage, type PackageDialogSource } from '@/components/admin/quotes/QuotePackageDialog';
@@ -69,6 +70,8 @@ function Counter({ initial }: { initial: CashSalesScreen }) {
   const [problem, setProblem] = useState<string | null>(null);
   const [unfinished, setUnfinished] = useState(false);
   const [receipt, setReceipt] = useState<SaleSummary | null>(null);
+  const [returning, setReturning] = useState<string | null>(null);
+  const [finishNotice, setFinishNotice] = useState<string | null>(null);
 
   const payload = { customerId: customer?.id ?? '', lines: lines.map((l) => ({ productId: l.productId, quantity: Number(l.quantity), ...(l.package === undefined ? {} : { package: { picks: l.package.picks, note: l.package.note } }) })) };
   const ready = lines.length > 0 && lines.every((l) => Number(l.quantity) > 0);
@@ -124,6 +127,11 @@ function Counter({ initial }: { initial: CashSalesScreen }) {
       setProblem(r.error);
       setUnfinished(r.unfinished !== undefined);
     }
+  };
+  const finishReturn = async (returnId: string) => {
+    const r = await finishReturnAction(returnId);
+    setFinishNotice(r.ok ? (r.data.next ?? `Return ${r.data.creditNoteNo} is finished.`) : r.error);
+    await reload();
   };
   const showReceipt = async (orderId: string) => {
     const r = await cashSaleReceiptAction(orderId);
@@ -196,7 +204,10 @@ function Counter({ initial }: { initial: CashSalesScreen }) {
         </section>
       ) : null}
       {canSell && choosing ? <QuotePackageDialog money={money} from={PACKAGES} onClose={() => setChoosing(false)} onChosen={(chosen) => { setLines((current) => [...current, { key: nextKey(), productId: chosen.productId, name: chosen.summary, quantity: String(chosen.servings), package: { picks: chosen.picks, note: chosen.note } }]); setChoosing(false); }} /> : null}
-      <Sales key={version} data={data} onReceipt={(id) => void showReceipt(id)} />
+      {returning === null ? null : <ReturnPanel key={returning} orderId={returning} onClose={() => setReturning(null)} onChanged={reload} />}
+      {finishNotice === null ? null : <p role="status" className="rounded-lg border border-line p-3 text-sm" data-testid="finish-notice">{finishNotice}</p>}
+      <ToFinish data={data} onFinish={(id) => void finishReturn(id)} />
+      <Sales key={version} data={data} onReceipt={(id) => void showReceipt(id)} onReturn={data.can.return ? setReturning : undefined} />
     </>
   );
 }
@@ -252,7 +263,17 @@ function Receipt({ sale, onClose }: { sale: SaleSummary; onClose: () => void }) 
   );
 }
 
-function Sales({ data, onReceipt }: { data: CashSalesScreen; onReceipt: (orderId: string) => void }) {
+function ToFinish({ data, onFinish }: { data: CashSalesScreen; onFinish: (returnId: string) => void }) {
+  if (data.returns.length === 0) return null;
+  return (
+    <section className="space-y-2 print:hidden" aria-label="Returns to finish" data-testid="returns-to-finish">
+      <h2 className="text-sm font-bold tracking-wider text-fg-subtle uppercase">Returns to finish</h2>
+      <ul className="space-y-1 text-sm">{data.returns.map((r) => <li key={r.returnId}>{r.orderNumber} · {money(r.amount)} · {r.status === 'refund_pending' ? 'refund waiting for approval' : 'refund to be paid'} <button type="button" className={buttonClass} aria-label={`Finish the return of ${r.orderNumber}`} onClick={() => onFinish(r.returnId)}>Finish</button></li>)}</ul>
+    </section>
+  );
+}
+
+function Sales({ data, onReceipt, onReturn }: { data: CashSalesScreen; onReceipt: (orderId: string) => void; onReturn?: (orderId: string) => void }) {
   const [rows, setRows] = useState<SaleRow[]>(data.sales.rows);
   const [next, setNext] = useState(data.sales.next);
   const [more, setMore] = useState(false);
@@ -281,6 +302,7 @@ function Sales({ data, onReceipt }: { data: CashSalesScreen; onReceipt: (orderId
               <div className="flex items-center gap-2">
                 {r.paid ? null : <Chip tone="red">Payment not recorded</Chip>}
                 <button type="button" className={buttonClass} aria-label={`Receipt for ${r.receiptNumber ?? r.orderNumber}`} onClick={() => onReceipt(r.orderId)}>Receipt</button>
+                {onReturn === undefined || !r.paid ? null : <button type="button" className={buttonClass} aria-label={`Return goods from ${r.receiptNumber ?? r.orderNumber}`} onClick={() => onReturn(r.orderId)}>Return</button>}
               </div>
             </li>
           ))}

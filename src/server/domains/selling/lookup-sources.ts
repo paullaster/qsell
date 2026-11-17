@@ -125,4 +125,20 @@ const counterMethods = tableSource({
   toOption: (row) => ({ id: String(row.id), label: String(row.label), description: COUNTER_KIND_WORDS[String(row.kind)] ?? null, badge: null, meta: { kind: String(row.kind), requiresReference: row.requiresReference === true ? 'yes' : 'no' } }),
 });
 
-export const SELLING_LOOKUP_SOURCES: LookupSource[] = [options, counterMethods, ...pickers('sales-order', 'sales_orders:create'), ...pickers('sales-invoice', 'sales_invoices:create'), ...pickers('cash-sale', 'cash_sales:create'), ...pickers('credit-sale', 'credit_sales:create'), invoiceableOrders];
+/** The ways a customer can be paid back at the till: cash (handed over from the shift) or M-Pesa to a number, behind the permission to take returns. */
+const counterRefundMethods = tableSource({
+  key: 'counter-refund-methods',
+  permission: 'cash_sales:return',
+  table: paymentMethods,
+  id: paymentMethods.id,
+  label: paymentMethods.name,
+  searchColumns: [paymentMethods.name, paymentMethods.code],
+  select: { kind: paymentMethods.kind },
+  scope: ({ companyId, filters }) => {
+    acceptFilters(filters, {});
+    return [eq(paymentMethods.companyId, companyId), eq(paymentMethods.enabled, true), sql`${paymentMethods.kind} IN ('cash', 'mobile_money')`, sql`${paymentMethods.usableFor} @> '["customer_refund"]'::jsonb`, sql`${paymentMethods.refundDestination} <> 'none'`];
+  },
+  toOption: (row) => ({ id: String(row.id), label: String(row.label), description: COUNTER_KIND_WORDS[String(row.kind)] ?? null, badge: null, meta: { kind: String(row.kind) } }),
+});
+
+export const SELLING_LOOKUP_SOURCES: LookupSource[] = [options, counterMethods, counterRefundMethods, ...pickers('sales-order', 'sales_orders:create'), ...pickers('sales-invoice', 'sales_invoices:create'), ...pickers('cash-sale', 'cash_sales:create'), ...pickers('credit-sale', 'credit_sales:create'), invoiceableOrders];

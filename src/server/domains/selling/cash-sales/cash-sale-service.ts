@@ -34,6 +34,8 @@ export interface SaleSummary {
 
 export type CashSaleResult = { ok: true; sale: SaleSummary } | { ok: false; error: string; /** The sale was rung up but its payment was not recorded: it can be finished with the same key. */ unfinished?: { orderId: string; orderNumber: string } };
 
+/** The walk-in customer's address: nobody's, so no mail can reach anyone, and the order writer finds this record (it looks customers up by address) instead of making another. */
+export const WALK_IN_EMAIL = 'walk-in@walk-in.invalid';
 const TENDER_ORDER: TenderKind[] = ['mobile_money', 'card', 'cash'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const duplicate = (error: unknown): boolean => `${error instanceof Error ? error.message : ''} ${String((error as { cause?: unknown }).cause)}`.includes('duplicate key');
@@ -60,7 +62,7 @@ export class CashSaleService {
     if (existing !== undefined) return existing;
     const { customers: master } = await this.lazy();
     try {
-      const made = await master.saveCustomer(companyId, { name: 'Walk-in customer', accountType: 'cash', creditLimit: 0, paymentTermDays: 0, transmitInvoicesToKra: true } as never);
+      const made = await master.saveCustomer(companyId, { name: 'Walk-in customer', email: WALK_IN_EMAIL, accountType: 'cash', creditLimit: 0, paymentTermDays: 0, transmitInvoicesToKra: true } as never);
       await this.db.update(customers).set({ isWalkIn: true }).where(eq(customers.id, made.id));
       return made.id;
     } catch (error) {

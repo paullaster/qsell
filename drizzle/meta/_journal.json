@@ -1338,6 +1338,13 @@
       "when": 1794929830956,
       "tag": "0190_cash_sales",
       "breakpoints": true
+    },
+    {
+      "idx": 191,
+      "version": "7",
+      "when": 1794943949723,
+      "tag": "0191_counter_returns",
+      "breakpoints": true
     }
   ]
 }

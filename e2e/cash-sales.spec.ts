@@ -85,12 +85,31 @@ test.describe('cash sales at the counter', () => {
     await receipt.getByRole('button', { name: 'New sale' }).click();
     await expect(page.getByTestId('sale-empty')).toBeVisible();
 
+    // A return: one of the two comes back, goes back into stock, and the cash is handed back from the shift.
+    await page.getByTestId('sale-row').first().getByRole('button', { name: /Return goods from/ }).click();
+    const panel = page.getByTestId('return-panel');
+    await expect(panel.getByTestId('return-line')).toHaveCount(1, { timeout: 60_000 });
+    await panel.getByLabel(/Quantity of .* returned/).fill('1');
+    await pick(page, panel.getByRole('combobox', { name: /Why/ }), '');
+    await pick(page, panel.getByRole('combobox', { name: /Pay the customer back by/ }), 'E2E Cash');
+    await expect(panel.getByTestId('return-total')).toContainText('KES');
+    await noNativeSelect(page);
+    await noHorizontalScroll(page);
+    await noInnerHorizontalScroll(page);
+    await panel.getByRole('button', { name: 'Return and refund' }).click();
+    const done = page.getByTestId('return-result');
+    await expect(done).toContainText('credited', { timeout: 60_000 });
+    await expect(done).toContainText('goods back in stock');
+    await expect(done).toContainText('handed back');
+    await done.getByRole('button', { name: 'Done' }).click();
+
     // The shift's X report shows the cash taken; close it counting exactly what the till should hold.
     await gotoAdmin(page, '/admin/shifts', 'Shifts');
     const x = page.getByTestId('x-report');
     await expect(x).toContainText('Cash sales', { timeout: 60_000 });
     const shouldHold = amountOf((await x.innerText()).split('The till should hold')[1] ?? '');
-    expect(shouldHold).toBeCloseTo(5000 + total, 1);
+    expect(shouldHold).toBeLessThan(5000 + total);
+    await expect(x).toContainText('Cash handed back for returns');
     const close = page.getByRole('form', { name: 'Close the shift' });
     await close.getByText('I only have a total').click();
     await close.getByLabel('Total counted (KES)').fill(String(shouldHold));

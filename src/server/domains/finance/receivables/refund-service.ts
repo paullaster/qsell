@@ -71,6 +71,8 @@ export interface RefundInput {
   idempotencyKey?: string | null;
   /** Whether the person asking may send money somewhere other than the customer's own details. */
   mayChangeDestination?: boolean;
+  /** The customer is one record many different buyers share (the counter's walk-in customer): the same amount twice, and per-customer limits, say nothing about one person, so they are not applied. Limits per requester and per destination still are. */
+  sharedCustomer?: boolean;
 }
 
 export interface PayoutInput {
@@ -254,19 +256,19 @@ export class RefundService {
         throw new FinanceError('DESTINATION_CHANGED', 'That is not the phone number on this customer\'s record. Paying somewhere else needs the "change refund destination" permission.');
       }
 
-      const dupe = looksDuplicate(
+      const dupe = input.sharedCustomer === true ? null : looksDuplicate(
         (await tx.select().from(refundRequests).where(and(eq(refundRequests.customerId, customer.id), eq(refundRequests.companyId, ctx.companyId)))).map((r) => ({ customerId: r.customerId, amountCents: toCents(r.amount), methodId: r.paymentMethodId, status: r.status, createdAt: r.createdAt })),
         { customerId: customer.id, amountCents: cents, methodId: m.id },
         new Date(),
       );
-      if (dupe) throw new FinanceError('DUPLICATE_REFUND', 'The same amount was already asked for this customer, by the same method, within the last day. Cancel that one first if this is a replacement.');
+      if (dupe !== null) throw new FinanceError('DUPLICATE_REFUND', 'The same amount was already asked for this customer, by the same method, within the last day. Cancel that one first if this is a replacement.');
 
       // How fast refunds are being asked for: past a limit the refund is refused, or held for approval whatever its amount.
       const limits = await this.limits.get(tx, ctx.companyId);
       let held: string | null = null;
       if (limits.enabled) {
         const usage = await this.limits.usage(tx, { companyId: ctx.companyId, customerId: customer.id, requester: ctx.actor.id ?? 'system', kind: m.kind, details, windowHours: limits.windowHours });
-        const breaches = checkVelocity(limits, usage, cents);
+        const breaches = checkVelocity(limits, input.sharedCustomer === true ? { ...usage, customer: { count: 0, cents: 0 } } : usage, cents);
         if (breaches.length > 0) {
           if (limits.mode === 'refuse') throw new FinanceError('VELOCITY_LIMIT', `${breaches.join(' ')} Refunds are refused past these limits (Finance → Refunds → Limits).`);
           held = breaches.join(' ');

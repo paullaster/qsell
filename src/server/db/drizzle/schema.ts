@@ -4770,7 +4770,7 @@ export const shiftCloseRequests = pgTable(
     expectedCash: numeric('expected_cash', { precision: 14, scale: 2 }).notNull(),
     variance: numeric('variance', { precision: 14, scale: 2 }).notNull(),
     varianceReason: text('variance_reason').notNull(),
-    closingFigures: jsonb('closing_figures').$type<{ paidIn: number; paidOut: number; cashSales: number }>().notNull(),
+    closingFigures: jsonb('closing_figures').$type<{ paidIn: number; paidOut: number; cashSales: number; cashRefunds?: number }>().notNull(),
     status: text('status').$type<'pending' | 'approved' | 'rejected' | 'canceled'>().notNull().default('pending'),
     decisionNote: text('decision_note'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -4780,6 +4780,47 @@ export const shiftCloseRequests = pgTable(
     uniqueIndex('shift_close_requests_one_pending_uidx').on(t.shiftId).where(sql`${t.status} = 'pending'`),
     index('shift_close_requests_shift_idx').on(t.shiftId, t.createdAt),
     check('shift_close_requests_status_chk', sql`${t.status} IN ('pending', 'approved', 'rejected', 'canceled')`),
+  ],
+);
+
+/**
+ * A return at the till: what was sent back from a counter sale, with the credit note that corrects the invoice, the refund of the money
+ * and (for cash handed back at the till) the shift it came out of. One key per return makes a repeat find it; the steps (credit note,
+ * goods back, refund asked, refund paid) are each safe to run again, so a return that stopped half way is finished from where it was.
+ */
+export const counterReturns = pgTable(
+  'counter_returns',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    orderId: text('order_id').notNull().references(() => orders.id, { onDelete: 'restrict' }),
+    idempotencyKey: text('idempotency_key').notNull(),
+    creditNoteId: uuid('credit_note_id').references(() => creditNotes.id, { onDelete: 'restrict' }),
+    refundId: uuid('refund_id').references(() => refundRequests.id, { onDelete: 'restrict' }),
+    /** The shift the cash came out of, when it was handed back at the till. */
+    shiftId: uuid('shift_id').references(() => shifts.id, { onDelete: 'restrict' }),
+    requestedBy: text('requested_by').notNull(),
+    reasonCode: text('reason_code').notNull(),
+    reasonText: text('reason_text'),
+    /** The goods came back in a state to be sold again and go back into stock. */
+    restock: boolean('restock').notNull(),
+    stockBack: boolean('stock_back').notNull().default(false),
+    refundMethodId: uuid('refund_method_id').references(() => paymentMethods.id, { onDelete: 'restrict' }),
+    /** The phone number or details the refund is paid to, for a method that is not cash. */
+    payoutDetails: jsonb('payout_details').$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    cashPaid: numeric('cash_paid', { precision: 14, scale: 2 }).notNull().default('0'),
+    lines: jsonb('lines').$type<{ productId: string; quantity: number }[]>().notNull(),
+    status: text('status').$type<'credited' | 'refund_pending' | 'refund_approved' | 'completed'>().notNull().default('credited'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('counter_returns_key_uidx').on(t.idempotencyKey),
+    index('counter_returns_order_idx').on(t.orderId),
+    index('counter_returns_shift_idx').on(t.shiftId).where(sql`${t.shiftId} IS NOT NULL`),
+    check('counter_returns_status_chk', sql`${t.status} IN ('credited', 'refund_pending', 'refund_approved', 'completed')`),
+    check('counter_returns_cash_chk', sql`${t.cashPaid} >= 0 AND ${t.cashPaid} <= ${t.amount} AND (${t.cashPaid} = 0 OR ${t.shiftId} IS NOT NULL)`),
   ],
 );
 

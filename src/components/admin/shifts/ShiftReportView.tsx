@@ -26,8 +26,11 @@ export function ShiftReportView({ report }: { report: ShiftReport }) {
         {row('Opening float', money(report.openingFloat))}
         {row('Cash sales', money(report.cashSales))}
         {row('Cash put in', money(report.paidIn))}
+        {report.takings.cashRefunds > 0 ? row('Cash handed back for returns', `−${money(report.takings.cashRefunds)}`) : null}
         {row('Cash taken out', `−${money(report.paidOut)}`)}
         {row('The till should hold', money(report.expectedCash), true)}
+        {report.takings.mobileMoney > 0 ? row('Also taken by M-Pesa (not in the till)', money(report.takings.mobileMoney)) : null}
+        {report.takings.card > 0 ? row('Also taken by card (not in the till)', money(report.takings.card)) : null}
         {report.declaredCash === null ? null : row('Counted at the close', money(report.declaredCash), true)}
         {report.variance === null ? null : row('Difference', `${report.variance > 0 ? '+' : ''}${money(report.variance)}`, true)}
       </dl>

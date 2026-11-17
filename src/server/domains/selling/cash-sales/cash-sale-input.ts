@@ -43,3 +43,37 @@ export function parseCashSale(raw: unknown): { ok: true; sale: ParsedCashSale } 
   }
   return { ok: true, sale: { customerId: read.customerId, lines: read.lines, tenders, saleKey } };
 }
+
+export interface ParsedCounterReturn {
+  orderId: string;
+  lines: { productId: string; quantity: number }[];
+  reason: { code: string; text: string };
+  restock: boolean;
+  refund: { methodId: string; phone: string; recipient: string };
+  key: string;
+}
+
+/** Reads what the till screen sent for a return (untrusted): the sale, the lines and counts, why, whether the goods go back into stock, how the customer is paid back, and the key of this attempt. */
+export function parseCounterReturn(raw: unknown): { ok: true; input: ParsedCounterReturn } | { ok: false; error: string } {
+  if (!isRecord(raw)) return { ok: false, error: 'The return could not be read.' };
+  const orderId = text(raw.orderId, 100);
+  const key = text(raw.key, 40);
+  if (orderId === '') return { ok: false, error: 'Choose the sale.' };
+  if (!UUID.test(key)) return { ok: false, error: 'This return could not be told apart from another. Start it again.' };
+  if (!Array.isArray(raw.lines) || raw.lines.length === 0) return { ok: false, error: 'Choose what is being returned.' };
+  if (raw.lines.length > 100) return { ok: false, error: 'Too many lines.' };
+  const lines: ParsedCounterReturn['lines'] = [];
+  for (const [n, entry] of raw.lines.entries()) {
+    if (!isRecord(entry)) return { ok: false, error: `Line ${String(n + 1)} could not be read.` };
+    const productId = text(entry.productId, 100);
+    const quantity = entry.quantity;
+    if (productId === '' || typeof quantity !== 'number' || !Number.isFinite(quantity) || quantity <= 0 || quantity > 1_000_000) return { ok: false, error: `Line ${String(n + 1)}: give the quantity returned.` };
+    if (lines.some((l) => l.productId === productId)) return { ok: false, error: 'Each product can be on the return once.' };
+    lines.push({ productId, quantity });
+  }
+  const reason = isRecord(raw.reason) ? raw.reason : {};
+  const refund = isRecord(raw.refund) ? raw.refund : {};
+  const methodId = text(refund.methodId, 40);
+  if (!UUID.test(methodId)) return { ok: false, error: 'Choose how the customer is paid back.' };
+  return { ok: true, input: { orderId, lines, reason: { code: text(reason.code, 60), text: text(reason.text, 200) }, restock: raw.restock === true, refund: { methodId, phone: text(refund.phone, 20), recipient: text(refund.recipient, 80) }, key } };
+}

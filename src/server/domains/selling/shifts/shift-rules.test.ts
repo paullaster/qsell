@@ -73,3 +73,10 @@ describe('closing a shift', () => {
     expect(toleranceProblem({ amount: 1, percent: 101 })).not.toBeNull();
   });
 });
+
+describe('cash refunded at the till', () => {
+  it('comes off what the till should hold', () => {
+    expect(expectedCash({ openingFloat: 1000, paidIn: 0, paidOut: 0, cashSales: 500, cashRefunds: 120 })).toBe(1380);
+    expect(expectedCash({ openingFloat: 1000, paidIn: 0, paidOut: 0, cashSales: 500 })).toBe(1500);
+  });
+});
