@@ -71,7 +71,7 @@ function VisitsProgress({ visits }: { visits: Promise<AccountResult<MyVisit[]>> 
       <ul aria-label="Visits for this order" className="mt-2 space-y-2 text-sm">
         {answer.data.map((v) => (
           <li key={`${v.startsAt}-${v.address}`} className="rounded-lg border border-line bg-surface px-3 py-2">
-            <p className="font-medium text-fg-strong">{windowWords(new Date(v.startsAt), new Date(v.endsAt))}</p>
+            <p className="font-medium text-fg-strong">{windowWords(new Date(v.startsAt), new Date(v.endsAt), v.timeZone)}</p>
             <p className="break-words text-fg-muted">{v.address}</p>
             <p className="text-fg-strong">{v.words}</p>
           </li>

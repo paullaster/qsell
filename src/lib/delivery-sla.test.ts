@@ -55,6 +55,9 @@ describe('words and settings', () => {
     expect(lateWords(1500)).toBe('1 day 1 hour');
     expect(lateWords(-4)).toBe('0 minutes');
     expect(windowWords(start, end)).toBe('Fri 6 Nov, 09:00 to 12:00');
+    // Written in the timezone it is given (the business's), not the server's or the viewer's.
+    expect(windowWords(start, end, 'UTC')).not.toBe(windowWords(start, end, 'Africa/Nairobi'));
+    expect(windowWords(start, end, 'Africa/Nairobi')).toBe('Fri 6 Nov, 09:00 to 12:00');
   });
 
   it('checks the settings as typed', () => {

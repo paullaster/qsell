@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_REMINDERS, TEXT_KIND_CHOICES, readReminders, isMessageKind, kindForStep, messageContent, messageKey, minutesToClock, quietEndsAt, readQuietHours, readTextKinds, reasonForCustomer, textContent, MESSAGE_KINDS, type MessageFacts } from './delivery-messages';
+import { DEFAULT_REMINDERS, TEXT_KIND_CHOICES, readReminders, isMessageKind, kindForStep, messageContent, messageKey, minutesToClock, quietEndsAt, readQuietHours, readTextKinds, reasonForCustomer, textContent, MESSAGE_KINDS, isVisitMessageKind, visitMessageKey, visitOfMessageKey, type MessageFacts } from './delivery-messages';
 
 const facts: MessageFacts = { tradingName: 'Test Traders', firstName: 'Wanjiru', orderNumber: 'ORD-77', deliveryNumber: 'DLV-26-0000000007', trackUrl: 'https://shop.example.test/track/abc', courierName: null, receivedBy: null,
   handoverCode: null, reasonCode: null, triesLeft: null, collection: null };
@@ -105,7 +105,9 @@ describe('customer text messages', () => {
     expect(readTextKinds('delivered').ok).toBe(false);
     // The reminder is a choice of its own, listed after the first message about collecting.
     expect(readTextKinds(['collection_reminder', 'ready_for_collection'])).toEqual({ ok: true, kinds: ['ready_for_collection', 'collection_reminder'] });
-    expect(TEXT_KIND_CHOICES.map((c) => c.kind)).toEqual([...MESSAGE_KINDS]);
+    // The messages about a visit are mail only: they are not on the list of texts to choose.
+    expect(TEXT_KIND_CHOICES.map((c) => c.kind)).toEqual(MESSAGE_KINDS.filter((k) => !isVisitMessageKind(k)));
+    expect(readTextKinds(['visit_booked']).ok).toBe(false);
   });
 });
 
@@ -192,5 +194,35 @@ describe('reminder settings as typed', () => {
     for (const first of [0, 31, 2.5, 'x', '', null, undefined, '1e1', -1]) expect(readReminders(true, first, '')).toMatchObject({ ok: false, error: expect.stringContaining('1 to 30') as string });
     for (const second of [3, 2, 61, 'later', 4.5]) expect(readReminders(true, 3, second)).toMatchObject({ ok: false, error: expect.stringContaining('later than the first') as string });
     expect(DEFAULT_REMINDERS).toEqual({ enabled: true, firstDays: 3, secondDays: 6 });
+  });
+});
+
+describe('the messages about a visit', () => {
+  const visit = { window: 'Fri, 20 Nov, 09:00 to 12:00' };
+  it('say when, in the words of what happened, and carry no address, phone number or note', () => {
+    const booked = messageContent('visit_booked', { ...facts, visit });
+    expect(booked.heading).toBe('Your visit is booked');
+    expect(booked.body).toContain('Fri, 20 Nov, 09:00 to 12:00');
+    expect(booked.details).toContainEqual(['When', visit.window]);
+    expect(messageContent('visit_moved', { ...facts, visit }).details).toContainEqual(['New time', visit.window]);
+    expect(messageContent('visit_cancelled', { ...facts, visit }).body).toContain('was cancelled');
+    for (const kind of ['visit_booked', 'visit_moved', 'visit_cancelled'] as const) {
+      expect(JSON.stringify(messageContent(kind, { ...facts, visit }))).not.toMatch(/\b0[17]\d{8}\b|\+254|street|road|crew list/i);
+    }
+  });
+  it('still read well when the time is not known', () => {
+    for (const kind of ['visit_booked', 'visit_moved', 'visit_cancelled'] as const) {
+      const m = messageContent(kind, { ...facts, visit: null });
+      expect(m.subject).toContain(facts.orderNumber);
+      expect(m.body.length).toBeGreaterThan(20);
+    }
+  });
+  it('makes one key for one change and finds the visit again from it', () => {
+    const id = '5f0c6f1e-2c1a-4c1e-9d55-0a1b2c3d4e5f';
+    expect(visitMessageKey(id, 'visit_moved', 3)).toBe(`${id}:visit_moved:3`);
+    expect(visitOfMessageKey(visitMessageKey(id, 'visit_booked', 1))).toBe(id);
+    expect(visitOfMessageKey(`${visitMessageKey(id, 'visit_cancelled', 2)}:sms`)).toBe(id);
+    expect(visitOfMessageKey(`${id}:collection_reminder:1`)).toBeNull();
+    expect(visitOfMessageKey('nonsense')).toBeNull();
   });
 });
