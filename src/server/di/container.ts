@@ -615,7 +615,7 @@ export function getContainer(): AppContainer {
   const packageShop = new PackageShopService(drizzleDb, packageConfig, deliveryServices.stockSettings, deliveryServices.stockAvailability);
   const packageOrders = new PackageOrderService(drizzleDb, packageShop);
   const orderDocuments = new OrderDocumentsService(drizzleDb);
-  const shifts = new ShiftService(drizzleDb, decisionLog, reasonCodes, numbering);
+  const shifts = new ShiftService(drizzleDb, decisionLog, reasonCodes, numbering, approvals);
   const salesInvoices = new SalesInvoiceService(drizzleDb, invoices);
   const salesOrders = new SalesOrderService(drizzleDb, sellingSettings, packageOrders, customers, branches);
   const preparation = new PreparationService(drizzleDb);

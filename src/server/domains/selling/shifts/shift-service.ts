@@ -1,14 +1,15 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, registers, shiftMovements, shiftSettings, shifts, users } from '@/server/db/drizzle/schema';
+import { branches, registers, shiftCloseRequests, shiftMovements, shiftSettings, shifts, users } from '@/server/db/drizzle/schema';
 import type { Actor } from '@/server/kernel/context';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { ReasonCodes, ReasonInput } from '@/server/kernel/reason-codes/service';
 import type { NumberSeriesService } from '@/server/kernel/numbering/service';
+import type { ApprovalEngine, Tx } from '@/server/kernel/approvals/engine';
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import { decodeCursor } from '@/server/domains/lookups/request';
 import { PAGE_SIZE, pageOf } from '@/server/domains/settings/paging';
-import { checkClose, DEFAULT_TOLERANCE, expectedCash, toleranceProblem, varianceOf, type Counted, type ParsedCount, type Tolerance } from './shift-rules';
+import { checkClose, DEFAULT_TOLERANCE, expectedCash, toleranceProblem, varianceOf, type Counted, type ParsedCount, type SupervisorClose, type Tolerance } from './shift-rules';
 
 export class ShiftError extends Error {}
 
@@ -24,7 +25,7 @@ export interface RegisterRow {
 
 export interface ShiftReport {
   id: string;
-  status: 'open' | 'closed';
+  status: 'open' | 'closing' | 'closed';
   registerName: string;
   branchName: string;
   openedBy: string;
@@ -43,6 +44,8 @@ export interface ShiftReport {
   variance: number | null;
   varianceReason: string | null;
   zNumber: string | null;
+  /** While the close waits in the approval queue: what was counted and why, and who asked. */
+  closeRequest: { requestedBy: string; requestedAt: string; declaredCash: number; variance: number; reason: string } | null;
   movements: { kind: 'paid_in' | 'paid_out'; amount: number; reason: string; by: string; at: string }[];
 }
 
@@ -52,7 +55,7 @@ export interface ShiftRow {
   openedBy: string;
   openedAt: string;
   closedAt: string | null;
-  status: 'open' | 'closed';
+  status: 'open' | 'closing' | 'closed';
   variance: number | null;
   zNumber: string | null;
 }
@@ -67,6 +70,7 @@ export class ShiftService {
     private readonly decisions: DecisionLog,
     private readonly reasons: ReasonCodes,
     private readonly numbering: NumberSeriesService,
+    private readonly approvals: ApprovalEngine,
   ) {}
 
   // ── Registers and tolerance ────────────────────────────────────────────
@@ -78,7 +82,7 @@ export class ShiftService {
       .innerJoin(branches, eq(branches.id, registers.branchId))
       .where(eq(registers.companyId, companyId))
       .orderBy(branches.name, registers.name);
-    const open = rows.length === 0 ? [] : await this.db.select({ registerId: shifts.registerId, by: users.name }).from(shifts).innerJoin(users, sql`${users.id}::text = ${shifts.openedBy}`).where(and(eq(shifts.status, 'open'), inArray(shifts.registerId, rows.map((r) => r.id))));
+    const open = rows.length === 0 ? [] : await this.db.select({ registerId: shifts.registerId, by: users.name }).from(shifts).innerJoin(users, sql`${users.id}::text = ${shifts.openedBy}`).where(and(inArray(shifts.status, ['open', 'closing']), inArray(shifts.registerId, rows.map((r) => r.id))));
     const openBy = new Map(open.map((o) => [o.registerId, o.by]));
     return rows.map((r) => ({ ...r, openBy: openBy.get(r.id) ?? null }));
   }
@@ -98,7 +102,7 @@ export class ShiftService {
         });
         id = made?.id;
       } else {
-        const open = await tx.select({ id: shifts.id }).from(shifts).where(and(eq(shifts.registerId, id), eq(shifts.status, 'open'))).limit(1);
+        const open = await tx.select({ id: shifts.id }).from(shifts).where(and(eq(shifts.registerId, id), inArray(shifts.status, ['open', 'closing']))).limit(1);
         if (open.length > 0 && !input.isActive) throw new ShiftError('This till has a shift open. Close it before switching the till off.');
         const changed = await tx.update(registers).set({ name, branchId: input.branchId, isActive: input.isActive, updatedAt: new Date() }).where(and(eq(registers.id, id), eq(registers.companyId, companyId))).returning({ id: registers.id });
         if (changed.length === 0) throw new ShiftError('That till could not be found.');
@@ -107,21 +111,25 @@ export class ShiftService {
     });
   }
 
-  async tolerance(companyId: string): Promise<Tolerance> {
+  async settings(companyId: string): Promise<{ tolerance: Tolerance; supervisorClose: SupervisorClose }> {
     const [row] = await this.db.select().from(shiftSettings).where(eq(shiftSettings.companyId, companyId)).limit(1);
-    return row === undefined ? DEFAULT_TOLERANCE : { amount: Number(row.toleranceAmount), percent: Number(row.tolerancePercent) };
+    return row === undefined ? { tolerance: DEFAULT_TOLERANCE, supervisorClose: 'direct' } : { tolerance: { amount: Number(row.toleranceAmount), percent: Number(row.tolerancePercent) }, supervisorClose: row.supervisorClose };
   }
 
-  async saveTolerance(companyId: string, actor: Actor, tolerance: Tolerance, reason: Why): Promise<void> {
-    const problem = toleranceProblem(tolerance);
+  async tolerance(companyId: string): Promise<Tolerance> {
+    return (await this.settings(companyId)).tolerance;
+  }
+
+  async saveSettings(companyId: string, actor: Actor, next: { tolerance: Tolerance; supervisorClose: SupervisorClose }, reason: Why): Promise<void> {
+    const problem = toleranceProblem(next.tolerance);
     if (problem !== null) throw new ShiftError(problem);
     const why = await this.reasons.require(companyId, reason, 'shift_configuration');
     await this.db.transaction(async (tx) => {
       const [before] = await tx.select().from(shiftSettings).where(eq(shiftSettings.companyId, companyId)).limit(1).for('update');
-      const values = { toleranceAmount: String(tolerance.amount), tolerancePercent: String(tolerance.percent), updatedBy: actor.id ?? 'system', updatedAt: new Date() };
+      const values = { toleranceAmount: String(next.tolerance.amount), tolerancePercent: String(next.tolerance.percent), supervisorClose: next.supervisorClose, updatedBy: actor.id ?? 'system', updatedAt: new Date() };
       if (before === undefined) await tx.insert(shiftSettings).values({ companyId, ...values });
       else await tx.update(shiftSettings).set({ ...values, version: before.version + 1 }).where(eq(shiftSettings.companyId, companyId));
-      await this.decisions.record({ companyId, actor, subject: { type: 'shift_settings', id: companyId }, action: 'shift_settings.changed', reason: why, inputs: before === undefined ? {} : { amount: Number(before.toleranceAmount), percent: Number(before.tolerancePercent) }, outcome: { ...tolerance } }, tx);
+      await this.decisions.record({ companyId, actor, subject: { type: 'shift_settings', id: companyId }, action: 'shift_settings.changed', reason: why, inputs: before === undefined ? {} : { amount: Number(before.toleranceAmount), percent: Number(before.tolerancePercent), supervisorClose: before.supervisorClose }, outcome: { ...next.tolerance, supervisorClose: next.supervisorClose } }, tx);
     });
   }
 
@@ -145,7 +153,7 @@ export class ShiftService {
 
   /** The open shift of this person, if they have one. */
   async openShiftOf(userId: string): Promise<string | null> {
-    const [row] = await this.db.select({ id: shifts.id }).from(shifts).where(and(eq(shifts.openedBy, userId), eq(shifts.status, 'open'))).limit(1);
+    const [row] = await this.db.select({ id: shifts.id }).from(shifts).where(and(eq(shifts.openedBy, userId), inArray(shifts.status, ['open', 'closing']))).limit(1);
     return row?.id ?? null;
   }
 
@@ -181,6 +189,7 @@ export class ShiftService {
     if (reason.length < 3 || reason.length > 200) return { ok: false, error: 'Say why, in 3 to 200 characters.' };
     const [shift] = await this.db.select().from(shifts).where(and(eq(shifts.id, shiftId), eq(shifts.companyId, companyId))).limit(1);
     if (shift === undefined) return { ok: false, error: 'That shift could not be found.' };
+    if (shift.status === 'closing') return { ok: false, error: 'This shift is waiting for its close to be approved: no cash can be added or taken out until it is decided.' };
     if (shift.status !== 'open') return { ok: false, error: 'That shift is closed.' };
     if (shift.openedBy !== who.userId && !who.supervisor) return { ok: false, error: 'This is another person\'s shift.' };
     if (input.kind === 'paid_out') {
@@ -202,7 +211,9 @@ export class ShiftService {
     if (shift === undefined) return null;
     const s = shift.s;
     const movements = await this.db.select().from(shiftMovements).where(eq(shiftMovements.shiftId, s.id)).orderBy(shiftMovements.createdAt);
-    const names = await this.db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, [...new Set([s.openedBy, ...(s.closedBy === null ? [] : [s.closedBy]), ...movements.map((m) => m.createdBy)].filter((id) => /^[0-9a-f-]{36}$/i.test(id)))]));
+    const [asked] = s.status === 'closing' ? await this.db.select().from(shiftCloseRequests).where(and(eq(shiftCloseRequests.shiftId, s.id), eq(shiftCloseRequests.status, 'pending'))).limit(1) : [];
+    const askedBy = asked === undefined ? [] : [asked.requestedBy];
+    const names = await this.db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, [...new Set([s.openedBy, ...askedBy, ...(s.closedBy === null ? [] : [s.closedBy]), ...movements.map((m) => m.createdBy)].filter((id) => /^[0-9a-f-]{36}$/i.test(id)))]));
     const nameOf = (id: string | null): string => (id === null ? '' : (names.find((n) => n.id === id)?.name ?? id));
     const live = s.status === 'open' ? await this.figures(s.id, Number(s.openingFloat)) : null;
     const kept = s.closingFigures;
@@ -227,34 +238,111 @@ export class ShiftService {
       variance: s.variance === null ? null : Number(s.variance),
       varianceReason: s.varianceReason,
       zNumber: s.zNumber,
+      closeRequest: asked === undefined ? null : { requestedBy: nameOf(asked.requestedBy), requestedAt: asked.createdAt.toISOString(), declaredCash: Number(asked.declaredCash), variance: Number(asked.variance), reason: asked.varianceReason },
       movements: movements.map((m) => ({ kind: m.kind, amount: Number(m.amount), reason: m.reason, by: nameOf(m.createdBy), at: m.createdAt.toISOString() })),
     };
   }
 
   /**
-   * Closes a shift with the cash counted: works out what the till should hold and the difference, needs a reason for any difference
-   * and a supervisor for one beyond the tolerance (or to close another person's shift), numbers the Z report from the gap-free series
-   * in the same transaction, and keeps the figures so the report never changes.
+   * Closes a shift with the cash counted: works out what the till should hold and the difference, needs a reason for any difference,
+   * and for one beyond the allowance either a supervisor on the spot or, when the company chose the approval queue, a decision in it
+   * (the shift waits as `closing`, with no cash moving, until it is decided). The Z report is numbered from the gap-free series in the
+   * same transaction as the close, and the figures are kept so the report never changes.
    */
-  async close(companyId: string, who: { userId: string; supervisor: boolean }, shiftId: string, input: { declared: Extract<ParsedCount, { ok: true }>; reason: string }): Promise<{ ok: true; zNumber: string; variance: number } | { ok: false; error: string }> {
-    const tolerance = await this.tolerance(companyId);
+  async close(companyId: string, who: { userId: string; supervisor: boolean }, shiftId: string, input: { declared: Extract<ParsedCount, { ok: true }>; reason: string }): Promise<{ ok: true; pending: false; zNumber: string; variance: number } | { ok: true; pending: true; variance: number } | { ok: false; error: string }> {
+    const { tolerance, supervisorClose } = await this.settings(companyId);
     try {
       return await this.db.transaction(async (tx) => {
         const [shift] = await tx.select().from(shifts).where(and(eq(shifts.id, shiftId), eq(shifts.companyId, companyId))).limit(1).for('update');
         if (shift === undefined) return { ok: false as const, error: 'That shift could not be found.' };
+        if (shift.status === 'closing') return { ok: false as const, error: 'This shift\'s close is waiting for approval.' };
         if (shift.status !== 'open') return { ok: false as const, error: 'That shift is already closed.' };
-        if (shift.openedBy !== who.userId && !who.supervisor) return { ok: false as const, error: 'This is another person\'s shift: only a supervisor can close it.' };
+        const own = shift.openedBy === who.userId;
+        if (!own && !who.supervisor) return { ok: false as const, error: 'This is another person\'s shift: only a supervisor can close it.' };
         const f = await this.figures(shift.id, Number(shift.openingFloat));
         const variance = varianceOf(input.declared.total, f.expected);
-        const checked = checkClose({ variance, expected: f.expected, reason: input.reason, tolerance, supervisor: who.supervisor });
+        const checked = checkClose({ variance, expected: f.expected, reason: input.reason, tolerance, supervisor: who.supervisor, mode: supervisorClose, ownShift: own });
         if (!checked.ok) return { ok: false as const, error: checked.error };
-        const { number } = await this.numbering.assign('z_report', { companyId, branchId: shift.branchId, date: businessDate(), document: { kind: 'z_report', id: shift.id }, actor: { type: 'user', id: who.userId } }, tx);
-        await tx.update(shifts).set({ status: 'closed', closedBy: who.userId, closedAt: new Date(), declaredCash: String(input.declared.total), closingCounted: input.declared.counted, expectedCash: String(f.expected), variance: String(variance), varianceReason: variance === 0 ? null : input.reason.trim(), closingFigures: { paidIn: f.paidIn, paidOut: f.paidOut, cashSales: f.cashSales }, zNumber: number }).where(eq(shifts.id, shift.id));
-        await this.decisions.record({ companyId, actor: { type: 'user', id: who.userId }, subject: { type: 'shift', id: shift.id }, action: 'shift.closed', inputs: { expected: f.expected, declared: input.declared.total }, outcome: { variance, kind: checked.kind, zNumber: number, closedByOther: shift.openedBy !== who.userId } }, tx);
-        return { ok: true as const, zNumber: number, variance };
+        const figures = { paidIn: f.paidIn, paidOut: f.paidOut, cashSales: f.cashSales };
+        const closing = { shift, closedBy: who.userId, declared: input.declared.total, counted: input.declared.counted, expected: f.expected, variance, reason: variance === 0 ? null : input.reason.trim(), figures };
+        if (checked.route === 'close') {
+          const zNumber = await this.finalize(tx, { ...closing, kind: checked.kind, how: 'on_the_spot' });
+          return { ok: true as const, pending: false as const, zNumber, variance };
+        }
+        // Held for approval: the count is kept, the shift stops taking cash, and the queue decides.
+        const [request] = await tx.insert(shiftCloseRequests).values({ shiftId: shift.id, requestedBy: who.userId, declaredCash: String(input.declared.total), closingCounted: input.declared.counted, expectedCash: String(f.expected), variance: String(variance), varianceReason: input.reason.trim(), closingFigures: figures }).returning({ id: shiftCloseRequests.id });
+        if (request === undefined) throw new ShiftError('The close could not be asked for.');
+        await tx.update(shifts).set({ status: 'closing' }).where(eq(shifts.id, shift.id));
+        const outcome = await this.approvals.submit({ companyId, trigger: 'shift.close_requested', documentId: shift.id, branchId: shift.branchId, requestedBy: who.userId, amount: Math.abs(variance), snapshot: { variance, absoluteVariance: Math.abs(variance), expectedCash: f.expected, registerId: shift.registerId } }, tx);
+        if (!outcome.required) throw new ShiftError('This difference is beyond what the company allows a till to be out by, so closing the shift needs approval, but no approval workflow covers it. Ask an administrator to set one up for closing till shifts, or to let a supervisor close them directly (Settings, Registers).');
+        await this.decisions.record({ companyId, actor: { type: 'user', id: who.userId }, subject: { type: 'shift', id: shift.id }, action: 'shift.close_requested', inputs: { expected: f.expected, declared: input.declared.total }, outcome: { variance, reason: input.reason.trim() } }, tx);
+        if (outcome.released) {
+          const zNumber = await this.finalize(tx, { ...closing, reason: input.reason.trim(), kind: 'beyond', how: 'approval', request: request.id });
+          return { ok: true as const, pending: false as const, zNumber, variance };
+        }
+        return { ok: true as const, pending: true as const, variance };
       });
     } catch (error) {
+      if (error instanceof ShiftError) return { ok: false, error: error.message };
       if (error instanceof Error && error.message.includes('closed')) return { ok: false, error: 'That shift is already closed.' };
+      throw error;
+    }
+  }
+
+  /** Writes the close itself: the Z number, the kept figures and the decision-log entry, in the caller's transaction. */
+  private async finalize(tx: Tx, c: { shift: typeof shifts.$inferSelect; closedBy: string; declared: number; counted: Counted[]; expected: number; variance: number; reason: string | null; figures: { paidIn: number; paidOut: number; cashSales: number }; kind: string; how: 'on_the_spot' | 'approval'; request?: string }): Promise<string> {
+    const { number } = await this.numbering.assign('z_report', { companyId: c.shift.companyId, branchId: c.shift.branchId, date: businessDate(), document: { kind: 'z_report', id: c.shift.id }, actor: { type: 'user', id: c.closedBy } }, tx);
+    await tx.update(shifts).set({ status: 'closed', closedBy: c.closedBy, closedAt: new Date(), declaredCash: String(c.declared), closingCounted: c.counted, expectedCash: String(c.expected), variance: String(c.variance), varianceReason: c.reason, closingFigures: c.figures, zNumber: number }).where(eq(shifts.id, c.shift.id));
+    if (c.request !== undefined) await tx.update(shiftCloseRequests).set({ status: 'approved', decidedAt: new Date() }).where(eq(shiftCloseRequests.id, c.request));
+    await this.decisions.record({ companyId: c.shift.companyId, actor: { type: 'user', id: c.closedBy }, subject: { type: 'shift', id: c.shift.id }, action: 'shift.closed', inputs: { expected: c.expected, declared: c.declared }, outcome: { variance: c.variance, kind: c.kind, zNumber: number, how: c.how, closedByOther: c.shift.openedBy !== c.closedBy } }, tx);
+    return number;
+  }
+
+  private async pendingRequest(tx: Tx, shiftId: string) {
+    const [shift] = await tx.select().from(shifts).where(eq(shifts.id, shiftId)).limit(1).for('update');
+    const [request] = await tx.select().from(shiftCloseRequests).where(and(eq(shiftCloseRequests.shiftId, shiftId), eq(shiftCloseRequests.status, 'pending'))).limit(1).for('update');
+    return { shift, request };
+  }
+
+  /** The approval queue approved the close: the shift closes from exactly the count and figures that were asked about. */
+  async onCloseApproved(tx: Tx, shiftId: string): Promise<void> {
+    const { shift, request } = await this.pendingRequest(tx, shiftId);
+    if (shift === undefined || request === undefined) return;
+    if (shift.status !== 'closing') return;
+    await this.finalize(tx, { shift, closedBy: request.requestedBy, declared: Number(request.declaredCash), counted: request.closingCounted, expected: Number(request.expectedCash), variance: Number(request.variance), reason: request.varianceReason, figures: request.closingFigures, kind: 'beyond', how: 'approval', request: request.id });
+  }
+
+  /** Rejected or withdrawn: the shift is open again so the till can be recounted, and the request is kept with what was said. */
+  private async reopen(tx: Tx, shiftId: string, status: 'rejected' | 'canceled', note: string): Promise<void> {
+    const { shift, request } = await this.pendingRequest(tx, shiftId);
+    if (shift === undefined || request === undefined) return;
+    await tx.update(shiftCloseRequests).set({ status, decisionNote: note, decidedAt: new Date() }).where(eq(shiftCloseRequests.id, request.id));
+    if (shift.status === 'closing') await tx.update(shifts).set({ status: 'open' }).where(eq(shifts.id, shift.id));
+    await this.decisions.record({ companyId: shift.companyId, actor: { type: 'system', id: null }, subject: { type: 'shift', id: shift.id }, action: status === 'rejected' ? 'shift.close_rejected' : 'shift.close_withdrawn', inputs: { declared: Number(request.declaredCash), variance: Number(request.variance) }, outcome: { note } }, tx);
+  }
+
+  async onCloseRejected(tx: Tx, shiftId: string, info: { reasonCode: string; comment: string }): Promise<void> {
+    await this.reopen(tx, shiftId, 'rejected', `${info.reasonCode.replace(/_/g, ' ')}${info.comment.trim() === '' ? '' : `: ${info.comment.trim()}`}`);
+  }
+
+  async onCloseCanceled(tx: Tx, shiftId: string): Promise<void> {
+    await this.reopen(tx, shiftId, 'canceled', 'The request was withdrawn.');
+  }
+
+  /** The person who asked for the close (or a supervisor) withdraws it, so the shift is open again for a recount. */
+  async withdrawClose(companyId: string, who: { userId: string; supervisor: boolean }, shiftId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    try {
+      return await this.db.transaction(async (tx) => {
+        const [request] = await tx.select({ r: shiftCloseRequests }).from(shiftCloseRequests).innerJoin(shifts, eq(shifts.id, shiftCloseRequests.shiftId)).where(and(eq(shiftCloseRequests.shiftId, shiftId), eq(shifts.companyId, companyId), eq(shiftCloseRequests.status, 'pending'))).limit(1);
+        if (request === undefined) return { ok: false as const, error: 'No close is waiting for approval on that shift.' };
+        const submissions = await this.approvals.forDocument(companyId, 'shift_close', shiftId);
+        const pending = submissions.find((r) => r.status === 'pending');
+        if (pending === undefined) return { ok: false as const, error: 'No close is waiting for approval on that shift.' };
+        await this.approvals.cancel(pending.submissionId, { userId: who.userId, isAdmin: who.supervisor }, { text: 'Withdrawn from the shifts screen.' }, tx);
+        return { ok: true as const };
+      });
+    } catch (error) {
+      if (error instanceof Error && 'code' in error) return { ok: false, error: error.message };
       throw error;
     }
   }

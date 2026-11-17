@@ -1324,6 +1324,13 @@
       "when": 1794901684549,
       "tag": "0188_registers_and_shifts",
       "breakpoints": true
+    },
+    {
+      "idx": 189,
+      "version": "7",
+      "when": 1794910853576,
+      "tag": "0189_shift_close_approval",
+      "breakpoints": true
     }
   ]
 }

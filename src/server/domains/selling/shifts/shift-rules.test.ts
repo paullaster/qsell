@@ -46,18 +46,26 @@ describe('what the till should hold and the difference', () => {
 describe('closing a shift', () => {
   const base = { expected: 5000, tolerance: { amount: 100, percent: 1 }, supervisor: false };
   it('needs no reason when the till is right', () => {
-    expect(checkClose({ ...base, variance: 0, reason: '' })).toEqual({ ok: true, kind: 'none' });
+    expect(checkClose({ ...base, variance: 0, reason: '' })).toEqual({ ok: true, kind: 'none', route: 'close' });
   });
   it('needs a reason in words for any difference', () => {
     const r = checkClose({ ...base, variance: -40, reason: ' ' });
     expect(r.ok).toBe(false);
-    expect(checkClose({ ...base, variance: -40, reason: 'gave wrong change' })).toEqual({ ok: true, kind: 'within' });
+    expect(checkClose({ ...base, variance: -40, reason: 'gave wrong change' })).toEqual({ ok: true, kind: 'within', route: 'close' });
     expect(checkClose({ ...base, variance: -40, reason: 'x'.repeat(201) }).ok).toBe(false);
   });
   it('lets only a supervisor close a shift that is out by more than the company allows', () => {
     const refused = checkClose({ ...base, variance: -400, reason: 'short' });
     expect(refused).toEqual({ ok: false, error: 'The difference is more than the company allows a till to be out by. A supervisor has to close this shift.' });
-    expect(checkClose({ ...base, variance: -400, reason: 'short', supervisor: true })).toEqual({ ok: true, kind: 'beyond' });
+    expect(checkClose({ ...base, variance: -400, reason: 'short', supervisor: true })).toEqual({ ok: true, kind: 'beyond', route: 'close' });
+  });
+  it('with the approval queue chosen, sends a difference beyond the allowance to it, except a supervisor closing another person\'s shift', () => {
+    const beyond = { ...base, variance: -400, reason: 'short', mode: 'approval' as const };
+    expect(checkClose({ ...beyond, supervisor: false })).toEqual({ ok: true, kind: 'beyond', route: 'approval' });
+    expect(checkClose({ ...beyond, supervisor: true, ownShift: true })).toEqual({ ok: true, kind: 'beyond', route: 'approval' });
+    expect(checkClose({ ...beyond, supervisor: true, ownShift: false })).toEqual({ ok: true, kind: 'beyond', route: 'close' });
+    expect(checkClose({ ...base, variance: -40, reason: 'gave wrong change', mode: 'approval' })).toEqual({ ok: true, kind: 'within', route: 'close' });
+    expect(checkClose({ ...beyond, reason: '', supervisor: true }).ok).toBe(false);
   });
   it('checks the tolerance the company sets', () => {
     expect(toleranceProblem({ amount: 100, percent: 1 })).toBeNull();

@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense, use, useState } from 'react';
-import { closeShiftAction, openShiftAction, shiftHistoryAction, shiftMovementAction, shiftReportAction, shiftsScreenAction, type ShiftsScreen } from '@/server/domains/selling/shifts/shift-actions';
+import { closeShiftAction, openShiftAction, shiftHistoryAction, shiftMovementAction, shiftReportAction, shiftsScreenAction, withdrawShiftCloseAction, type ShiftsScreen } from '@/server/domains/selling/shifts/shift-actions';
 import type { ShiftReport, ShiftRow } from '@/server/domains/selling/shifts/shift-service';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { Chip, Field, LoadFailed, PageHeader, PageSkeleton, buttonClass, cardClass, fieldClass, primaryClass } from '@/components/ui/screen-kit';
@@ -45,16 +45,22 @@ function Body({ initial }: { initial: ShiftsScreen }) {
   };
   return (
     <>
-      <PageHeader title="Shifts" intro="A shift is one person's time on one till: opened with the float counted, closed with the cash counted. A difference needs its reason, and a supervisor must close a till that is out by more than the company allows." />
+      <PageHeader title="Shifts" intro="A shift is one person's time on one till: opened with the float counted, closed with the cash counted. A difference needs its reason, and a till that is out by more than the company allows is closed by a supervisor or goes to approval, as the company chose." />
       {notice === null ? null : <p role={notice.kind === 'error' ? 'alert' : 'status'} className={`rounded-lg border p-3 text-sm ${notice.kind === 'error' ? 'border-red-500/30 bg-red-500/10 text-red-700' : 'border-emerald-500/30 bg-emerald-500/10 text-fg'}`} data-testid="shift-notice">{notice.text}</p>}
       {data.mine === null && data.can.open ? <OpenForm onOpened={async () => { setNotice({ kind: 'ok', text: 'Shift opened.' }); setShown(null); await reload(); }} /> : null}
       {data.mine === null && !data.can.open ? <p className="text-sm text-fg-muted">You have no shift open.</p> : null}
       {data.mine === null ? null : (
         <>
           <ShiftReportView report={data.mine} />
-          {data.can.open ? <MovementForm shiftId={data.mine.id} onDone={async (text) => { setNotice({ kind: 'ok', text }); await reload(); }} onError={(text) => setNotice({ kind: 'error', text })} /> : null}
-          {data.can.close || data.can.supervise ? (
-            <CloseForm shiftId={data.mine.id} supervisor={data.can.supervise} onClosed={async (z, variance) => {
+          {data.mine.status === 'closing' ? <Waiting report={data.mine} canWithdraw={data.can.close || data.can.supervise} onWithdrawn={async () => { setNotice({ kind: 'ok', text: 'The request was withdrawn. The shift is open again.' }); await reload(); }} onError={(text) => setNotice({ kind: 'error', text })} /> : null}
+          {data.can.open && data.mine.status === 'open' ? <MovementForm shiftId={data.mine.id} onDone={async (text) => { setNotice({ kind: 'ok', text }); await reload(); }} onError={(text) => setNotice({ kind: 'error', text })} /> : null}
+          {(data.can.close || data.can.supervise) && data.mine.status === 'open' ? (
+            <CloseForm shiftId={data.mine.id} supervisor={data.can.supervise} approval={data.supervisorClose === 'approval'} onClosed={async (z, variance) => {
+              if (z === null) {
+                setNotice({ kind: 'ok', text: `The close is waiting for approval (difference ${money(variance)}). No cash can move on this shift until it is decided.` });
+                await reload();
+                return;
+              }
               setNotice({ kind: 'ok', text: `Shift closed. Z report ${z}${variance === 0 ? ': the till was right.' : `: difference ${money(variance)}.`}` });
               const r = await shiftReportAction(data.mine?.id);
               setShown(r.ok ? r.data : null);
@@ -65,7 +71,7 @@ function Body({ initial }: { initial: ShiftsScreen }) {
       )}
       {shown === null || (data.mine !== null && shown.id === data.mine.id) ? null : <ShiftReportView report={shown} />}
       {shown !== null && shown.status === 'open' && data.can.supervise && shown.openedById !== data.mine?.openedById ? (
-        <CloseForm shiftId={shown.id} supervisor onClosed={async (z) => { setNotice({ kind: 'ok', text: `Shift closed. Z report ${z}.` }); setShown(null); await reload(); }} />
+        <CloseForm shiftId={shown.id} supervisor approval={false} onClosed={async (z) => { setNotice({ kind: 'ok', text: `Shift closed. Z report ${z ?? ''}.` }); setShown(null); await reload(); }} />
       ) : null}
       <History key={version} data={data} onOpen={(report) => { setShown(report); setNotice(null); }} />
     </>
@@ -125,7 +131,7 @@ function MovementForm({ shiftId, onDone, onError }: { shiftId: string; onDone: (
   );
 }
 
-function CloseForm({ shiftId, supervisor, onClosed }: { shiftId: string; supervisor: boolean; onClosed: (zNumber: string, variance: number) => Promise<void> }) {
+function CloseForm({ shiftId, supervisor, approval, onClosed }: { shiftId: string; supervisor: boolean; approval: boolean; onClosed: (zNumber: string | null, variance: number) => Promise<void> }) {
   const [declared, setDeclared] = useState<CountValue | null>({ counted: [] });
   const [why, setWhy] = useState('');
   const [busy, setBusy] = useState(false);
@@ -142,6 +148,7 @@ function CloseForm({ shiftId, supervisor, onClosed }: { shiftId: string; supervi
   return (
     <form aria-label="Close the shift" className={`${cardClass} space-y-3`} onSubmit={(e) => { e.preventDefault(); void close(); }}>
       <h2 className="text-base font-bold text-fg-strong">Close the shift{supervisor ? ' (as a supervisor)' : ''}</h2>
+      {approval ? <p className="text-sm text-fg-muted">If the till is out by more than the company allows, the close goes to approval and the shift is held until it is decided.</p> : null}
       <CashCounter label="Count the cash in the drawer" onChange={setDeclared} />
       <Field id={`close-why-${shiftId}`} label="Reason for any difference"><input id={`close-why-${shiftId}`} className={fieldClass} value={why} maxLength={200} onChange={(e) => setWhy(e.target.value)} /></Field>
       {problem === null ? null : <p role="alert" className="text-sm text-red-700" data-testid="shift-problem">{problem}</p>}
@@ -152,8 +159,30 @@ function CloseForm({ shiftId, supervisor, onClosed }: { shiftId: string; supervi
 
 function StatusChip({ row }: { row: ShiftRow }) {
   if (row.status === 'open') return <Chip tone="amber">Open</Chip>;
+  if (row.status === 'closing') return <Chip tone="amber">Waiting for approval</Chip>;
   if (row.variance === 0) return <Chip tone="green">Till right</Chip>;
   return <Chip tone="red">{`Difference ${money(row.variance ?? 0)}`}</Chip>;
+}
+
+function Waiting({ report, canWithdraw, onWithdrawn, onError }: { report: ShiftReport; canWithdraw: boolean; onWithdrawn: () => Promise<void>; onError: (text: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const ask = report.closeRequest;
+  const withdraw = async () => {
+    setBusy(true);
+    const r = await withdrawShiftCloseAction(report.id);
+    setBusy(false);
+    if (r.ok) await onWithdrawn();
+    else onError(r.error);
+  };
+  return (
+    <section className={`${cardClass} space-y-2`} aria-label="Waiting for approval" data-testid="shift-waiting">
+      <h2 className="text-base font-bold text-fg-strong">Waiting for approval</h2>
+      <p className="text-sm text-fg-muted">
+        {ask === null ? 'The close of this shift is waiting for approval.' : `${ask.requestedBy} counted ${money(ask.declaredCash)}, a difference of ${money(ask.variance)} ("${ask.reason}"). No cash can be added or taken out until it is decided.`}
+      </p>
+      {canWithdraw ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void withdraw()}>{busy ? 'Withdrawing…' : 'Withdraw the request and recount'}</button> : null}
+    </section>
+  );
 }
 
 function History({ data, onOpen }: { data: ShiftsScreen; onOpen: (report: ShiftReport) => void }) {

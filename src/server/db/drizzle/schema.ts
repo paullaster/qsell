@@ -4695,7 +4695,7 @@ export const shifts = pgTable(
     branchId: uuid('branch_id')
       .notNull()
       .references(() => branches.id, { onDelete: 'restrict' }),
-    status: text('status').$type<'open' | 'closed'>().notNull().default('open'),
+    status: text('status').$type<'open' | 'closing' | 'closed'>().notNull().default('open'),
     openedBy: text('opened_by').notNull(),
     openedAt: timestamp('opened_at', { withTimezone: true }).notNull().defaultNow(),
     openingFloat: numeric('opening_float', { precision: 14, scale: 2 }).notNull(),
@@ -4713,12 +4713,12 @@ export const shifts = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex('shifts_one_open_per_register_uidx').on(t.registerId).where(sql`${t.status} = 'open'`),
-    uniqueIndex('shifts_one_open_per_person_uidx').on(t.openedBy).where(sql`${t.status} = 'open'`),
+    uniqueIndex('shifts_one_open_per_register_uidx').on(t.registerId).where(sql`${t.status} IN ('open', 'closing')`),
+    uniqueIndex('shifts_one_open_per_person_uidx').on(t.openedBy).where(sql`${t.status} IN ('open', 'closing')`),
     uniqueIndex('shifts_z_number_uidx').on(t.zNumber).where(sql`${t.zNumber} IS NOT NULL`),
     index('shifts_company_opened_idx').on(t.companyId, t.openedAt),
-    check('shifts_status_chk', sql`${t.status} IN ('open', 'closed')`),
-    check('shifts_closed_chk', sql`(${t.status} = 'open' AND ${t.closedAt} IS NULL) OR (${t.status} = 'closed' AND ${t.closedAt} IS NOT NULL AND ${t.declaredCash} IS NOT NULL AND ${t.zNumber} IS NOT NULL)`),
+    check('shifts_status_chk', sql`${t.status} IN ('open', 'closing', 'closed')`),
+    check('shifts_closed_chk', sql`(${t.status} IN ('open', 'closing') AND ${t.closedAt} IS NULL) OR (${t.status} = 'closed' AND ${t.closedAt} IS NOT NULL AND ${t.declaredCash} IS NOT NULL AND ${t.zNumber} IS NOT NULL)`),
     check('shifts_float_chk', sql`${t.openingFloat} >= 0`),
   ],
 );
@@ -4745,16 +4745,51 @@ export const shiftMovements = pgTable(
 );
 
 /** How far a till may be out before only a supervisor can close its shift: an amount or a percent, either is enough. */
-export const shiftSettings = pgTable('shift_settings', {
-  companyId: uuid('company_id')
-    .primaryKey()
-    .references(() => companySettings.id, { onDelete: 'cascade' }),
-  toleranceAmount: numeric('tolerance_amount', { precision: 14, scale: 2 }).notNull().default('100'),
-  tolerancePercent: numeric('tolerance_percent', { precision: 7, scale: 3 }).notNull().default('1'),
-  version: integer('version').notNull().default(1),
-  updatedBy: text('updated_by').notNull(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+/**
+ * A close the approval queue is deciding: the count, the figures it was worked out from and the reason, kept while the shift waits in
+ * `closing` (no cash moves in that time). Approved, it closes the shift from exactly these figures; rejected or withdrawn, the shift is
+ * open again for a recount.
+ */
+export const shiftCloseRequests = pgTable(
+  'shift_close_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    shiftId: uuid('shift_id').notNull().references(() => shifts.id, { onDelete: 'restrict' }),
+    requestedBy: text('requested_by').notNull(),
+    declaredCash: numeric('declared_cash', { precision: 14, scale: 2 }).notNull(),
+    closingCounted: jsonb('closing_counted').$type<{ value: number; count: number }[]>().notNull().default(sql`'[]'::jsonb`),
+    expectedCash: numeric('expected_cash', { precision: 14, scale: 2 }).notNull(),
+    variance: numeric('variance', { precision: 14, scale: 2 }).notNull(),
+    varianceReason: text('variance_reason').notNull(),
+    closingFigures: jsonb('closing_figures').$type<{ paidIn: number; paidOut: number; cashSales: number }>().notNull(),
+    status: text('status').$type<'pending' | 'approved' | 'rejected' | 'canceled'>().notNull().default('pending'),
+    decisionNote: text('decision_note'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('shift_close_requests_one_pending_uidx').on(t.shiftId).where(sql`${t.status} = 'pending'`),
+    index('shift_close_requests_shift_idx').on(t.shiftId, t.createdAt),
+    check('shift_close_requests_status_chk', sql`${t.status} IN ('pending', 'approved', 'rejected', 'canceled')`),
+  ],
+);
+
+export const shiftSettings = pgTable(
+  'shift_settings',
+  {
+    companyId: uuid('company_id')
+      .primaryKey()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    toleranceAmount: numeric('tolerance_amount', { precision: 14, scale: 2 }).notNull().default('100'),
+    tolerancePercent: numeric('tolerance_percent', { precision: 7, scale: 3 }).notNull().default('1'),
+    /** How a difference beyond the allowance is closed: by a supervisor on the spot, or through the approval queue. */
+    supervisorClose: text('supervisor_close').$type<'direct' | 'approval'>().notNull().default('direct'),
+    version: integer('version').notNull().default(1),
+    updatedBy: text('updated_by').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+},
+  (t) => [check('shift_settings_supervisor_close_chk', sql`${t.supervisorClose} IN ('direct', 'approval')`)],
+);
 
 /**
  * How each selling document type (sales order, sales invoice, credit sale, cash sale) behaves for this company: the credit check, credit
