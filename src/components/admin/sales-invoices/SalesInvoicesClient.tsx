@@ -10,6 +10,7 @@ import { SegmentedChoice } from '@/components/ui/SegmentedChoice';
 import { useDebouncedValue } from '@/components/ui/useDebouncedValue';
 import { usePagedList } from '@/components/ui/usePagedList';
 import type { Choice } from '@/lib/payment-options';
+import { SalesOrderEditor } from '@/components/admin/sales-orders/SalesOrderEditor';
 import { SalesInvoiceDetail } from './SalesInvoiceDetail';
 
 type FirstPage = Awaited<ReturnType<typeof salesInvoicesPageAction>>;
@@ -46,6 +47,7 @@ function Body({ first }: { first: Extract<FirstPage, { ok: true }> }) {
   const [order, setOrder] = useState<Choice | null>(null);
   const [pickerKey, setPickerKey] = useState(0);
   const [raising, setRaising] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [notice, setNotice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const list = usePagedList<SalesInvoiceRow, { query: string; kind: Kind }>({
     filters: { query, kind },
@@ -70,7 +72,22 @@ function Body({ first }: { first: Extract<FirstPage, { ok: true }> }) {
   };
   return (
     <>
-      <PageHeader title="Sales invoices" intro="The invoices raised for sales: whether each is signed with KRA, paid or credited. A signed invoice is never edited: it is corrected by a credit note." />
+      <PageHeader
+        title="Sales invoices"
+        intro="The invoices raised for sales: whether each is signed with KRA, paid or credited. A signed invoice is never edited: it is corrected by a credit note."
+        actions={first.data.canCreate && !creating ? <button type="button" className={primaryClass} onClick={() => { setNotice(null); setCreating(true); }}>New sales invoice</button> : null}
+      />
+      {creating ? (
+        <SalesOrderEditor
+          variant="sales_invoice"
+          onCancel={() => setCreating(false)}
+          onPlaced={(text) => {
+            setCreating(false);
+            setNotice({ kind: 'ok', text });
+            list.reload();
+          }}
+        />
+      ) : null}
       {notice === null ? null : <p role={notice.kind === 'error' ? 'alert' : 'status'} className={`rounded-lg border p-3 text-sm ${notice.kind === 'error' ? 'border-red-500/30 bg-red-500/10 text-red-700' : 'border-emerald-500/30 bg-emerald-500/10 text-fg'}`} data-testid="invoice-notice">{notice.text}</p>}
       {first.data.canCreate ? (
         <section className={`${cardClass} space-y-2`} aria-label="Raise an invoice">
@@ -98,7 +115,7 @@ function Body({ first }: { first: Extract<FirstPage, { ok: true }> }) {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0">
                 <p className="font-semibold break-words text-fg-strong">{row.invoiceNumber}</p>
-                <p className="text-sm break-words text-fg-muted">{INVOICE_KIND_WORDS[row.kind] ?? row.kind} · order {row.orderNumber} · {row.customerName} · {new Date(row.createdAt).toLocaleDateString()}</p>
+                <p className="text-sm break-words text-fg-muted">{INVOICE_KIND_WORDS[row.kind] ?? row.kind}{row.salesModule === 'sales_invoice' ? ' (direct sale)' : ''} · order {row.orderNumber} · {row.customerName} · {new Date(row.createdAt).toLocaleDateString()}</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-mono text-sm font-semibold text-fg-strong">{row.currency} {row.total.toLocaleString()}</span>

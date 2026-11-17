@@ -62,4 +62,49 @@ test.describe('sales invoices', () => {
     await expect(page.getByTestId('invoices-empty')).toBeVisible({ timeout: 30_000 });
     await noNativeSelect(page);
   });
+
+  test('staff issue a sale directly as a sales invoice to an account customer, with the credit position shown and the invoice made with it', async ({ page }, testInfo) => {
+    test.slow();
+    const tag = `sd${String(Date.now()).slice(-6)}${testInfo.project.name === 'phone' ? 'p' : 'd'}`;
+    const customer = makeTradeCustomer(tag, '1000000', 14);
+    const small = makeTradeCustomer(`${tag}s`, '500', 30);
+    const productName = makeProduct(tag);
+
+    await gotoAdmin(page, '/admin/sales-invoices', 'Sales invoices');
+    await expect(page.getByLabel('Find an invoice')).toBeVisible({ timeout: 60_000 });
+    await expect(async () => {
+      await page.getByRole('button', { name: 'New sales invoice' }).click();
+      await expect(page.getByRole('form', { name: 'New sales invoice' })).toBeVisible({ timeout: 3000 });
+    }).toPass({ timeout: 60_000 });
+    const form = page.getByRole('form', { name: 'New sales invoice' });
+    await pick(page, form.getByRole('combobox', { name: /Customer/ }), customer);
+    await expect(form.getByTestId('credit-position')).toContainText('credit account on 14 days', { timeout: 30_000 });
+    await pick(page, form.getByRole('combobox', { name: 'Add a product' }), productName);
+    await form.getByLabel(`Quantity of ${productName}`).fill('2');
+    await noNativeSelect(page);
+    await noHorizontalScroll(page);
+    await form.getByRole('button', { name: 'Issue invoice' }).click();
+    const notice = page.getByTestId('invoice-notice');
+    await expect(notice).toContainText('issued for order', { timeout: 60_000 });
+    const invoiceNumber = /Invoice (\S+) issued/.exec((await notice.textContent()) ?? '')?.[1] ?? '';
+    expect(invoiceNumber).not.toBe('');
+
+    // It is in the list as a direct sale, unpaid, with its own number.
+    await page.getByLabel('Find an invoice').fill(customer);
+    const row = page.getByTestId('sales-invoice').filter({ hasText: invoiceNumber });
+    await expect(row).toHaveCount(1, { timeout: 30_000 });
+    await expect(row).toContainText('(direct sale)');
+    await expect(row).toContainText('Unpaid');
+
+    // A customer whose limit is small is refused in words and nothing is issued.
+    await page.getByLabel('Find an invoice').fill('');
+    await page.getByRole('button', { name: 'New sales invoice' }).click();
+    const second = page.getByRole('form', { name: 'New sales invoice' });
+    await pick(page, second.getByRole('combobox', { name: /Customer/ }), small);
+    await expect(second.getByTestId('credit-position')).toContainText('Limit', { timeout: 30_000 });
+    await pick(page, second.getByRole('combobox', { name: 'Add a product' }), productName);
+    await second.getByLabel(`Quantity of ${productName}`).fill('3');
+    await second.getByRole('button', { name: 'Issue invoice' }).click();
+    await expect(second.getByTestId('order-problem')).toContainText('would exceed the credit limit', { timeout: 60_000 });
+  });
 });
