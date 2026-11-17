@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { noHorizontalScroll, noInnerHorizontalScroll, noNativeSelect, open } from './support/page';
 import { pick } from './support/quotes';
+import { deliveryTool } from './support/delivery-fixtures';
 import { riderTool } from './support/rider-fixtures';
 import { pngOf } from './support/png';
 
@@ -182,9 +183,33 @@ test.describe('visits', () => {
     await card.getByRole('button', { name: `Cancel the visit for order ${orderNumber}` }).click();
     await card.getByRole('button', { name: `Confirm: Cancel the visit for order ${orderNumber}` }).click();
     await expect(page.getByText('The visit is cancelled.')).toBeVisible({ timeout: 30_000 });
+    // The list is read again after a cancel and goes back to Coming up; a tab chosen before that is lost, so wait for it to settle.
+    await expect(card).toHaveCount(0, { timeout: 30_000 });
     await page.getByRole('button', { name: 'Cancelled' }).click();
     const gone = page.getByRole('list', { name: 'Visit list' }).getByRole('listitem').filter({ hasText: `Order ${orderNumber}` }).first();
     await expect(gone).toContainText('cancelled: Customer is travelling', { timeout: 30_000 });
+    await noHorizontalScroll(page);
+    await noInnerHorizontalScroll(page);
+  });
+  test('a visit that has not started is cancelled with its order, so no crew is sent', async ({ page }, testInfo) => {
+    test.slow();
+    const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}C`;
+    const orderNumber = riderTool('paid-order', tag).orderNumber ?? '';
+    await open(page, '/admin/delivery/visits', 'Visits');
+    const form = page.getByRole('form', { name: 'Book a visit' });
+    await pick(page, form.getByRole('combobox', { name: 'Order' }), orderNumber, new RegExp(orderNumber));
+    await form.getByLabel('Starts (Nairobi time)').fill(boxTime(3, 9));
+    await form.getByLabel('Ends (Nairobi time)').fill(boxTime(3, 12));
+    await form.getByLabel('Address the crew goes to').fill('Westlands, Nairobi');
+    await form.getByLabel('Checklist, one item to a line').fill('Measure up');
+    await form.getByRole('button', { name: 'Book the visit' }).click();
+    const list = page.getByRole('list', { name: 'Visit list' });
+    await expect(list.getByRole('listitem').filter({ hasText: `Order ${orderNumber}` }).first()).toContainText('Booked', { timeout: 30_000 });
+    deliveryTool('cancel-order', orderNumber);
+    await open(page, '/admin/delivery/visits', 'Visits');
+    await page.getByRole('button', { name: 'Cancelled' }).click();
+    const gone = list.getByRole('listitem').filter({ hasText: `Order ${orderNumber}` }).first();
+    await expect(gone).toContainText('The order was cancelled or refunded, so the visit is cancelled.', { timeout: 30_000 });
     await noHorizontalScroll(page);
     await noInnerHorizontalScroll(page);
   });

@@ -1,7 +1,30 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 
+const withoutDevOverlay = new WeakSet<Page>();
+
+/**
+ * The development server floats a badge ("1 Insight", errors) over the bottom of the screen. On a phone it covers the buttons a test
+ * clicks at the foot of a card, so the click is refused as intercepted. Tests do not read the badge; it is hidden for the page.
+ */
+async function hideDevOverlay(page: Page): Promise<void> {
+  if (withoutDevOverlay.has(page)) return;
+  withoutDevOverlay.add(page);
+  await page.addInitScript(() => {
+    const hide = (): void => {
+      const style = document.createElement('style');
+      style.textContent = 'nextjs-portal { display: none !important; }';
+      document.documentElement.appendChild(style);
+    };
+    // The script can run before the page has a root element.
+    const root = document.documentElement as HTMLElement | null;
+    if (root === null) document.addEventListener('DOMContentLoaded', hide);
+    else hide();
+  });
+}
+
 /** Opens an admin screen and waits for its heading, trying again if the development server was still compiling it. */
 export async function open(page: Page, url: string, heading: string | RegExp): Promise<void> {
+  await hideDevOverlay(page);
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
       // A first visit that makes the development server compile can reload the page under us; that is another try, not a failure.
