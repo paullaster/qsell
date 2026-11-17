@@ -20,6 +20,7 @@ import {
 } from '@/server/domains/transactions/reconcile-actions';
 import { classifyCallbackEventAction } from '@/server/domains/payments/classify-actions';
 import { has } from '@/lib/values';
+import { useWhen } from '@/components/business-time';
 
 const amountFormat = new Intl.NumberFormat('en-KE', {
   minimumFractionDigits: 2,
@@ -73,6 +74,7 @@ export function AdminTransactionReconcile({
   paymentCredits: MissingPaymentCredit[];
   callbacks: PaymentCallbackEventRow[];
 }) {
+  const when = useWhen();
   const [debits, setDebits] = useState(initialDebits);
   const [credits, setCredits] = useState(initialCredits);
   const [callbacks, setCallbacks] = useState(initialCallbacks);
@@ -326,10 +328,7 @@ export function AdminTransactionReconcile({
                 {callbacks.map((row) => (
                   <tr role="row" key={row.id} className={`block md:table-row ${rowClass}`}>
                     <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 whitespace-nowrap text-fg-muted" data-label="Received">
-                      {new Date(row.createdAt).toLocaleString('en-GB', {
-                        dateStyle: 'medium',
-                        timeStyle: 'short',
-                      })}
+                      {when(row.createdAt)}
                     </td>
                     <td role="cell" className="before:mr-2 before:text-xs before:font-normal before:text-fg-muted before:content-[attr(data-label)] md:before:hidden block md:table-cell px-4 py-3 font-mono text-[11px] text-indigo-300" data-label="Provider">
                       {row.providerCode}

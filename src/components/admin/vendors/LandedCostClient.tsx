@@ -6,6 +6,7 @@ import { use, useId, useState } from 'react';
 import { cancelLandedCostAction, postLandedCostAction, type landedCostAction } from '@/server/domains/vendors/landed-cost-actions';
 import { LANDED_KINDS, LANDED_STATUS } from '@/lib/landed-cost';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
+import { useWhen } from '@/components/business-time';
 
 type Data = Extract<Awaited<ReturnType<typeof landedCostAction>>, { ok: true }>['data'];
 type Result = { ok: true; data?: unknown } | { ok: false; error: string };
@@ -17,6 +18,7 @@ export function LandedCostClient({ viewPromise }: { viewPromise: ReturnType<type
 }
 
 function View({ data }: { data: Data }) {
+  const when = useWhen();
   const uid = useId();
   const router = useRouter();
   const r = data.cost;
@@ -62,7 +64,7 @@ function View({ data }: { data: Data }) {
       ) : null}
       <section className={cardClass} aria-label="History">
         <h2 className="text-sm font-bold text-fg-strong">History</h2>
-        <ol className="mt-1 space-y-1 text-sm text-fg">{data.events.map((e) => <li key={e.id}>{EVENT_WORDS[e.event] ?? e.event} <span className="text-xs text-fg-muted">· {e.who ?? 'System'} · {new Date(e.at).toLocaleString()}</span></li>)}</ol>
+        <ol className="mt-1 space-y-1 text-sm text-fg">{data.events.map((e) => <li key={e.id}>{EVENT_WORDS[e.event] ?? e.event} <span className="text-xs text-fg-muted">· {e.who ?? 'System'} · {when(e.at)}</span></li>)}</ol>
       </section>
     </div>
   );

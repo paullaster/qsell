@@ -158,6 +158,7 @@ The time zone the business works in. It decides which **day** a sale or a postin
 - **Reason** (and a comment, which some reasons require): chosen from the company's list of reasons. Nothing is changed without one.
 - **Change the time zone**: asks once ("Yes, change it"). It applies at once to everything made from then on. **Documents already made keep the dates they have**; nothing is rewritten, and a delivery slot's hours (for example 09:00 to 12:00) are hours on the business's own clock, so they move with the zone.
 - **Recorded**: who changed it, when, from which zone to which, and why, in the decision log.
+- **Times you type and read**: every date-and-time box in the system (a discount's start and end, a price list's "in force from", a rebate, the price check's "as at", a quotation's deadline, a visit, a group order's closing time) is the clock of the business, and its label says *business time*. Dates and times shown on screens, quotes and invoices follow it too, whatever zone the person's own computer or phone is in.
 - **Not affected**: the time written to the KRA eTIMS and in M-Pesa messages follows those services' own Kenya-time rules and does not move with this setting.
 - **Pitfalls**: change it before go-live, or on a quiet day, and check the clock on the screen afterwards; changing it in the middle of a trading day means that day's documents straddle two zones.
 

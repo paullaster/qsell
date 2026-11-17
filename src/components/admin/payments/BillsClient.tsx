@@ -6,7 +6,8 @@ import { billsOverviewAction, cancelInvoicesAction, listBillInvoicesAction, send
 import { billStatus, invoiceNote, isOverdue, stillDue } from '@/lib/bill-invoices';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import type { Choice } from '@/lib/payment-options';
-import { billRequestLabel, shortReason, when, words } from '@/lib/payment-activity-format';
+import { useWhen } from '@/components/business-time';
+import { billRequestLabel, shortReason, words } from '@/lib/payment-activity-format';
 import { Chip, Field, LoadFailed, Message, PageHeader, cardClass, fieldClass, money, primaryClass, buttonClass, today, type Notice, attempt } from '../finance/ui';
 
 type Data = Extract<Awaited<ReturnType<typeof billsOverviewAction>>, { ok: true }>['data'];
@@ -20,6 +21,7 @@ export function BillsClient({ initialPromise }: { initialPromise: ReturnType<typ
 }
 
 function BillsView({ initial }: { initial: Data }) {
+  const when = useWhen();
   const uid = useId();
   const [data, setData] = useState(initial);
   const first = initial.methods.at(0);

@@ -9,6 +9,7 @@ import { REFUND_FILE_STATUS, statusInfo } from '@/lib/finance-statuses';
 import { fileProblem, ownApprovals, pickedTotal, toggleAll, toggleOne } from '@/lib/refund-file-form';
 import type { Choice } from '@/lib/payment-options';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, money, primaryClass, today, type Notice } from './ui';
+import { useDate } from '@/components/business-time';
 
 type Files = Extract<Awaited<ReturnType<typeof listRefundFilesAction>>, { ok: true }>['data'];
 type Candidates = Extract<Awaited<ReturnType<typeof refundFileCandidatesAction>>, { ok: true }>['data'];
@@ -21,6 +22,7 @@ export function RefundFilesClient({ filesPromise, candidatesPromise }: { filesPr
 }
 
 function RefundFilesView({ files, candidates }: { files: Files; candidates: Candidates | null }) {
+  const date = useDate();
   const uid = useId();
   const router = useRouter();
   const rows = candidates?.rows ?? [];
@@ -99,7 +101,7 @@ function RefundFilesView({ files, candidates }: { files: Files; candidates: Cand
                     <p className="text-sm font-bold text-fg-strong">{f.number} <span className="font-normal text-fg-muted">· {f.count} {f.count === 1 ? 'refund' : 'refunds'}</span></p>
                     <Chip tone={statusInfo(REFUND_FILE_STATUS, f.status).tone}>{statusInfo(REFUND_FILE_STATUS, f.status).label}</Chip>
                   </div>
-                  <p className="mt-1 text-xs text-fg-muted">{f.currency} {money(f.total)} · {f.format === 'csv' ? 'CSV' : 'ISO 20022'} · {new Date(f.createdAt).toLocaleDateString()} · downloaded {f.downloads} {f.downloads === 1 ? 'time' : 'times'}</p>
+                  <p className="mt-1 text-xs text-fg-muted">{f.currency} {money(f.total)} · {f.format === 'csv' ? 'CSV' : 'ISO 20022'} · {date(f.createdAt)} · downloaded {f.downloads} {f.downloads === 1 ? 'time' : 'times'}</p>
                 </Link>
               </li>
             ))}

@@ -7,6 +7,7 @@ import { VENDOR_BLOCK, VENDOR_STATUS, VENDOR_TYPES } from '@/lib/vendor-forms';
 import { VendorPeoplePanel } from './VendorPeoplePanel';
 import { VendorStandingPanel } from './VendorStandingPanel';
 import { Chip, LoadFailed, PageHeader, buttonClass, cardClass, money } from '@/components/ui/screen-kit';
+import { useWhen } from '@/components/business-time';
 
 type View = Extract<Awaited<ReturnType<typeof vendorDetailAction>>, { ok: true }>['data'];
 
@@ -18,6 +19,7 @@ export function VendorDetailClient({ viewPromise, reviewSlot, termsSlot }: { vie
 const dash = (v: string | number | null): string => (v === null || v === '' ? '—' : String(v));
 
 function VendorDetailView({ view, reviewSlot, termsSlot }: { view: View; reviewSlot: ReactNode; termsSlot: ReactNode }) {
+  const when = useWhen();
   const v = view.vendor;
   const state = VENDOR_STATUS[v.status] ?? { label: v.status, tone: 'gray' as const };
   const type = VENDOR_TYPES.find((t) => t.id === v.vendorType)?.label ?? v.vendorType;
@@ -76,7 +78,7 @@ function VendorDetailView({ view, reviewSlot, termsSlot }: { view: View; reviewS
           {view.events.map((e) => (
             <li key={e.id} className="border-t border-line pt-2 first:border-0 first:pt-0">
               <p className="font-semibold text-fg-strong">{e.event.replace(/_/g, ' ')}{e.toStatus !== null && e.fromStatus !== e.toStatus ? ` · ${e.fromStatus ?? 'new'} → ${e.toStatus}` : ''}</p>
-              <p className="text-fg-muted">{new Date(e.at).toLocaleString()} · {e.actorType}</p>
+              <p className="text-fg-muted">{when(e.at)} · {e.actorType}</p>
             </li>
           ))}
         </ol>

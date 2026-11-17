@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { auth } from '@/auth';
+import { BusinessTimeZoneProvider } from '@/components/business-time';
+import { getContainer } from '@/server/di/container';
 import { logoutAction } from '@/server/domains/auth/actions';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { buttonClass } from '@/components/ui/screen-kit';
@@ -19,9 +21,10 @@ export default async function VendorPortalLayout({ children }: { children: React
   const session = await auth();
   const user = session?.user;
   if (user === undefined || user.isStaff || (user.role !== 'vendor' && user.role !== 'customer')) redirect('/login?callbackUrl=%2Fvendor');
-  const access = await findPortalAccess(user.id);
+  const [access, company] = await Promise.all([findPortalAccess(user.id), getContainer().companySettings.ensureSeeded()]);
   if (access === null) redirect('/login?callbackUrl=%2Fvendor');
   return (
+    <BusinessTimeZoneProvider timeZone={company.timezone}>
     <div className="min-h-dvh bg-canvas">
       <header className="border-b border-line bg-surface-raised">
         <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-3">
@@ -39,5 +42,6 @@ export default async function VendorPortalLayout({ children }: { children: React
       <VendorPortalNavigation role={access.portalRole} />
       <main className="mx-auto max-w-5xl px-4 py-6">{children}</main>
     </div>
+    </BusinessTimeZoneProvider>
   );
 }

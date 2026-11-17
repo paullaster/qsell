@@ -18,6 +18,7 @@ import type { Order } from '@/types/index';
 import { OrderDetailsModal, type FulfilmentChange } from './orders/OrderDetailsModal';
 import { OrderInvoicePreview } from './orders/OrderInvoicePreview';
 import { LeftAtCounterBadge, OrderStatusBadge } from './orders/OrderStatusBadge';
+import { useWhen } from '@/components/business-time';
 
 /** The order (and invoice preview) the address asked to open, read on the server. */
 export interface OpenTarget {
@@ -44,6 +45,7 @@ const messageOf = (error: unknown, fallback: string): string =>
 
 /** The orders, a page at a time: search, narrow by state, and open one to fulfil, invoice, take payment on or credit. */
 export function AdminOrders({ firstPage, companyPromise, canEditProductsPromise, targetPromise = NO_TARGET }: AdminOrdersProps) {
+  const when = useWhen();
   const first = use(firstPage);
   const company = use(companyPromise);
   const canEditProducts = use(canEditProductsPromise);
@@ -240,7 +242,7 @@ export function AdminOrders({ firstPage, companyPromise, canEditProductsPromise,
                   <div className="min-w-0">
                     <p className="font-mono text-sm font-bold text-fg-strong">{o.orderNumber}</p>
                     <p className="text-[11px] text-fg-muted">
-                      {new Date(o.createdAt).toLocaleString()}
+                      {when(o.createdAt)}
                     </p>
                   </div>
                   <div className="flex flex-col items-end gap-1">
@@ -304,10 +306,7 @@ export function AdminOrders({ firstPage, companyPromise, canEditProductsPromise,
                       {o.orderNumber}
                     </td>
                     <td className="px-4 py-3.5 text-[11px] text-fg-muted">
-                      {new Date(o.createdAt).toLocaleString([], {
-                        dateStyle: 'short',
-                        timeStyle: 'short',
-                      })}
+                      {when(o.createdAt)}
                     </td>
                     <td className="px-4 py-3.5">
                       <div className="font-semibold text-fg-strong">{o.customerName}</div>

@@ -5,7 +5,8 @@ import { canPermission } from '@/server/domains/access-control/guard';
 import { getContainer } from '@/server/di/container';
 import { run } from '@/server/domains/finance/action-runner';
 import { FinanceError } from '@/server/domains/finance/errors';
-import { businessDate } from '@/server/kernel/numbering/business-date';
+import { businessDate, businessTimeZone } from '@/server/kernel/numbering/business-date';
+import { toBusinessInput } from '@/lib/visit';
 import { emptyRfqHeader, emptyRfqLine, type RfqHeaderForm, type RfqLineForm } from '@/lib/rfq';
 import { has } from '@/lib/values';
 
@@ -65,7 +66,6 @@ export async function rfqAction(rfqId: string) {
     if (got === null) throw new FinanceError('NOT_FOUND', 'That request does not exist.');
     const [create, issue, close, evaluate, award] = await Promise.all([canPermission('rfq:create'), canPermission('rfq:issue'), canPermission('rfq:close'), canPermission('rfq:evaluate'), canPermission('rfq:award')]);
     const r = got.rfq;
-    const pad = (n: number) => String(n).padStart(2, '0');
     const d = r.deadline;
     return {
       id: r.id,
@@ -83,7 +83,7 @@ export async function rfqAction(rfqId: string) {
         description: r.description ?? '',
         terms: r.terms ?? '',
         requiredBy: r.requiredBy ?? '',
-        deadline: `${String(d.getFullYear())}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`,
+        deadline: toBusinessInput(d.toISOString(), businessTimeZone()),
         validityDays: String(r.validityDays),
         currency: r.currency,
         sealed: r.sealed,

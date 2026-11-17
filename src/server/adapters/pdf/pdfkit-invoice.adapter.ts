@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { InvoicePdfPort, InvoicePayload } from '@/server/ports/communications';
 import { resolveDocumentLayouts } from '@/lib/document-layouts';
+import { businessTimeZone } from '@/server/kernel/numbering/business-date';
 
 function money(amount: number, currency: string): string {
   return `${currency} ${amount.toLocaleString('en-KE', {
@@ -169,7 +170,7 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
       const metaRows: [string, string][] = [
         [docLabel, payload.invoiceNumber],
         ...(isQuote ? [] : [['Order No.', payload.orderNumber] as [string, string]]),
-        ['Issue Date', new Date(payload.issuedAt).toLocaleDateString('en-KE')],
+        ['Issue Date', new Date(payload.issuedAt).toLocaleDateString('en-GB', { timeZone: businessTimeZone() })],
         ...(isQuote
           ? [
               ...(has(payload.validUntil)

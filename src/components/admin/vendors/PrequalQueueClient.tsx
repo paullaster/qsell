@@ -7,6 +7,7 @@ import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { STATUS_WORDS } from '@/lib/prequalification';
 import type { Choice } from '@/lib/payment-options';
 import { Chip, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, type Notice } from '@/components/ui/screen-kit';
+import { useDate } from '@/components/business-time';
 
 type Page = Extract<Awaited<ReturnType<typeof prequalQueueAction>>, { ok: true }>['data'];
 type Row = Page['rows'][number];
@@ -17,6 +18,7 @@ export function PrequalQueueClient({ initialPromise }: { initialPromise: ReturnT
 }
 
 function QueueView({ initial }: { initial: Page }) {
+  const date = useDate();
   const [rows, setRows] = useState<Row[]>(initial.rows);
   const [next, setNext] = useState(initial.next);
   const [status, setStatus] = useState<Choice | null>(null);
@@ -50,7 +52,7 @@ function QueueView({ initial }: { initial: Page }) {
             return (
               <li key={r.id}>
                 <Link href={`/admin/vendors/prequalification/${r.id}`} className={`${cardClass} flex min-h-10 flex-wrap items-center justify-between gap-2 hover:bg-hover`}>
-                  <span className="min-w-0"><span className="block text-sm font-bold text-fg-strong">{r.vendorName}</span><span className="block text-xs text-fg-muted">{r.categoryName}{r.submittedAt === null ? '' : ` · sent ${new Date(r.submittedAt).toLocaleDateString()}`}{r.validUntil === null ? '' : ` · until ${r.validUntil}`}</span></span>
+                  <span className="min-w-0"><span className="block text-sm font-bold text-fg-strong">{r.vendorName}</span><span className="block text-xs text-fg-muted">{r.categoryName}{r.submittedAt === null ? '' : ` · sent ${date(r.submittedAt)}`}{r.validUntil === null ? '' : ` · until ${r.validUntil}`}</span></span>
                   <Chip tone={s.tone}>{s.label}</Chip>
                 </Link>
               </li>

@@ -4,7 +4,8 @@ import { procurementCategories, rfqAddenda, rfqAwardProposals, rfqEvents, rfqInv
 import { has, trimToNull } from '@/lib/values';
 import { checkRfqHeader, checkRfqLine, type RfqHeaderForm, type RfqLineForm } from '@/lib/rfq';
 import type { NumberSeriesService } from '@/server/kernel/numbering/service';
-import { businessDate } from '@/server/kernel/numbering/business-date';
+import { businessDate, businessTimeZone } from '@/server/kernel/numbering/business-date';
+import { fromBusinessInput } from '@/lib/visit';
 import { FinanceError, type FinanceContext } from '@/server/domains/finance/errors';
 import type { VendorNotifier } from './notifier';
 import type { PrequalLifecycle } from './prequal-lifecycle';
@@ -16,7 +17,12 @@ const MAX_LINES = 200;
 const MAX_INVITEES = 50;
 
 /** A buyer's local `YYYY-MM-DDTHH:mm` becomes an instant. The server's own zone is the company's, as everywhere else here. */
-export const parseDeadline = (local: string): Date => new Date(local.length === 16 ? `${local}:00` : local);
+/** A deadline typed as a date and time (`2026-11-05T17:00`) is read on the business's own clock, whatever zone the server runs in; a full instant is taken as it is. */
+export const parseDeadline = (local: string): Date => {
+  if (local.length !== 16) return new Date(local);
+  const at = fromBusinessInput(local, businessTimeZone());
+  return at === null ? new Date(Number.NaN) : new Date(at);
+};
 
 export interface RfqListFilter {
   status?: string;

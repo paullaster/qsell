@@ -9,6 +9,7 @@ import { SegmentedChoice } from '@/components/ui/SegmentedChoice';
 import type { Choice } from '@/lib/payment-options';
 import { CashCounter, type CountValue } from './CashCounter';
 import { ShiftReportView } from './ShiftReportView';
+import { useWhen } from '@/components/business-time';
 
 type First = Awaited<ReturnType<typeof shiftsScreenAction>>;
 type Notice = { kind: 'ok' | 'error'; text: string } | null;
@@ -157,6 +158,7 @@ function StatusChip({ row }: { row: ShiftRow }) {
 }
 
 function History({ data, onOpen }: { data: ShiftsScreen; onOpen: (report: ShiftReport) => void }) {
+  const when = useWhen();
   const [rows, setRows] = useState<ShiftRow[]>(data.history.rows);
   const [cursor, setCursor] = useState(data.history.nextCursor);
   const [more, setMore] = useState(false);
@@ -185,7 +187,7 @@ function History({ data, onOpen }: { data: ShiftsScreen; onOpen: (report: ShiftR
             <li key={r.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface-raised p-3" data-testid="shift-row">
               <div className="min-w-0">
                 <p className="font-semibold break-words text-fg-strong">{r.zNumber ?? 'Open'} · {r.registerName}</p>
-                <p className="text-sm break-words text-fg-muted">{r.openedBy} · {new Date(r.openedAt).toLocaleString()}</p>
+                <p className="text-sm break-words text-fg-muted">{r.openedBy} · {when(r.openedAt)}</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <StatusChip row={r} />

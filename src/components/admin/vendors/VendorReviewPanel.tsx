@@ -8,6 +8,7 @@ import { CONTACT_ROLES, ID_TYPES, TURNOVER_BANDS, maskAccount } from '@/lib/vend
 import { VENDOR_TYPES } from '@/lib/vendor-forms';
 import type { Choice } from '@/lib/payment-options';
 import { Chip, Field, LoadFailed, Message, attempt, buttonClass, cardClass, dangerClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
+import { useWhen } from '@/components/business-time';
 
 type View = Extract<Awaited<ReturnType<typeof vendorReviewAction>>, { ok: true }>['data'];
 type Panel = null | 'approve' | 'revision' | 'reject';
@@ -17,7 +18,6 @@ const DOC_WORDS = { submitted: 'Waiting for a check', valid: 'Valid', invalid: '
 const DECISION_WORDS = { pending: 'Waiting for a decision', approved: 'Approved', revision_requested: 'Sent back for revision', rejected: 'Refused' } as const;
 const label = (list: readonly { id: string; label: string }[], id: string): string => list.find((x) => x.id === id)?.label ?? id;
 const dash = (v: string | null | undefined): string => (v === null || v === undefined || v === '' ? '—' : v);
-const when = (iso: string | null): string => (iso === null ? '—' : new Date(iso).toLocaleString());
 
 export function VendorReviewSection({ vendorId, reviewPromise }: { vendorId: string; reviewPromise: ReturnType<typeof vendorReviewAction> }) {
   const res = use(reviewPromise);
@@ -38,6 +38,7 @@ function Facts({ title, rows }: { title: string; rows: [string, string][] }) {
 }
 
 function VendorReviewPanel({ vendorId, view }: { vendorId: string; view: View }) {
+  const when = useWhen();
   const uid = useId();
   const router = useRouter();
   const [panel, setPanel] = useState<Panel>(null);

@@ -6,6 +6,7 @@ import { listReturnsAction } from '@/server/domains/returns/actions';
 import { RETURN_STATUS } from '@/lib/return-form';
 import { statusInfo } from '@/lib/finance-statuses';
 import { Chip, LoadFailed, Message, PageHeader, buttonClass, cardClass, type Notice, attempt } from './ui';
+import { useDate } from '@/components/business-time';
 
 type Page = Extract<Awaited<ReturnType<typeof listReturnsAction>>, { ok: true }>['data'];
 
@@ -15,6 +16,7 @@ export function ReturnsClient({ initialPromise }: { initialPromise: ReturnType<t
 }
 
 function ReturnsView({ initial }: { initial: Page }) {
+  const date = useDate();
   const [rows, setRows] = useState(initial.rows);
   const [which, setWhich] = useState<'open' | 'closed'>('open');
   const [busy, setBusy] = useState(false);
@@ -56,7 +58,7 @@ function ReturnsView({ initial }: { initial: Page }) {
                   <p className="text-sm font-bold text-fg-strong">{r.number} <span className="font-normal text-fg-muted">· credit note {r.creditNoteNo} · order {r.order}</span></p>
                   <Chip tone={statusInfo(RETURN_STATUS, r.status).tone}>{statusInfo(RETURN_STATUS, r.status).label}</Chip>
                 </div>
-                <p className="mt-1 text-xs text-fg-muted">{r.received} of {r.expected} units received · asked {new Date(r.requestedAt).toLocaleDateString()}</p>
+                <p className="mt-1 text-xs text-fg-muted">{r.received} of {r.expected} units received · asked {date(r.requestedAt)}</p>
               </Link>
             </li>
           ))}

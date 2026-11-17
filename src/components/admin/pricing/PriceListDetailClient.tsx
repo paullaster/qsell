@@ -23,6 +23,7 @@ import {
 import { PriceLinesPanel } from './PriceLinesPanel';
 import { PriceListForm } from './PriceListForm';
 import { listStatusChip } from './PriceListsClient';
+import { useWhen } from '@/components/business-time';
 
 const ACTIONS: Record<string, string> = {
   'pricing.list_created': 'Created as a draft',
@@ -43,6 +44,7 @@ export function PriceListDetailClient({
   lookups: PricingLookups;
   canManage: boolean;
 }) {
+  const when = useWhen();
   const router = useRouter();
   const { list, issues, timeline, names } = detail;
   const [editing, setEditing] = useState(false);
@@ -137,10 +139,10 @@ export function PriceListDetailClient({
             value={list.quantityMode === 'all_units' ? 'On every unit' : 'Step by step'}
           />
           <Fact label="Priority" value={String(list.priority)} />
-          <Fact label="In force from" value={new Date(list.validFrom).toLocaleString('en-KE')} />
+          <Fact label="In force from" value={when(list.validFrom)} />
           <Fact
             label="Until"
-            value={list.validTo ? new Date(list.validTo).toLocaleString('en-KE') : 'No end'}
+            value={list.validTo === null || list.validTo === '' ? 'No end' : when(list.validTo)}
           />
         </dl>
         {waiting ? (

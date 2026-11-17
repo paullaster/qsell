@@ -8,6 +8,7 @@ import { ADJUSTMENT_KIND, ADJUSTMENT_STATUS, statusInfo } from '@/lib/finance-st
 import { adjustmentRoute } from '@/lib/credit-adjustment-form';
 import type { Choice } from '@/lib/payment-options';
 import { Chip, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, money, primaryClass, type Notice } from './ui';
+import { useDate } from '@/components/business-time';
 
 type Page = Extract<Awaited<ReturnType<typeof listCreditAdjustmentsAction>>, { ok: true }>['data'];
 
@@ -17,6 +18,7 @@ export function CreditAdjustmentsClient({ initialPromise }: { initialPromise: Re
 }
 
 function CreditAdjustmentsView({ initial }: { initial: Page }) {
+  const date = useDate();
   const [rows, setRows] = useState(initial.rows);
   const [next, setNext] = useState(initial.nextBefore);
   const [status, setStatus] = useState<Choice | null>(null);
@@ -68,7 +70,7 @@ function CreditAdjustmentsView({ initial }: { initial: Page }) {
                   <p className="text-sm font-bold text-fg-strong">{r.number} <span className="font-normal text-fg-muted">· {r.customer}</span></p>
                   <span className="flex items-center gap-2"><Chip tone={statusInfo(ADJUSTMENT_KIND, r.kind).tone}>{statusInfo(ADJUSTMENT_KIND, r.kind).label}</Chip><Chip tone={statusInfo(ADJUSTMENT_STATUS, r.status).tone}>{statusInfo(ADJUSTMENT_STATUS, r.status).label}</Chip></span>
                 </div>
-                <p className="mt-1 text-xs text-fg-muted">{r.currency} {money(r.amount)} · {r.reason.replace(/_/g, ' ')} · {new Date(r.createdAt).toLocaleDateString()}</p>
+                <p className="mt-1 text-xs text-fg-muted">{r.currency} {money(r.amount)} · {r.reason.replace(/_/g, ' ')} · {date(r.createdAt)}</p>
               </Link>
             </li>
           ))}

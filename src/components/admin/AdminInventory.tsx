@@ -29,6 +29,7 @@ import {
   writeOffStockAction,
   auditStockCountAction,
 } from '@/server/actions';
+import { useWhen } from '@/components/business-time';
 
 interface AdminInventoryProps {
   productsPromise: Promise<Product[]>;
@@ -37,6 +38,7 @@ interface AdminInventoryProps {
 }
 
 export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: AdminInventoryProps) {
+  const when = useWhen();
   const products = use(productsPromise).filter(isInventoryManaged);
   const ledger = use(ledgerPromise);
 
@@ -559,7 +561,7 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
                     return (
                       <tr key={entry.id} className="font-mono hover:bg-hover">
                         <td className="px-4 py-3 text-[11px] text-fg-muted">
-                          {new Date(entry.timestamp).toLocaleString()}
+                          {when(entry.timestamp)}
                         </td>
                         <td className="px-4 py-3 font-semibold text-fg-strong">
                           {entry.productName}

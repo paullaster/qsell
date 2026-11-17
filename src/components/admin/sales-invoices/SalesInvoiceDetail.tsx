@@ -5,12 +5,13 @@ import { salesInvoiceDetailAction, salesInvoicePdfAction, sendSalesInvoiceAction
 import type { SalesInvoiceDetail as Detail } from '@/server/domains/selling/sales-invoice-service';
 import { INVOICE_KIND_WORDS, PAYMENT_WORDS, SIGNING_WORDS } from '@/server/domains/selling/domain/invoice-status';
 import { Chip, buttonClass } from '@/components/ui/screen-kit';
+import { useWhen } from '@/components/business-time';
 
 const money = (currency: string, amount: number): string => `${currency} ${amount.toLocaleString()}`;
-const when = (iso: string): string => new Date(iso).toLocaleString();
 
 /** One invoice opened: how it stands, its lines, the credit notes against it and the signing log; send it again or download it. */
 export function SalesInvoiceDetail({ invoiceNumber, canSend, onSent }: { invoiceNumber: string; canSend: boolean; onSent: () => void }) {
+  const when = useWhen();
   const [state, setState] = useState<{ number: string; detail: Detail | null | 'failed' } | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);

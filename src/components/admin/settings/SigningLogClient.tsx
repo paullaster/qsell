@@ -9,6 +9,7 @@ import { buttonClass, Chip, fieldClass, LoadFailed, PageHeader } from '@/compone
 import { isOutcome, OUTCOME_LABEL, reasonWords, type SigningOutcomeId } from '@/lib/kra-signing-log';
 import type { Choice } from '@/lib/payment-options';
 import { has } from '@/lib/values';
+import { useWhen } from '@/components/business-time';
 
 type FirstPage = Extract<Awaited<ReturnType<typeof signingDocumentsPageAction>>, { ok: true }>;
 
@@ -115,6 +116,7 @@ function DocumentRow({ latest, flow, onToggle }: { latest: SigningEventView; flo
 
 /** The whole story of one document, read when it is opened. */
 function Flow({ flow }: { flow: ReturnType<typeof signingFlowAction> }) {
+  const when = useWhen();
   const res = use(flow);
   if (!res.ok) {
     return (
@@ -129,7 +131,7 @@ function Flow({ flow }: { flow: ReturnType<typeof signingFlowAction> }) {
       {events.map((e) => (
         <li key={e.id} className="space-y-2 text-xs">
           <p className="font-semibold text-fg-strong">
-            {e.eventType === 'decision' ? 'Decision' : 'Signing attempt'} · <span className="font-normal text-fg-muted">{new Date(e.createdAt).toLocaleString()}</span>
+            {e.eventType === 'decision' ? 'Decision' : 'Signing attempt'} · <span className="font-normal text-fg-muted">{when(e.createdAt)}</span>
           </p>
           <p className="text-fg-muted">
             {OUTCOME_LABEL[e.outcome]}: {reasonWords(e.reason)}

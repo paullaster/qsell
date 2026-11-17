@@ -10,6 +10,7 @@ import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { emptyRfqHeader, emptyRfqLine, RFQ_STATUS, type RfqHeaderForm, type RfqLineForm } from '@/lib/rfq';
 import type { Choice } from '@/lib/payment-options';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
+import { useWhen } from '@/components/business-time';
 
 type View = Extract<Awaited<ReturnType<typeof rfqAction>>, { ok: true }>['data'];
 type Result = { ok: true } | { ok: false; error: string };
@@ -42,6 +43,7 @@ function Check({ id, label, hint, checked, onChange, disabled }: { id: string; l
 }
 
 function Editor({ view }: { view: View | null }) {
+  const businessWhen = useWhen();
   const uid = useId();
   const router = useRouter();
   const draft = view === null || view.status === 'draft';
@@ -130,7 +132,7 @@ function Editor({ view }: { view: View | null }) {
           <div className="sm:col-span-2"><Field id={`${uid}-t`} label="Title"><input id={`${uid}-t`} value={f.title} onChange={(e) => set('title', e.target.value)} className={fieldClass} disabled={!draft} required maxLength={200} autoComplete="off" /></Field></div>
           <ChoicePicker label="Category" source="procurement-categories" choice={category} onChoice={setCategory} disabled={!draft} required clearable={false} placeholder="Choose the category…" />
           <ChoicePicker label="Currency" source="rfq-currencies" choice={currency} onChoice={setCurrency} disabled={!draft} required clearable={false} placeholder="Choose the currency…" />
-          <Field id={`${uid}-d`} label="Quotes are due" hint="Your local date and time."><input id={`${uid}-d`} type="datetime-local" value={f.deadline} onChange={(e) => set('deadline', e.target.value)} className={fieldClass} disabled={!draft} required /></Field>
+          <Field id={`${uid}-d`} label="Quotes are due" hint="In the business time zone, as set in Settings."><input id={`${uid}-d`} type="datetime-local" value={f.deadline} onChange={(e) => set('deadline', e.target.value)} className={fieldClass} disabled={!draft} required /></Field>
           <Field id={`${uid}-rb`} label="Needed by (optional)"><input id={`${uid}-rb`} type="date" value={f.requiredBy} onChange={(e) => set('requiredBy', e.target.value)} className={fieldClass} disabled={!draft} /></Field>
           <Field id={`${uid}-v`} label="A quote must hold (days)"><input id={`${uid}-v`} inputMode="numeric" value={f.validityDays} onChange={(e) => set('validityDays', e.target.value)} className={fieldClass} disabled={!draft} required /></Field>
           <Field id={`${uid}-ev`} label="Estimated value (optional)" hint="For your own planning. Vendors never see it."><input id={`${uid}-ev`} inputMode="decimal" value={f.estimatedValue} onChange={(e) => set('estimatedValue', e.target.value)} className={fieldClass} disabled={!draft} autoComplete="off" /></Field>
@@ -193,7 +195,7 @@ function Editor({ view }: { view: View | null }) {
         <>
           <section className={`${cardClass} space-y-3`} aria-label="Running the request">
             <h3 className="text-sm font-bold text-fg-strong">Running the request</h3>
-            <p className="text-xs text-fg-muted">Due {new Date(view.deadlineIso).toLocaleString()}{view.opensAt === null ? '' : ` · quotes open ${new Date(view.opensAt).toLocaleString()}`}</p>
+            <p className="text-xs text-fg-muted">Due {businessWhen(view.deadlineIso)}{view.opensAt === null ? '' : ` · quotes open ${businessWhen(view.opensAt)}`}</p>
             {panel === null ? (
               <div className="flex flex-wrap gap-2">
                 {view.status === 'issued' && view.can.create ? <button type="button" className={buttonClass} onClick={() => setPanel('addendum')}>Send a clarification…</button> : null}
@@ -205,13 +207,13 @@ function Editor({ view }: { view: View | null }) {
             {panel === 'addendum' ? (
               <form className="space-y-2 rounded-lg border border-line p-3" aria-label="Send a clarification" onSubmit={(e) => { e.preventDefault(); void act(rfqAddendumAction(view.id, text, when).then((r) => (r.ok ? { ok: true as const } : r)), 'The clarification was sent to every invited vendor.'); }}>
                 <Field id={`${uid}-ab`} label="Clarification"><textarea id={`${uid}-ab`} rows={3} value={text} onChange={(e) => setText(e.target.value)} className={fieldClass} required maxLength={2000} /></Field>
-                <Field id={`${uid}-ad`} label="New deadline (optional)"><input id={`${uid}-ad`} type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} className={fieldClass} /></Field>
+                <Field id={`${uid}-ad`} label="New deadline (optional, business time)"><input id={`${uid}-ad`} type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} className={fieldClass} /></Field>
                 <div className="flex gap-2"><button type="submit" className={primaryClass} disabled={busy}>Send to all vendors</button><button type="button" className={buttonClass} onClick={() => setPanel(null)}>Cancel</button></div>
               </form>
             ) : null}
             {panel === 'extend' ? (
               <form className="space-y-2 rounded-lg border border-line p-3" aria-label="Move the deadline" onSubmit={(e) => { e.preventDefault(); void act(extendRfqAction(view.id, when, text), 'The deadline moved and every vendor was told.'); }}>
-                <Field id={`${uid}-xd`} label="New deadline"><input id={`${uid}-xd`} type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} className={fieldClass} required /></Field>
+                <Field id={`${uid}-xd`} label="New deadline (business time)"><input id={`${uid}-xd`} type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} className={fieldClass} required /></Field>
                 <Field id={`${uid}-xr`} label="Why"><input id={`${uid}-xr`} value={text} onChange={(e) => setText(e.target.value)} className={fieldClass} required maxLength={500} autoComplete="off" /></Field>
                 <div className="flex gap-2"><button type="submit" className={primaryClass} disabled={busy}>Move the deadline</button><button type="button" className={buttonClass} onClick={() => setPanel(null)}>Cancel</button></div>
               </form>
@@ -249,7 +251,7 @@ function Editor({ view }: { view: View | null }) {
               </ul>
             )}
             {view.addenda.length === 0 ? null : (
-              <div><h4 className="text-xs font-bold uppercase text-fg-muted">Addenda sent</h4><ol className="mt-1 space-y-1 text-sm">{view.addenda.map((a) => <li key={a.number}>{a.number}. {a.body} <span className="text-xs text-fg-muted">({new Date(a.at).toLocaleString()})</span></li>)}</ol></div>
+              <div><h4 className="text-xs font-bold uppercase text-fg-muted">Addenda sent</h4><ol className="mt-1 space-y-1 text-sm">{view.addenda.map((a) => <li key={a.number}>{a.number}. {a.body} <span className="text-xs text-fg-muted">({businessWhen(a.at)})</span></li>)}</ol></div>
             )}
           </section>
         </>
@@ -259,7 +261,7 @@ function Editor({ view }: { view: View | null }) {
         <section aria-label="History" className={cardClass}>
           <h3 className="text-sm font-bold text-fg-strong">History</h3>
           <ol className="mt-2 space-y-2 text-xs">
-            {view.events.map((e) => <li key={e.id} className="border-t border-line pt-2 first:border-0 first:pt-0"><p className="font-semibold text-fg-strong">{e.event.replace(/_/g, ' ')}</p><p className="text-fg-muted">{new Date(e.at).toLocaleString()} · {e.actor}{e.reason === null ? '' : ` · ${e.reason}`}</p></li>)}
+            {view.events.map((e) => <li key={e.id} className="border-t border-line pt-2 first:border-0 first:pt-0"><p className="font-semibold text-fg-strong">{e.event.replace(/_/g, ' ')}</p><p className="text-fg-muted">{businessWhen(e.at)} · {e.actor}{e.reason === null ? '' : ` · ${e.reason}`}</p></li>)}
           </ol>
         </section>
       )}

@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { type ReconciliationLog } from '@/types/index';
 import { runBatchReconciliationAction, resolveDiscrepancyAction } from '@/server/actions';
+import { useWhen } from '@/components/business-time';
 
 interface AdminReconciliationProps {
   reconciliationLogsPromise: Promise<ReconciliationLog[]>;
@@ -27,6 +28,7 @@ export function AdminReconciliation({
   reconciliationLogsPromise,
   onRefresh,
 }: AdminReconciliationProps) {
+  const when = useWhen();
   const logs = use(reconciliationLogsPromise);
 
   const [isRunningBatch, setIsRunningBatch] = useState(false);
@@ -181,11 +183,7 @@ export function AdminReconciliation({
               return (
                 <tr key={log.id} className="transition-colors hover:bg-hover">
                   <td className="px-4 py-3.5 font-mono text-[11px] text-fg-subtle">
-                    {new Date(log.timestamp).toLocaleTimeString([], {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      second: '2-digit',
-                    })}
+                    {when(log.timestamp)}
                   </td>
                   <td className="px-3 py-3.5 font-mono font-semibold text-fg-strong">
                     {log.orderNumber}

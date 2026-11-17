@@ -6,12 +6,14 @@ import { CheckCircle2, LoaderCircle } from 'lucide-react';
 import { keyed } from '@/lib/keyed';
 import { respondToPublicSalesQuoteAction, type getPublicSalesQuoteAction } from '@/server/domains/quotes/actions';
 import { has } from '@/lib/values';
+import { useDate } from '@/components/business-time';
 
 type SharedQuote = NonNullable<
   Awaited<ReturnType<typeof getPublicSalesQuoteAction>>
 >;
 
 export function PublicSalesQuote({ token, quote }: { token: string; quote: SharedQuote }) {
+  const date = useDate();
   const [response, setResponse] = useState<'accepted' | 'rejected' | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +46,7 @@ export function PublicSalesQuote({ token, quote }: { token: string; quote: Share
           </p>
           {quote.validUntil && (
             <p className="mt-1 text-xs text-fg-subtle">
-              Valid until {new Date(quote.validUntil).toLocaleDateString()}
+              Valid until {date(quote.validUntil)}
             </p>
           )}
         </header>

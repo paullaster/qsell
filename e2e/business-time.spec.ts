@@ -83,6 +83,26 @@ test.describe('the business time zone', () => {
     }
   });
 
+  test.describe('a browser in another zone', () => {
+    test.use({ timezoneId: 'America/New_York' });
+
+    test('a pricing form starts at the time it is where the business is, not where the browser is', async ({ page }) => {
+      deliveryTool('set-time-zone', 'x', 'Asia/Tokyo');
+      try {
+        await open(page, '/admin/pricing/discounts/new', 'New discount');
+        const starts = await page.getByLabel('Starts (business time)').inputValue();
+        const tokyo = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Tokyo', dateStyle: 'short', timeStyle: 'short' }).format(new Date()).replace(' ', 'T');
+        const minutesApart = Math.abs(new Date(`${starts}:00Z`).getTime() - new Date(`${tokyo}:00Z`).getTime()) / 60_000;
+        expect(minutesApart).toBeLessThanOrEqual(5);
+        // The browser's own clock (New York) is 13 or 14 hours behind Tokyo, so a form that used it would be far off.
+        const browser = await page.evaluate(() => new Date().getTimezoneOffset());
+        expect([240, 300]).toContain(browser);
+      } finally {
+        deliveryTool('set-time-zone', 'x', 'Africa/Nairobi');
+      }
+    });
+  });
+
   test.describe('without the permission', () => {
     test.use({ storageState: { cookies: [], origins: [] } });
 

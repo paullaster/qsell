@@ -20,6 +20,7 @@ import { InlineConfirm } from '@/components/ui/InlineConfirm';
 import { VOUCHER_KIND, VOUCHER_STATUS, fromCents, needsThreePeople, toCents, type VoucherKind } from '@/lib/vendor-payment';
 import type { Choice } from '@/lib/payment-options';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
+import { useWhen } from '@/components/business-time';
 
 type View = Extract<Awaited<ReturnType<typeof paymentAction>>, { ok: true }>['data'];
 type Candidates = Extract<Awaited<ReturnType<typeof paymentCandidatesAction>>, { ok: true }>['data'];
@@ -194,6 +195,7 @@ function CancelBox({ id }: { id: string }) {
 }
 
 function Reader({ view, found }: { view: View; found: NonNullable<View['found']> }) {
+  const when = useWhen();
   const uid = useId();
   const router = useRouter();
   const v = found.voucher;
@@ -300,7 +302,7 @@ function Reader({ view, found }: { view: View; found: NonNullable<View['found']>
       <section className={cardClass} aria-label="History">
         <h2 className="text-sm font-bold text-fg-strong">History</h2>
         <ol className="mt-1 space-y-1 text-sm text-fg">
-          {found.events.map((e) => <li key={e.id}>{EVENT_WORDS[e.event] ?? e.event} <span className="text-xs text-fg-muted">· {e.who ?? 'System'} · {new Date(e.at).toLocaleString()}</span>{e.reason === null || e.reason === '' ? null : <span className="block text-xs text-fg-muted">{e.reason}</span>}</li>)}
+          {found.events.map((e) => <li key={e.id}>{EVENT_WORDS[e.event] ?? e.event} <span className="text-xs text-fg-muted">· {e.who ?? 'System'} · {when(e.at)}</span>{e.reason === null || e.reason === '' ? null : <span className="block text-xs text-fg-muted">{e.reason}</span>}</li>)}
         </ol>
       </section>
     </section>
