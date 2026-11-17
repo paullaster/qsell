@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { mediaAssets, orderVisitCrew, orderVisitItems, orderVisitMaterials, orderVisitPhotos, orderVisits, orders, products, stockLocations, users } from '@/server/db/drizzle/schema';
+import { deliveryMessages, mediaAssets, orderVisitCrew, orderVisitItems, orderVisitMaterials, orderVisitPhotos, orderVisits, orders, products, stockLocations, users } from '@/server/db/drizzle/schema';
 import { checkCrew, checkItems, checkWindow, checklistProblem, nextVisitStatus, reasonProblem, signOffProblem, type VisitAction, type VisitStatus } from '@/lib/visit';
 import type { StockLedger } from '@/server/domains/stock/ledger';
 import { StockError } from '@/server/domains/stock/errors';
@@ -9,8 +9,8 @@ import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { decodeCursor, encodeCursor } from '@/server/domains/lookups/request';
 import type { DocRefusal, DocResult } from './documents';
 import { VISIT_ORDER_CLOSED_REASON, orderReadinessProblem } from './order-readiness';
-import { visitMessageKey } from '@/lib/delivery-messages';
-import type { DeliveryMessages } from './messages';
+import { visitMessageKey, visitOfMessageKey } from '@/lib/delivery-messages';
+import { viewOfMessage, type DeliveryMessages, type MessageView } from './messages';
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
@@ -36,6 +36,8 @@ export interface VisitView {
   items: { id: string; label: string; done: boolean }[];
   materials: MaterialView[];
   photos: PhotoView[];
+  /** What the customer was sent about this visit (booked, moved, cancelled), with where it went (hidden but for its ends) and whether it left. Empty for the crew. */
+  messages: MessageView[];
   startedAt: string | null;
   completedAt: string | null;
   signedOffAt: string | null;
@@ -139,7 +141,8 @@ export class OrderVisits {
       .limit(limit);
     if (rows.length === 0) return [];
     const ids = rows.map((r) => r.v.id);
-    const [crew, items, materials, photos] = await Promise.all([
+    const orderIds = [...new Set(rows.map((r) => r.v.orderId))];
+    const [crew, items, materials, photos, sent] = await Promise.all([
       db.select().from(orderVisitCrew).where(inArray(orderVisitCrew.visitId, ids)).orderBy(asc(orderVisitCrew.addedAt), asc(orderVisitCrew.name)),
       db.select().from(orderVisitItems).where(inArray(orderVisitItems.visitId, ids)).orderBy(asc(orderVisitItems.position)),
       db
@@ -150,6 +153,8 @@ export class OrderVisits {
         .where(inArray(orderVisitMaterials.visitId, ids))
         .orderBy(asc(orderVisitMaterials.createdAt), asc(orderVisitMaterials.id)),
       db.select().from(orderVisitPhotos).where(inArray(orderVisitPhotos.visitId, ids)).orderBy(asc(orderVisitPhotos.createdAt), asc(orderVisitPhotos.id)),
+      // The crew are not shown what was written to the customer.
+      viewer?.crewOnly === true ? Promise.resolve([]) : db.select().from(deliveryMessages).where(and(eq(deliveryMessages.companyId, companyId), inArray(deliveryMessages.orderId, orderIds), isNull(deliveryMessages.deliveryId))).orderBy(asc(deliveryMessages.createdAt), asc(deliveryMessages.id)),
     ]);
     const undone = new Set(materials.map((r) => r.m.reversesId).filter((x): x is string => x !== null));
     return rows.map(({ v, orderNumber }) => ({
@@ -178,6 +183,7 @@ export class OrderVisits {
           at: p.createdAt.toISOString(),
           canRemove: viewer !== null && (v.status === 'on_site' || v.status === 'completed') && (!viewer.crewOnly || p.takenBy === viewer.userId),
         })),
+      messages: sent.filter((m) => visitOfMessageKey(m.messageKey) === v.id).map(viewOfMessage),
       startedAt: v.startedAt?.toISOString() ?? null,
       completedAt: v.completedAt?.toISOString() ?? null,
       signedOffAt: v.signedOffAt?.toISOString() ?? null,

@@ -40,6 +40,11 @@ test.describe('visits', () => {
     await expect(card).toContainText('Booked', { timeout: 30_000 });
     await expect(card).toContainText('No crew yet.');
     await expect(card).toContainText('0 of 2 ticked');
+    // What the customer was told about it is on the card: the mail, whether it has left, and where it went with the address hidden.
+    const told = card.getByRole('list', { name: 'Messages about this visit' });
+    await expect(told).toContainText('Visit booked');
+    await expect(told).toContainText(/Waiting to send|Sent/);
+    await expect(told).toContainText('***@');
     await noHorizontalScroll(page);
     await noInnerHorizontalScroll(page);
 

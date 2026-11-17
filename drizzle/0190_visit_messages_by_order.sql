@@ -1,0 +1,1 @@
+CREATE INDEX "delivery_messages_order_idx" ON "delivery_messages" USING btree ("order_id","created_at");

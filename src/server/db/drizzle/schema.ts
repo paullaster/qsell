@@ -1690,6 +1690,8 @@ export const deliveryMessages = pgTable(
     uniqueIndex('delivery_messages_key_uidx').on(t.companyId, t.messageKey),
     index('delivery_messages_due_idx').on(t.status, t.nextTryAt),
     index('delivery_messages_delivery_idx').on(t.deliveryId, t.createdAt),
+    /** A visit's messages are found by its order (they have no delivery). */
+    index('delivery_messages_order_idx').on(t.orderId, t.createdAt),
     check('delivery_messages_status_chk', sql`${t.status} IN ('queued','sent','failed','skipped')`),
     check('delivery_messages_attempts_chk', sql`${t.attempts} >= 0`),
   ],

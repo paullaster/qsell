@@ -11,6 +11,7 @@ import { VisitPhotosPanel } from './VisitPhotosPanel';
 import { usePagedList } from '@/components/ui/usePagedList';
 import type { Choice } from '@/lib/payment-options';
 import { VISIT_STATUS_WORDS, fromBusinessInput, itemsFromLines, toBusinessInput, visitActionsFrom, type VisitStatus } from '@/lib/visit';
+import { MessageList } from './MessageList';
 
 type Loaded = Awaited<ReturnType<typeof visitsPageAction>>;
 
@@ -259,6 +260,13 @@ function VisitCard({ visit, onDone, onError }: { visit: VisitView; onDone: (text
 
       {visit.materials.length === 0 && visit.status !== 'on_site' && visit.status !== 'completed' ? null : (
         <MaterialsPanel visit={visit} busy={busy} onDone={onDone} onError={onError} />
+      )}
+
+      {visit.messages.length === 0 ? null : (
+        <section aria-label="Messages to the customer about this visit" className="space-y-1">
+          <h4 className="text-xs font-bold uppercase text-fg-muted">What the customer was told</h4>
+          <MessageList messages={visit.messages} label="Messages about this visit" />
+        </section>
       )}
 
       {visit.photos.length === 0 && visit.status !== 'on_site' && visit.status !== 'completed' ? null : (
