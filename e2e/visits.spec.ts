@@ -24,15 +24,15 @@ test.describe('visits', () => {
     const form = page.getByRole('form', { name: 'Book a visit' });
     await pick(page, form.getByRole('combobox', { name: 'Order' }), orderNumber, new RegExp(orderNumber));
     // A visit in the past is refused, in words.
-    await form.getByLabel('Starts (Nairobi time)').fill(boxTime(-1, 8));
-    await form.getByLabel('Ends (Nairobi time)').fill(boxTime(-1, 10));
+    await form.getByLabel('Starts (business time)').fill(boxTime(-1, 8));
+    await form.getByLabel('Ends (business time)').fill(boxTime(-1, 10));
     await form.getByLabel('Address the crew goes to').fill('Kileleshwa, Nairobi, Gate 4');
     await form.getByLabel('Checklist, one item to a line').fill('Fit the unit\nTest it');
     await form.getByRole('button', { name: 'Book the visit' }).click();
     await expect(page.getByRole('alert').filter({ hasText: /must start in the future/ })).toBeVisible({ timeout: 30_000 });
 
-    await form.getByLabel('Starts (Nairobi time)').fill(boxTime(2, 8));
-    await form.getByLabel('Ends (Nairobi time)').fill(boxTime(2, 11));
+    await form.getByLabel('Starts (business time)').fill(boxTime(2, 8));
+    await form.getByLabel('Ends (business time)').fill(boxTime(2, 11));
     await form.getByRole('button', { name: 'Book the visit' }).click();
     await expect(page.getByText('The visit is booked.')).toBeVisible({ timeout: 30_000 });
 
@@ -158,8 +158,8 @@ test.describe('visits', () => {
     await open(page, '/admin/delivery/visits', 'Visits');
     const form = page.getByRole('form', { name: 'Book a visit' });
     await pick(page, form.getByRole('combobox', { name: 'Order' }), orderNumber, new RegExp(orderNumber));
-    await form.getByLabel('Starts (Nairobi time)').fill(boxTime(3, 9));
-    await form.getByLabel('Ends (Nairobi time)').fill(boxTime(3, 12));
+    await form.getByLabel('Starts (business time)').fill(boxTime(3, 9));
+    await form.getByLabel('Ends (business time)').fill(boxTime(3, 12));
     await form.getByLabel('Address the crew goes to').fill('Westlands, Nairobi');
     await form.getByLabel('Checklist, one item to a line').fill('Measure up');
     await form.getByRole('button', { name: 'Book the visit' }).click();
@@ -168,8 +168,8 @@ test.describe('visits', () => {
 
     await card.getByRole('button', { name: 'Move the visit' }).click();
     const move = card.getByRole('form', { name: `Move the visit for order ${orderNumber}` });
-    await move.getByLabel('New start (Nairobi time)').fill(boxTime(4, 9));
-    await move.getByLabel('New end (Nairobi time)').fill(boxTime(4, 12));
+    await move.getByLabel('New start (business time)').fill(boxTime(4, 9));
+    await move.getByLabel('New end (business time)').fill(boxTime(4, 12));
     await move.getByLabel('Why it is being moved').fill('no');
     await move.getByRole('button', { name: 'Move it' }).click();
     await expect(page.getByRole('alert').filter({ hasText: /Say why the visit is moved/ })).toBeVisible({ timeout: 30_000 });
@@ -203,8 +203,8 @@ test.describe('visits', () => {
     await open(page, '/admin/delivery/visits', 'Visits');
     const form = page.getByRole('form', { name: 'Book a visit' });
     await pick(page, form.getByRole('combobox', { name: 'Order' }), orderNumber, new RegExp(orderNumber));
-    await form.getByLabel('Starts (Nairobi time)').fill(boxTime(3, 9));
-    await form.getByLabel('Ends (Nairobi time)').fill(boxTime(3, 12));
+    await form.getByLabel('Starts (business time)').fill(boxTime(3, 9));
+    await form.getByLabel('Ends (business time)').fill(boxTime(3, 12));
     await form.getByLabel('Address the crew goes to').fill('Westlands, Nairobi');
     await form.getByLabel('Checklist, one item to a line').fill('Measure up');
     await form.getByRole('button', { name: 'Book the visit' }).click();

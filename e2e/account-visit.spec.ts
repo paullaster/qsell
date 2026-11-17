@@ -24,7 +24,7 @@ test.describe('a visit booked for the customer, on their own order page', () => 
     await expect(visit).toBeVisible({ timeout: 30_000 });
     await expect(visit).toContainText('Kileleshwa, Nairobi, Gate 4');
     await expect(visit).toContainText('Booked. We will assign the crew before the visit.');
-    // The day and the hours are written out, in Nairobi time.
+    // The day and the hours are written out, in the business's time zone.
     await expect(visit).toContainText(/\d{2}:\d{2} to \d{2}:\d{2}/);
     // What is for the crew stays with the crew.
     const body = await page.locator('main, body').first().innerText();

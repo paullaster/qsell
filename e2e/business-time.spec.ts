@@ -55,6 +55,34 @@ test.describe('the business time zone', () => {
     }
   });
 
+  test('a visit is booked on the business\'s own clock: 09:00 typed in the booking form is 09:00 where the business is', async ({ page }, testInfo) => {
+    test.slow();
+    const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}V`;
+    const orderNumber = riderTool('paid-order', tag).orderNumber ?? '';
+    deliveryTool('set-time-zone', 'x', 'Asia/Tokyo');
+    try {
+      await open(page, '/admin/delivery/visits', 'Visits');
+      const form = page.getByRole('form', { name: 'Book a visit' });
+      await expect(form).toContainText('Written in Asia/Tokyo.');
+      await pick(page, form.getByRole('combobox', { name: 'Order' }), orderNumber, new RegExp(orderNumber));
+      const day = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
+      await form.getByLabel('Starts (business time)').fill(`${day}T09:00`);
+      await form.getByLabel('Ends (business time)').fill(`${day}T12:00`);
+      await form.getByLabel('Address the crew goes to').fill('Shibuya, Tokyo');
+      await form.getByLabel('Checklist, one item to a line').fill('Measure up');
+      await form.getByRole('button', { name: 'Book the visit' }).click();
+      const card = page.getByRole('list', { name: 'Visit list' }).getByRole('listitem').filter({ hasText: `Order ${orderNumber}` }).first();
+      await expect(card).toContainText('09:00', { timeout: 30_000 });
+      await expect(card).toContainText('12:00');
+      // Stored as the instant 09:00 in Tokyo is: 00:00 UTC, not 06:00 UTC as it would be if it were read as Nairobi time.
+      const stored = deliveryTool('visit-instant', orderNumber);
+      expect(stored.startsAt).toBe(`${day}T00:00:00.000Z`);
+      expect(stored.endsAt).toBe(`${day}T03:00:00.000Z`);
+    } finally {
+      deliveryTool('set-time-zone', 'x', 'Africa/Nairobi');
+    }
+  });
+
   test.describe('without the permission', () => {
     test.use({ storageState: { cookies: [], origins: [] } });
 

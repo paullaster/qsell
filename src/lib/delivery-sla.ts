@@ -124,7 +124,7 @@ export function checkSlaSettings(raw: { atRiskMinutes?: unknown; escalateAfterMi
   return { ok: true, atRiskMinutes: a, escalateAfterMinutes: e };
 }
 
-/** The window as the customer is told it: "Thu 5 Nov, 09:00 to 12:00" (Nairobi time). */
+/** The window as the customer is told it: "Thu 5 Nov, 09:00 to 12:00" (in the business's time zone, given). */
 export function windowWords(start: Date, end: Date, timeZone: string): string {
   const day = start.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone });
   const time = (d: Date): string => d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone });

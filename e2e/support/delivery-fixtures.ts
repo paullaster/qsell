@@ -194,6 +194,15 @@ async function setTimeZone(zone: string): Promise<Record<string, string>> {
   return { timeZone: zone };
 }
 
+/** When the live visit of an order starts, as stored (an instant), so a test can check what a time typed in the booking form was taken to mean. */
+async function visitInstant(orderNumber: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { orders, orderVisits } = await import('@/server/db/drizzle/schema');
+  const [row] = await db.select({ startsAt: orderVisits.startsAt, endsAt: orderVisits.endsAt }).from(orderVisits).innerJoin(orders, eq(orders.id, orderVisits.orderId)).where(eq(orders.orderNumber, orderNumber));
+  if (row === undefined) throw new Error(`e2e fixture: no visit for ${orderNumber}`);
+  return { startsAt: row.startsAt.toISOString(), endsAt: row.endsAt.toISOString() };
+}
+
 /** A member of staff with the manager role, who has not been given the permission to change the business time zone. */
 async function managerStaff(tag: string): Promise<Record<string, string>> {
   const { getContainer } = await import('@/server/di/container');
@@ -415,6 +424,7 @@ async function main(): Promise<void> {
   if (command === 'ready') result = await ready(tag, extra);
   if (command === 'collection-ready' && extra !== undefined) result = await markCollectionReady(tag, extra);
   if (command === 'set-time-zone' && extra !== undefined) result = await setTimeZone(extra);
+  if (command === 'visit-instant') result = await visitInstant(tag);
   if (command === 'manager-staff') result = await managerStaff(tag);
   if (command === 'book-visit') result = await bookVisit(tag);
   if (command === 'close-closed') result = await closeForClosedOrders();

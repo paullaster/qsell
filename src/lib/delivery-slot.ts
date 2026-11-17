@@ -1,7 +1,7 @@
 import { dayInZone, instantInZone } from './business-timezone';
 /**
  * Delivery slots: a window on certain weekdays at a branch, with room for so many deliveries and a time after which it can no longer be
- * booked. These are the rules only (dates are calendar days in Nairobi, UTC+3 with no daylight saving); the database and screens follow them.
+ * booked. These are the rules only (dates are calendar days and times are the business's wall-clock hours, in the business's time zone); the database and screens follow them.
  */
 
 export const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const; // ISO: Monday is 1, Sunday is 7

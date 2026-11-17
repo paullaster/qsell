@@ -1,6 +1,6 @@
 'use client';
 
-import { useWhen } from '@/components/business-time';
+import { useBusinessTimeZone, useWhen } from '@/components/business-time';
 import { use, useId, useState } from 'react';
 import { assignCrewAction, bookVisitAction, cancelVisitAction, completeVisitAction, giveBackMaterialAction, moveVisitAction, recordMaterialAction, signOffVisitAction, startVisitAction, tickVisitItemAction, visitsPageAction } from '@/server/domains/delivery/visit-actions';
 import type { MaterialView, VisitView } from '@/server/domains/delivery/visits';
@@ -10,7 +10,7 @@ import { InlineConfirm } from '@/components/ui/InlineConfirm';
 import { VisitPhotosPanel } from './VisitPhotosPanel';
 import { usePagedList } from '@/components/ui/usePagedList';
 import type { Choice } from '@/lib/payment-options';
-import { VISIT_STATUS_WORDS, fromNairobiInput, itemsFromLines, toNairobiInput, visitActionsFrom, type VisitStatus } from '@/lib/visit';
+import { VISIT_STATUS_WORDS, fromBusinessInput, itemsFromLines, toBusinessInput, visitActionsFrom, type VisitStatus } from '@/lib/visit';
 
 type Loaded = Awaited<ReturnType<typeof visitsPageAction>>;
 
@@ -120,6 +120,7 @@ function CrewPicker({ label, crew, onChange }: { label: string; crew: Choice[]; 
 
 function BookPanel({ onBooked, onError }: { onBooked: () => void; onError: (text: string) => void }) {
   const uid = useId();
+  const timeZone = useBusinessTimeZone();
   const [order, setOrder] = useState<Choice | null>(null);
   const [startsAt, setStartsAt] = useState('');
   const [endsAt, setEndsAt] = useState('');
@@ -133,7 +134,7 @@ function BookPanel({ onBooked, onError }: { onBooked: () => void; onError: (text
   const save = async () => {
     setBusy(true);
     const r = await attempt(
-      bookVisitAction({ orderId: order?.id ?? '', startsAt: fromNairobiInput(startsAt), endsAt: fromNairobiInput(endsAt), address, contactName, contactPhone, notes, items: itemsFromLines(items), crewIds: crew.map((c) => c.id) }),
+      bookVisitAction({ orderId: order?.id ?? '', startsAt: fromBusinessInput(startsAt, timeZone), endsAt: fromBusinessInput(endsAt, timeZone), address, contactName, contactPhone, notes, items: itemsFromLines(items), crewIds: crew.map((c) => c.id) }),
     );
     setBusy(false);
     if (!r.ok) {
@@ -163,10 +164,10 @@ function BookPanel({ onBooked, onError }: { onBooked: () => void; onError: (text
       <h3 className="text-sm font-bold text-fg-strong">Book a visit</h3>
       <ChoicePicker label="Order" source="visit-orders" choice={order} onChoice={setOrder} placeholder="Search by order number, customer or phone" />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field id={`${uid}-s`} label="Starts (Nairobi time)">
+        <Field id={`${uid}-s`} label="Starts (business time)" hint={`Written in ${timeZone}.`}>
           <input id={`${uid}-s`} type="datetime-local" className={fieldClass} value={startsAt} onChange={(e) => setStartsAt(e.target.value)} required />
         </Field>
-        <Field id={`${uid}-e`} label="Ends (Nairobi time)">
+        <Field id={`${uid}-e`} label="Ends (business time)">
           <input id={`${uid}-e`} type="datetime-local" className={fieldClass} value={endsAt} onChange={(e) => setEndsAt(e.target.value)} required />
         </Field>
       </div>
@@ -197,12 +198,13 @@ function BookPanel({ onBooked, onError }: { onBooked: () => void; onError: (text
 
 function VisitCard({ visit, onDone, onError }: { visit: VisitView; onDone: (text: string) => void; onError: (text: string) => void }) {
   const when = useWhen();
+  const timeZone = useBusinessTimeZone();
   const uid = useId();
   const [busy, setBusy] = useState(false);
   const [panel, setPanel] = useState<'crew' | 'move' | 'signoff' | null>(null);
   const [crew, setCrew] = useState<Choice[]>(visit.crew.map((m) => ({ id: m.userId, label: m.name })));
-  const [startsAt, setStartsAt] = useState(toNairobiInput(visit.startsAt));
-  const [endsAt, setEndsAt] = useState(toNairobiInput(visit.endsAt));
+  const [startsAt, setStartsAt] = useState(toBusinessInput(visit.startsAt, timeZone));
+  const [endsAt, setEndsAt] = useState(toBusinessInput(visit.endsAt, timeZone));
   const [reason, setReason] = useState('');
   const [name, setName] = useState('');
   const actions = visitActionsFrom(visit.status);
@@ -315,14 +317,14 @@ function VisitCard({ visit, onDone, onError }: { visit: VisitView; onDone: (text
           className="space-y-2"
           onSubmit={(e) => {
             e.preventDefault();
-            void go(moveVisitAction({ id: visit.id, startsAt: fromNairobiInput(startsAt), endsAt: fromNairobiInput(endsAt), reason, expectedVersion: visit.version }), 'The visit is moved.');
+            void go(moveVisitAction({ id: visit.id, startsAt: fromBusinessInput(startsAt, timeZone), endsAt: fromBusinessInput(endsAt, timeZone), reason, expectedVersion: visit.version }), 'The visit is moved.');
           }}
         >
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field id={`${uid}-ms`} label="New start (Nairobi time)">
+            <Field id={`${uid}-ms`} label="New start (business time)">
               <input id={`${uid}-ms`} type="datetime-local" className={fieldClass} value={startsAt} onChange={(e) => setStartsAt(e.target.value)} required />
             </Field>
-            <Field id={`${uid}-me`} label="New end (Nairobi time)">
+            <Field id={`${uid}-me`} label="New end (business time)">
               <input id={`${uid}-me`} type="datetime-local" className={fieldClass} value={endsAt} onChange={(e) => setEndsAt(e.target.value)} required />
             </Field>
           </div>

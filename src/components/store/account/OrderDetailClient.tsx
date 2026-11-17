@@ -84,6 +84,7 @@ function VisitsProgress({ visits }: { visits: Promise<AccountResult<MyVisit[]>> 
 }
 
 export function OrderDetailClient({ result, tracking, visits }: { result: Promise<AccountResult<CustomerOrder>>; tracking?: Promise<AccountResult<MyOrderTracking | null>>; visits?: Promise<AccountResult<MyVisit[]>> }) {
+  const timeZone = useBusinessTimeZone();
   const answer = use(result);
   if (!answer.ok) {
     return answer.code === 'SIGN_IN' ? (
@@ -113,19 +114,19 @@ export function OrderDetailClient({ result, tracking, visits }: { result: Promis
           <Chip tone={state.tone}>{state.label}</Chip>
           <Chip tone={payment.tone}>{payment.label}</Chip>
         </div>
-        <p className="mt-1 text-sm text-fg-muted">Placed on {formatOrderDate(order.createdAt)}</p>
+        <p className="mt-1 text-sm text-fg-muted">Placed on {formatOrderDate(order.createdAt, timeZone)}</p>
         {has(state.hint) ? <p className="mt-3 text-sm text-fg">{state.hint}</p> : null}
         <dl className="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-3">
           {order.shippedAt === null ? null : (
             <div>
               <dt className="text-fg-subtle">Shipped</dt>
-              <dd className="font-medium text-fg-strong">{formatOrderDate(order.shippedAt)}</dd>
+              <dd className="font-medium text-fg-strong">{formatOrderDate(order.shippedAt, timeZone)}</dd>
             </div>
           )}
           {order.deliveredAt === null ? null : (
             <div>
               <dt className="text-fg-subtle">Delivered</dt>
-              <dd className="font-medium text-fg-strong">{formatOrderDate(order.deliveredAt)}</dd>
+              <dd className="font-medium text-fg-strong">{formatOrderDate(order.deliveredAt, timeZone)}</dd>
             </div>
           )}
           {order.shippingCourier === null && order.trackingNumber === null ? null : (

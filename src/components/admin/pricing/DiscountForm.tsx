@@ -686,7 +686,7 @@ export function DiscountForm({
         <div className="grid grid-cols-2 gap-3 sm:max-w-sm">
           <div>
             <label htmlFor={`${uid}-tf`} className={labelClass}>
-              From time (Nairobi)
+              From time (business time)
             </label>
             <input
               id={`${uid}-tf`}
