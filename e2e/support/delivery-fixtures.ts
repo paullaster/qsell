@@ -184,6 +184,15 @@ async function cancelOrder(orderNumber: string): Promise<Record<string, string>>
   return { cancelled: orderNumber };
 }
 
+/** Runs the sweep that cancels deliveries and visits of orders that were cancelled, as the worker does every minute. */
+async function closeForClosedOrders(): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const c = getContainer();
+  const deliveries = await c.deliveryDocuments.closeForClosedOrders();
+  const visits = await c.orderVisits.closeForClosedOrders();
+  return { deliveries: String(deliveries), visits: String(visits) };
+}
+
 /**
  * Makes a delivery for the whole of an order and takes it to ready to go, as a person would on its screen, so a test of the dispatch
  * board need not click through all of that. Prints the delivery number.
@@ -362,6 +371,7 @@ async function main(): Promise<void> {
   if (command === 'collection') result = await collection(tag);
   if (command === 'ready') result = await ready(tag, extra);
   if (command === 'collection-ready' && extra !== undefined) result = await markCollectionReady(tag, extra);
+  if (command === 'close-closed') result = await closeForClosedOrders();
   if (command === 'cancel-order') result = await cancelOrder(tag);
   if (command === 'advance' && extra !== undefined) result = await advance(tag, extra);
   if (command === 'set-email' && extra !== undefined) result = await setEmail(tag, extra);

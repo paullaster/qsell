@@ -99,6 +99,7 @@ graph TD
 
 ### 1. Deliveries (`/admin/delivery/deliveries`)
 - Master directory of fulfillment parcels. Filter by Status (`Draft`, `Released`, `Picking`, `Packed`, `Ready`, `On Run`, `Delivered`, `Failed`), Method, and Branch. Supports **Partial Dispatches** (sending in-stock items while back-ordering the rest).
+- **When the order is cancelled**: a delivery that has not gone out (draft, released, picking, packed or ready) is cancelled by the system within about a minute of its order being cancelled, refunded or failing, with the reason "The order was cancelled or refunded, so the delivery is cancelled." in its history (shown as done by the system, not a person) and the courier booking cancelled with it. One that is already out for delivery is left to the rider, who can still deliver it or record a failed attempt. If the order is put back to work, make a new delivery.
 
 ### 2. Delivery Zones (`/admin/delivery/zones`)
 - Geographic zone builder: Group counties, towns, and estates (e.g. *"Nairobi Central"*, *"Westlands & Parklands"*, *"Thika & Environs"*). Supports polygon geofencing on an interactive map.

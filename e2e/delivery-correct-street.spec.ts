@@ -65,4 +65,24 @@ test.describe('correcting the street of a delivery', () => {
       deliveryTool('close', tag);
     }
   });
+  test('a delivery that has not gone out is cancelled when its order is cancelled, and says why in its history', async ({ page }, testInfo) => {
+    test.slow();
+    const tag = `${testInfo.project.name === 'phone' ? 'P' : 'D'}${String(Date.now()).slice(-6)}X`;
+    deliveryTool('open', tag);
+    try {
+      const orderNumber = deliveryTool('courier-order', tag).orderNumber ?? '';
+      const made = deliveryTool('ready', orderNumber);
+      const number = made.number ?? '';
+      deliveryTool('cancel-order', orderNumber);
+      expect(Number(deliveryTool('close-closed', tag).deliveries)).toBeGreaterThanOrEqual(1);
+      await open(page, `/admin/delivery/deliveries/${made.id ?? ''}`, new RegExp(`^Delivery ${number}`));
+      await expect(page.getByText('Cancelled', { exact: true }).first()).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByRole('region', { name: 'History' })).toContainText('The order was cancelled or refunded, so the delivery is cancelled.');
+      await expect(page.getByRole('button', { name: 'Send out' })).toHaveCount(0);
+      await noHorizontalScroll(page);
+      await noInnerHorizontalScroll(page);
+    } finally {
+      deliveryTool('close', tag);
+    }
+  });
 });
