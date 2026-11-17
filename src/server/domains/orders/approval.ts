@@ -9,7 +9,7 @@ import { afterCommit } from '@/server/kernel/after-commit';
 import { broadcastRealtime } from '@/server/realtime';
 
 /** Sales channels whose orders are approved by staff. Shop checkouts and tills are never held up. */
-export const APPROVED_SALES_MODULES = ['sales_order', 'credit_sale'] as const;
+export const APPROVED_SALES_MODULES = ['sales_order', 'credit_sale', 'sales_invoice'] as const;
 
 export function needsApprovalCheck(
   salesModule: string | undefined,
@@ -67,6 +67,7 @@ export function orderApprovalHandler(db: DrizzleDb): DocumentHandler {
           name: orders.customerName,
           total: orders.totalAmount,
           currency: orders.currency,
+          module: orders.salesModule,
         })
         .from(orders)
         .where(eq(orders.id, orderId))
@@ -77,7 +78,7 @@ export function orderApprovalHandler(db: DrizzleDb): DocumentHandler {
         .from(orderItems)
         .where(eq(orderItems.orderId, orderId));
       return {
-        title: `Sales order ${o.number} for ${o.name}: ${o.currency} ${Number(o.total).toLocaleString('en-KE')}.`,
+        title: `${o.module === 'sales_invoice' ? 'Sales invoice' : 'Sales order'} ${o.number} for ${o.name}: ${o.currency} ${Number(o.total).toLocaleString('en-KE')}.`,
         lines: guardLines(items.map((i) => ({ name: i.name, guard: i.trace?.guard }))),
       };
     },
