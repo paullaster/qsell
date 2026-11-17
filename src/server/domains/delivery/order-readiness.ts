@@ -26,3 +26,6 @@ export function orderReadinessProblem(order: { status: string; paymentStatus: st
 
 /** What a visit that had not started says when its order is cancelled, refunded or fails. */
 export const VISIT_ORDER_CLOSED_REASON = 'The order was cancelled or refunded, so the visit is cancelled.';
+
+/** What a delivery that had not gone out says when its order is cancelled, refunded or fails. */
+export const DELIVERY_ORDER_CLOSED_REASON = 'The order was cancelled or refunded, so the delivery is cancelled.';

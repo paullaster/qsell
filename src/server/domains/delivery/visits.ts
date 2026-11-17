@@ -367,6 +367,20 @@ export class OrderVisits {
     });
   }
 
+  /**
+   * What the customer of an order may see of its visits: when, where (the address they gave), and how it stands. Never the crew, a
+   * contact's phone, the notes, the checklist, the materials or the photos. The caller has already checked that the order is theirs.
+   */
+  async forCustomer(companyId: string, orderId: string): Promise<{ status: VisitStatus; startsAt: string; endsAt: string; address: string }[]> {
+    const rows = await this.db
+      .select({ status: orderVisits.status, startsAt: orderVisits.startsAt, endsAt: orderVisits.endsAt, address: orderVisits.address })
+      .from(orderVisits)
+      .where(and(eq(orderVisits.companyId, companyId), eq(orderVisits.orderId, orderId)))
+      .orderBy(asc(orderVisits.startsAt), asc(orderVisits.id))
+      .limit(20);
+    return rows.map((r) => ({ status: r.status, startsAt: r.startsAt.toISOString(), endsAt: r.endsAt.toISOString(), address: r.address }));
+  }
+
   /** Cancels visits that have not started for an order that is cancelled, refunded or failed (visits booked before they followed their order). Idempotent; returns how many. */
   async closeForClosedOrders(): Promise<number> {
     const at = this.clock();

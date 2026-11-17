@@ -88,6 +88,12 @@ export const deliveryMessagesSweep = async (_payload: unknown, helpers: JobHelpe
     return 0;
   });
   if (visits > 0) helpers.logger.info(`Visits cancelled for closed orders: ${String(visits)}`);
+  // The same for deliveries that have not gone out.
+  const deliveries = await getContainer().deliveryDocuments.closeForClosedOrders().catch((error: unknown) => {
+    helpers.logger.error(`Deliveries for closed orders: ${String(error)}`);
+    return 0;
+  });
+  if (deliveries > 0) helpers.logger.info(`Deliveries cancelled for closed orders: ${String(deliveries)}`);
 };
 
 /** Worker cron task: issue the stock of staff documents whose moment has come (paid, or approved), so a held document leaves the shelf soon after it is paid. */

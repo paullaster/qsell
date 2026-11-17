@@ -236,6 +236,35 @@ describe.skipIf(!has(url))('deliveries of an order (database)', () => {
       expect(await c.deliveryDocuments.release(staff(), id)).toMatchObject({ ok: true, data: { status: 'released' } });
     });
 
+    it('is cancelled with its order when it has not gone out, by the system and with the reason, and one already out is left to the rider', async () => {
+      const early = await order();
+      const draft = await made(early);
+      const late = await order();
+      const packed = await made(late);
+      await toReady(packed);
+      const out = await order();
+      const goingOut = await made(out);
+      await toReady(goingOut);
+      await goOut(goingOut);
+      const open = await order();
+      const stays = await made(open);
+      for (const o of [early, late, out]) await OrderStages.move(db, o.id, 'cancelled', 'cancelled', { reasonCode: 'cancelled', message: 'test' });
+      expect(await c.deliveryDocuments.closeForClosedOrders()).toBeGreaterThanOrEqual(2);
+      for (const id of [draft, packed]) {
+        const v = await view(id);
+        expect(v.status).toBe('cancelled');
+        const last = v.events.at(-1);
+        expect(last).toMatchObject({ action: 'cancel', actorId: null, note: expect.stringContaining('cancelled or refunded') as string });
+      }
+      expect((await view(goingOut)).status).toBe('out_for_delivery');
+      expect((await view(stays)).status).toBe('draft');
+      // Once, and nothing more to do.
+      expect(await c.deliveryDocuments.closeForClosedOrders()).toBe(0);
+      const log = await db.select().from(schema.decisionLog).where(and(eq(schema.decisionLog.subjectId, draft), eq(schema.decisionLog.action, 'delivery.cancel')));
+      expect(log).toHaveLength(1);
+      expect(log[0]?.actorType).toBe('system');
+    });
+
     it('takes a delivery to delivered, with its history, the timeline of the order, and the order delivered only when all of it is', async () => {
       const o = await order();
       const id = await made(o);

@@ -39,15 +39,15 @@ import { StockError } from '@/server/domains/stock/errors';
 import { codeFromBytes, isProofRule, usesCode } from '@/lib/delivery-proof';
 import { kindForStep, messageKey } from '@/lib/delivery-messages';
 import type { DeliveryMessages } from './messages';
-import { orderReadinessProblem } from './order-readiness';
+import { DELIVERY_ORDER_CLOSED_REASON, orderReadinessProblem } from './order-readiness';
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
 export interface DocActor {
   companyId: string;
   userId: string;
-  /** The customer, acting through their own tracking link, has no account: their steps are recorded as theirs, without an id. */
-  kind?: 'customer';
+  /** The customer, acting through their own tracking link, has no account: their steps are recorded as theirs, without an id. The system is the worker acting on its own (a sweep), also without an id. */
+  kind?: 'customer' | 'system';
 }
 
 export type DocRefusal = 'not_found' | 'bad_input' | 'not_allowed' | 'conflict' | 'order_not_ready' | 'nothing_left' | 'wrong_method';
@@ -423,6 +423,26 @@ export class DeliveryDocuments {
   }
 
   /**
+   * Deliveries of an order that was cancelled, refunded or failed, and that have not gone out, are cancelled as the system with that as the
+   * reason, through the same step as a person's cancel (so the history, the decision log, the order's timeline and the courier booking
+   * all follow). One that is already out for delivery is left to the rider, who can still fail or deliver it. Returns how many it cancelled.
+   */
+  async closeForClosedOrders(limit = 100): Promise<number> {
+    const due = await this.db
+      .select({ id: deliveries.id, companyId: deliveries.companyId })
+      .from(deliveries)
+      .where(and(inArray(deliveries.status, ['draft', 'released', 'picking', 'packed', 'ready']), sql`exists (select 1 from ${orders} o where o.id = ${deliveries.orderId} and o.status in ('cancelled','refunded','failed'))`))
+      .orderBy(deliveries.createdAt)
+      .limit(limit);
+    let cancelled = 0;
+    for (const d of due) {
+      const done = await this.cancel({ companyId: d.companyId, userId: 'system', kind: 'system' }, d.id, { reason: DELIVERY_ORDER_CLOSED_REASON });
+      if (done.ok) cancelled += 1;
+    }
+    return cancelled;
+  }
+
+  /**
    * Corrections that do not change the state, until it goes out: who receives it, any note, and the street or building the order was
    * written with, and the pin of the place (put on a delivery that has none, moved, or taken off). The street is only words, and neither it nor
    * the pin changes the charge, which was worked out when the order was planned.
@@ -513,7 +533,7 @@ export class DeliveryDocuments {
       if (kind !== null) await this.messages.enqueueIn(tx, { companyId: actor.companyId, orderId: row.orderId, deliveryId: id, kind, key: messageKey(id, kind, action === 'fail_attempt' ? row.failedAttempts + 1 : row.failedAttempts) });
       for (const stage of stages) {
         await OrderStages.moveIn(tx, row.orderId, stage, stage === 'delivery_attempted' || stage === 'delivery_failed' ? 'failed' : 'succeeded', {
-          actor: { type: 'user', id: actor.userId },
+          actor: actor.kind === 'system' ? { type: 'system', id: null } : { type: 'user', id: actor.userId },
           ref: { type: 'delivery_stage', id: `${id}:${stage}:${String(row.failedAttempts)}:${String(row.version)}` },
           message: `${row.number} · ${ACTION_WORDS[action]}${outcome.note === undefined || outcome.note === null ? '' : `: ${outcome.note}`}`,
           ...(outcome.stageReason === undefined ? {} : { reasonCode: outcome.stageReason }),
@@ -521,7 +541,7 @@ export class DeliveryDocuments {
         });
       }
       if (action === 'cancel' || action === 'return' || action === 'fail_attempt') {
-        await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery', id }, action: `delivery.${action}`, actor: { type: 'user', id: actor.userId }, from: row.status, to, reason: { ...(outcome.reasonCode === undefined || outcome.reasonCode === null ? {} : { code: outcome.reasonCode }), text: outcome.note ?? null } }, tx);
+        await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery', id }, action: `delivery.${action}`, actor: actor.kind === 'system' ? { type: 'system', id: null } : { type: 'user', id: actor.userId }, from: row.status, to, reason: { ...(outcome.reasonCode === undefined || outcome.reasonCode === null ? {} : { code: outcome.reasonCode }), text: outcome.note ?? null } }, tx);
       }
       return { ok: true, data: await this.viewIn(tx, actor.companyId, id) };
     });
