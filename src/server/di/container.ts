@@ -21,6 +21,8 @@ import { PackageShopService } from '@/server/domains/pricing/package-shop-servic
 import { PackageOrderService } from '@/server/domains/pricing/package-order-service';
 import { PreparationService } from '@/server/domains/pricing/preparation-service';
 import { PackageGroupService } from '@/server/domains/pricing/package-group-service';
+import { SalesInvoiceService } from '@/server/domains/selling/sales-invoice-service';
+import { OrderDocumentsService } from '@/server/domains/selling/order-documents-service';
 import { SalesOrderService } from '@/server/domains/selling/sales-order-service';
 import { SellingSettingsService } from '@/server/domains/selling/selling-settings-service';
 import { EmailRouteService } from '@/server/domains/email-routing/email-route-service';
@@ -385,6 +387,8 @@ export interface AppContainer {
   emailRoutes: EmailRouteService;
   sellingSettings: SellingSettingsService;
   salesOrders: SalesOrderService;
+  orderDocuments: OrderDocumentsService;
+  salesInvoices: SalesInvoiceService;
   packageShop: PackageShopService;
   packageOrders: PackageOrderService;
   preparation: PreparationService;
@@ -608,6 +612,8 @@ export function getContainer(): AppContainer {
   const sellingSettings = new SellingSettingsService(drizzleDb, decisionLog, reasonCodes);
   const packageShop = new PackageShopService(drizzleDb, packageConfig, deliveryServices.stockSettings, deliveryServices.stockAvailability);
   const packageOrders = new PackageOrderService(drizzleDb, packageShop);
+  const orderDocuments = new OrderDocumentsService(drizzleDb);
+  const salesInvoices = new SalesInvoiceService(drizzleDb, invoices);
   const salesOrders = new SalesOrderService(drizzleDb, sellingSettings, packageOrders, customers, branches);
   const preparation = new PreparationService(drizzleDb);
   const packageGroups = new PackageGroupService(drizzleDb, packageShop, packageOrders);
@@ -785,6 +791,8 @@ export function getContainer(): AppContainer {
     emailRoutes,
     sellingSettings,
     salesOrders,
+    orderDocuments,
+    salesInvoices,
     packageShop,
     packageOrders,
     preparation,

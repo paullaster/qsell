@@ -73,6 +73,9 @@ export function QuoteDetails({
             value={quote.sentAt === null ? 'Not emailed yet' : (quote.sentByName ?? 'Unknown')}
             detail={quote.sentAt === null ? undefined : new Date(quote.sentAt).toLocaleString()}
           />
+          {quote.convertedOrderNumber === undefined || quote.convertedOrderNumber === null ? null : (
+            <Summary label="Became the order" value={quote.convertedOrderNumber} detail="Find it in Sales Orders or Customer Orders" />
+          )}
           <Summary
             label="Customer"
             value={quote.customerName}
