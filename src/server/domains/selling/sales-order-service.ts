@@ -41,6 +41,9 @@ export interface SalesOrderRow {
 
 const text = (value: string | null | undefined, fallback: string): string => (value === null || value === undefined || value.trim() === '' ? fallback : value.trim());
 
+/** The kinds of document this service places: an order for later, or a sale invoiced directly. Each behaves by the company's settings for its kind. */
+export type PlacedKind = 'sales_order' | 'sales_invoice';
+
 /** Sales orders taken by staff: placing one (through the order writer, with the company's settings for the kind), the customer's credit position, and the list. */
 export class SalesOrderService {
   constructor(
@@ -57,11 +60,11 @@ export class SalesOrderService {
     return row?.branchId ?? null;
   }
 
-  async creditPosition(companyId: string, customerId: string): Promise<CreditPosition | null> {
+  async creditPosition(companyId: string, customerId: string, kind: PlacedKind = 'sales_order'): Promise<CreditPosition | null> {
     const found = await this.customerMaster.getCustomer(companyId, customerId);
     if (found === null) return null;
     const c = found.customer;
-    const settings = await this.settings.get(companyId, 'sales_order');
+    const settings = await this.settings.get(companyId, kind);
     const hasCreditAccount = c.accountType === 'credit';
     const creditLimit = Number(c.creditLimit);
     const balance = Number(c.balance);
@@ -70,7 +73,7 @@ export class SalesOrderService {
   }
 
   /** Places the order as a sales order, behaving as the company's settings for sales orders say. Nothing here is a price: the writer works them out. */
-  async place(companyId: string, who: { userId: string; branchId: string | null }, input: SalesOrderInput): Promise<PlaceOutcome> {
+  async place(companyId: string, who: { userId: string; branchId: string | null }, input: SalesOrderInput, kind: PlacedKind = 'sales_order'): Promise<PlaceOutcome> {
     const [customer] = await this.db.select().from(customers).where(and(eq(customers.id, input.customerId), eq(customers.companyId, companyId), eq(customers.isActive, true))).limit(1);
     if (customer === undefined) return { ok: false, error: 'That customer could not be found.' };
     if (customer.blocked !== 'none') return { ok: false, error: `${customer.name} is blocked from buying (${customer.blocked}).` };
@@ -81,7 +84,7 @@ export class SalesOrderService {
     if (!resolved.ok) return { ok: false, error: resolved.error };
 
     const branchId = who.branchId ?? (await this.branches.getDefault(companyId))?.id ?? null;
-    const selling = await this.settings.get(companyId, 'sales_order');
+    const selling = await this.settings.get(companyId, kind);
     const result = await OrderWriteService.createOrder({
       branchId,
       customerId: customer.id,
@@ -97,7 +100,7 @@ export class SalesOrderService {
       currency: 'KES',
       // How they are expected to pay is a label: money is received by receipt, and a customer's credit comes from their account, not from this.
       paymentMethod: input.paymentMethod,
-      salesModule: 'sales_order',
+      salesModule: kind,
       requestedBy: who.userId,
       selling,
       holdUntilPaid: input.holdUntilPaid,

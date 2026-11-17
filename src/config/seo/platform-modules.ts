@@ -97,6 +97,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
     subModules: [
       'Sales Quotes',
       'Sales Orders',
+      'Sales Invoices',
       'Customer Orders',
       'Preparation sheet',
       'Newsletter',

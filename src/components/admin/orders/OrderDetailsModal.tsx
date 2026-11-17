@@ -11,6 +11,7 @@ import { OrderApprovalBanner } from '@/components/admin/approvals/OrderApprovalB
 import { deliveryInvoiceAvailableAction } from '@/server/domains/invoices/actions';
 import { OrderCreditNotesPanel } from '@/components/admin/OrderCreditNotesPanel';
 import { OrderReferencePanel } from './OrderReferencePanel';
+import { OrderDocumentsPanel } from './OrderDocumentsPanel';
 import { OrderTimelinePanel } from './OrderTimelinePanel';
 import { OrderStockPanel } from './OrderStockPanel';
 import { OrderCollectionPanel } from './OrderCollectionPanel';
@@ -436,6 +437,7 @@ export function OrderDetailsModal({
         <OrderStockPanel orderId={order.id} canMove={order.status === 'pending' || order.status === 'processing'} />
         <OrderCollectionPanel key={`c-${order.id}`} orderId={order.id} onChanged={onChanged} />
         <OrderDeliveriesPanel key={`d-${order.id}`} orderId={order.id} onChanged={onChanged} />
+        <OrderDocumentsPanel key={`docs-${order.id}`} orderId={order.id} />
         <OrderTimelinePanel orderId={order.id} />
         <OrderCreditNotesPanel key={`cn-${order.id}`} orderId={order.id} />
       </div>

@@ -174,6 +174,8 @@ export const OrderWriteService = {
      * credit days, approval and discounts. Left out, the order behaves as it always has (the shop, and callers that predate the settings).
      */
     selling?: SellingSettings;
+    /** The quote this order is made from; kept on the order so it can show where it came from. */
+    sourceQuoteId?: string;
     /** Hold this one document's stock until it is paid, where its kind allows it (the staff member switched it on). */
     holdUntilPaid?: boolean;
     /**
@@ -749,6 +751,7 @@ export const OrderWriteService = {
 
     const order: Order = {
       id: orderId,
+      ...(params.sourceQuoteId === undefined ? {} : { sourceQuoteId: params.sourceQuoteId }),
       orderNumber: explicitOrderNumber ?? '',
       userId: resolvedUserId,
       customerName: params.customerName,

@@ -115,6 +115,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'sales_orders:read',
       },
       {
+        id: 'sales-invoices',
+        title: 'Sales Invoices',
+        name: 'sales-invoices',
+        href: '/admin/sales-invoices',
+        description: 'Find invoices, see whether each is signed, paid or credited, raise one for an order, and send it again',
+        icon: 'Receipt',
+        permission: 'sales_invoices:read',
+      },
+      {
         id: 'orders',
         title: 'Customer Orders',
         name: 'orders',

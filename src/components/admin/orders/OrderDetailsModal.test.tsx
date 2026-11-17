@@ -8,6 +8,7 @@ vi.mock('@/server/domains/invoices/actions', () => ({ deliveryInvoiceAvailableAc
 vi.mock('@/components/admin/approvals/OrderApprovalBanner', () => ({ OrderApprovalBanner: () => null }));
 vi.mock('@/components/admin/OrderCreditNotesPanel', () => ({ OrderCreditNotesPanel: () => <div data-testid="credit-notes" /> }));
 vi.mock('./OrderReferencePanel', () => ({ OrderReferencePanel: () => null }));
+vi.mock('./OrderDocumentsPanel', () => ({ OrderDocumentsPanel: () => <div data-testid="documents" /> }));
 vi.mock('./OrderTimelinePanel', () => ({ OrderTimelinePanel: () => <div data-testid="timeline" /> }));
 vi.mock('./OrderStockPanel', () => ({ OrderStockPanel: () => <div data-testid="stock" /> }));
 vi.mock('./OrderCollectionPanel', () => ({ OrderCollectionPanel: () => <div data-testid="collection" /> }));
