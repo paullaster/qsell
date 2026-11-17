@@ -10,6 +10,7 @@ import type { CustomerAccount, CustomerAddress, Order } from '@/types/index';
 import type { CustomerAddressInput } from './master-service';
 import { ownsOrder, readAddress, toCustomerOrder, type CustomerOrder, type OrderOwner } from '@/lib/storefront-account';
 import { CUSTOMER_STATUS_WORDS, HEADLINE, collectionWords } from '@/lib/tracking-view';
+import { customerVisitWords, type CustomerVisitState } from '@/lib/visit-customer';
 import { resolvePublicBaseUrl } from '@/server/domains/auth/account-service';
 
 function mapAddress(row: CustomerAddressRow): CustomerAddress {
@@ -385,6 +386,32 @@ export async function myOrderTrackingAction(id: string): Promise<AccountResult<M
   } catch (error) {
     console.error('[storefront] my order tracking', error);
     return { ok: false, error: 'The delivery could not be checked just now.' };
+  }
+}
+
+/** A visit of the shopper's own order as they may see it: when, where and how it stands. Never the crew, a phone number or a note. */
+export interface MyVisit {
+  state: CustomerVisitState;
+  words: string;
+  startsAt: string;
+  endsAt: string;
+  address: string;
+}
+
+/** The scheduled visits (an installation, a site job) of one of the signed-in shopper's own orders, soonest first. */
+export async function myOrderVisitsAction(id: string): Promise<AccountResult<MyVisit[]>> {
+  try {
+    const mine = await ownerOf();
+    if (!mine) return NEEDS_SIGN_IN;
+    const c = getContainer();
+    const order = typeof id === 'string' && id !== '' ? await c.orders.getById(id) : null;
+    if (!order || !ownsOrder(order, mine.owner)) return { ok: false, error: 'This order was not found.', code: 'ORDER_NOT_FOUND' };
+    const company = await c.companySettings.ensureSeeded();
+    const visits = await c.orderVisits.forCustomer(company.id, order.id);
+    return { ok: true, data: visits.map((v) => ({ ...customerVisitWords(v.status), startsAt: v.startsAt, endsAt: v.endsAt, address: v.address })) };
+  } catch (error) {
+    console.error('[storefront] my order visits', error);
+    return { ok: false, error: 'The visit could not be checked just now.' };
   }
 }
 

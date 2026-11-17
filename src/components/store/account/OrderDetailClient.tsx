@@ -2,7 +2,7 @@
 
 import { Suspense, use } from 'react';
 import { Chip } from '@/components/ui/screen-kit';
-import type { AccountResult, MyOrderTracking } from '@/server/domains/customers/actions';
+import type { AccountResult, MyOrderTracking, MyVisit } from '@/server/domains/customers/actions';
 import { windowWords } from '@/lib/delivery-sla';
 import {
   formatAmount,
@@ -61,7 +61,27 @@ function DeliveryProgress({ tracking }: { tracking: Promise<AccountResult<MyOrde
   );
 }
 
-export function OrderDetailClient({ result, tracking }: { result: Promise<AccountResult<CustomerOrder>>; tracking?: Promise<AccountResult<MyOrderTracking | null>> }) {
+/** The visits booked for the order (an installation, a site job): when, where and how each stands. Nothing is drawn for an order with none. */
+function VisitsProgress({ visits }: { visits: Promise<AccountResult<MyVisit[]>> }) {
+  const answer = use(visits);
+  if (!answer.ok || answer.data.length === 0) return null;
+  return (
+    <section aria-label="Your visit" className="rounded-xl border border-line bg-surface-raised p-4 sm:p-5">
+      <h2 className="text-lg font-semibold text-fg-strong">{answer.data.length === 1 ? 'Your visit' : 'Your visits'}</h2>
+      <ul aria-label="Visits for this order" className="mt-2 space-y-2 text-sm">
+        {answer.data.map((v) => (
+          <li key={`${v.startsAt}-${v.address}`} className="rounded-lg border border-line bg-surface px-3 py-2">
+            <p className="font-medium text-fg-strong">{windowWords(new Date(v.startsAt), new Date(v.endsAt))}</p>
+            <p className="break-words text-fg-muted">{v.address}</p>
+            <p className="text-fg-strong">{v.words}</p>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+export function OrderDetailClient({ result, tracking, visits }: { result: Promise<AccountResult<CustomerOrder>>; tracking?: Promise<AccountResult<MyOrderTracking | null>>; visits?: Promise<AccountResult<MyVisit[]>> }) {
   const answer = use(result);
   if (!answer.ok) {
     return answer.code === 'SIGN_IN' ? (
@@ -120,6 +140,12 @@ export function OrderDetailClient({ result, tracking }: { result: Promise<Accoun
       {tracking === undefined ? null : (
         <Suspense fallback={null}>
           <DeliveryProgress tracking={tracking} />
+        </Suspense>
+      )}
+
+      {visits === undefined ? null : (
+        <Suspense fallback={null}>
+          <VisitsProgress visits={visits} />
         </Suspense>
       )}
 
