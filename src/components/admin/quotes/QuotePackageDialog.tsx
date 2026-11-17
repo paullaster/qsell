@@ -24,7 +24,19 @@ export interface ChosenPackage {
  * Choosing a package for a quote with the same builder the shop uses. A new line starts from a package picked here; an existing line
  * reopens on its kept choices (a choice the package no longer offers is left empty, so a replacement can be picked).
  */
-export function QuotePackageDialog({ money, editing, onClose, onChosen }: { money: (amount: number) => string; editing?: { productId: string; servings: number; picks: StoredPick[]; note?: string }; onClose: () => void; onChosen: (chosen: ChosenPackage) => void }) {
+/** Where a package dialog finds its packages and opens one: a quote's (the default), or another document's with its own permission. */
+export interface PackageDialogSource {
+  /** The lookup that lists the packages. */
+  source: string;
+  /** Opens one package's builder. */
+  load: (productId: string) => Promise<{ ok: true; data: Loaded | null } | { ok: false; error: string }>;
+  /** The button's words ("Add to the quote"). */
+  addLabel: string;
+}
+
+const QUOTE_SOURCE: PackageDialogSource = { source: 'quote-packages', load: quotePackageBuilderAction, addLabel: 'Add to the quote' };
+
+export function QuotePackageDialog({ money, editing, onClose, onChosen, from = QUOTE_SOURCE }: { money: (amount: number) => string; editing?: { productId: string; servings: number; picks: StoredPick[]; note?: string }; onClose: () => void; onChosen: (chosen: ChosenPackage) => void; from?: PackageDialogSource }) {
   const [product, setProduct] = useState<Choice | null>(null);
   const productId = editing?.productId ?? product?.id ?? null;
   const [loaded, setLoaded] = useState<{ id: string; result: Loaded | 'missing' | 'failed' } | null>(null);
@@ -32,7 +44,7 @@ export function QuotePackageDialog({ money, editing, onClose, onChosen }: { mone
   useEffect(() => {
     if (productId === null) return;
     let live = true;
-    void quotePackageBuilderAction(productId)
+    void from.load(productId)
       .then((r) => {
         if (live) setLoaded({ id: productId, result: r.ok ? (r.data ?? 'missing') : 'failed' });
       })
@@ -42,7 +54,7 @@ export function QuotePackageDialog({ money, editing, onClose, onChosen }: { mone
     return () => {
       live = false;
     };
-  }, [productId]);
+  }, [productId, from]);
 
   const ready = productId !== null && loaded !== null && loaded.id === productId ? loaded.result : null;
   const pkg = ready !== null && ready !== 'missing' && ready !== 'failed' ? ready : null;
@@ -57,7 +69,7 @@ export function QuotePackageDialog({ money, editing, onClose, onChosen }: { mone
           <h2 className="text-lg font-bold text-fg-strong">{editing === undefined ? 'Add a package' : 'Change the choices'}</h2>
           <button type="button" onClick={onClose} className="min-h-10 cursor-pointer rounded-lg px-3 text-sm font-medium text-fg-muted hover:bg-hover">Close</button>
         </div>
-        {editing === undefined ? <ChoicePicker label="Package" source="quote-packages" choice={product} onChoice={setProduct} placeholder="Search packages…" /> : null}
+        {editing === undefined ? <ChoicePicker label="Package" source={from.source} choice={product} onChoice={setProduct} placeholder="Search packages…" /> : null}
         {productId !== null && ready === null ? <p role="status" className="text-sm text-fg-muted">Opening the package…</p> : null}
         {ready === 'missing' ? <p role="alert" className="text-sm text-red-400">That product is not a package any more.</p> : null}
         {ready === 'failed' ? <p role="alert" className="text-sm text-red-400">The package could not be opened. Please try again.</p> : null}
@@ -70,7 +82,7 @@ export function QuotePackageDialog({ money, editing, onClose, onChosen }: { mone
             money={money}
             watchStock={false}
             servingsLabel="Servings"
-            submitLabel={editing === undefined ? 'Add to the quote' : 'Save choices'}
+            submitLabel={editing === undefined ? from.addLabel : 'Save choices'}
             {...(initial === undefined ? {} : { initial })}
             onSubmit={(picks, servings, _intent, note) => {
               const kept = storedPicks(pkg.package, picks);

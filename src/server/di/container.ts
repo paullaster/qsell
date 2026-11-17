@@ -21,6 +21,7 @@ import { PackageShopService } from '@/server/domains/pricing/package-shop-servic
 import { PackageOrderService } from '@/server/domains/pricing/package-order-service';
 import { PreparationService } from '@/server/domains/pricing/preparation-service';
 import { PackageGroupService } from '@/server/domains/pricing/package-group-service';
+import { SalesOrderService } from '@/server/domains/selling/sales-order-service';
 import { SellingSettingsService } from '@/server/domains/selling/selling-settings-service';
 import { EmailRouteService } from '@/server/domains/email-routing/email-route-service';
 import { PackageQuoteRequestService } from '@/server/domains/pricing/package-quote-request-service';
@@ -383,6 +384,7 @@ export interface AppContainer {
   packageConfig: PackageConfigService;
   emailRoutes: EmailRouteService;
   sellingSettings: SellingSettingsService;
+  salesOrders: SalesOrderService;
   packageShop: PackageShopService;
   packageOrders: PackageOrderService;
   preparation: PreparationService;
@@ -606,6 +608,7 @@ export function getContainer(): AppContainer {
   const sellingSettings = new SellingSettingsService(drizzleDb, decisionLog, reasonCodes);
   const packageShop = new PackageShopService(drizzleDb, packageConfig, deliveryServices.stockSettings, deliveryServices.stockAvailability);
   const packageOrders = new PackageOrderService(drizzleDb, packageShop);
+  const salesOrders = new SalesOrderService(drizzleDb, sellingSettings, packageOrders, customers, branches);
   const preparation = new PreparationService(drizzleDb);
   const packageGroups = new PackageGroupService(drizzleDb, packageShop, packageOrders);
   const packageQuoteRequests = new PackageQuoteRequestService(drizzleDb, packageShop, packageOrders);
@@ -781,6 +784,7 @@ export function getContainer(): AppContainer {
     packageConfig,
     emailRoutes,
     sellingSettings,
+    salesOrders,
     packageShop,
     packageOrders,
     preparation,

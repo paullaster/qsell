@@ -51,6 +51,17 @@ async function product(tag: string): Promise<Record<string, string>> {
   return { name };
 }
 
+/** A trade customer with a credit account (the limit and the days given), found by its name. */
+async function tradeCustomer(tag: string, limit: string, days: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { customers } = await import('@/server/db/drizzle/schema');
+  const company = await getContainer().companySettings.ensureSeeded();
+  const name = `Trade ${tag}`;
+  await db.insert(customers).values({ companyId: company.id, number: `TRD-${tag}`.toUpperCase(), name, email: `trade-${tag}@example.test`.toLowerCase(), phone: '0711555222', accountType: 'credit', creditLimit: limit, paymentTermDays: Number(days), street: '9 Mill Rd', city: 'Nairobi', countyOrState: 'Nairobi', country: 'Kenya' });
+  return { name };
+}
+
 async function lateOrder(tag: string, hours: string): Promise<Record<string, string>> {
   const { getContainer } = await import('@/server/di/container');
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
@@ -349,6 +360,7 @@ async function main(): Promise<void> {
   let result: Record<string, string>;
   if (command === 'reviewer' && a !== undefined && b !== undefined) result = await reviewer(a, b);
   else if (command === 'product' && a !== undefined) result = await product(a);
+  else if (command === 'trade-customer' && a !== undefined && b !== undefined && process.argv[5] !== undefined) result = await tradeCustomer(a, b, process.argv[5]);
   else if (command === 'limited-product' && a !== undefined && b !== undefined && process.argv[5] !== undefined) result = await limitedProduct(a, b, process.argv[5]);
   else if (command === 'package' && a !== undefined) result = await lunchPackage(a, b);
   else if (command === 'package-orders' && a !== undefined) result = await lunchOrders(a);
@@ -372,6 +384,11 @@ export function storefrontTool(...args: string[]): Record<string, string> {
   const line = output.split('\n').find((l) => l.startsWith('FIXTURE '));
   if (line === undefined) throw new Error(`the storefront tool printed nothing usable: ${output.slice(-500)}`);
   return JSON.parse(line.slice('FIXTURE '.length)) as Record<string, string>;
+}
+
+/** A trade customer with a credit account of the limit and days given; its name is returned. */
+export function makeTradeCustomer(tag: string, limit = '1000000', days = 30): string {
+  return storefrontTool('trade-customer', tag, limit, String(days)).name ?? '';
 }
 
 /** A new product for sale with no reviews; its name is returned. */

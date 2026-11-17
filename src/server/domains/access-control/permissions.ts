@@ -561,6 +561,18 @@ export const PERMISSIONS = {
     category: 'Company & Settings',
     description: 'Choose who receives the business emails (quotes and web shop orders), who is copied, where replies go, and which business emails a quote shows',
   },
+  'sales_orders:read': {
+    resource: 'sales_orders',
+    action: 'read',
+    category: 'Orders & Sales',
+    description: 'See the sales orders staff have taken',
+  },
+  'sales_orders:create': {
+    resource: 'sales_orders',
+    action: 'create',
+    category: 'Orders & Sales',
+    description: 'Take a sales order for a customer, with products and packages, and see the customer\'s credit position',
+  },
   'selling_settings:manage': {
     resource: 'selling_settings',
     action: 'manage',

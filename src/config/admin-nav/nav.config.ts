@@ -106,6 +106,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'quotes:read',
       },
       {
+        id: 'sales-orders',
+        title: 'Sales Orders',
+        name: 'sales-orders',
+        href: '/admin/sales-orders',
+        description: 'Take an order for a customer, with products and packages, and see their credit',
+        icon: 'ClipboardList',
+        permission: 'sales_orders:read',
+      },
+      {
         id: 'orders',
         title: 'Customer Orders',
         name: 'orders',
