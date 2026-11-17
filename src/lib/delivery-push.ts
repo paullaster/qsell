@@ -8,8 +8,8 @@ export interface Alert {
 }
 
 /** The alert for a level. It names the delivery and the window and how late, never the address, phone, items or any payment. */
-export function lateAlert(input: { level: EscalationLevel; number: string; windowStart: Date | null; windowEnd: Date | null; minutesLate: number }): Alert {
-  const window = input.windowStart !== null && input.windowEnd !== null ? windowWords(input.windowStart, input.windowEnd) : 'no window';
+export function lateAlert(input: { level: EscalationLevel; number: string; windowStart: Date | null; windowEnd: Date | null; minutesLate: number; timeZone: string }): Alert {
+  const window = input.windowStart !== null && input.windowEnd !== null ? windowWords(input.windowStart, input.windowEnd, input.timeZone) : 'no window';
   const state = input.level === 'at_risk' ? 'is at risk' : 'is late';
   const how = input.level === 'at_risk' ? 'Not late yet' : `Late by ${lateWords(input.minutesLate)}`;
   return { title: `Delivery ${input.number} ${state}`.slice(0, 80), body: `${LEVEL_WORDS[input.level]}. Promised ${window}. ${how}.`.slice(0, 200) };

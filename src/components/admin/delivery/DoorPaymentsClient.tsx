@@ -1,5 +1,6 @@
 'use client';
 
+import { useWhen } from '@/components/business-time';
 import { use, useEffect, useId, useState } from 'react';
 import { approveHandInAction, doorBalancesAction, doorEntriesAction, finishDoorPostingAction, handInsAction, recordHandInAction, refuseHandInAction, setDoorCashMethodAction, setDoorDifferencesAction, setPayOnDeliveryAction, type doorSettingsAction } from '@/server/domains/delivery/door-payment-actions';
 import type { HandInView } from '@/server/domains/delivery/door-hand-ins';
@@ -13,7 +14,6 @@ import type { Choice } from '@/lib/payment-options';
 type Loaded = Awaited<ReturnType<typeof doorSettingsAction>>;
 type Settings = Extract<Loaded, { ok: true }>['data'];
 
-const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' });
 
 export function DoorPaymentsClient({ settingsPromise }: { settingsPromise: ReturnType<typeof doorSettingsAction> }) {
   const res: Loaded = use(settingsPromise);
@@ -21,6 +21,7 @@ export function DoorPaymentsClient({ settingsPromise }: { settingsPromise: Retur
 }
 
 function Screen({ initial }: { initial: Settings }) {
+  const when = useWhen();
   const [settings, setSettings] = useState(initial);
   const [notice, setNotice] = useState<Notice>(null);
   const [balances, setBalances] = useState<CustodyRiderView[] | null>(null);
@@ -359,6 +360,7 @@ function HandInForm({ rider, onDone, onError }: { rider: CustodyRiderView; onDon
 }
 
 function HandInRow({ h, canApprove, onDone, onError }: { h: HandInView; canApprove: boolean; onDone: (text: string) => void; onError: (text: string) => void }) {
+  const when = useWhen();
   const uid = useId();
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);

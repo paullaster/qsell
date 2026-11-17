@@ -3,7 +3,7 @@
 import { and, asc, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import { drizzleDb } from '@/server/db/drizzle/client';
 import { branches, chargePolicies, chargePolicyRates, currencies, customerGroups, deliveryZones, type ChargePolicyRow } from '@/server/db/drizzle/schema';
-import { DEFAULT_BUSINESS_TIMEZONE, businessDate } from '@/server/kernel/numbering/business-date';
+import { businessDate, businessTimeZone } from '@/server/kernel/numbering/business-date';
 import { isDateOnly, startOfLocalDay } from './domain/time';
 import { CHANNEL_WORDS } from './lookup-sources';
 import { getContainer } from '@/server/di/container';
@@ -178,7 +178,7 @@ function moment(v: unknown): Date {
   const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})$/.exec(v.trim());
   if (m === null) return new Date(v);
   if (!isDateOnly(m[1] ?? '')) return new Date(Number.NaN);
-  return new Date(startOfLocalDay(m[1] ?? '', DEFAULT_BUSINESS_TIMEZONE).getTime() + (Number(m[2]) * 60 + Number(m[3])) * 60_000);
+  return new Date(startOfLocalDay(m[1] ?? '', businessTimeZone()).getTime() + (Number(m[2]) * 60 + Number(m[3])) * 60_000);
 }
 
 const num = (v: unknown, what: string, fallback?: number): number => {

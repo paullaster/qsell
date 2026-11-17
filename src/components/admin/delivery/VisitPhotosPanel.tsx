@@ -1,5 +1,6 @@
 'use client';
 
+import { useWhen } from '@/components/business-time';
 import { useId, useRef, useState } from 'react';
 import { Camera } from 'lucide-react';
 import { addVisitPhotoAction, removeVisitPhotoAction, visitPhotoLinkAction } from '@/server/domains/delivery/visit-actions';
@@ -8,7 +9,6 @@ import { Chip, Field, attempt, buttonClass, fieldClass, primaryClass } from '@/c
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
 
 const KIND_WORDS: Record<PhotoKind, string> = { before: 'Before the work', after: 'After the work', other: 'Something else' };
-const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' });
 
 /** Sends the picture to the photo route and gives back its id, or says in words why not. A route rather than an action: a phone's photo can be large. */
 async function upload(file: File): Promise<{ ok: true; photoId: string } | { ok: false; error: string }> {
@@ -114,6 +114,7 @@ export function VisitPhotosPanel({ visit, busy, onDone, onError }: { visit: Visi
 }
 
 function PhotoRow({ visitId, photo, busy, onShow, onDone, onError }: { visitId: string; photo: PhotoView; busy: boolean; onShow: () => void; onDone: (text: string) => void; onError: (text: string) => void }) {
+  const when = useWhen();
   const uid = useId();
   const [reason, setReason] = useState('');
   return (

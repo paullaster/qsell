@@ -133,6 +133,11 @@ export const companySettings = pgTable(
      * Validated at read-time via resolveCompanyUiConfig — never trust raw JSON.
      */
     uiConfig: jsonb('ui_config').$type<CompanyUiConfigRaw>().notNull().default({}),
+    /**
+     * The business's time zone (an IANA name such as Africa/Nairobi): the day a posting, a quiet hour, a delivery window or a report
+     * period belongs to. Changed only in Settings, by someone with the timezone:manage permission, with a reason; read by every screen.
+     */
+    timezone: text('timezone').notNull().default('Africa/Nairobi'),
     isActive: boolean('is_active').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -141,6 +146,7 @@ export const companySettings = pgTable(
     index('company_settings_active_updated_idx')
       .on(t.updatedAt.desc())
       .where(sql`${t.isActive}`),
+    check('company_settings_timezone_chk', sql`${t.timezone} ~ '^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$' AND char_length(${t.timezone}) <= 64`),
   ],
 );
 

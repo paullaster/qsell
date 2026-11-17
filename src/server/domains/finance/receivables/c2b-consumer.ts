@@ -1,3 +1,4 @@
+import { businessDate } from '@/server/kernel/numbering/business-date';
 import { and, eq, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { customers, orders, type PaymentMethodRow, type ProviderTransactionRow } from '@/server/db/drizzle/schema';
@@ -32,7 +33,7 @@ export class FinanceC2bConsumer implements C2bConsumer {
   /** A person chose the customer: the same receipt, made in their name. Problems are told, not hidden. */
   async place(tx: ProviderTransactionRow, method: PaymentMethodRow, customerId: string, actor: { id: string }) {
     const ctx: FinanceContext = { companyId: tx.companyId, actor: { type: 'user', id: actor.id }, origin: { surface: 'payments/activity', action: 'place_payment' } };
-    const when = (tx.occurredAt ?? tx.createdAt).toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' });
+    const when = businessDate(tx.occurredAt ?? tx.createdAt);
     const created = await this.receipts.create(ctx, {
       customerId,
       paymentMethodId: method.id,
@@ -58,7 +59,7 @@ export class FinanceC2bConsumer implements C2bConsumer {
     const [customer] = await this.db.select().from(customers).where(and(eq(customers.companyId, tx.companyId), sql`lower(${customers.number}) = lower(${ref})`)).limit(1);
     if (customer?.isActive !== true) return null;
     const ctx: FinanceContext = { companyId: tx.companyId, actor: { type: 'integration', id: tx.providerId }, origin: { surface: 'payments/c2b', action: 'auto_allocate' } };
-    const when = (tx.occurredAt ?? tx.createdAt).toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' });
+    const when = businessDate(tx.occurredAt ?? tx.createdAt);
     try {
       const created = await this.receipts.create(ctx, {
         customerId: customer.id,

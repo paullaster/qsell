@@ -1,4 +1,4 @@
-import { DEFAULT_BUSINESS_TIMEZONE } from '@/server/kernel/numbering/business-date';
+import { businessTimeZone } from '@/server/kernel/numbering/business-date';
 
 export const PERIOD_PRESETS = [
   'today',
@@ -260,7 +260,7 @@ function spanFor(input: PeriodInput, today: Ymd): Span {
 export function resolvePeriod(
   input: PeriodInput,
   now: Date = new Date(),
-  timeZone: string = DEFAULT_BUSINESS_TIMEZONE,
+  timeZone: string = businessTimeZone(),
 ): ResolvedPeriod {
   const today = localYmd(now, timeZone);
   const span = spanFor(input, today);

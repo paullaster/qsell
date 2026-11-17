@@ -1,5 +1,7 @@
 'use client';
 
+import { useWhen } from '@/components/business-time';
+import { dayOf } from '@/lib/business-time-format';
 import { useEffect, useId, useState } from 'react';
 import Link from 'next/link';
 import { Truck } from 'lucide-react';
@@ -21,6 +23,7 @@ const DELIVERY_TONE: Partial<Record<DeliveryStatus, 'green' | 'amber' | 'red' | 
  * have their own panel), nor for someone who may not see deliveries.
  */
 export function OrderDeliveriesPanel({ orderId, onChanged }: { orderId: string; onChanged: () => void }) {
+  const when = useWhen();
   const uid = useId();
   const [data, setData] = useState<Loaded | null>(null);
   const [hidden, setHidden] = useState(false);
@@ -96,7 +99,7 @@ export function OrderDeliveriesPanel({ orderId, onChanged }: { orderId: string; 
         <p role="status" className="flex flex-wrap items-center gap-2 text-xs">
           <Chip tone={data.chosen.outcome === 'unavailable' ? 'amber' : 'sky'}>{data.chosen.outcome === 'unavailable' ? 'Chosen time not kept' : 'Customer chose a time'}</Chip>
           <span className="text-fg">
-            {new Date(`${data.chosen.day}T12:00:00+03:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Africa/Nairobi' })}, {data.chosen.slotName} {data.chosen.startsAt} to {data.chosen.endsAt}
+            {dayOf(data.chosen.day)}, {data.chosen.slotName} {data.chosen.startsAt} to {data.chosen.endsAt}
             {data.chosen.outcome === 'pending' ? '. It is booked when the delivery is made.' : ''}
             {data.chosen.note === null ? '' : `. ${data.chosen.note} The customer has been told.`}
           </span>
@@ -160,7 +163,7 @@ export function OrderDeliveriesPanel({ orderId, onChanged }: { orderId: string; 
           )}
           <p className="text-xs text-fg-muted">
             Opened {link.views} {link.views === 1 ? 'time' : 'times'}
-            {link.lastViewedAt === null ? '' : `, last on ${new Date(link.lastViewedAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' })}`}.
+            {link.lastViewedAt === null ? '' : `, last on ${when(link.lastViewedAt)}`}.
           </p>
           {link.canManage ? (
             <div className="space-y-2">

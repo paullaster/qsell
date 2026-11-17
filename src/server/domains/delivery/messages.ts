@@ -10,7 +10,7 @@ import { internationalPhone, maskedPhone } from '@/lib/sms-providers';
 import { maskEmail } from '@/lib/tracking-token';
 import { resolvePublicBaseUrl } from '@/server/domains/auth/account-service';
 import { layout } from '@/server/domains/auth/emails';
-import { DEFAULT_BUSINESS_TIMEZONE } from '@/server/kernel/numbering/business-date';
+import { businessTimeZone } from '@/server/kernel/numbering/business-date';
 import type { CompanySettingsRepository } from '@/server/domains/company/repository';
 import type { EmailPort } from '@/server/ports/communications';
 import { SmsSendError, type SmsPort } from '@/server/ports/sms';
@@ -93,6 +93,8 @@ export class DeliveryMessages {
 
   /** Sends what is due, a few at a time. Safe to call from anywhere, any number of times. Returns how many went. */
   async flush(limit = 10, now: Date = new Date()): Promise<number> {
+    // Reading the company row also brings this process's business time zone up to date, which the quiet hours below depend on.
+    await this.company.ensureSeeded();
     const claimed = await this.db.transaction(async (tx) => {
       const due = await tx
         .select({ id: deliveryMessages.id })
@@ -239,7 +241,7 @@ export class DeliveryMessages {
       reasonCode: null,
       triesLeft: null,
       collection: null,
-      visit: { window: windowWords(row.startsAt, row.endsAt, DEFAULT_BUSINESS_TIMEZONE) },
+      visit: { window: windowWords(row.startsAt, row.endsAt, businessTimeZone()) },
     };
     return { facts, orderNumber: row.orderNumber };
   }
@@ -249,7 +251,7 @@ export class DeliveryMessages {
     if (m.channel !== 'sms' || this.texting === null) return null;
     if (!memo.has(m.companyId)) {
       const settings = await this.texting.settings.get(m.companyId);
-      memo.set(m.companyId, quietEndsAt(now, settings.quiet, DEFAULT_BUSINESS_TIMEZONE));
+      memo.set(m.companyId, quietEndsAt(now, settings.quiet, businessTimeZone()));
     }
     return memo.get(m.companyId) ?? null;
   }

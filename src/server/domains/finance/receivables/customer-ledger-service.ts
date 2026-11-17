@@ -1,3 +1,4 @@
+import { businessTimeZone } from '@/server/kernel/numbering/business-date';
 import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
@@ -497,6 +498,8 @@ export class CustomerLedgerService {
    * many customers. Credits (unapplied receipts) are shown apart, never netted against old debt.
    */
   async ageingByCustomer(companyId: string, limit = 100) {
+    // Days are counted in the business's time zone.
+    const tz = businessTimeZone();
     const bucketSql = (lo: number, hi: number | null) =>
       sql.raw(
         `COALESCE(SUM(CASE WHEN e.remaining_amount > 0 AND x.d >= ${lo}${hi === null ? '' : ` AND x.d <= ${hi}`} THEN e.remaining_amount END), 0)`,
@@ -516,7 +519,7 @@ export class CustomerLedgerService {
       FROM customer_ledger_entries e
       JOIN customers c ON c.id = e.customer_id
       CROSS JOIN LATERAL (
-        SELECT ((now() AT TIME ZONE 'Africa/Nairobi')::date - (COALESCE(e.due_date, e.created_at) AT TIME ZONE 'Africa/Nairobi')::date) AS d
+        SELECT ((now() AT TIME ZONE ${tz})::date - (COALESCE(e.due_date, e.created_at) AT TIME ZONE ${tz})::date) AS d
       ) x
       WHERE e.company_id = ${companyId}::uuid AND e.remaining_amount <> 0
       GROUP BY c.id, c.number, c.name

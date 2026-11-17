@@ -1,3 +1,4 @@
+import { businessTimeZone } from '@/server/kernel/numbering/business-date';
 import { and, eq, inArray, lt, lte, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { deliveries, deliverySlaEvents, deliverySlaTexts } from '@/server/db/drizzle/schema';
@@ -93,7 +94,7 @@ export class DeliverySlaTexts {
           .innerJoin(deliveries, eq(deliveries.id, deliverySlaEvents.deliveryId))
           .where(eq(deliverySlaEvents.id, n.eventId));
         if (row === undefined) throw new SmsSendError('The delivery of this text is gone.', false);
-        await sender.send({ to: n.recipient, text: lateText({ level: row.level, number: row.d.number, windowStart: row.d.windowStart, windowEnd: row.d.windowEnd, minutesLate: row.minutesLate, shop }) });
+        await sender.send({ to: n.recipient, text: lateText({ level: row.level, number: row.d.number, windowStart: row.d.windowStart, windowEnd: row.d.windowEnd, minutesLate: row.minutesLate, timeZone: businessTimeZone(), shop }) });
         await this.db.update(deliverySlaTexts).set({ status: 'sent', sentAt: new Date(), lastError: null }).where(eq(deliverySlaTexts.id, n.id));
         sent += 1;
       } catch (error) {

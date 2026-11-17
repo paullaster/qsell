@@ -1,12 +1,12 @@
 'use client';
 
+import { useWhen } from '@/components/business-time';
 import { useState } from 'react';
 import { issueRiderPinAction, removeRiderPinAction, unlockRiderPinAction } from '@/server/domains/delivery/rider-actions';
 import type { PinStatus } from '@/server/domains/delivery/rider-pins';
 import { Chip, attempt, buttonClass, primaryClass } from '@/components/ui/screen-kit';
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
 
-const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' });
 
 function pinBadge(status: PinStatus | null): { tone: 'gray' | 'amber' | 'green' | 'red'; words: string } {
   if (status === null) return { tone: 'gray', words: 'No PIN' };
@@ -19,6 +19,7 @@ function pinBadge(status: PinStatus | null): { tone: 'gray' | 'amber' | 'green' 
  * can let a shut-out rider try again, and can turn it off. Giving a new PIN ends the rider's sessions made with the old one.
  */
 export function RiderPinPanel({ riderId, riderName, initial, onError }: { riderId: string; riderName: string; initial: PinStatus | null; onError: (text: string) => void }) {
+  const when = useWhen();
   const [status, setStatus] = useState(initial);
   const [shown, setShown] = useState<{ pin: string; phoneWords: string } | null>(null);
   const [busy, setBusy] = useState(false);

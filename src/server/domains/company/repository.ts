@@ -1,3 +1,4 @@
+import { followBusinessTimeZone } from '@/server/kernel/numbering/business-date';
 import { cache } from 'react';
 import { desc, eq, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
@@ -102,7 +103,10 @@ export class CompanySettingsRepository {
     const held = readThisRequest();
     held.row ??= this.loadOrSeed();
     try {
-      return await held.row;
+      const row = await held.row;
+      // Every request and every job reads this row, so the process always dates things in the zone the company chose.
+      followBusinessTimeZone(row.timezone);
+      return row;
     } catch (error) {
       held.row = null;
       throw error;

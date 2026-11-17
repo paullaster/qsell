@@ -561,6 +561,12 @@ export const PERMISSIONS = {
     category: 'Company & Settings',
     description: 'Choose who receives the business emails (quotes and web shop orders), who is copied, where replies go, and which business emails a quote shows',
   },
+  'timezone:manage': {
+    resource: 'timezone',
+    action: 'manage',
+    category: 'Company & Settings',
+    description: 'Change the business time zone, which decides the day a posting, a quiet hour, a delivery window and a report period belong to',
+  },
   'sales_orders:read': {
     resource: 'sales_orders',
     action: 'read',

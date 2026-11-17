@@ -1,5 +1,6 @@
 'use client';
 
+import { useWhen } from '@/components/business-time';
 import { useEffect, useId, useState } from 'react';
 import { KeyRound } from 'lucide-react';
 import {
@@ -24,7 +25,6 @@ const STATUS_WORDS: Record<CollectionView['status'], string> = {
   cancelled: 'Cancelled',
 };
 const MESSAGE_WORDS = { sent: 'Sent', failed: 'Not sent yet', skipped: 'Not sent', queued: 'Waiting to send' } as const;
-const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' });
 
 /**
  * An order the customer comes to collect: where, and in what state, with what the person at the counter does: mark it ready, take
@@ -32,6 +32,7 @@ const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { da
  * is delivered, nor for someone who may not hand orders over.
  */
 export function OrderCollectionPanel({ orderId, onChanged }: { orderId: string; onChanged: () => void }) {
+  const when = useWhen();
   const uid = useId();
   const [view, setView] = useState<CollectionView | null>(null);
   const [messages, setMessages] = useState<MessageView[]>([]);

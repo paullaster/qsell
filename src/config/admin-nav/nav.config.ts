@@ -1406,6 +1406,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'selling_settings:manage',
       },
       {
+        id: 'settings-business-time',
+        title: 'Business Time Zone',
+        name: 'settings-business-time',
+        href: '/admin/settings/business-time',
+        description: 'The time zone the business works in, which decides the day a posting belongs to, quiet hours for text messages, delivery windows and report days',
+        icon: 'CalendarClock',
+        permission: 'timezone:manage',
+      },
+      {
         id: 'settings-email-routing',
         title: 'Email Routing',
         name: 'settings-email-routing',

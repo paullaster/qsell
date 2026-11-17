@@ -1,3 +1,4 @@
+import { businessTimeZone } from '@/server/kernel/numbering/business-date';
 import type { MixConfig } from './mix';
 import { scopeMismatch } from './resolve';
 import type { Scopes } from './types';
@@ -196,7 +197,7 @@ const parseTime = (hhmm: string) => {
 };
 
 /** Day and minute of day at `at` in a time zone. */
-export function localParts(at: Date, timeZone = 'Africa/Nairobi') {
+export function localParts(at: Date, timeZone = businessTimeZone()) {
   const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone,
     weekday: 'short',

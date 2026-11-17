@@ -5,17 +5,17 @@ import { pushRuntimeConfig } from '@/server/adapters/push/config';
 describe('what an alert says', () => {
   const window = { windowStart: new Date('2026-11-12T07:00:00Z'), windowEnd: new Date('2026-11-12T09:00:00Z') };
   it('names the delivery, the window and how late, in plain words', () => {
-    const risk = lateAlert({ level: 'at_risk', number: 'DLV-12', ...window, minutesLate: 0 });
+    const risk = lateAlert({ level: 'at_risk', number: 'DLV-12', ...window, minutesLate: 0, timeZone: 'Africa/Nairobi' });
     expect(risk.title).toBe('Delivery DLV-12 is at risk');
     expect(risk.body).toContain('Not late yet');
-    const late = lateAlert({ level: 'late', number: 'DLV-12', ...window, minutesLate: 25 });
+    const late = lateAlert({ level: 'late', number: 'DLV-12', ...window, minutesLate: 25, timeZone: 'Africa/Nairobi' });
     expect(late.title).toBe('Delivery DLV-12 is late');
     expect(late.body).toContain('Late by');
-    expect(lateAlert({ level: 'escalated', number: 'DLV-12', ...window, minutesLate: 95 }).title).toBe('Delivery DLV-12 is late');
+    expect(lateAlert({ level: 'escalated', number: 'DLV-12', ...window, minutesLate: 95, timeZone: 'Africa/Nairobi' }).title).toBe('Delivery DLV-12 is late');
   });
   it('copes with no window and keeps to the size limits', () => {
-    expect(lateAlert({ level: 'late', number: 'D'.repeat(200), windowStart: null, windowEnd: null, minutesLate: 5 }).title.length).toBeLessThanOrEqual(80);
-    expect(lateAlert({ level: 'late', number: 'X', windowStart: null, windowEnd: null, minutesLate: 5 }).body).toContain('no window');
+    expect(lateAlert({ level: 'late', number: 'D'.repeat(200), windowStart: null, windowEnd: null, minutesLate: 5, timeZone: 'Africa/Nairobi' }).title.length).toBeLessThanOrEqual(80);
+    expect(lateAlert({ level: 'late', number: 'X', windowStart: null, windowEnd: null, minutesLate: 5, timeZone: 'Africa/Nairobi' }).body).toContain('no window');
   });
 });
 

@@ -1,3 +1,5 @@
+import { BusinessTimeService } from '@/server/domains/company/business-time-service';
+import { followBusinessTimeZone } from '@/server/kernel/numbering/business-date';
 import { ParkedActions } from '@/server/kernel/approvals/parked-actions';
 import { registerApprovalHandlers } from '@/server/di/approval-wiring';
 import { ApprovalConfigService } from '@/server/kernel/approvals/config-service';
@@ -387,6 +389,7 @@ export interface AppContainer {
   packageConfig: PackageConfigService;
   emailRoutes: EmailRouteService;
   sellingSettings: SellingSettingsService;
+  businessTime: BusinessTimeService;
   salesOrders: SalesOrderService;
   shifts: ShiftService;
   orderDocuments: OrderDocumentsService;
@@ -496,6 +499,8 @@ export function getContainer(): AppContainer {
   const email = createEmailPort();
   const deliveryPush = new DeliveryPush(drizzleDb, createPushPort());
   const companySettings = new CompanySettingsRepository(drizzleDb);
+  // A new process learns the company's business time zone at once (read only; every request and job reads it again afterwards).
+  void companySettings.getActive().then((row) => followBusinessTimeZone(row?.timezone)).catch(() => undefined);
   const invoices = new InvoiceService({
     db: drizzleDb,
     companySettings,
@@ -612,6 +617,7 @@ export function getContainer(): AppContainer {
   const packageConfig = new PackageConfigService(drizzleDb, decisionLog, reasonCodes);
   const emailRoutes = new EmailRouteService(drizzleDb, decisionLog, reasonCodes, companySettings);
   const sellingSettings = new SellingSettingsService(drizzleDb, decisionLog, reasonCodes);
+  const businessTime = new BusinessTimeService(drizzleDb, decisionLog, reasonCodes);
   const packageShop = new PackageShopService(drizzleDb, packageConfig, deliveryServices.stockSettings, deliveryServices.stockAvailability);
   const packageOrders = new PackageOrderService(drizzleDb, packageShop);
   const orderDocuments = new OrderDocumentsService(drizzleDb);
@@ -793,6 +799,7 @@ export function getContainer(): AppContainer {
     packageConfig,
     emailRoutes,
     sellingSettings,
+    businessTime,
     salesOrders,
     shifts,
     orderDocuments,

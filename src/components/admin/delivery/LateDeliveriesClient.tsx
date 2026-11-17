@@ -1,5 +1,6 @@
 'use client';
 
+import { useBusinessTimeZone, useWhen } from '@/components/business-time';
 import { use, useId, useState } from 'react';
 import Link from 'next/link';
 import { acknowledgeLateAction, lateAlertsStateAction, lateDeliveriesAction, turnOffLateAlertsAction, turnOnLateAlertsAction } from '@/server/domains/delivery/slot-actions';
@@ -11,7 +12,6 @@ type Loaded = Awaited<ReturnType<typeof lateDeliveriesAction>>;
 type Data = Extract<Loaded, { ok: true }>['data'];
 type Late = Data['late'][number];
 
-const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' });
 
 export function LateDeliveriesClient({ firstPromise }: { firstPromise: ReturnType<typeof lateDeliveriesAction> }) {
   const res: Loaded = use(firstPromise);
@@ -66,6 +66,8 @@ function Screen({ initial }: { initial: Data }) {
 }
 
 function LateCard({ item, onDone, onError }: { item: Late; onDone: (text: string) => void; onError: (text: string) => void }) {
+  const timeZone = useBusinessTimeZone();
+  const when = useWhen();
   const uid = useId();
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
@@ -87,7 +89,7 @@ function LateCard({ item, onDone, onError }: { item: Late; onDone: (text: string
             · Order {item.orderNumber} · {item.customerName}
           </p>
           <p className="text-sm text-fg">
-            Promised {windowWords(new Date(item.windowStart), new Date(item.windowEnd))} · {item.branchName}
+            Promised {windowWords(new Date(item.windowStart), new Date(item.windowEnd), timeZone)} · {item.branchName}
           </p>
         </div>
         <Chip tone={item.state === 'late' ? 'red' : 'amber'}>{item.state === 'late' ? `Late by ${lateWords(item.minutesLate)}` : item.stateWords}</Chip>
