@@ -42,7 +42,14 @@ export interface SalesOrderRow {
 const text = (value: string | null | undefined, fallback: string): string => (value === null || value === undefined || value.trim() === '' ? fallback : value.trim());
 
 /** The kinds of document this service places: an order for later, or a sale invoiced directly. Each behaves by the company's settings for its kind. */
-export type PlacedKind = 'sales_order' | 'sales_invoice' | 'credit_sale';
+export type PlacedKind = 'sales_order' | 'sales_invoice' | 'credit_sale' | 'pos_cash_sale';
+
+/** What only some kinds of order carry: the shift a counter sale is rung up in, the key that makes a retry safe, and a check on the priced total. */
+export interface PlaceExtra {
+  shiftId?: string;
+  idempotencyKey?: string;
+  checkTotal?: (totals: { subtotal: number; tax: number; totalAmount: number }) => string | null;
+}
 
 /** Sales orders taken by staff: placing one (through the order writer, with the company's settings for the kind), the customer's credit position, and the list. */
 export class SalesOrderService {
@@ -72,8 +79,8 @@ export class SalesOrderService {
     return { customerId: c.id, name: c.name, hasCreditAccount, creditLimit, balance, available: Math.max(0, creditLimit - balance), termDays: c.paymentTermDays, blocked: c.blocked !== 'none', overdue };
   }
 
-  /** Places the order as a sales order, behaving as the company's settings for sales orders say. Nothing here is a price: the writer works them out. */
-  async place(companyId: string, who: { userId: string; branchId: string | null }, input: SalesOrderInput, kind: PlacedKind = 'sales_order'): Promise<PlaceOutcome> {
+  /** Everything the writer needs to price or place this order, or why it cannot be (an unknown customer, a blocked one, a package choice that is not real). */
+  private async prepare(companyId: string, who: { userId: string; branchId: string | null }, input: SalesOrderInput, kind: PlacedKind): Promise<{ ok: true; params: Parameters<typeof OrderWriteService.createOrder>[0] } | { ok: false; error: string }> {
     const [customer] = await this.db.select().from(customers).where(and(eq(customers.id, input.customerId), eq(customers.companyId, companyId), eq(customers.isActive, true))).limit(1);
     if (customer === undefined) return { ok: false, error: 'That customer could not be found.' };
     if (customer.blocked !== 'none') return { ok: false, error: `${customer.name} is blocked from buying (${customer.blocked}).` };
@@ -85,30 +92,49 @@ export class SalesOrderService {
 
     const branchId = who.branchId ?? (await this.branches.getDefault(companyId))?.id ?? null;
     const selling = await this.settings.get(companyId, kind);
-    const result = await OrderWriteService.createOrder({
-      branchId,
-      customerId: customer.id,
-      customerName: customer.name,
-      customerEmail: customer.email ?? '',
-      customerPhone: text(customer.phone, '—'),
-      shippingAddress: { street: text(customer.street, 'Not given'), city: text(customer.city, 'Not given'), countyOrState: text(customer.countyOrState, 'Not given'), ...(customer.postalCode === null ? {} : { postalCode: customer.postalCode }), country: text(customer.country, 'Kenya') },
-      items: input.lines.map((line, index) => {
-        const at = packageLines.findIndex((p) => p.index === index);
-        const picks = at < 0 ? undefined : resolved.picks[at];
-        return { productId: line.productId, quantity: line.quantity, ...(picks === undefined ? {} : { package: { picks, ...(line.package?.note === undefined || line.package.note === '' ? {} : { note: line.package.note }) } }) };
-      }),
-      currency: 'KES',
-      // How they are expected to pay is a label: money is received by receipt, and a customer's credit comes from their account, not from this.
-      paymentMethod: kind === 'credit_sale' ? 'on_account' : input.paymentMethod,
-      // A credit sale is an order on account, which the writer turns into a credit sale; the staff channel is still named so staff rules apply.
-      salesModule: kind === 'credit_sale' ? 'sales_order' : kind,
-      requestedBy: who.userId,
-      selling,
-      holdUntilPaid: input.holdUntilPaid,
-      ...(input.neededOn === '' ? {} : { fulfilmentDate: input.neededOn }),
-    });
+    return {
+      ok: true,
+      params: {
+        branchId,
+        customerId: customer.id,
+        customerName: customer.name,
+        customerEmail: customer.email ?? '',
+        customerPhone: text(customer.phone, '—'),
+        shippingAddress: { street: text(customer.street, 'Not given'), city: text(customer.city, 'Not given'), countyOrState: text(customer.countyOrState, 'Not given'), ...(customer.postalCode === null ? {} : { postalCode: customer.postalCode }), country: text(customer.country, 'Kenya') },
+        items: input.lines.map((line, index) => {
+          const at = packageLines.findIndex((p) => p.index === index);
+          const picks = at < 0 ? undefined : resolved.picks[at];
+          return { productId: line.productId, quantity: line.quantity, ...(picks === undefined ? {} : { package: { picks, ...(line.package?.note === undefined || line.package.note === '' ? {} : { note: line.package.note }) } }) };
+        }),
+        currency: 'KES',
+        // How they are expected to pay is a label: money is received by receipt, and a customer's credit comes from their account, not from this.
+        paymentMethod: kind === 'credit_sale' ? 'on_account' : input.paymentMethod,
+        // A credit sale is an order on account, which the writer turns into a credit sale; the staff channel is still named so staff rules apply.
+        salesModule: kind === 'credit_sale' ? 'sales_order' : kind,
+        requestedBy: who.userId,
+        selling,
+        holdUntilPaid: input.holdUntilPaid,
+        ...(input.neededOn === '' ? {} : { fulfilmentDate: input.neededOn }),
+      },
+    };
+  }
+
+  /** Places the order as the kind of selling document it is, behaving as the company's settings for that kind say. Nothing here is a price: the writer works them out. */
+  async place(companyId: string, who: { userId: string; branchId: string | null }, input: SalesOrderInput, kind: PlacedKind = 'sales_order', extra: PlaceExtra = {}): Promise<PlaceOutcome> {
+    const prepared = await this.prepare(companyId, who, input, kind);
+    if (!prepared.ok) return prepared;
+    const result = await OrderWriteService.createOrder({ ...prepared.params, ...extra });
     if (!result.success || result.order === undefined) return { ok: false, error: result.error ?? 'The order could not be placed.' };
     return { ok: true, orderId: result.order.id, orderNumber: result.order.orderNumber, waitingForApproval: result.order.approvalStatus === 'pending' };
+  }
+
+  /** What this order would total, worked out by the same pricing as placing it, without placing anything. For the till as lines are added. */
+  async price(companyId: string, who: { userId: string; branchId: string | null }, input: SalesOrderInput, kind: PlacedKind): Promise<{ ok: true; subtotal: number; tax: number; total: number } | { ok: false; error: string }> {
+    const prepared = await this.prepare(companyId, who, input, kind);
+    if (!prepared.ok) return prepared;
+    const result = await OrderWriteService.createOrder({ ...prepared.params, previewOnly: true });
+    if (!result.success || result.preview === undefined) return { ok: false, error: result.error ?? 'The total could not be worked out.' };
+    return { ok: true, subtotal: result.preview.subtotal, tax: result.preview.tax, total: result.preview.totalAmount };
   }
 
   /** The sales orders staff took, newest first (the next page begins at `cursor`), narrowed by words or by status. */

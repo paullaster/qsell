@@ -31,7 +31,7 @@ export interface CheckoutInput {
   buyerKraPin?: string;
   shippingAddress: { street: string; city: string; countyOrState: string; country: string };
   items: BasketItem[];
-  paymentMethod: PaymentProvider;
+  paymentMethod: (typeof PAYMENT_PROVIDERS)[number];
   /** Promo codes the shopper typed (at most 5). The server decides whether each can be used. */
   couponCodes?: string[];
   /** Absent for an order that is not delivered by the shop's own delivery rules. */

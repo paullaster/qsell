@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, registers, shiftCloseRequests, shiftMovements, shiftSettings, shifts, users } from '@/server/db/drizzle/schema';
+import { branches, orders, orderTenders, registers, shiftCloseRequests, shiftMovements, shiftSettings, shifts, users } from '@/server/db/drizzle/schema';
 import type { Actor } from '@/server/kernel/context';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { ReasonCodes, ReasonInput } from '@/server/kernel/reason-codes/service';
@@ -45,6 +45,8 @@ export interface ShiftReport {
   varianceReason: string | null;
   zNumber: string | null;
   /** While the close waits in the approval queue: what was counted and why, and who asked. */
+  /** What counter sales took in this shift. */
+  takings: { count: number; cash: number; mobileMoney: number; card: number };
   closeRequest: { requestedBy: string; requestedAt: string; declaredCash: number; variance: number; reason: string } | null;
   movements: { kind: 'paid_in' | 'paid_out'; amount: number; reason: string; by: string; at: string }[];
 }
@@ -135,9 +137,31 @@ export class ShiftService {
 
   // ── Shifts ─────────────────────────────────────────────────────────────
 
-  /** Cash taken for sales in the shift. Cash sales are recorded against a shift when they are built; until then it is nothing. */
-  private async cashSalesOf(_shiftId: string): Promise<number> {
-    return await Promise.resolve(0);
+  /** What counter sales took in the shift, by how it was paid (net of change), and how many sales. Reads the tenders of the orders that name the shift. */
+  async takings(shiftId: string, w: Pick<DrizzleDb, 'select'> = this.db): Promise<{ count: number; cash: number; mobileMoney: number; card: number }> {
+    const [row] = await w
+      .select({
+        count: sql<string>`COUNT(DISTINCT ${orderTenders.orderId})::text`,
+        cash: sql<string>`COALESCE(SUM(${orderTenders.amount}) FILTER (WHERE ${orderTenders.methodKind} = 'cash'), 0)::text`,
+        mobileMoney: sql<string>`COALESCE(SUM(${orderTenders.amount}) FILTER (WHERE ${orderTenders.methodKind} = 'mobile_money'), 0)::text`,
+        card: sql<string>`COALESCE(SUM(${orderTenders.amount}) FILTER (WHERE ${orderTenders.methodKind} = 'card'), 0)::text`,
+      })
+      .from(orderTenders)
+      .innerJoin(orders, eq(orders.id, orderTenders.orderId))
+      .where(and(eq(orders.shiftId, shiftId), eq(orderTenders.kind, 'payment_method')));
+    return { count: Number(row?.count ?? 0), cash: Number(row?.cash ?? 0), mobileMoney: Number(row?.mobileMoney ?? 0), card: Number(row?.card ?? 0) };
+  }
+
+  private async cashSalesOf(shiftId: string): Promise<number> {
+    return (await this.takings(shiftId)).cash;
+  }
+
+  /** The open shift this person may ring a sale into, or why there is none. */
+  async openForSale(companyId: string, userId: string): Promise<{ ok: true; shiftId: string; branchId: string } | { ok: false; error: string }> {
+    const [shift] = await this.db.select().from(shifts).where(and(eq(shifts.companyId, companyId), eq(shifts.openedBy, userId), inArray(shifts.status, ['open', 'closing']))).limit(1);
+    if (shift === undefined) return { ok: false, error: 'Open a shift on a till before selling at the counter.' };
+    if (shift.status === 'closing') return { ok: false, error: 'Your shift is waiting for its close to be approved: no sale can be rung up in it. Withdraw the close on the Shifts screen to sell again.' };
+    return { ok: true, shiftId: shift.id, branchId: shift.branchId };
   }
 
   private async figures(shiftId: string, openingFloat: number): Promise<{ paidIn: number; paidOut: number; cashSales: number; expected: number }> {
@@ -238,6 +262,7 @@ export class ShiftService {
       variance: s.variance === null ? null : Number(s.variance),
       varianceReason: s.varianceReason,
       zNumber: s.zNumber,
+      takings: await this.takings(s.id),
       closeRequest: asked === undefined ? null : { requestedBy: nameOf(asked.requestedBy), requestedAt: asked.createdAt.toISOString(), declaredCash: Number(asked.declaredCash), variance: Number(asked.variance), reason: asked.varianceReason },
       movements: movements.map((m) => ({ kind: m.kind, amount: Number(m.amount), reason: m.reason, by: nameOf(m.createdBy), at: m.createdAt.toISOString() })),
     };
@@ -259,6 +284,8 @@ export class ShiftService {
         if (shift.status !== 'open') return { ok: false as const, error: 'That shift is already closed.' };
         const own = shift.openedBy === who.userId;
         if (!own && !who.supervisor) return { ok: false as const, error: 'This is another person\'s shift: only a supervisor can close it.' };
+        const [unfinished] = await tx.select({ n: sql<string>`COUNT(*)::text` }).from(orders).where(and(eq(orders.shiftId, shift.id), eq(orders.salesModule, 'pos_cash_sale'), sql`${orders.paymentStatus} NOT IN ('paid', 'reconciled')`, sql`${orders.status} NOT IN ('cancelled', 'failed')`));
+        if (Number(unfinished?.n ?? 0) > 0) return { ok: false as const, error: `${unfinished?.n ?? '0'} sale(s) rung up in this shift are still waiting for their payment to be recorded. Finish or cancel them on the Cash Sales screen before closing.` };
         const f = await this.figures(shift.id, Number(shift.openingFloat));
         const variance = varianceOf(input.declared.total, f.expected);
         const checked = checkClose({ variance, expected: f.expected, reason: input.reason, tolerance, supervisor: who.supervisor, mode: supervisorClose, ownShift: own });

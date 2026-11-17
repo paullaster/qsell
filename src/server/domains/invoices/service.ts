@@ -265,7 +265,10 @@ export class InvoiceService {
       .limit(1);
     if (existing) return existing.invoiceNumber;
 
-    const kind = documentType === 'proforma' ? 'proforma_invoice' : 'tax_invoice';
+    // A counter sale's tax invoice is its till receipt: one fiscal document, numbered from the POS receipt series.
+    let kind: 'proforma_invoice' | 'pos_receipt' | 'tax_invoice' = 'tax_invoice';
+    if (documentType === 'proforma') kind = 'proforma_invoice';
+    else if (order.salesModule === 'pos_cash_sale' && documentType === 'tax_invoice') kind = 'pos_receipt';
     // The delivery service's own invoice comes from the same tax invoice series (one legal sequence), as its own document.
     const documentId = documentType === 'delivery_invoice' ? `${order.id}#delivery` : order.id;
     const company = await this.deps.companySettings.ensureSeeded();

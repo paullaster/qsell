@@ -1331,6 +1331,13 @@
       "when": 1794910853576,
       "tag": "0189_shift_close_approval",
       "breakpoints": true
+    },
+    {
+      "idx": 190,
+      "version": "7",
+      "when": 1794929830956,
+      "tag": "0190_cash_sales",
+      "breakpoints": true
     }
   ]
 }

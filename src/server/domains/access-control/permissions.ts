@@ -597,6 +597,18 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'See till shifts and their X and Z reports',
   },
+  'cash_sales:read': {
+    resource: 'cash_sales',
+    action: 'read',
+    category: 'Orders & Sales',
+    description: 'See the counter sales rung up, and their receipts',
+  },
+  'cash_sales:create': {
+    resource: 'cash_sales',
+    action: 'create',
+    category: 'Orders & Sales',
+    description: 'Ring up a counter sale in your own open shift, take the payment and give the receipt',
+  },
   'shifts:open': {
     resource: 'shifts',
     action: 'open',

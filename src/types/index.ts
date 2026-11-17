@@ -259,7 +259,7 @@ export interface InventoryLedgerEntry {
 }
 
 export type PaymentProvider =
-  'mpesa_daraja' | 'pesapal_v3' | 'jenga_hq' | 'kcb_buni' | 'card_direct' | 'on_account' | 'pay_on_delivery';
+  'mpesa_daraja' | 'pesapal_v3' | 'jenga_hq' | 'kcb_buni' | 'card_direct' | 'on_account' | 'pay_on_delivery' | 'counter';
 
 export interface PaymentGatewayConfig {
   id: string;
@@ -375,6 +375,8 @@ export interface Order {
   invoiceWhenApproved?: boolean;
   /** The quote this order was made from. */
   sourceQuoteId?: string | null;
+  shiftId?: string | null;
+  idempotencyKey?: string | null;
   createdAt: string;
   updatedAt: string;
   /** The discounts applied when the order was priced (rules, coupons, amounts). */

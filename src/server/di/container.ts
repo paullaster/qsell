@@ -23,6 +23,7 @@ import { PreparationService } from '@/server/domains/pricing/preparation-service
 import { PackageGroupService } from '@/server/domains/pricing/package-group-service';
 import { SalesInvoiceService } from '@/server/domains/selling/sales-invoice-service';
 import { OrderDocumentsService } from '@/server/domains/selling/order-documents-service';
+import { CashSaleService } from '@/server/domains/selling/cash-sales/cash-sale-service';
 import { ShiftService } from '@/server/domains/selling/shifts/shift-service';
 import { SalesOrderService } from '@/server/domains/selling/sales-order-service';
 import { SellingSettingsService } from '@/server/domains/selling/selling-settings-service';
@@ -389,6 +390,7 @@ export interface AppContainer {
   sellingSettings: SellingSettingsService;
   salesOrders: SalesOrderService;
   shifts: ShiftService;
+  cashSales: CashSaleService;
   orderDocuments: OrderDocumentsService;
   salesInvoices: SalesInvoiceService;
   packageShop: PackageShopService;
@@ -618,6 +620,7 @@ export function getContainer(): AppContainer {
   const shifts = new ShiftService(drizzleDb, decisionLog, reasonCodes, numbering, approvals);
   const salesInvoices = new SalesInvoiceService(drizzleDb, invoices);
   const salesOrders = new SalesOrderService(drizzleDb, sellingSettings, packageOrders, customers, branches);
+  const cashSales = new CashSaleService(drizzleDb, decisionLog, shifts, salesOrders, async () => (await import('@/server/di/container')).getContainer());
   const preparation = new PreparationService(drizzleDb);
   const packageGroups = new PackageGroupService(drizzleDb, packageShop, packageOrders);
   const packageQuoteRequests = new PackageQuoteRequestService(drizzleDb, packageShop, packageOrders);
@@ -795,6 +798,7 @@ export function getContainer(): AppContainer {
     sellingSettings,
     salesOrders,
     shifts,
+    cashSales,
     orderDocuments,
     salesInvoices,
     packageShop,

@@ -1,6 +1,6 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { PermissionKey } from '@/server/domains/access-control/permissions';
-import { customers, orders, products } from '@/server/db/drizzle/schema';
+import { customers, orders, paymentMethods, products } from '@/server/db/drizzle/schema';
 import { acceptFilters, LookupFilterError, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
 import { methodLabel } from '@/lib/payment-method-labels';
 import { SALES_ORDER_PAYMENT_METHODS } from './domain/sales-order-input';
@@ -24,7 +24,7 @@ const options = staticSource({
  * the permission of taking that document: `sales-order-*` for sales orders, `sales-invoice-*` for direct sales invoices and `credit-sale-*`
  * for credit sales (whose customers are only those with a credit account).
  */
-function pickers(prefix: 'sales-order' | 'sales-invoice' | 'credit-sale', permission: PermissionKey): LookupSource[] {
+function pickers(prefix: 'sales-order' | 'sales-invoice' | 'credit-sale' | 'cash-sale', permission: PermissionKey): LookupSource[] {
   /** Products sold as lines of their own: for sale, switched on, not kept for packages, and not a package (those are chosen with their builder). */
   const productList = tableSource({
     key: `${prefix}-products`,
@@ -72,7 +72,7 @@ function pickers(prefix: 'sales-order' | 'sales-invoice' | 'credit-sale', permis
     select: { number: customers.number, email: customers.email, accountType: customers.accountType },
     scope: ({ companyId, filters }) => {
       acceptFilters(filters, {});
-      return [eq(customers.companyId, companyId), eq(customers.isActive, true), ...(prefix === 'credit-sale' ? [eq(customers.accountType, 'credit')] : [])];
+      return [eq(customers.companyId, companyId), eq(customers.isActive, true), ...(prefix === 'credit-sale' ? [eq(customers.accountType, 'credit')] : []), ...(prefix === 'cash-sale' ? [eq(customers.isWalkIn, false)] : [])];
     },
     toOption: (row) => ({ id: String(row.id), label: String(row.label), description: [row.number, row.email].filter((x): x is string => typeof x === 'string' && x !== '').join(' · '), badge: row.accountType === 'credit' ? 'Credit' : null }),
   });
@@ -104,4 +104,25 @@ const invoiceableOrders = tableSource({
   toOption: (row) => ({ id: String(row.id), label: String(row.label), description: `${String(row.customer)} · ${String(row.currency)} ${String(row.total)}`, badge: null }),
 });
 
-export const SELLING_LOOKUP_SOURCES: LookupSource[] = [options, ...pickers('sales-order', 'sales_orders:create'), ...pickers('sales-invoice', 'sales_invoices:create'), ...pickers('credit-sale', 'credit_sales:create'), invoiceableOrders];
+const COUNTER_KIND_WORDS: Record<string, string> = { cash: 'Cash', card: 'Card', mobile_money: 'M-Pesa or mobile money' };
+
+/**
+ * The ways of paying a counter sale: cash, M-Pesa and card methods that are switched on, pay into a real cash or bank account and can take customer
+ * money. Which of them this till may use (its branch) is decided again when the sale is completed.
+ */
+const counterMethods = tableSource({
+  key: 'counter-methods',
+  permission: 'cash_sales:create',
+  table: paymentMethods,
+  id: paymentMethods.id,
+  label: paymentMethods.name,
+  searchColumns: [paymentMethods.name, paymentMethods.code],
+  select: { kind: paymentMethods.kind, requiresReference: paymentMethods.requiresReference },
+  scope: ({ companyId, filters }) => {
+    acceptFilters(filters, {});
+    return [eq(paymentMethods.companyId, companyId), eq(paymentMethods.enabled, true), sql`${paymentMethods.kind} IN ('cash', 'mobile_money', 'card')`, sql`${paymentMethods.balancingBankAccountId} IS NOT NULL`, sql`${paymentMethods.usableFor} @> '["customer_receipt"]'::jsonb`];
+  },
+  toOption: (row) => ({ id: String(row.id), label: String(row.label), description: COUNTER_KIND_WORDS[String(row.kind)] ?? null, badge: null, meta: { kind: String(row.kind), requiresReference: row.requiresReference === true ? 'yes' : 'no' } }),
+});
+
+export const SELLING_LOOKUP_SOURCES: LookupSource[] = [options, counterMethods, ...pickers('sales-order', 'sales_orders:create'), ...pickers('sales-invoice', 'sales_invoices:create'), ...pickers('cash-sale', 'cash_sales:create'), ...pickers('credit-sale', 'credit_sales:create'), invoiceableOrders];

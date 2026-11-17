@@ -3190,6 +3190,10 @@ export const orders = pgTable(
     stockRelease: text('stock_release').$type<'on_issue' | 'on_payment' | 'on_delivery'>(),
     /** Its tax invoice is to be made automatically once an approval that held it releases it (decided when it was placed). */
     invoiceWhenApproved: boolean('invoice_when_approved').notNull().default(false),
+    /** The till shift a counter sale was rung up in (a cash sale only); the shift's takings are the tenders of the orders that name it. */
+    shiftId: uuid('shift_id').references((): AnyPgColumn => shifts.id, { onDelete: 'restrict' }),
+    /** The screen's key for one attempt at placing a sale: a retry of the same sale finds the order it made instead of making another. */
+    idempotencyKey: text('idempotency_key'),
     /** The quote this order was made from, when it was (the quote shows its order the other way, in `converted_order_id`). */
     sourceQuoteId: uuid('source_quote_id').references((): AnyPgColumn => salesQuotes.id, { onDelete: 'set null' }),
     /** 'none' until approvals apply; 'pending'/'rejected'/'draft' block the order from moving on. */
@@ -3211,6 +3215,8 @@ export const orders = pgTable(
     index('orders_customer_email_idx').on(t.customerEmail),
     index('orders_status_idx').on(t.status),
     index('orders_source_quote_idx').on(t.sourceQuoteId).where(sql`${t.sourceQuoteId} IS NOT NULL`),
+    index('orders_shift_idx').on(t.shiftId).where(sql`${t.shiftId} IS NOT NULL`),
+    uniqueIndex('orders_idempotency_key_uidx').on(t.idempotencyKey).where(sql`${t.idempotencyKey} IS NOT NULL`),
     check('orders_stock_release_chk', sql`${t.stockRelease} IS NULL OR ${t.stockRelease} IN ('on_issue', 'on_payment', 'on_delivery')`),
     index('orders_stock_release_due_idx').on(t.createdAt).where(sql`${t.stockRelease} IN ('on_issue', 'on_payment')`),
     // Orders still waiting for their timeline to be rebuilt (the worker's backfill reads only these).
@@ -3276,6 +3282,8 @@ export const customers = pgTable(
       onDelete: 'set null',
     }),
     number: text('number').notNull(),
+    /** The company's one walk-in customer: who a counter sale is to when the buyer gives no details. It can never be put on credit. */
+    isWalkIn: boolean('is_walk_in').notNull().default(false),
     name: text('name').notNull(),
     email: text('email'),
     phone: text('phone'),
@@ -3309,6 +3317,7 @@ export const customers = pgTable(
   },
   (t) => [
     uniqueIndex('customers_company_number_uidx').on(t.companyId, t.number),
+    uniqueIndex('customers_one_walk_in_uidx').on(t.companyId).where(sql`${t.isWalkIn}`),
     index('customers_company_idx').on(t.companyId),
     index('customers_company_email_idx').on(t.companyId, t.email),
     index('customers_profile_idx').on(t.profileId),
@@ -4715,7 +4724,7 @@ export const shifts = pgTable(
   (t) => [
     uniqueIndex('shifts_one_open_per_register_uidx').on(t.registerId).where(sql`${t.status} IN ('open', 'closing')`),
     uniqueIndex('shifts_one_open_per_person_uidx').on(t.openedBy).where(sql`${t.status} IN ('open', 'closing')`),
-    uniqueIndex('shifts_z_number_uidx').on(t.zNumber).where(sql`${t.zNumber} IS NOT NULL`),
+    uniqueIndex('shifts_z_number_uidx').on(t.companyId, t.zNumber).where(sql`${t.zNumber} IS NOT NULL`),
     index('shifts_company_opened_idx').on(t.companyId, t.openedAt),
     check('shifts_status_chk', sql`${t.status} IN ('open', 'closing', 'closed')`),
     check('shifts_closed_chk', sql`(${t.status} IN ('open', 'closing') AND ${t.closedAt} IS NULL) OR (${t.status} = 'closed' AND ${t.closedAt} IS NOT NULL AND ${t.declaredCash} IS NOT NULL AND ${t.zNumber} IS NOT NULL)`),
@@ -7430,18 +7439,24 @@ export const orderTenders = pgTable(
     orderId: text('order_id')
       .notNull()
       .references(() => orders.id, { onDelete: 'restrict' }),
-    kind: text('kind').$type<'gift_card' | 'loyalty_points' | 'wallet'>().notNull(),
+    kind: text('kind').$type<'gift_card' | 'loyalty_points' | 'wallet' | 'payment_method'>().notNull(),
     /** The card, or the customer whose points were spent. */
     reference: text('reference').notNull(),
     amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
     points: bigint('points', { mode: 'number' }),
     /** What the points were worth in the books' currency when they were spent (an order in another currency). */
     baseAmount: numeric('base_amount', { precision: 18, scale: 4 }),
+    /** A counter tender (`payment_method`): what kind of method it was when taken (cash, mobile money, card), the cash handed over and the change given back, and the M-Pesa code or card slip. `amount` is what the sale took, net of change. */
+    methodKind: text('method_kind'),
+    handedOver: numeric('handed_over', { precision: 14, scale: 2 }),
+    changeDue: numeric('change_due', { precision: 14, scale: 2 }),
+    externalReference: text('external_reference'),
     actor: text('actor').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index('order_tenders_order_idx').on(t.orderId),
+    uniqueIndex('order_tenders_counter_method_uidx').on(t.orderId, t.reference).where(sql`${t.kind} = 'payment_method'`),
     index('order_tenders_created_idx').on(t.createdAt),
   ],
 );

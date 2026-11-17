@@ -115,6 +115,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'sales_orders:read',
       },
       {
+        id: 'cash-sales',
+        title: 'Cash Sales',
+        name: 'cash-sales',
+        href: '/admin/cash-sales',
+        description: 'Ring up a counter sale in your open shift: take cash with change, M-Pesa or card, and give the receipt',
+        icon: 'ShoppingBag',
+        permission: ['cash_sales:create', 'cash_sales:read'],
+      },
+      {
         id: 'shifts',
         title: 'Shifts',
         name: 'shifts',

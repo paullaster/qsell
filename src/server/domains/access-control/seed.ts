@@ -110,6 +110,8 @@ const SEED_ROLES: SeedRole[] = [
       'shifts:open',
       'shifts:close',
       'shifts:supervise',
+      'cash_sales:read',
+      'cash_sales:create',
       'sales_invoices:read',
       'sales_invoices:create',
       'sales_invoices:send',
