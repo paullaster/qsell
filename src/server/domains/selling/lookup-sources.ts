@@ -1,5 +1,5 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { customers, products } from '@/server/db/drizzle/schema';
+import { customers, orders, products } from '@/server/db/drizzle/schema';
 import { acceptFilters, LookupFilterError, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
 import { methodLabel } from '@/lib/payment-method-labels';
 import { SALES_ORDER_PAYMENT_METHODS } from './domain/sales-order-input';
@@ -74,6 +74,26 @@ const salesOrderCustomers = tableSource({
   toOption: (row) => ({ id: String(row.id), label: String(row.label), description: [row.number, row.email].filter((x): x is string => typeof x === 'string' && x !== '').join(' · '), badge: row.accountType === 'credit' ? 'Credit' : null }),
 });
 
+/** Orders a tax invoice can still be raised for: none yet, not waiting for or refused by approval, not cancelled or failed. */
+const invoiceableOrders = tableSource({
+  key: 'invoiceable-orders',
+  permission: 'sales_invoices:create',
+  table: orders,
+  id: orders.id,
+  label: orders.orderNumber,
+  searchColumns: [orders.orderNumber, orders.customerName],
+  select: { customer: orders.customerName, total: orders.totalAmount, currency: orders.currency },
+  scope: ({ filters }) => {
+    acceptFilters(filters, {});
+    return [
+      sql`NOT EXISTS (SELECT 1 FROM invoice_documents d WHERE d.order_id = ${orders.id} AND d.document_type = 'tax_invoice')`,
+      sql`${orders.approvalStatus} NOT IN ('pending', 'rejected', 'draft')`,
+      sql`${orders.status} NOT IN ('cancelled', 'failed')`,
+    ];
+  },
+  toOption: (row) => ({ id: String(row.id), label: String(row.label), description: `${String(row.customer)} · ${String(row.currency)} ${String(row.total)}`, badge: null }),
+});
+
 /** How a sales order's customer is expected to pay. */
 const salesOrderPaymentMethods = staticSource({
   key: 'sales-order-payment-methods',
@@ -81,4 +101,4 @@ const salesOrderPaymentMethods = staticSource({
   items: () => SALES_ORDER_PAYMENT_METHODS.map((id) => ({ id, label: methodLabel(id), description: null, badge: null })),
 });
 
-export const SELLING_LOOKUP_SOURCES: LookupSource[] = [options, salesOrderProducts, salesOrderPackages, salesOrderCustomers, salesOrderPaymentMethods];
+export const SELLING_LOOKUP_SOURCES: LookupSource[] = [options, salesOrderProducts, salesOrderPackages, salesOrderCustomers, invoiceableOrders, salesOrderPaymentMethods];

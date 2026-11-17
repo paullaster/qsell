@@ -573,6 +573,24 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'Take a sales order for a customer, with products and packages, and see the customer\'s credit position',
   },
+  'sales_invoices:read': {
+    resource: 'sales_invoices',
+    action: 'read',
+    category: 'Orders & Sales',
+    description: 'See the invoices raised for sales: how each stands (signed with KRA, paid, credited), its credit notes and its signing log',
+  },
+  'sales_invoices:create': {
+    resource: 'sales_invoices',
+    action: 'create',
+    category: 'Orders & Sales',
+    description: 'Raise the tax invoice of an order that has none',
+  },
+  'sales_invoices:send': {
+    resource: 'sales_invoices',
+    action: 'send',
+    category: 'Orders & Sales',
+    description: 'Send an invoice to the customer again by email, and print or download it',
+  },
   'selling_settings:manage': {
     resource: 'selling_settings',
     action: 'manage',

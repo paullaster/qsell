@@ -62,6 +62,20 @@ async function tradeCustomer(tag: string, limit: string, days: string): Promise<
   return { name };
 }
 
+/** A sales order taken by staff for a named trade customer: two of a named product; the order number is returned. */
+async function salesOrder(customerName: string, productName: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const company = await getContainer().companySettings.ensureSeeded();
+  const [customer] = await db.execute<{ id: string }>(sql`SELECT id FROM customers WHERE name = ${customerName} LIMIT 1`);
+  const [item] = await db.execute<{ id: string }>(sql`SELECT id FROM products WHERE name = ${productName} AND deleted_at IS NULL LIMIT 1`);
+  const [staff] = await db.execute<{ id: string }>(sql`SELECT id FROM users WHERE role <> 'customer' ORDER BY created_at LIMIT 1`);
+  if (customer === undefined || item === undefined || staff === undefined) throw new Error('e2e fixture: the customer, the product or a staff member is missing');
+  const placed = await getContainer().salesOrders.place(company.id, { userId: staff.id, branchId: null }, { customerId: customer.id, lines: [{ productId: item.id, quantity: 2 }], paymentMethod: 'mpesa_daraja', neededOn: '', holdUntilPaid: false });
+  if (!placed.ok) throw new Error(`e2e fixture: ${placed.error}`);
+  return { orderNumber: placed.orderNumber };
+}
+
 async function lateOrder(tag: string, hours: string): Promise<Record<string, string>> {
   const { getContainer } = await import('@/server/di/container');
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
@@ -360,6 +374,7 @@ async function main(): Promise<void> {
   let result: Record<string, string>;
   if (command === 'reviewer' && a !== undefined && b !== undefined) result = await reviewer(a, b);
   else if (command === 'product' && a !== undefined) result = await product(a);
+  else if (command === 'sales-order' && a !== undefined && b !== undefined) result = await salesOrder(a, b);
   else if (command === 'trade-customer' && a !== undefined && b !== undefined && process.argv[5] !== undefined) result = await tradeCustomer(a, b, process.argv[5]);
   else if (command === 'limited-product' && a !== undefined && b !== undefined && process.argv[5] !== undefined) result = await limitedProduct(a, b, process.argv[5]);
   else if (command === 'package' && a !== undefined) result = await lunchPackage(a, b);
@@ -384,6 +399,11 @@ export function storefrontTool(...args: string[]): Record<string, string> {
   const line = output.split('\n').find((l) => l.startsWith('FIXTURE '));
   if (line === undefined) throw new Error(`the storefront tool printed nothing usable: ${output.slice(-500)}`);
   return JSON.parse(line.slice('FIXTURE '.length)) as Record<string, string>;
+}
+
+/** A sales order taken for a named trade customer (two of a named product), with no invoice yet; its number is returned. */
+export function makeSalesOrder(customerName: string, productName: string): string {
+  return storefrontTool('sales-order', customerName, productName).orderNumber ?? '';
 }
 
 /** A trade customer with a credit account of the limit and days given; its name is returned. */
