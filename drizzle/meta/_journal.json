@@ -1310,6 +1310,13 @@
       "when": 1794885915772,
       "tag": "0186_order_source_quote",
       "breakpoints": true
+    },
+    {
+      "idx": 187,
+      "version": "7",
+      "when": 1794891986454,
+      "tag": "0187_order_invoice_when_approved",
+      "breakpoints": true
     }
   ]
 }

@@ -97,6 +97,18 @@ describe.skipIf(url === undefined || url === '')('a package sold by every docume
         return { ok: true, total: order.totalAmount, tax: order.tax, parts: Object.fromEntries(order.items.map((i) => [i.productId, i.quantity])) };
       },
     },
+    credit_sale: {
+      async sell({ productId, servings, picks }) {
+        const [buyer] = await db.insert(schema.customers).values({ companyId, number: `PDC-${randomUUID().slice(0, 10)}`, name: 'Doc Credit Buyer', email: `pdc-${randomUUID()}@pkg.test`, phone: '0700000000', accountType: 'credit', creditLimit: '100000000', paymentTermDays: 30, street: '1 Rd', city: 'Nairobi', countyOrState: 'Nairobi', country: 'Kenya' }).returning();
+        const [staff] = await db.insert(schema.users).values({ email: `pdc-staff-${randomUUID()}@pkg.test`, passwordHash: 'x', name: 'Doc Order Taker', role: 'manager' }).returning();
+        if (buyer === undefined || staff === undefined) return { ok: false, error: 'no customer or staff' };
+        const placed = await c.salesOrders.place(companyId, { userId: staff.id, branchId }, { customerId: buyer.id, lines: [{ productId, quantity: servings, package: { picks, note: '' } }], paymentMethod: 'mpesa_daraja', neededOn: '', holdUntilPaid: false }, 'credit_sale');
+        if (!placed.ok) return { ok: false, error: placed.error };
+        const order = await c.orders.getById(placed.orderId);
+        if (order === null) return { ok: false, error: 'the order is gone' };
+        return { ok: true, total: order.totalAmount, tax: order.tax, parts: Object.fromEntries(order.items.map((i) => [i.productId, i.quantity])) };
+      },
+    },
     quote: {
       async sell({ productId, servings, picks }) {
         try {

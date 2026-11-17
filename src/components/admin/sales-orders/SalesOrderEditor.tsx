@@ -3,6 +3,7 @@
 import { useEffect, useId, useState } from 'react';
 import { Package, Trash2 } from 'lucide-react';
 import { placeSalesOrderAction, salesOrderBehaviourAction, salesOrderCreditAction, salesOrderPackageBuilderAction } from '@/server/domains/selling/sales-order-actions';
+import { creditSaleBehaviourAction, creditSaleCreditAction, creditSalePackageBuilderAction, placeCreditSaleAction } from '@/server/domains/selling/credit-sale-actions';
 import { issueSalesInvoiceAction, salesInvoiceBehaviourAction, salesInvoiceCreditAction, salesInvoicePackageBuilderAction } from '@/server/domains/selling/direct-invoice-actions';
 import type { CreditPosition } from '@/server/domains/selling/sales-order-service';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
@@ -20,6 +21,7 @@ const VARIANTS = {
     packages: { source: 'sales-order-packages', load: salesOrderPackageBuilderAction, addLabel: 'Add to the order' } satisfies PackageDialogSource,
     behaviour: salesOrderBehaviourAction,
     credit: salesOrderCreditAction,
+    showPayment: true,
   },
   sales_invoice: {
     title: 'New sales invoice',
@@ -29,6 +31,17 @@ const VARIANTS = {
     packages: { source: 'sales-invoice-packages', load: salesInvoicePackageBuilderAction, addLabel: 'Add to the invoice' } satisfies PackageDialogSource,
     behaviour: salesInvoiceBehaviourAction,
     credit: salesInvoiceCreditAction,
+    showPayment: true,
+  },
+  credit_sale: {
+    title: 'New credit sale',
+    submit: 'Place credit sale',
+    working: 'Placing…',
+    prefix: 'credit-sale',
+    packages: { source: 'credit-sale-packages', load: creditSalePackageBuilderAction, addLabel: 'Add to the sale' } satisfies PackageDialogSource,
+    behaviour: creditSaleBehaviourAction,
+    credit: creditSaleCreditAction,
+    showPayment: false,
   },
 } as const;
 export type EditorVariant = keyof typeof VARIANTS;
@@ -120,6 +133,13 @@ export function SalesOrderEditor({ onCancel, onPlaced, variant = 'sales_order' }
       neededOn,
       holdUntilPaid: hold,
     };
+    if (variant === 'credit_sale') {
+      const r = await placeCreditSaleAction(payload);
+      setBusy(false);
+      if (r.ok) onPlaced(`Credit sale ${r.data.orderNumber} placed${r.data.invoiceNumber === null ? '' : ` with invoice ${r.data.invoiceNumber}`}${r.data.waitingForApproval ? ' and waiting for approval' : ''}.`);
+      else setProblem(r.error);
+      return;
+    }
     if (variant === 'sales_invoice') {
       const r = await issueSalesInvoiceAction(payload);
       setBusy(false);
@@ -167,7 +187,7 @@ export function SalesOrderEditor({ onCancel, onPlaced, variant = 'sales_order' }
       </section>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <ChoicePicker label="Expected payment" source={`${v.prefix}-payment-methods`} clearable={false} choice={payment} onChoice={(c) => c !== null && setPayment(c)} />
+        {v.showPayment ? <ChoicePicker label="Expected payment" source={`${v.prefix}-payment-methods`} clearable={false} choice={payment} onChoice={(c) => c !== null && setPayment(c)} /> : <p className="self-end text-sm text-fg-muted">Paid by the customer on their account terms.</p>}
         <Field id={`${id}-needed`} label="Needed on (optional)">
           <input id={`${id}-needed`} type="date" className={fieldClass} value={neededOn} onChange={(e) => setNeededOn(e.target.value)} />
         </Field>

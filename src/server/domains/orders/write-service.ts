@@ -814,6 +814,7 @@ export const OrderWriteService = {
       if (params.holdUntilPaid === true && params.selling?.allowHoldUntilPaid !== true) throw new Error('This kind of sale cannot be held until it is paid.');
       // When the stock is issued is decided now and kept with the order, so a later change of the settings leaves it alone.
       if (params.selling !== undefined) {
+        order.invoiceWhenApproved = params.selling.invoice === 'with_document' && params.selling.invoiceAfterApproval;
         order.stockRelease = stockReleaseFor(params.selling, { holdUntilPaid: params.holdUntilPaid === true, hasCreditAccount: tradeCustomer.accountType === 'credit' });
       }
       // A kind of sale that refuses over the limit never asks for approval: it is refused here, before anything is requested.

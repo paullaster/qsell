@@ -23,6 +23,7 @@ test.describe('selling document settings', () => {
     await expect(card).toContainText('Check the credit limit');
     await expect(card).toContainText('The customer\'s payment terms');
     await expect(card).toContainText('When the document is issued');
+    await expect(card).toContainText('Made automatically once approved');
     await card.getByRole('button', { name: /^Change Sales invoices/ }).click();
     const form = page.getByRole('form', { name: /^Change Sales invoices/ });
     await expect(form).toBeVisible();
@@ -33,6 +34,10 @@ test.describe('selling document settings', () => {
     await form.getByLabel('Credit days for every customer').fill('14');
     await choose(page, form.getByRole('combobox', { name: 'Credit check' }), /overdue invoices/);
     await form.getByLabel('An invoice overdue by more than (days)').fill('7');
+    // The invoice after approval is automatic to begin with; here it is turned off.
+    const automatic = form.getByRole('checkbox', { name: /make its invoice automatically once it is approved/ });
+    await expect(automatic).toBeChecked();
+    await automatic.uncheck();
     await noNativeSelect(page);
     await noHorizontalScroll(page);
 
@@ -47,6 +52,7 @@ test.describe('selling document settings', () => {
     await expect(saved).toContainText('When payment is received');
     await expect(saved).toContainText('14 days');
     await expect(saved).toContainText('more than 7 days');
+    await expect(saved).toContainText('Staff raise it after approval');
 
     // It is still there after a reload.
     await gotoAdmin(page, '/admin/settings/selling-documents', 'Selling documents');

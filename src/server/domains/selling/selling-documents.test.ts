@@ -68,4 +68,18 @@ describe('credit days', () => {
     expect(creditDaysFor({ ...s, creditDays: 'on_issue' }, 30)).toBe(0);
     expect(creditDaysFor({ ...s, creditDays: 'customer' }, -5)).toBe(0);
   });
+ 
+describe('the invoice after approval', () => {
+  it('is automatic by default for every kind', () => {
+    for (const def of SELLING_TYPE_DEFS) expect(def.defaults.invoiceAfterApproval).toBe(true);
+  });
+
+  it('is kept when it is turned off, falls back to automatic when a stored value is not a yes or no, and must be a yes or no from the screen', () => {
+    expect(readSellingSettings('sales_invoice', { invoiceAfterApproval: false }).invoiceAfterApproval).toBe(false);
+    expect(readSellingSettings('sales_invoice', { invoiceAfterApproval: 'no' }).invoiceAfterApproval).toBe(true);
+    const full = { ...defOf('sales_invoice').defaults };
+    expect(checkSellingInput('sales_invoice', { ...full, invoiceAfterApproval: false })).toMatchObject({ ok: true, settings: { invoiceAfterApproval: false } });
+    expect(checkSellingInput('sales_invoice', { ...full, invoiceAfterApproval: undefined })).toEqual({ ok: false, error: 'Say whether the invoice is made automatically once the document is approved.' });
+  });
+});
 });

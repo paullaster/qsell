@@ -21,9 +21,10 @@ const options = staticSource({
 
 /**
  * The pickers a selling screen uses (customers, products, packages, how they will pay), one set for each kind of document, each behind
- * the permission of taking that document: `sales-order-*` for sales orders and `sales-invoice-*` for direct sales invoices.
+ * the permission of taking that document: `sales-order-*` for sales orders, `sales-invoice-*` for direct sales invoices and `credit-sale-*`
+ * for credit sales (whose customers are only those with a credit account).
  */
-function pickers(prefix: 'sales-order' | 'sales-invoice', permission: PermissionKey): LookupSource[] {
+function pickers(prefix: 'sales-order' | 'sales-invoice' | 'credit-sale', permission: PermissionKey): LookupSource[] {
   /** Products sold as lines of their own: for sale, switched on, not kept for packages, and not a package (those are chosen with their builder). */
   const productList = tableSource({
     key: `${prefix}-products`,
@@ -71,7 +72,7 @@ function pickers(prefix: 'sales-order' | 'sales-invoice', permission: Permission
     select: { number: customers.number, email: customers.email, accountType: customers.accountType },
     scope: ({ companyId, filters }) => {
       acceptFilters(filters, {});
-      return [eq(customers.companyId, companyId), eq(customers.isActive, true)];
+      return [eq(customers.companyId, companyId), eq(customers.isActive, true), ...(prefix === 'credit-sale' ? [eq(customers.accountType, 'credit')] : [])];
     },
     toOption: (row) => ({ id: String(row.id), label: String(row.label), description: [row.number, row.email].filter((x): x is string => typeof x === 'string' && x !== '').join(' · '), badge: row.accountType === 'credit' ? 'Credit' : null }),
   });
@@ -103,4 +104,4 @@ const invoiceableOrders = tableSource({
   toOption: (row) => ({ id: String(row.id), label: String(row.label), description: `${String(row.customer)} · ${String(row.currency)} ${String(row.total)}`, badge: null }),
 });
 
-export const SELLING_LOOKUP_SOURCES: LookupSource[] = [options, ...pickers('sales-order', 'sales_orders:create'), ...pickers('sales-invoice', 'sales_invoices:create'), invoiceableOrders];
+export const SELLING_LOOKUP_SOURCES: LookupSource[] = [options, ...pickers('sales-order', 'sales_orders:create'), ...pickers('sales-invoice', 'sales_invoices:create'), ...pickers('credit-sale', 'credit_sales:create'), invoiceableOrders];
