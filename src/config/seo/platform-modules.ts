@@ -98,6 +98,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'Sales Quotes',
       'Sales Orders',
       'Credit Sales',
+      'Shifts',
       'Sales Invoices',
       'Customer Orders',
       'Preparation sheet',
@@ -350,6 +351,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'SMS Providers',
       'Email Routing',
       'Selling Documents',
+      'Registers',
     ],
   },
   {

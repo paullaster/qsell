@@ -115,6 +115,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'sales_orders:read',
       },
       {
+        id: 'shifts',
+        title: 'Shifts',
+        name: 'shifts',
+        href: '/admin/shifts',
+        description: 'Open and close a till shift with the cash counted, put cash in or take it out, and see the X and Z reports',
+        icon: 'CalendarClock',
+        permission: 'shifts:read',
+      },
+      {
         id: 'credit-sales',
         title: 'Credit Sales',
         name: 'credit-sales',
@@ -1377,6 +1386,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         description: 'Connect the SMS provider this business sends text messages with, keep its keys safe, and send a test message',
         icon: 'Mail',
         permission: 'sms:manage',
+      },
+      {
+        id: 'settings-registers',
+        title: 'Registers',
+        name: 'settings-registers',
+        href: '/admin/settings/registers',
+        description: 'The tills of each branch, and how far a till may be out before a supervisor must close its shift',
+        icon: 'Wallet',
+        permission: 'registers:manage',
       },
       {
         id: 'settings-selling-documents',

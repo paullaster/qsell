@@ -124,6 +124,12 @@ Every client sends text messages through their own SMS provider, so the provider
 
 The keys are sealed when saved, are never shown again (not in the list, not when the connection is opened to change it) and are used only at the moment a message is sent. Which fields are secret is part of each provider's definition. Nothing is sent by the test except a fixed sentence naming the business (*Test message from …: your SMS provider is connected.*), so the button cannot be used to send anything else; the number typed is not kept, and the same connection can be tested once every half minute. A client whose provider is not in the list needs a new adapter built (a development task, not a setting); the screen and everything that sends messages stay as they are.
 
+### 7d. Registers (`/admin/settings/registers`)
+The **tills** of each branch, and how far a till may be out. Behind its own permission (**Registers**, in the *Company & Settings* group); every change needs a reason and is recorded.
+- **Tills**: **Add a till** (a name of up to 60 characters, unique within its branch, and the **branch** it is in); **Change** renames it, moves it or switches it off. A till that is *Switched off* cannot have a shift opened on it, and **a till with a shift open cannot be switched off** until that shift is closed. Each row shows whether it is in use and, when a shift is open, **who has it**.
+- **How far a till may be out**: an **amount (KES)** and a **percent** of what the till should hold (built in: 100 and 1). A difference at the close up to **either** is only given a reason; a difference beyond **both** can only be closed by a **supervisor**.
+- **Z report numbers**: each closed shift is numbered from a gap-free series (kind *Till shift Z report*, per branch, standard pattern `Z-{branch}-{year}-000001`). Set or change its series in Number Series like any other document.
+
 ### 7c. Selling Documents (`/admin/settings/selling-documents`)
 How each kind of staff sale behaves: **Sales orders**, **Credit sales**, **Sales invoices** (a sale invoiced directly, with no sales order) and **Cash sales**. Behind its own permission (**Selling settings**, *Company & Settings*). One card per kind says what it is, whether it is **As built in** or **Changed**, and each choice in words.
 

@@ -36,6 +36,7 @@ import { STOCK_LOOKUP_SOURCES } from '@/server/domains/stock/lookup-sources';
 import { DELIVERY_LOOKUP_SOURCES } from '@/server/domains/delivery/lookup-sources';
 import { SMS_LOOKUP_SOURCES } from '@/server/domains/sms/lookup-sources';
 import { PRICING_LOOKUP_SOURCES } from '@/server/domains/pricing/lookup-sources';
+import { SHIFT_LOOKUP_SOURCES } from '@/server/domains/selling/shifts/lookup-sources';
 import { SELLING_LOOKUP_SOURCES } from '@/server/domains/selling/lookup-sources';
 import { EMAIL_ROUTING_LOOKUP_SOURCES } from '@/server/domains/email-routing/lookup-sources';
 import { VENDOR_LOOKUP_SOURCES } from '@/server/domains/vendors/lookup-sources';
@@ -340,6 +341,7 @@ const SOURCES: ReadonlyMap<string, LookupSource> = registry(
     ...PRICING_LOOKUP_SOURCES,
     ...EMAIL_ROUTING_LOOKUP_SOURCES,
     ...SELLING_LOOKUP_SOURCES,
+    ...SHIFT_LOOKUP_SOURCES,
     ...REASON_LOOKUP_SOURCES,
     ...NUMBERING_LOOKUP_SOURCES,
     ...APPROVAL_LOOKUP_SOURCES,
