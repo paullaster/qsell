@@ -22,11 +22,14 @@ test.describe('customer messages', () => {
     // Turned on with nothing ticked is refused in words; with some ticked it is saved.
     await on.check();
     // Nothing ticked at all, whatever an earlier run left ticked.
-    for (const label of [/^On its way/, /^Delivered/, /^Part delivered/, /^Could not deliver/, /^Coming back/, /^Delivery time not kept/, /^Ready to collect/, /^Reminder for an order left at the counter/]) await form.getByLabel(label).uncheck();
+    for (const label of [/^On its way/, /^Delivered/, /^Part delivered/, /^Could not deliver/, /^Coming back/, /^Delivery time not kept/, /^Ready to collect/, /^Visit booked/, /^Visit moved/, /^Visit cancelled/, /^Reminder for an order left at the counter/]) await form.getByLabel(label).uncheck();
     await form.getByRole('button', { name: 'Save' }).click();
     await expect(page.getByRole('alert').filter({ hasText: 'Choose at least one message' })).toBeVisible({ timeout: 30_000 });
     await form.getByLabel(/^On its way/).check();
     await form.getByLabel(/^Part delivered/).check();
+    // The messages about a visit are choices of their own, off until ticked.
+    await expect(form.getByLabel(/^Visit moved/)).not.toBeChecked();
+    await form.getByLabel(/^Visit booked/).check();
     await form.getByLabel(/^Reminder for an order left at the counter/).check();
     await form.getByRole('button', { name: 'Save' }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Customers are now texted for the messages ticked' })).toBeVisible({ timeout: 30_000 });
@@ -48,6 +51,8 @@ test.describe('customer messages', () => {
     await expect(again.getByLabel(/^Part delivered/)).toBeChecked();
     await expect(again.getByLabel(/^Reminder for an order left at the counter/)).toBeChecked();
     await expect(again.getByLabel(/^Delivered/)).not.toBeChecked();
+    await expect(again.getByLabel(/^Visit booked/)).toBeChecked();
+    await expect(again.getByLabel(/^Visit moved/)).not.toBeChecked();
     await expect(again.getByLabel('No texts from')).toHaveValue('21:00');
     await expect(again.getByLabel('Texts resume at')).toHaveValue('07:00');
     await again.getByLabel('No texts from').fill('');

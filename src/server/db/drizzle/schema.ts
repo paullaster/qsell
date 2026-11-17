@@ -12002,7 +12002,7 @@ export const deliveryTextSettings = pgTable(
     updatedBy: text('updated_by'),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [check('delivery_text_settings_kinds_chk', sql`${t.kinds} <@ ARRAY['out_for_delivery','delivered','part_delivered','attempt_failed','returned','slot_not_kept','ready_for_collection','collection_reminder']::text[]`),
+  (t) => [check('delivery_text_settings_kinds_chk', sql`${t.kinds} <@ ARRAY['out_for_delivery','delivered','part_delivered','attempt_failed','returned','slot_not_kept','ready_for_collection','collection_reminder','visit_booked','visit_moved','visit_cancelled']::text[]`),
     check('delivery_text_settings_reminder_days_chk', sql`${t.collectionReminderFirstDays} between 1 and 30 and (${t.collectionReminderSecondDays} is null or (${t.collectionReminderSecondDays} > ${t.collectionReminderFirstDays} and ${t.collectionReminderSecondDays} <= 60))`),
     check('delivery_text_settings_quiet_chk', sql`(${t.quietFromMinute} is null and ${t.quietUntilMinute} is null) or (${t.quietFromMinute} between 0 and 1439 and ${t.quietUntilMinute} between 0 and 1439 and ${t.quietFromMinute} <> ${t.quietUntilMinute})`),
 ],
