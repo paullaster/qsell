@@ -50,6 +50,8 @@ export async function startWorker(): Promise<void> {
       '* * * * * provider-sweep',
       // Customers are told as their delivery moves; a mail that could not be sent is tried again.
       '* * * * * delivery-messages-sweep',
+      // Stock held until a staff document is paid leaves the shelf once it is; one issued with its document, once approved.
+      '* * * * * stock-release-sweep',
       '*/10 * * * * provider-pull-sweep',
       // Vendors: documents past their date, and bank changes whose cool-off has passed.
       '22 5 * * * vendor-document-expiry',

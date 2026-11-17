@@ -1296,6 +1296,13 @@
       "when": 1794857425007,
       "tag": "0184_selling_document_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 185,
+      "version": "7",
+      "when": 1794862354541,
+      "tag": "0185_order_stock_release",
+      "breakpoints": true
     }
   ]
 }

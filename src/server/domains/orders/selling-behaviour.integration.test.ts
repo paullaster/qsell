@@ -5,6 +5,7 @@ import type { getContainer } from '@/server/di/container';
 import type { drizzleDb } from '@/server/db/drizzle/client';
 import type * as schemaModule from '@/server/db/drizzle/schema';
 import type { OrderWriteService } from './write-service';
+import type { InventoryReservationService as ReservationService } from '@/server/domains/inventory/reservation-service';
 import { defOf, type SellingSettings } from '@/server/domains/selling/selling-documents';
 
 /**
@@ -20,6 +21,7 @@ describe.skipIf(url === undefined || url === '')('selling document behaviour in 
   let db: typeof drizzleDb;
   let schema: typeof schemaModule;
   let write: typeof OrderWriteService;
+  let InventoryReservationService: typeof ReservationService;
   let companyId: string;
   let branchId: string;
   let productId: string;
@@ -60,6 +62,7 @@ describe.skipIf(url === undefined || url === '')('selling document behaviour in 
     db = (await import('@/server/db/drizzle/client')).drizzleDb;
     schema = await import('@/server/db/drizzle/schema');
     write = (await import('./write-service')).OrderWriteService;
+    InventoryReservationService = (await import('@/server/domains/inventory/reservation-service')).InventoryReservationService;
     c = mod.getContainer();
     companyId = (await c.companySettings.ensureSeeded()).id;
     await c.reasonCodes.ensureSystemReasons(companyId);
@@ -143,5 +146,101 @@ describe.skipIf(url === undefined || url === '')('selling document behaviour in 
     const buyer = await customer({ accountType: 'cash', creditLimit: '0', paymentTermDays: 0 });
     const shop = await write.createOrder({ branchId, orderNumber: `SB-${randomUUID()}`, customerName: 'Shopper', customerEmail: buyer.email, customerPhone: '0711000000', shippingAddress: { street: '1', city: 'N', countyOrState: 'N', country: 'KE' }, items: [{ productId, quantity: 1 }], currency: 'KES', paymentMethod: 'mpesa_daraja' });
     expect(shop.success).toBe(true);
+  });
+
+  describe('when the stock leaves and when the invoice is made', () => {
+    const stockOf = async (id: string) => {
+      const [row] = await db.select({ stock: schema.products.stockQuantity, reserved: schema.products.reservedQuantity }).from(schema.products).where(eq(schema.products.id, id));
+      return { stock: row?.stock ?? 0, reserved: row?.reserved ?? 0 };
+    };
+    /** A product of its own, so each case reads its own stock. */
+    const own = async () => {
+      const id = `prod_${randomUUID()}`;
+      const [mine] = await db.select().from(schema.products).where(eq(schema.products.id, productId));
+      await db.insert(schema.products).values({ ...(mine as typeof schema.products.$inferInsert), id, sku: `SBO-${randomUUID().slice(0, 8)}`.toUpperCase(), stockCode: `SBOS-${randomUUID().slice(0, 8)}`.toUpperCase(), slug: `sbo-${randomUUID()}`, stockQuantity: 100, reservedQuantity: 0 });
+      return id;
+    };
+    const place = async (email: string, product: string, selling: Partial<SellingSettings>, over: Record<string, unknown> = {}) => {
+      const placed = await write.createOrder({ branchId, orderNumber: `SB-${randomUUID()}`, customerName: 'Selling Buyer', customerEmail: email, customerPhone: '0700000000', shippingAddress: { street: '1 Rd', city: 'Nairobi', countyOrState: 'Nairobi', country: 'KE' }, items: [{ productId: product, quantity: 4 }], currency: 'KES', paymentMethod: 'mpesa_daraja', salesModule: 'sales_order', requestedBy: staffId, selling: { ...base, creditCheck: 'off', ...selling }, ...over });
+      if (!placed.success || placed.order === undefined) throw new Error(placed.error ?? 'not placed');
+      return placed.order;
+    };
+
+    it('takes the stock off at once when it is to leave when the document is issued', async () => {
+      const product = await own();
+      const buyer = await customer();
+      const o = await place(buyer.email, product, { stockRelease: 'on_issue' });
+      expect(o.stockRelease).toBe('on_issue');
+      expect(await stockOf(product)).toEqual({ stock: 96, reserved: 0 });
+    });
+
+    it('leaves the stock reserved when it is to leave at delivery or collection, as before', async () => {
+      const product = await own();
+      const buyer = await customer();
+      const o = await place(buyer.email, product, { stockRelease: 'on_delivery' });
+      expect(o.stockRelease).toBe('on_delivery');
+      expect(await stockOf(product)).toEqual({ stock: 100, reserved: 4 });
+      expect(await InventoryReservationService.issueDue()).toBeGreaterThanOrEqual(0);
+      expect(await stockOf(product)).toEqual({ stock: 100, reserved: 4 });
+    });
+
+    it('holds the stock until the document is paid, then takes it off once, within the sweep', async () => {
+      const product = await own();
+      const buyer = await customer();
+      const o = await place(buyer.email, product, { stockRelease: 'on_payment' });
+      expect(await stockOf(product)).toEqual({ stock: 100, reserved: 4 });
+      await InventoryReservationService.issueDue(500);
+      expect(await stockOf(product)).toEqual({ stock: 100, reserved: 4 });
+      // The customer pays: a receipt is posted against the invoice, which makes the order paid.
+      const fin = c.finance;
+      const ctx = { companyId, actor: { type: 'user' as const, id: 'selling-test' }, origin: { surface: 'test', action: 'run' } };
+      await fin.setup.applyTemplate(ctx, 'kenya', { fiscalYearStart: '2026-01-01' }).catch(() => undefined);
+      await fin.paymentMethods.seedStandard(ctx).catch(() => undefined);
+      const methods = Object.fromEntries((await fin.paymentMethods.list(companyId)).map((m) => [m.method.code, m.method.id]));
+      const receipt = await fin.receipts.create(ctx, { customerId: buyer.id, paymentMethodId: methods.CASH ?? '', amount: String(o.totalAmount), paymentDate: '2026-10-10' });
+      await fin.receipts.post(ctx, receipt.id, { allocate: 'oldest_first' });
+      const [paid] = await db.select({ pay: schema.orders.paymentStatus }).from(schema.orders).where(eq(schema.orders.id, o.id));
+      expect(paid?.pay).toBe('paid');
+      await InventoryReservationService.issueDue(500);
+      expect(await stockOf(product)).toEqual({ stock: 96, reserved: 0 });
+      // Running the sweep again issues nothing more.
+      await InventoryReservationService.issueDue(500);
+      expect(await stockOf(product)).toEqual({ stock: 96, reserved: 0 });
+    });
+
+    it('lets staff hold one document until it is paid where the kind allows it, and refuses where it does not', async () => {
+      const product = await own();
+      const buyer = await customer();
+      const held = await place(buyer.email, product, { stockRelease: 'on_issue', allowHoldUntilPaid: true }, { holdUntilPaid: true });
+      expect(held.stockRelease).toBe('on_payment');
+      expect(await stockOf(product)).toEqual({ stock: 100, reserved: 4 });
+      const refused = await write.createOrder({ branchId, orderNumber: `SB-${randomUUID()}`, customerName: 'B', customerEmail: buyer.email, customerPhone: '0700000000', shippingAddress: { street: '1', city: 'N', countyOrState: 'N', country: 'KE' }, items: [{ productId: product, quantity: 1 }], currency: 'KES', paymentMethod: 'mpesa_daraja', salesModule: 'sales_order', requestedBy: staffId, selling: { ...base, creditCheck: 'off', allowHoldUntilPaid: false }, holdUntilPaid: true });
+      expect(refused.success).toBe(false);
+      expect(refused.error).toBe('This kind of sale cannot be held until it is paid.');
+      expect(await stockOf(product)).toEqual({ stock: 100, reserved: 4 });
+    });
+
+    it('holds the stock for a customer without a credit account when the kind requires payment first, and not for one with an account', async () => {
+      const product = await own();
+      const cash = await customer({ accountType: 'cash', creditLimit: '0', paymentTermDays: 0 });
+      const account = await customer();
+      const first = await place(cash.email, product, { stockRelease: 'on_issue', noAccount: 'pay_first' });
+      expect(first.stockRelease).toBe('on_payment');
+      const second = await place(account.email, product, { stockRelease: 'on_issue', noAccount: 'pay_first' });
+      expect(second.stockRelease).toBe('on_issue');
+      expect(await stockOf(product)).toEqual({ stock: 96, reserved: 4 });
+    });
+
+    it('makes the tax invoice with the document when the kind says so, and leaves it for staff when it does not; the shop and unsettings orders keep no stock release of their own', async () => {
+      const product = await own();
+      const buyer = await customer();
+      const withInvoice = await place(buyer.email, product, { invoice: 'with_document' });
+      const later = await place(buyer.email, product, { invoice: 'later' });
+      const invoices = async (id: string) => await db.select().from(schema.invoiceDocuments).where(eq(schema.invoiceDocuments.orderId, id));
+      expect((await invoices(withInvoice.id)).map((i) => i.documentType)).toEqual(['tax_invoice']);
+      expect(await invoices(later.id)).toEqual([]);
+      const plain = await order(buyer.email, 1);
+      expect(plain.order?.stockRelease ?? null).toBeNull();
+    });
   });
 });

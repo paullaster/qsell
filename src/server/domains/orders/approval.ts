@@ -45,7 +45,17 @@ export function orderApprovalHandler(db: DrizzleDb): DocumentHandler {
         .limit(1);
       return { amount: Number(o?.total ?? 0) };
     },
-    onReleased: setStatus('approved', 'approval_approved', 'succeeded'),
+    onReleased: async (orderId, tx) => {
+      await setStatus('approved', 'approval_approved', 'succeeded')(orderId, tx);
+      // Stock that was to leave when the document was issued (or when it is paid, and it has been) leaves now that it is approved.
+      const [o] = await tx.select({ release: orders.stockRelease, payment: orders.paymentStatus }).from(orders).where(eq(orders.id, orderId)).limit(1);
+      if (o?.release === 'on_issue' || (o?.release === 'on_payment' && o.payment === 'paid')) {
+        afterCommit(tx, async () => {
+          const { InventoryReservationService } = await import('@/server/domains/inventory/reservation-service');
+          await InventoryReservationService.fulfilOrder(orderId);
+        });
+      }
+    },
     onRejected: setStatus('rejected', 'approval_rejected', 'failed'),
     // Reopened (or withdrawn): the order is editable again but still held until it is sent back.
     onReopened: setStatus('draft', 'approval_reopened', 'entered'),
