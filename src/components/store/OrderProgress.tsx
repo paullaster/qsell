@@ -1,5 +1,6 @@
 'use client';
 
+import { useBusinessTimeZone } from '@/components/business-time';
 import { useEffect, useState } from 'react';
 import { CheckCircle2, Clock } from 'lucide-react';
 import { trackedOrderTimelineAction } from '@/server/domains/orders/timeline-actions';
@@ -10,6 +11,7 @@ import { stageTimeShort } from '@/lib/order-timeline-view';
  * what happened and when, not a guess. Only what the shop chooses to show a customer is here: no reasons, no staff.
  */
 export function OrderProgress({ orderNumber, contact }: { orderNumber: string; contact: string }) {
+  const timeZone = useBusinessTimeZone();
   const [steps, setSteps] = useState<{ label: string; at: string }[] | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -36,7 +38,7 @@ export function OrderProgress({ orderNumber, contact }: { orderNumber: string; c
             {index === steps.length - 1 ? <Clock className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
           </span>
           <span className="min-w-0 flex-1 text-sm font-semibold text-fg-strong">{step.label}</span>
-          <time dateTime={step.at} className="shrink-0 font-mono text-xs text-fg-muted">{stageTimeShort(step.at)}</time>
+          <time dateTime={step.at} className="shrink-0 font-mono text-xs text-fg-muted">{stageTimeShort(step.at, timeZone)}</time>
         </li>
       ))}
     </ol>

@@ -349,6 +349,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'SMS Providers',
       'Email Routing',
       'Selling Documents',
+      'Business Time Zone',
     ],
   },
   {

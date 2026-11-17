@@ -1,5 +1,6 @@
 'use client';
 
+import { useWhen } from '@/components/business-time';
 import { use, useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { checkStockLedgerAction, startStockShadowAction, switchStockLedgerOffAction, switchStockLedgerOnAction, type stockLedgerStatusAction } from '@/server/domains/stock/cutover-actions';
@@ -14,7 +15,6 @@ const triggerWords = (trigger: string): string => {
 };
 const count = (report: ShadowReport, key: Count): number => report[key];
 
-const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' });
 
 const MODE_WORDS: Record<LedgerStatus['mode'], { label: string; tone: 'gray' | 'sky' | 'green'; text: string }> = {
   off: { label: 'The old way', tone: 'gray', text: 'Stock is kept as one count per product. Stock by location is not kept.' },
@@ -38,6 +38,7 @@ export function StockLedgerClient({ statusPromise }: { statusPromise: ReturnType
 }
 
 function View({ status }: { status: LedgerStatus }) {
+  const when = useWhen();
   const uid = useId();
   const router = useRouter();
   const [busy, setBusy] = useState(false);

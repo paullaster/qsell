@@ -1,3 +1,4 @@
+import { businessTimeZone } from '@/server/kernel/numbering/business-date';
 import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { deliveries, deliverySlaEvents, deliverySlaPushes, pushSubscriptions } from '@/server/db/drizzle/schema';
@@ -146,7 +147,7 @@ export class DeliveryPush {
       await this.db.update(deliverySlaPushes).set({ status: 'sent', sentAt: new Date(), lastError: 'The browser is gone.' }).where(eq(deliverySlaPushes.id, n.id));
       return false;
     }
-    const alert = lateAlert({ level: row.level, number: row.d.number, windowStart: row.d.windowStart, windowEnd: row.d.windowEnd, minutesLate: row.minutesLate });
+    const alert = lateAlert({ level: row.level, number: row.d.number, windowStart: row.d.windowStart, windowEnd: row.d.windowEnd, minutesLate: row.minutesLate, timeZone: businessTimeZone() });
     const outcome = await this.push.send({ endpoint: row.sub.endpoint, p256dh: row.sub.p256dh, auth: row.sub.auth }, { ...alert, url: n.audience === 'rider' ? '/rider' : '/admin/delivery/late', tag: `delivery-${row.d.id}` });
     if (outcome === 'gone') {
       await this.db.delete(pushSubscriptions).where(eq(pushSubscriptions.id, row.sub.id));

@@ -1,5 +1,6 @@
 'use client';
 
+import { useWhen } from '@/components/business-time';
 import { use, useId, useState } from 'react';
 import { createCourierAction, couriersScreenAction, renewCourierSecretAction, setCourierActiveAction, testCourierParcelAction, updateCourierAction } from '@/server/domains/delivery/courier-actions';
 import type { CourierAccountView, TestParcelResult } from '@/server/domains/delivery/courier-accounts';
@@ -219,10 +220,10 @@ function CourierRow({ account, onSaved, onError }: { account: CourierAccountView
   );
 }
 
-const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' });
 
 /** What the last test parcel did, kept with the courier so it is still there tomorrow; nothing is shown before a first test. */
 function LastTest({ name, last }: { name: string; last: CourierAccountView['lastTest'] }) {
+  const when = useWhen();
   if (last === null) return null;
   const ok = last.booked && last.cancelled;
   const outcome = ok ? 'Booked and cancelled again' : 'Not booked';

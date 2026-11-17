@@ -1,7 +1,7 @@
 import type { DiscountTarget } from './discounts';
 import { validateScopes, type RuleIssue } from './rules';
 import type { Scopes } from './types';
-import { DEFAULT_BUSINESS_TIMEZONE, businessDate } from '@/server/kernel/numbering/business-date';
+import { businessDate, businessTimeZone } from '@/server/kernel/numbering/business-date';
 
 /**
  * Rebates: money given back after the fact, on what a customer bought over a period (2% back on
@@ -46,7 +46,7 @@ const money = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 export function periodKey(
   at: Date,
   period: RebatePeriod,
-  timeZone: string = DEFAULT_BUSINESS_TIMEZONE,
+  timeZone: string = businessTimeZone(),
 ): string {
   const [y, m] = businessDate(at, timeZone).split('-');
   if (period === 'year') return y!;

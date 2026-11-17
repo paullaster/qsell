@@ -1,3 +1,4 @@
+import { businessTimeZone } from '@/server/kernel/numbering/business-date';
 import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { branches, deliveries, deliverySlaEvents, deliverySlaNotices, orders } from '@/server/db/drizzle/schema';
@@ -78,7 +79,7 @@ export class DeliverySlaNotices {
     if (row === undefined) throw new Error('The delivery of this notice is gone.');
     const settings = await this.company.ensureSeeded();
     const url = `${resolvePublicBaseUrl(settings.publicBaseUrl)}/admin/delivery/late`;
-    const windowText = row.d.windowStart !== null && row.d.windowEnd !== null ? windowWords(row.d.windowStart, row.d.windowEnd) : 'no window';
+    const windowText = row.d.windowStart !== null && row.d.windowEnd !== null ? windowWords(row.d.windowStart, row.d.windowEnd, businessTimeZone()) : 'no window';
     const headline = LEVEL_WORDS[row.level];
     const late = row.level === 'at_risk' ? 'Not late yet' : `Late by ${lateWords(row.minutesLate)}`;
     const firstName = row.customerName.trim().split(/\s+/)[0] ?? '';

@@ -19,9 +19,11 @@ describe('the time between two stages, in words', () => {
 });
 
 describe('stage times', () => {
-  it('are shown in Nairobi time', () => {
-    expect(stageTime('2026-01-01T09:00:05Z')).toMatch(/12:00:05/);
-    expect(stageTimeShort('2026-01-01T09:00:05Z')).toMatch(/12:00/);
+  it('are shown in the time zone given, which is the business\'s', () => {
+    expect(stageTime('2026-01-01T09:00:05Z', 'Africa/Nairobi')).toMatch(/12:00:05/);
+    expect(stageTimeShort('2026-01-01T09:00:05Z', 'Africa/Nairobi')).toMatch(/12:00/);
+    expect(stageTime('2026-01-01T09:00:05Z', 'Europe/London')).toMatch(/09:00:05/);
+    expect(stageTimeShort('2026-01-01T09:00:05Z', 'America/New_York')).toMatch(/04:00/);
   });
 });
 

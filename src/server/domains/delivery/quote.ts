@@ -3,7 +3,7 @@ import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { branches } from '@/server/db/drizzle/schema';
 import { isGeoPoint, type GeoPoint } from '@/lib/geo';
 import type { AddressWords } from '@/lib/delivery-zones';
-import { DEFAULT_BUSINESS_TIMEZONE } from '@/server/kernel/numbering/business-date';
+import { businessTimeZone } from '@/server/kernel/numbering/business-date';
 import type { GeoService } from '@/server/domains/geo/service';
 import { toHeader, type ChargePolicies } from './charge-policies';
 import type { DeliveryZones } from './zones';
@@ -103,7 +103,7 @@ export class DeliveryQuotes {
       }
     }
 
-    const quote = quoteCharge(policy.def, { at: input.at, timeZone: DEFAULT_BUSINESS_TIMEZONE, zoneId: match?.zone.id ?? null, zoneName: match?.zone.name ?? null, out, back, distanceApproximate: approximate, orderValue: input.orderValue, weightKg: input.weightKg });
+    const quote = quoteCharge(policy.def, { at: input.at, timeZone: businessTimeZone(), zoneId: match?.zone.id ?? null, zoneName: match?.zone.name ?? null, out, back, distanceApproximate: approximate, orderValue: input.orderValue, weightKg: input.weightKg });
     if (!quote.ok) return { ok: false, reason: quote.reason, message: quote.message, considered };
     return {
       ok: true,

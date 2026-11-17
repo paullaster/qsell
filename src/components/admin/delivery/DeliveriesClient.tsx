@@ -1,5 +1,6 @@
 'use client';
 
+import { useWhen } from '@/components/business-time';
 import { useId, useState } from 'react';
 import Link from 'next/link';
 import { deliveriesPageAction } from '@/server/domains/delivery/document-actions';
@@ -24,10 +25,10 @@ const TONE: Record<DeliveryStatus, 'green' | 'amber' | 'red' | 'sky' | 'gray'> =
   cancelled: 'gray',
 };
 
-const made = (iso: string): string => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' });
 
 /** The deliveries of orders, newest first, by state or by what is typed, a page at a time. Each opens its own screen. */
 export function DeliveriesClient() {
+  const made = useWhen();
   const uid = useId();
   const [status, setStatus] = useState<Choice | null>(null);
   const [query, setQuery] = useState('');

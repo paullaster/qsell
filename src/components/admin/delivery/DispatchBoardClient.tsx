@@ -1,5 +1,6 @@
 'use client';
 
+import { useBusinessTimeZone } from '@/components/business-time';
 import { use, useId, useState } from 'react';
 import Link from 'next/link';
 import { courierNewsAction, createRunAction, dispatchBoardAction, runStepAction } from '@/server/domains/delivery/run-actions';
@@ -25,6 +26,7 @@ export function DispatchBoardClient({ firstLoad }: { firstLoad: ReturnType<typeo
  * run, picks it, and puts ready deliveries on it; the server checks that each is ready, from the run's branch, and on no other run.
  */
 function Board({ initial }: { initial: Board }) {
+  const timeZone = useBusinessTimeZone();
   const uid = useId();
   const [board, setBoard] = useState(initial);
   const [branch, setBranch] = useState<Choice | null>(null);
@@ -149,7 +151,7 @@ function Board({ initial }: { initial: Board }) {
                     {d.number}
                   </Link>
                   {d.scheduledFor === null ? null : <Chip tone="sky">{`Wanted ${d.scheduledFor}`}</Chip>}
-                  {d.promised === null ? null : <Chip tone={PROMISE_TONE[d.promised.state]}>{`Promised ${windowWords(new Date(d.promised.start), new Date(d.promised.end))}${d.promised.state === 'late' || d.promised.state === 'at_risk' ? ` · ${SLA_WORDS[d.promised.state]}` : ''}`}</Chip>}
+                  {d.promised === null ? null : <Chip tone={PROMISE_TONE[d.promised.state]}>{`Promised ${windowWords(new Date(d.promised.start), new Date(d.promised.end), timeZone)}${d.promised.state === 'late' || d.promised.state === 'at_risk' ? ` · ${SLA_WORDS[d.promised.state]}` : ''}`}</Chip>}
                   {d.waiting === null ? null : <Chip tone={d.waiting.late ? 'red' : 'gray'}>{d.waiting.late ? `Waiting ${String(d.waiting.hours)}h` : `${String(d.waiting.hours)}h`}</Chip>}
                 </div>
                 <p className="text-sm text-fg-strong">{d.customerName}</p>

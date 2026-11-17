@@ -1,5 +1,6 @@
 'use client';
 
+import { useWhen } from '@/components/business-time';
 import { use, useEffect, useId, useState } from 'react';
 import { costBooksAction, costsPageAction, payRiderAction, recordRunningCostAction, payoutsPageAction, postCostsNowAction, reverseCostAction, setCostAccountsAction, setPayRulesAction, type payRulesAction } from '@/server/domains/delivery/cost-actions';
 import type { CostView } from '@/server/domains/delivery/costs';
@@ -13,7 +14,6 @@ import type { Choice } from '@/lib/payment-options';
 type Loaded = Awaited<ReturnType<typeof payRulesAction>>;
 type Rules = Extract<Loaded, { ok: true }>['data'];
 
-const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' });
 
 export function DeliveryCostsClient({ rulesPromise }: { rulesPromise: ReturnType<typeof payRulesAction> }) {
   const res: Loaded = use(rulesPromise);
@@ -203,6 +203,7 @@ function RunningCostForm({ onSaved, onError }: { onSaved: (text: string) => void
 }
 
 function CostRow({ cost, onDone, onError }: { cost: CostView; onDone: (text: string) => void; onError: (text: string) => void }) {
+  const when = useWhen();
   const uid = useId();
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);

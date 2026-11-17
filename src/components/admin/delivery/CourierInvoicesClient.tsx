@@ -1,5 +1,6 @@
 'use client';
 
+import { useWhen } from '@/components/business-time';
 import { use, useEffect, useId, useMemo, useState } from 'react';
 import { addCourierInvoiceAction, courierInvoiceChargesAction, courierInvoicesPageAction, courierInvoicesScreenAction, matchCourierChargesAction, unmatchCourierChargeAction, voidCourierInvoiceAction } from '@/server/domains/delivery/courier-invoice-actions';
 import type { ChargeView, InvoiceView } from '@/server/domains/delivery/courier-invoices';
@@ -14,7 +15,6 @@ type Loaded = Awaited<ReturnType<typeof courierInvoicesScreenAction>>;
 type Data = Extract<Loaded, { ok: true }>['data'];
 
 const TONE: Record<InvoiceState, 'green' | 'amber' | 'red' | 'sky' | 'gray'> = { open: 'sky', agreed: 'green', short: 'amber', over: 'red' };
-const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' });
 
 export function CourierInvoicesClient({ firstPromise }: { firstPromise: ReturnType<typeof courierInvoicesScreenAction> }) {
   const res: Loaded = use(firstPromise);
@@ -178,6 +178,7 @@ function AddFormBody({ onAdded, onError }: { onAdded: () => void; onError: (text
 }
 
 function InvoiceCard({ invoice, onChanged, onError }: { invoice: InvoiceView; onChanged: (text: string) => void; onError: (text: string) => void }) {
+  const when = useWhen();
   const uid = useId();
   const [inv, setInv] = useState(invoice);
   const [open, setOpen] = useState(false);
@@ -260,6 +261,7 @@ function Charges({ invoiceId, currency, busy, onMatch, onUnmatch, version }: { i
 }
 
 function ChargesLoaded({ invoiceId, currency, busy, onMatch, onUnmatch }: { invoiceId: string; currency: string; busy: boolean; onMatch: (ids: string[]) => Promise<boolean>; onUnmatch: (id: string) => Promise<boolean> }) {
+  const when = useWhen();
   const [state, setState] = useState<{ phase: 'loading' } | { phase: 'error'; error: string } | { phase: 'ready'; matched: ChargeView[]; candidates: ChargeView[]; more: boolean }>({ phase: 'loading' });
   const [picked, setPicked] = useState<string[]>([]);
   useEffect(() => {

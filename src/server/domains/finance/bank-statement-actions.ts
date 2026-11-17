@@ -38,7 +38,7 @@ export async function statementWorkbenchAction(bankAccountId: string, filter: { 
     const [methods, recs, preview, chargeGls] = await Promise.all([
       fin().bankStatements.receiptMethods(ctx.companyId, bankAccountId),
       fin().bankReconciliation.list(ctx.companyId, bankAccountId),
-      fin().bankReconciliation.preview(ctx.companyId, bankAccountId, new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' })),
+      fin().bankReconciliation.preview(ctx.companyId, bankAccountId, businessDate()),
       fin().bankStatements.chargeGlChoices(ctx.companyId, bankAccountId),
     ]);
     const entry = (e: { id: number; postingDate: string; documentType: string; documentNo: string; description: string | null; amount: string }) => ({ id: e.id, date: e.postingDate, type: e.documentType, no: e.documentNo, description: e.description ?? '', amount: e.amount });

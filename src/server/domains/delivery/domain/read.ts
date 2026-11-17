@@ -2,7 +2,7 @@ import { validateScopes } from '@/server/domains/pricing/domain/rules';
 import type { Scopes } from '@/server/domains/pricing/domain/types';
 import { CHARGE_METHODS, DISTANCE_BASES, ROUND_MODES, type ChargeMethod, type DistanceBand, type DistanceBasis, type RateRow, type RoundMode, type Surcharge, type ValueTier } from './types';
 import { clockMinutes } from '@/lib/clock-time';
-import { DEFAULT_BUSINESS_TIMEZONE } from '@/server/kernel/numbering/business-date';
+import { businessTimeZone } from '@/server/kernel/numbering/business-date';
 import { isDateOnly, nextDay, startOfLocalDay } from './time';
 import { LIMITS } from './validate';
 
@@ -99,7 +99,7 @@ function date(v: unknown, what: string, lastDay = false): Date | null {
   if (blank(v)) return null;
   if (v instanceof Date) return Number.isNaN(v.getTime()) ? fail(`${what} is not a date.`) : v;
   const text = String(v).trim();
-  if (isDateOnly(text)) return startOfLocalDay(lastDay ? nextDay(text) : text, DEFAULT_BUSINESS_TIMEZONE);
+  if (isDateOnly(text)) return startOfLocalDay(lastDay ? nextDay(text) : text, businessTimeZone());
   const d = new Date(text);
   return Number.isNaN(d.getTime()) ? fail(`${what} is not a date.`) : d;
 }

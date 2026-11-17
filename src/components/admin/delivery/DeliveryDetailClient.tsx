@@ -1,5 +1,6 @@
 'use client';
 
+import { useWhen } from '@/components/business-time';
 import { use, useEffect, useId, useState } from 'react';
 import Link from 'next/link';
 import { deliveryAction, deliveryStepAction, proofPhotoLinkAction } from '@/server/domains/delivery/document-actions';
@@ -59,7 +60,6 @@ const ATTEMPT_CHIP = (result: string): string => {
   if (result === 'delivered') return 'Delivered';
   return result === 'part_accepted' ? 'Part accepted' : 'Not delivered';
 };
-const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' });
 const qty = (n: number): string => String(n);
 
 type Extras = Extract<Awaited<ReturnType<typeof deliveryExtrasAction>>, { ok: true }>['data'];
@@ -79,6 +79,7 @@ function whereTo(view: DeliveryView): string {
 }
 
 function DeliveryScreen({ initial, canFulfil, initialExtras }: { initial: DeliveryView; canFulfil: boolean; initialExtras: Extras }) {
+  const when = useWhen();
   const uid = useId();
   const [view, setView] = useState(initial);
   const [extra, setExtra] = useState(initialExtras);

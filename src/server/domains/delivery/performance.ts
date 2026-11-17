@@ -2,11 +2,10 @@ import { sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { readPeriod, type ReportPeriod } from '@/lib/delivery-cost';
 import { averageMinutes, fillPercent, ratePercent } from '@/lib/delivery-performance';
-import { businessDate } from '@/server/kernel/numbering/business-date';
+import { businessDate, businessTimeZone } from '@/server/kernel/numbering/business-date';
 import type { DocRefusal, DocResult } from './documents';
 
 const fail = (reason: DocRefusal, message: string): { ok: false; reason: DocRefusal; message: string } => ({ ok: false, reason, message });
-const TZ = 'Africa/Nairobi';
 const num = (v: unknown): number => Number(v ?? 0);
 
 /** The headline figures of a set of deliveries (all, one rider's, one courier's). Rates are null with nothing to measure. */
@@ -51,8 +50,8 @@ export class DeliveryPerformanceReports {
     const read = readPeriod(input.from, input.to, businessDate());
     if (!read.ok) return fail('bad_input', read.error);
     const { from, to } = read.period;
-    const start = sql`(${from}::date)::timestamp AT TIME ZONE ${TZ}`;
-    const end = sql`((${to}::date) + 1)::timestamp AT TIME ZONE ${TZ}`;
+    const start = sql`(${from}::date)::timestamp AT TIME ZONE ${businessTimeZone()}`;
+    const end = sql`((${to}::date) + 1)::timestamp AT TIME ZONE ${businessTimeZone()}`;
     const co = sql`${companyId}::uuid`;
     const done = sql`WITH done AS (
       SELECT d.id, d.window_end, d.delivered_at, d.dispatched_at, d.released_at,

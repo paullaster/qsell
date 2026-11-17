@@ -1,5 +1,6 @@
 'use client';
 
+import { useBusinessTimeZone } from '@/components/business-time';
 import { useEffect, useState } from 'react';
 import { Activity } from 'lucide-react';
 import { orderFlowAction } from '@/server/domains/orders/timeline-actions';
@@ -16,6 +17,7 @@ import { reasonWords, stageTime } from '@/lib/order-timeline-view';
  * else it shows nothing. It reads the same events as each order's timeline, so the numbers and the timelines agree.
  */
 export function OrderFlowPanel() {
+  const timeZone = useBusinessTimeZone();
   const [flow, setFlow] = useState<OrderFlow | null>(null);
   const [allowed, setAllowed] = useState(true);
 
@@ -86,7 +88,7 @@ export function OrderFlowPanel() {
             <ul className="text-xs text-fg-muted">
               {flow.stuck.map((s) => (
                 <li key={s.orderId}>
-                  <span className="font-mono text-fg">{s.orderNumber}</span>: {s.label.toLowerCase()} since {stageTime(s.since)}
+                  <span className="font-mono text-fg">{s.orderNumber}</span>: {s.label.toLowerCase()} since {stageTime(s.since, timeZone)}
                 </li>
               ))}
             </ul>

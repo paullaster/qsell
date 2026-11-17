@@ -2,11 +2,10 @@ import { sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { FAILURE_REASONS } from '@/lib/delivery-document';
 import { fuelEconomy, marginCents, money, readPeriod, sharePercent, type ReportPeriod } from '@/lib/delivery-cost';
-import { businessDate } from '@/server/kernel/numbering/business-date';
+import { businessDate, businessTimeZone } from '@/server/kernel/numbering/business-date';
 import type { DocRefusal, DocResult } from './documents';
 
 const fail = (reason: DocRefusal, message: string): { ok: false; reason: DocRefusal; message: string } => ({ ok: false, reason, message });
-const TZ = 'Africa/Nairobi';
 const cents = (v: unknown): number => Math.round(Number(v ?? 0) * 100);
 
 /** The fuel figures of one vehicle's row: what was typed, and what it gave. */
@@ -59,8 +58,8 @@ export class DeliveryReports {
     const read = readPeriod(input.from, input.to, businessDate());
     if (!read.ok) return fail('bad_input', read.error);
     const { from, to } = read.period;
-    const start = sql`(${from}::date)::timestamp AT TIME ZONE ${TZ}`;
-    const end = sql`((${to}::date) + 1)::timestamp AT TIME ZONE ${TZ}`;
+    const start = sql`(${from}::date)::timestamp AT TIME ZONE ${businessTimeZone()}`;
+    const end = sql`((${to}::date) + 1)::timestamp AT TIME ZONE ${businessTimeZone()}`;
 
     const [counts, charges, costs, riders, couriers, zones, failures, vehicles, untied] = await Promise.all([
       this.db.execute(sql`

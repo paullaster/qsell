@@ -1,5 +1,6 @@
 'use client';
 
+import { useBusinessTimeZone } from '@/components/business-time';
 import { Suspense, use } from 'react';
 import { Chip } from '@/components/ui/screen-kit';
 import type { AccountResult, MyOrderTracking, MyVisit } from '@/server/domains/customers/actions';
@@ -16,6 +17,7 @@ import { SignInPrompt } from './SignInPrompt';
 
 /** Where the delivery stands, in words, with the page that follows it; nothing is drawn for an order with no delivery to follow. */
 function DeliveryProgress({ tracking }: { tracking: Promise<AccountResult<MyOrderTracking | null>> }) {
+  const timeZone = useBusinessTimeZone();
   const answer = use(tracking);
   if (!answer.ok || answer.data === null) return null;
   const t = answer.data;
@@ -46,7 +48,7 @@ function DeliveryProgress({ tracking }: { tracking: Promise<AccountResult<MyOrde
               <p className="font-medium text-fg-strong">
                 {d.number}: {d.words}
               </p>
-              {d.window === null || d.words === 'Delivered' ? null : <p className="text-fg-muted">Promised: {windowWords(new Date(d.window.start), new Date(d.window.end))}</p>}
+              {d.window === null || d.words === 'Delivered' ? null : <p className="text-fg-muted">Promised: {windowWords(new Date(d.window.start), new Date(d.window.end), timeZone)}</p>}
               {d.receivedBy === null ? null : <p className="text-fg-muted">Received by {d.receivedBy}</p>}
             </li>
           ))}

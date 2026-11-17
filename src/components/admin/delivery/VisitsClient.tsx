@@ -1,5 +1,6 @@
 'use client';
 
+import { useWhen } from '@/components/business-time';
 import { use, useId, useState } from 'react';
 import { assignCrewAction, bookVisitAction, cancelVisitAction, completeVisitAction, giveBackMaterialAction, moveVisitAction, recordMaterialAction, signOffVisitAction, startVisitAction, tickVisitItemAction, visitsPageAction } from '@/server/domains/delivery/visit-actions';
 import type { MaterialView, VisitView } from '@/server/domains/delivery/visits';
@@ -13,7 +14,6 @@ import { VISIT_STATUS_WORDS, fromNairobiInput, itemsFromLines, toNairobiInput, v
 
 type Loaded = Awaited<ReturnType<typeof visitsPageAction>>;
 
-const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' });
 const TONES: Record<VisitStatus, 'green' | 'amber' | 'red' | 'sky' | 'gray'> = { scheduled: 'amber', crew_assigned: 'sky', on_site: 'sky', completed: 'amber', signed_off: 'green', cancelled: 'gray' };
 const FILTERS: { id: string; label: string }[] = [
   { id: 'live', label: 'Coming up' },
@@ -196,6 +196,7 @@ function BookPanel({ onBooked, onError }: { onBooked: () => void; onError: (text
 }
 
 function VisitCard({ visit, onDone, onError }: { visit: VisitView; onDone: (text: string) => void; onError: (text: string) => void }) {
+  const when = useWhen();
   const uid = useId();
   const [busy, setBusy] = useState(false);
   const [panel, setPanel] = useState<'crew' | 'move' | 'signoff' | null>(null);

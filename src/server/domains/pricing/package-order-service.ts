@@ -1,7 +1,7 @@
 import { and, eq, inArray, ne, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { orders, packageInstancePicks, packageInstances, productPackages, products } from '@/server/db/drizzle/schema';
-import { businessDate } from '@/server/kernel/numbering/business-date';
+import { businessDate, businessTimeZone } from '@/server/kernel/numbering/business-date';
 import { canonicalSelection, orderingProblem, packageComponentDefs, servingCost, type CanonicalPick, type LocalMoment, type OrderingRules, type RawPick } from './domain/packages';
 import { checkPackageBasket, resolveStoredPicks, storedPicks, type PackageLineInput, type ShopPackage, type StoredPick } from './domain/package-shop';
 import { allowsCart, quoteOnlyRefusal } from './domain/package-order-mode';
@@ -86,7 +86,7 @@ const rulesOf = (view: PackageView): OrderingRules => ({
 /** The date and minute of day in the company's time zone. */
 export function localMoment(now: Date): LocalMoment {
   const date = businessDate(now);
-  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Nairobi', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(now);
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: businessTimeZone(), hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(now);
   const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? '0');
   const minute = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
   return { date, minute: hour * 60 + minute };
