@@ -34,6 +34,7 @@ export function ShiftReportView({ report }: { report: ShiftReport }) {
         {report.declaredCash === null ? null : row('Counted at the close', money(report.declaredCash), true)}
         {report.variance === null ? null : row('Difference', `${report.variance > 0 ? '+' : ''}${money(report.variance)}`, true)}
       </dl>
+      {report.differencePosting === null ? null : <p className={report.differencePosting.status === 'posted' ? 'text-fg-muted' : 'text-amber-700'} data-testid="difference-posting">{report.differencePosting.status === 'posted' ? 'The difference is written to the books.' : `The difference is waiting to be written to the books: ${report.differencePosting.note ?? 'it will be tried again shortly.'}`}</p>}
       {report.varianceReason === null ? null : <p className="text-fg-muted">Reason for the difference: {report.varianceReason}</p>}
       {report.movements.length === 0 ? null : (
         <div>

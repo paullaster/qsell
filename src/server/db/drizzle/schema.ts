@@ -3879,6 +3879,8 @@ export const products = pgTable(
      * not found, not sold on its own. A package may sell it; nothing else may. Such a product is never shown in the web shop.
      */
     soldOnlyInPackages: boolean('sold_only_in_packages').notNull().default(false),
+    /** The selling documents this is offered in (quotes, sales orders, credit sales, cash sales, sales invoices); the web shop has its own switch. Everything by default. */
+    offeredIn: text('offered_in').array().notNull().default(sql`ARRAY['quote','sales_order','credit_sale','pos_cash_sale','sales_invoice']::text[]`),
     imageUrl: text('image_url').notNull().default(''),
     additionalImages: jsonb('additional_images').$type<string[]>().notNull().default([]),
     rating: numeric('rating', { precision: 3, scale: 2 }).notNull().default('0'),
@@ -4679,6 +4681,8 @@ export const registers = pgTable(
       .notNull()
       .references(() => branches.id, { onDelete: 'restrict' }),
     name: text('name').notNull(),
+    /** The cash account this till's money is kept in (the books): where a difference at the close is written against. */
+    cashAccountId: uuid('cash_account_id').references(() => bankAccounts.id, { onDelete: 'restrict' }),
     isActive: boolean('is_active').notNull().default(true),
     createdBy: text('created_by').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -4824,6 +4828,34 @@ export const counterReturns = pgTable(
   ],
 );
 
+/**
+ * The closing difference of a shift on its way to the books: written at the close in the same transaction as the Z number, posted
+ * afterwards (and retried) so that a set-up gap in the accounts never stops a till from being closed. Kept apart from `shifts`, which
+ * never changes once closed. `amount` is counted less expected: negative is short.
+ */
+export const shiftVariancePostings = pgTable(
+  'shift_variance_postings',
+  {
+    shiftId: uuid('shift_id').primaryKey().references(() => shifts.id, { onDelete: 'restrict' }),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    status: text('status').$type<'pending' | 'posted'>().notNull().default('pending'),
+    /** Why it has not been posted yet, in words (an account not chosen, a period closed). */
+    note: text('note'),
+    attempts: integer('attempts').notNull().default(0),
+    registerId: text('register_id'),
+    bankEntryId: bigint('bank_entry_id', { mode: 'number' }),
+    postedAt: timestamp('posted_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('shift_variance_postings_due_idx').on(t.createdAt).where(sql`${t.status} = 'pending'`),
+    check('shift_variance_postings_status_chk', sql`${t.status} IN ('pending', 'posted')`),
+    check('shift_variance_postings_amount_chk', sql`${t.amount} <> 0`),
+  ],
+);
+
 export const shiftSettings = pgTable(
   'shift_settings',
   {
@@ -4832,6 +4864,8 @@ export const shiftSettings = pgTable(
       .references(() => companySettings.id, { onDelete: 'cascade' }),
     toleranceAmount: numeric('tolerance_amount', { precision: 14, scale: 2 }).notNull().default('100'),
     tolerancePercent: numeric('tolerance_percent', { precision: 7, scale: 3 }).notNull().default('1'),
+    /** The account a till's difference at the close is written to (usually a cash over/short expense). */
+    varianceGlAccountId: uuid('variance_gl_account_id').references(() => glAccounts.id, { onDelete: 'restrict' }),
     /** How a difference beyond the allowance is closed: by a supervisor on the spot, or through the approval queue. */
     supervisorClose: text('supervisor_close').$type<'direct' | 'approval'>().notNull().default('direct'),
     version: integer('version').notNull().default(1),

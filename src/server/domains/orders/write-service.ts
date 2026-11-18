@@ -1,3 +1,4 @@
+import { isOfferedIn, notOfferedRefusal, offerTypeOfModule } from '@/lib/offered-in';
 import { packageAsLineRefusal, packageOnlyRefusal } from '@/lib/package-only';
 import { creditDaysFor, stockReleaseFor, type SellingSettings } from '@/server/domains/selling/selling-documents';
 import type { RawPick } from '@/server/domains/pricing/domain/packages';
@@ -363,6 +364,11 @@ export const OrderWriteService = {
       // A package-only product is sold by its package, never as a line of its own (also not from a quote or by staff).
       if (prod.soldOnlyInPackages === true) {
         return { success: false, error: packageOnlyRefusal(prod.name), code: 'not_for_sale' };
+      }
+      // Where it is offered: a staff document refuses a product that is not offered in it (an order made from a quote was checked when the quote was).
+      const offerType = offerTypeOfModule(params.salesModule, params.paymentMethod === 'on_account');
+      if (offerType !== null && params.sourceQuoteId === undefined && !isOfferedIn(prod.offeredIn, offerType)) {
+        return { success: false, error: notOfferedRefusal(prod.name, offerType), code: 'not_for_sale' };
       }
       const quoted = quotedFor(item, index);
       if (!prod.isSellable && !quoted) {

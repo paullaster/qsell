@@ -17,6 +17,8 @@ export interface ShiftsScreen {
   can: { read: boolean; open: boolean; close: boolean; supervise: boolean };
   tolerance: Tolerance;
   supervisorClose: SupervisorClose;
+  varianceGlAccountId: string | null;
+  varianceGlAccountName: string | null;
 }
 
 /** The permission that lets this person see shifts at all, the widest they hold. */
@@ -160,6 +162,8 @@ export interface RegistersScreen {
   registers: RegisterRow[];
   tolerance: Tolerance;
   supervisorClose: SupervisorClose;
+  varianceGlAccountId: string | null;
+  varianceGlAccountName: string | null;
 }
 
 export async function registersScreenAction() {
@@ -176,7 +180,9 @@ export async function saveRegisterAction(raw: unknown, reason: unknown) {
       const branchId = text(input.branchId, 40);
       if (!UUID.test(branchId)) throw new ShiftError('Choose the branch the till is in.');
       const id = typeof input.id === 'string' && UUID.test(input.id) ? input.id : undefined;
-      await c.shifts.saveRegister(companyId, { type: 'user', id: userId }, { ...(id === undefined ? {} : { id }), branchId, name: text(input.name, 60), isActive: input.isActive !== false }, reasonOf(reason));
+      const cashAccountId = input.cashAccountId === null || input.cashAccountId === '' ? null : text(input.cashAccountId, 40);
+      if (cashAccountId !== null && !UUID.test(cashAccountId)) throw new ShiftError('Choose the till\'s cash account.');
+      await c.shifts.saveRegister(companyId, { type: 'user', id: userId }, { ...(id === undefined ? {} : { id }), branchId, name: text(input.name, 60), isActive: input.isActive !== false, cashAccountId }, reasonOf(reason));
       return { registers: await c.shifts.registerList(companyId), ...(await c.shifts.settings(companyId)) };
     },
     { paths: PATHS, friendly },
@@ -194,7 +200,9 @@ export async function saveShiftSettingsAction(raw: unknown, reason: unknown) {
       const problem = toleranceProblem(tolerance);
       if (problem !== null) throw new ShiftError(problem);
       if (!isSupervisorClose(input.supervisorClose)) throw new ShiftError('Choose how a difference beyond the allowance is closed.');
-      await c.shifts.saveSettings(companyId, { type: 'user', id: userId }, { tolerance, supervisorClose: input.supervisorClose }, reasonOf(reason));
+      const varianceGlAccountId = input.varianceGlAccountId === null || input.varianceGlAccountId === '' ? null : text(input.varianceGlAccountId, 40);
+      if (varianceGlAccountId !== null && !UUID.test(varianceGlAccountId)) throw new ShiftError('Choose the account for till differences.');
+      await c.shifts.saveSettings(companyId, { type: 'user', id: userId }, { tolerance, supervisorClose: input.supervisorClose, varianceGlAccountId }, reasonOf(reason));
       return { registers: await c.shifts.registerList(companyId), ...(await c.shifts.settings(companyId)) };
     },
     { paths: PATHS, friendly },

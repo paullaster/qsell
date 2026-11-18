@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, counterReturns, orders, orderTenders, registers, shiftCloseRequests, shiftMovements, shiftSettings, shifts, users } from '@/server/db/drizzle/schema';
+import { bankAccounts, branches, counterReturns, orders, glAccounts, orderTenders, registers, shiftCloseRequests, shiftMovements, shiftSettings, shiftVariancePostings, shifts, users } from '@/server/db/drizzle/schema';
 import type { Actor } from '@/server/kernel/context';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { ReasonCodes, ReasonInput } from '@/server/kernel/reason-codes/service';
@@ -19,6 +19,9 @@ export interface RegisterRow {
   branchName: string;
   name: string;
   isActive: boolean;
+  /** The cash account (in the books) this till's money is kept in, where a closing difference is written. */
+  cashAccountId: string | null;
+  cashAccountName: string | null;
   /** Who has a shift open on it now, if anyone. */
   openBy: string | null;
 }
@@ -47,6 +50,8 @@ export interface ShiftReport {
   /** While the close waits in the approval queue: what was counted and why, and who asked. */
   /** What counter sales took in this shift. */
   takings: { count: number; cash: number; mobileMoney: number; card: number; refunds: number; cashRefunds: number };
+  /** The closing difference on its way to the books: posted, or waiting with the reason. */
+  differencePosting: { status: 'pending' | 'posted'; note: string | null } | null;
   closeRequest: { requestedBy: string; requestedAt: string; declaredCash: number; variance: number; reason: string } | null;
   movements: { kind: 'paid_in' | 'paid_out'; amount: number; reason: string; by: string; at: string }[];
 }
@@ -73,15 +78,17 @@ export class ShiftService {
     private readonly reasons: ReasonCodes,
     private readonly numbering: NumberSeriesService,
     private readonly approvals: ApprovalEngine,
+    private readonly finance: () => Promise<{ cashCounts: { postShiftDifference: (ctx: { companyId: string; actor: { type: 'system'; id: null }; origin: { surface: string; action: string } }, input: { shiftId: string; zNumber: string; bankAccountId: string; differenceCents: number; varianceGlAccountId: string; date: string }) => Promise<{ registerId: string | null; bankEntryId: number; gl: boolean }> } }>,
   ) {}
 
   // ── Registers and tolerance ────────────────────────────────────────────
 
   async registerList(companyId: string): Promise<RegisterRow[]> {
     const rows = await this.db
-      .select({ id: registers.id, branchId: registers.branchId, branchName: branches.name, name: registers.name, isActive: registers.isActive })
+      .select({ id: registers.id, branchId: registers.branchId, branchName: branches.name, name: registers.name, isActive: registers.isActive, cashAccountId: registers.cashAccountId, cashAccountName: bankAccounts.name })
       .from(registers)
       .innerJoin(branches, eq(branches.id, registers.branchId))
+      .leftJoin(bankAccounts, eq(bankAccounts.id, registers.cashAccountId))
       .where(eq(registers.companyId, companyId))
       .orderBy(branches.name, registers.name);
     const open = rows.length === 0 ? [] : await this.db.select({ registerId: shifts.registerId, by: users.name }).from(shifts).innerJoin(users, sql`${users.id}::text = ${shifts.openedBy}`).where(and(inArray(shifts.status, ['open', 'closing']), inArray(shifts.registerId, rows.map((r) => r.id))));
@@ -89,16 +96,20 @@ export class ShiftService {
     return rows.map((r) => ({ ...r, openBy: openBy.get(r.id) ?? null }));
   }
 
-  async saveRegister(companyId: string, actor: Actor, input: { id?: string; branchId: string; name: string; isActive: boolean }, reason: Why): Promise<void> {
+  async saveRegister(companyId: string, actor: Actor, input: { id?: string; branchId: string; name: string; isActive: boolean; /** The till's cash account: left out keeps what it has, null clears it. */ cashAccountId?: string | null }, reason: Why): Promise<void> {
     const name = input.name.trim();
     if (name.length < 1 || name.length > 60) throw new ShiftError('Give the till a name of up to 60 characters.');
     const [branch] = await this.db.select({ id: branches.id }).from(branches).where(and(eq(branches.id, input.branchId), eq(branches.companyId, companyId))).limit(1);
     if (branch === undefined) throw new ShiftError('Choose one of the company\'s branches.');
+    if (typeof input.cashAccountId === 'string') {
+      const [cash] = await this.db.select({ id: bankAccounts.id }).from(bankAccounts).where(and(eq(bankAccounts.id, input.cashAccountId), eq(bankAccounts.companyId, companyId), eq(bankAccounts.kind, 'cash'), eq(bankAccounts.blocked, false))).limit(1);
+      if (cash === undefined) throw new ShiftError('Choose one of the company\'s cash accounts for the till.');
+    }
     const why = await this.reasons.require(companyId, reason, 'shift_configuration');
     await this.db.transaction(async (tx) => {
       let id = input.id;
       if (id === undefined) {
-        const [made] = await tx.insert(registers).values({ companyId, branchId: input.branchId, name, isActive: input.isActive, createdBy: actor.id ?? 'system' }).returning({ id: registers.id }).catch((error: unknown) => {
+        const [made] = await tx.insert(registers).values({ companyId, branchId: input.branchId, name, isActive: input.isActive, cashAccountId: input.cashAccountId ?? null, createdBy: actor.id ?? 'system' }).returning({ id: registers.id }).catch((error: unknown) => {
           if (error instanceof Error && /registers_branch_name_uidx|duplicate key/.test(`${error.message} ${String((error as { cause?: unknown }).cause)}`)) throw new ShiftError('That branch already has a till with that name.');
           throw error;
         });
@@ -106,29 +117,34 @@ export class ShiftService {
       } else {
         const open = await tx.select({ id: shifts.id }).from(shifts).where(and(eq(shifts.registerId, id), inArray(shifts.status, ['open', 'closing']))).limit(1);
         if (open.length > 0 && !input.isActive) throw new ShiftError('This till has a shift open. Close it before switching the till off.');
-        const changed = await tx.update(registers).set({ name, branchId: input.branchId, isActive: input.isActive, updatedAt: new Date() }).where(and(eq(registers.id, id), eq(registers.companyId, companyId))).returning({ id: registers.id });
+        const changed = await tx.update(registers).set({ name, branchId: input.branchId, isActive: input.isActive, ...(input.cashAccountId === undefined ? {} : { cashAccountId: input.cashAccountId }), updatedAt: new Date() }).where(and(eq(registers.id, id), eq(registers.companyId, companyId))).returning({ id: registers.id });
         if (changed.length === 0) throw new ShiftError('That till could not be found.');
       }
       await this.decisions.record({ companyId, actor, subject: { type: 'register', id: id ?? '' }, action: input.id === undefined ? 'register.created' : 'register.changed', reason: why, inputs: {}, outcome: { name, branchId: input.branchId, isActive: input.isActive } }, tx);
     });
   }
 
-  async settings(companyId: string): Promise<{ tolerance: Tolerance; supervisorClose: SupervisorClose }> {
-    const [row] = await this.db.select().from(shiftSettings).where(eq(shiftSettings.companyId, companyId)).limit(1);
-    return row === undefined ? { tolerance: DEFAULT_TOLERANCE, supervisorClose: 'direct' } : { tolerance: { amount: Number(row.toleranceAmount), percent: Number(row.tolerancePercent) }, supervisorClose: row.supervisorClose };
+  async settings(companyId: string): Promise<{ tolerance: Tolerance; supervisorClose: SupervisorClose; varianceGlAccountId: string | null; varianceGlAccountName: string | null }> {
+    const [row] = await this.db.select({ s: shiftSettings, glNo: glAccounts.no, glName: glAccounts.name }).from(shiftSettings).leftJoin(glAccounts, eq(glAccounts.id, shiftSettings.varianceGlAccountId)).where(eq(shiftSettings.companyId, companyId)).limit(1);
+    if (row === undefined) return { tolerance: DEFAULT_TOLERANCE, supervisorClose: 'direct', varianceGlAccountId: null, varianceGlAccountName: null };
+    return { tolerance: { amount: Number(row.s.toleranceAmount), percent: Number(row.s.tolerancePercent) }, supervisorClose: row.s.supervisorClose, varianceGlAccountId: row.s.varianceGlAccountId, varianceGlAccountName: row.glNo === null ? null : `${row.glNo} ${row.glName ?? ''}`.trim() };
   }
 
   async tolerance(companyId: string): Promise<Tolerance> {
     return (await this.settings(companyId)).tolerance;
   }
 
-  async saveSettings(companyId: string, actor: Actor, next: { tolerance: Tolerance; supervisorClose: SupervisorClose }, reason: Why): Promise<void> {
+  async saveSettings(companyId: string, actor: Actor, next: { tolerance: Tolerance; supervisorClose: SupervisorClose; /** The account a closing difference is written to: left out keeps it, null clears it. */ varianceGlAccountId?: string | null }, reason: Why): Promise<void> {
     const problem = toleranceProblem(next.tolerance);
     if (problem !== null) throw new ShiftError(problem);
+    if (typeof next.varianceGlAccountId === 'string') {
+      const [gl] = await this.db.select({ id: glAccounts.id }).from(glAccounts).where(and(eq(glAccounts.id, next.varianceGlAccountId), eq(glAccounts.companyId, companyId), eq(glAccounts.type, 'posting'), eq(glAccounts.blocked, false))).limit(1);
+      if (gl === undefined) throw new ShiftError('Choose an open posting account for till differences.');
+    }
     const why = await this.reasons.require(companyId, reason, 'shift_configuration');
     await this.db.transaction(async (tx) => {
       const [before] = await tx.select().from(shiftSettings).where(eq(shiftSettings.companyId, companyId)).limit(1).for('update');
-      const values = { toleranceAmount: String(next.tolerance.amount), tolerancePercent: String(next.tolerance.percent), supervisorClose: next.supervisorClose, updatedBy: actor.id ?? 'system', updatedAt: new Date() };
+      const values = { toleranceAmount: String(next.tolerance.amount), tolerancePercent: String(next.tolerance.percent), supervisorClose: next.supervisorClose, ...(next.varianceGlAccountId === undefined ? {} : { varianceGlAccountId: next.varianceGlAccountId }), updatedBy: actor.id ?? 'system', updatedAt: new Date() };
       if (before === undefined) await tx.insert(shiftSettings).values({ companyId, ...values });
       else await tx.update(shiftSettings).set({ ...values, version: before.version + 1 }).where(eq(shiftSettings.companyId, companyId));
       await this.decisions.record({ companyId, actor, subject: { type: 'shift_settings', id: companyId }, action: 'shift_settings.changed', reason: why, inputs: before === undefined ? {} : { amount: Number(before.toleranceAmount), percent: Number(before.tolerancePercent), supervisorClose: before.supervisorClose }, outcome: { ...next.tolerance, supervisorClose: next.supervisorClose } }, tx);
@@ -262,6 +278,7 @@ export class ShiftService {
       varianceReason: s.varianceReason,
       zNumber: s.zNumber,
       takings: await this.takings(s.id),
+      differencePosting: await this.differencePostingOf(s.id),
       closeRequest: asked === undefined ? null : { requestedBy: nameOf(asked.requestedBy), requestedAt: asked.createdAt.toISOString(), declaredCash: Number(asked.declaredCash), variance: Number(asked.variance), reason: asked.varianceReason },
       movements: movements.map((m) => ({ kind: m.kind, amount: Number(m.amount), reason: m.reason, by: nameOf(m.createdBy), at: m.createdAt.toISOString() })),
     };
@@ -276,7 +293,7 @@ export class ShiftService {
   async close(companyId: string, who: { userId: string; supervisor: boolean }, shiftId: string, input: { declared: Extract<ParsedCount, { ok: true }>; reason: string }): Promise<{ ok: true; pending: false; zNumber: string; variance: number } | { ok: true; pending: true; variance: number } | { ok: false; error: string }> {
     const { tolerance, supervisorClose } = await this.settings(companyId);
     try {
-      return await this.db.transaction(async (tx) => {
+      const out = await this.db.transaction(async (tx) => {
         const [shift] = await tx.select().from(shifts).where(and(eq(shifts.id, shiftId), eq(shifts.companyId, companyId))).limit(1).for('update');
         if (shift === undefined) return { ok: false as const, error: 'That shift could not be found.' };
         if (shift.status === 'closing') return { ok: false as const, error: 'This shift\'s close is waiting for approval.' };
@@ -308,6 +325,9 @@ export class ShiftService {
         }
         return { ok: true as const, pending: true as const, variance };
       });
+      // The difference goes to the books now; if the accounts are not ready it waits and the sweep tries again.
+      if (out.ok && !out.pending && out.variance !== 0) await this.postDifference(shiftId).catch((error: unknown) => console.error('[shifts] difference not posted', shiftId, error));
+      return out;
     } catch (error) {
       if (error instanceof ShiftError) return { ok: false, error: error.message };
       if (error instanceof Error && error.message.includes('closed')) return { ok: false, error: 'That shift is already closed.' };
@@ -319,6 +339,8 @@ export class ShiftService {
   private async finalize(tx: Tx, c: { shift: typeof shifts.$inferSelect; closedBy: string; declared: number; counted: Counted[]; expected: number; variance: number; reason: string | null; figures: { paidIn: number; paidOut: number; cashSales: number }; kind: string; how: 'on_the_spot' | 'approval'; request?: string }): Promise<string> {
     const { number } = await this.numbering.assign('z_report', { companyId: c.shift.companyId, branchId: c.shift.branchId, date: businessDate(), document: { kind: 'z_report', id: c.shift.id }, actor: { type: 'user', id: c.closedBy } }, tx);
     await tx.update(shifts).set({ status: 'closed', closedBy: c.closedBy, closedAt: new Date(), declaredCash: String(c.declared), closingCounted: c.counted, expectedCash: String(c.expected), variance: String(c.variance), varianceReason: c.reason, closingFigures: c.figures, zNumber: number }).where(eq(shifts.id, c.shift.id));
+    // A difference is queued for the books in this same transaction; posting it follows (and is retried), so the till is closed whatever the accounts' state.
+    if (c.variance !== 0) await tx.insert(shiftVariancePostings).values({ shiftId: c.shift.id, companyId: c.shift.companyId, amount: String(c.variance) }).onConflictDoNothing();
     if (c.request !== undefined) await tx.update(shiftCloseRequests).set({ status: 'approved', decidedAt: new Date() }).where(eq(shiftCloseRequests.id, c.request));
     await this.decisions.record({ companyId: c.shift.companyId, actor: { type: 'user', id: c.closedBy }, subject: { type: 'shift', id: c.shift.id }, action: 'shift.closed', inputs: { expected: c.expected, declared: c.declared }, outcome: { variance: c.variance, kind: c.kind, zNumber: number, how: c.how, closedByOther: c.shift.openedBy !== c.closedBy } }, tx);
     return number;
@@ -371,6 +393,56 @@ export class ShiftService {
       if (error instanceof Error && 'code' in error) return { ok: false, error: error.message };
       throw error;
     }
+  }
+
+  /**
+   * Writes a closed shift's difference to the books, once: the till's cash account against the over/short account chosen in Settings,
+   * Registers. Without either of them (or with a closed period) it waits, with the reason in words, and is tried again by the sweep:
+   * the shift is already closed and its Z report stands either way. Returns whether it is posted now.
+   */
+  async postDifference(shiftId: string): Promise<boolean> {
+    const [row] = await this.db.select().from(shiftVariancePostings).where(eq(shiftVariancePostings.shiftId, shiftId)).limit(1);
+    if (row === undefined) return false;
+    if (row.status === 'posted') return true;
+    const [shift] = await this.db.select().from(shifts).where(eq(shifts.id, shiftId)).limit(1);
+    if (shift?.zNumber === null || shift === undefined) return false;
+    const [register] = await this.db.select({ cash: registers.cashAccountId, name: registers.name }).from(registers).where(eq(registers.id, shift.registerId)).limit(1);
+    const settings = await this.settings(shift.companyId);
+    const waiting = async (note: string): Promise<false> => {
+      await this.db.update(shiftVariancePostings).set({ note, attempts: row.attempts + 1, updatedAt: new Date() }).where(eq(shiftVariancePostings.shiftId, shiftId));
+      return false;
+    };
+    if (register?.cash === null || register === undefined) return await waiting(`The till ${register?.name ?? ''} has no cash account yet: choose one in Settings, Registers.`);
+    if (settings.varianceGlAccountId === null) return await waiting('No account is chosen for till differences yet: choose one in Settings, Registers.');
+    try {
+      const { cashCounts } = await this.finance();
+      const done = await cashCounts.postShiftDifference(
+        { companyId: shift.companyId, actor: { type: 'system', id: null }, origin: { surface: 'sales/shifts', action: 'post_difference' } },
+        { shiftId, zNumber: shift.zNumber, bankAccountId: register.cash, differenceCents: Math.round(Number(row.amount) * 100), varianceGlAccountId: settings.varianceGlAccountId, date: businessDate(shift.closedAt ?? new Date()) },
+      );
+      await this.db.update(shiftVariancePostings).set({ status: 'posted', note: null, registerId: done.registerId, bankEntryId: done.bankEntryId, postedAt: new Date(), attempts: row.attempts + 1, updatedAt: new Date() }).where(eq(shiftVariancePostings.shiftId, shiftId));
+      return true;
+    } catch (error) {
+      return await waiting(error instanceof Error ? error.message.slice(0, 300) : 'The difference could not be posted.');
+    }
+  }
+
+  /** Differences still waiting for the books, oldest first, each tried again after a growing wait (the sweep). */
+  async postDueDifferences(limit = 50): Promise<number> {
+    const due = await this.db
+      .select({ shiftId: shiftVariancePostings.shiftId })
+      .from(shiftVariancePostings)
+      .where(and(eq(shiftVariancePostings.status, 'pending'), sql`${shiftVariancePostings.updatedAt} <= now() - (LEAST(${shiftVariancePostings.attempts}, 12) * interval '5 minutes')`))
+      .orderBy(shiftVariancePostings.createdAt)
+      .limit(limit);
+    let posted = 0;
+    for (const d of due) if (await this.postDifference(d.shiftId)) posted += 1;
+    return posted;
+  }
+
+  private async differencePostingOf(shiftId: string): Promise<{ status: 'pending' | 'posted'; note: string | null } | null> {
+    const [row] = await this.db.select({ status: shiftVariancePostings.status, note: shiftVariancePostings.note }).from(shiftVariancePostings).where(eq(shiftVariancePostings.shiftId, shiftId)).limit(1);
+    return row ?? null;
   }
 
   /** Shifts newest first, 25 a page; `onlyUser` narrows to one person's own (for staff who may not see everyone's). */

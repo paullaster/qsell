@@ -93,6 +93,8 @@ export interface Product {
   isCheckoutPackaging?: boolean;
   /** Sold only inside packages: real stock, but never listed and never sold on its own. Such a product is never shown in the web shop. */
   soldOnlyInPackages?: boolean;
+  /** The selling documents this is offered in; everywhere when left out. */
+  offeredIn?: string[];
   /** A configurable package: the shopper builds it from choices, so it is never added to the cart as it stands. */
   isPackage?: boolean;
   /** Per-product capacity rules, loaded for packaging administration only. */

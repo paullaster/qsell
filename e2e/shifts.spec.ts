@@ -36,6 +36,21 @@ test.describe('till shifts', () => {
     await expect(tolerance.getByLabel('An amount (KES)')).toHaveValue('100');
     await noNativeSelect(page);
 
+    // The till's cash account and the account for differences, so a difference at the close has somewhere to be written.
+    await page.getByRole('button', { name: `Change ${tillName}` }).click();
+    const edit = page.getByRole('form', { name: `Change ${tillName}` });
+    await pickFirst(page, edit.getByRole('combobox', { name: /Cash account/ }));
+    await edit.getByRole('combobox', { name: /Reason/ }).click();
+    await page.getByRole('option').first().click();
+    await edit.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByText('Till saved.')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('register').filter({ hasText: tillName })).toContainText('cash kept in');
+    await pickFirst(page, tolerance.getByRole('combobox', { name: /Account for till differences/ }));
+    await tolerance.getByRole('combobox', { name: /Reason/ }).click();
+    await page.getByRole('option').first().click();
+    await tolerance.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByText('Saved. It applies to the next shift that is closed.')).toBeVisible({ timeout: 30_000 });
+
     // Open a shift on it with the float counted: 5 × 1000 and 4 × 500 = 7,000.
     await gotoAdmin(page, '/admin/shifts', 'Shifts');
     const open = page.getByRole('form', { name: 'Open a shift' });
@@ -87,6 +102,7 @@ test.describe('till shifts', () => {
     await expect(z).toContainText('Counted at the close');
     await expect(z).toContainText('gave a customer the wrong change');
     await expect(z).toContainText(tillName);
+    await expect(z.getByTestId('difference-posting')).toContainText(/books/);
 
     // It is in the history with its Z number and the difference.
     const row = page.getByTestId('shift-row').filter({ hasText: tillName }).first();

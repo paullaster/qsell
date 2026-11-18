@@ -619,7 +619,7 @@ export function getContainer(): AppContainer {
   const packageShop = new PackageShopService(drizzleDb, packageConfig, deliveryServices.stockSettings, deliveryServices.stockAvailability);
   const packageOrders = new PackageOrderService(drizzleDb, packageShop);
   const orderDocuments = new OrderDocumentsService(drizzleDb);
-  const shifts = new ShiftService(drizzleDb, decisionLog, reasonCodes, numbering, approvals);
+  const shifts = new ShiftService(drizzleDb, decisionLog, reasonCodes, numbering, approvals, async () => (await import('@/server/di/container')).getContainer().finance);
   const salesInvoices = new SalesInvoiceService(drizzleDb, invoices);
   const salesOrders = new SalesOrderService(drizzleDb, sellingSettings, packageOrders, customers, branches);
   const counterReturns = new CounterReturnService(drizzleDb, shifts, async () => (await import('@/server/di/container')).getContainer());

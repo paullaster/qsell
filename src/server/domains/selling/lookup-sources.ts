@@ -24,7 +24,11 @@ const options = staticSource({
  * the permission of taking that document: `sales-order-*` for sales orders, `sales-invoice-*` for direct sales invoices and `credit-sale-*`
  * for credit sales (whose customers are only those with a credit account).
  */
+const OFFER_OF_PREFIX = { 'sales-order': 'sales_order', 'sales-invoice': 'sales_invoice', 'credit-sale': 'credit_sale', 'cash-sale': 'pos_cash_sale' } as const;
+
 function pickers(prefix: 'sales-order' | 'sales-invoice' | 'credit-sale' | 'cash-sale', permission: PermissionKey): LookupSource[] {
+  /** Only what is offered in this kind of document (set on the product, Offered in). */
+  const offered = sql`${OFFER_OF_PREFIX[prefix]} = ANY(${products.offeredIn})`;
   /** Products sold as lines of their own: for sale, switched on, not kept for packages, and not a package (those are chosen with their builder). */
   const productList = tableSource({
     key: `${prefix}-products`,
@@ -42,6 +46,7 @@ function pickers(prefix: 'sales-order' | 'sales-invoice' | 'credit-sale' | 'cash
           eq(products.isSellable, true),
           isNull(products.deletedAt),
           eq(products.soldOnlyInPackages, false),
+          offered,
           sql`${products.id} NOT IN (SELECT product_id FROM product_packages WHERE is_active)`,
         ) ?? eq(products.isActive, true),
       ];
@@ -58,7 +63,7 @@ function pickers(prefix: 'sales-order' | 'sales-invoice' | 'credit-sale' | 'cash
     select: { sku: products.sku },
     scope: ({ filters }) => {
       acceptFilters(filters, {});
-      return [and(eq(products.isActive, true), eq(products.isSellable, true), isNull(products.deletedAt), sql`${products.id} IN (SELECT product_id FROM product_packages WHERE is_active)`) ?? eq(products.isActive, true)];
+      return [and(eq(products.isActive, true), eq(products.isSellable, true), isNull(products.deletedAt), offered, sql`${products.id} IN (SELECT product_id FROM product_packages WHERE is_active)`) ?? eq(products.isActive, true)];
     },
     toOption: (row) => ({ id: String(row.id), label: String(row.label), description: String(row.sku), badge: null }),
   });
