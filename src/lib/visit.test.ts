@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fromBusinessInput, itemsFromLines, toBusinessInput, checkCrew, checkItems, checkWindow, checklistProblem, isVisitOver, nextVisitStatus, reasonProblem, signOffProblem, visitActionsFrom } from './visit';
+import { fromBusinessInput, itemsFromLines, toBusinessInput, checkCrew, checkItems, checkWindow, checklistProblem, isVisitOver, nextVisitStatus, reasonProblem, signOffProblem, visitActionsFrom, checkTimeRequest } from './visit';
 
 const now = new Date('2026-11-06T09:00:00Z');
 
@@ -87,5 +87,18 @@ describe('times typed in Nairobi', () => {
   it('a checklist is typed a line to an item', () => {
     expect(itemsFromLines(' Fit it \n\n Test it\n  ')).toEqual(['Fit it', 'Test it']);
     expect(itemsFromLines('')).toEqual([]);
+  });
+});
+
+describe('the words a customer writes when they ask for another time', () => {
+  it('are cleaned up and kept: a few words to a short paragraph', () => {
+    expect(checkTimeRequest('  Thursday   morning,\n please ')).toEqual({ ok: true, note: 'Thursday morning, please' });
+    expect(checkTimeRequest('x'.repeat(300))).toMatchObject({ ok: true });
+  });
+  it('are refused in words when empty, too short, too long, or a link', () => {
+    for (const bad of [undefined, null, 7, '', '  ', 'ab']) expect(checkTimeRequest(bad)).toMatchObject({ ok: false, error: expect.stringContaining('few words') as string });
+    expect(checkTimeRequest('x'.repeat(301))).toMatchObject({ ok: false, error: expect.stringContaining('300') as string });
+    expect(checkTimeRequest('see https://example.test')).toMatchObject({ ok: false, error: expect.stringContaining('link') as string });
+    expect(checkTimeRequest('go to www.example.test')).toMatchObject({ ok: false });
   });
 });

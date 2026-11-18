@@ -34,6 +34,21 @@ test.describe('a visit booked for the customer, on their own order page', () => 
     await noHorizontalScroll(page);
     await noInnerHorizontalScroll(page);
 
+    // The customer cannot keep it and asks for another time, in words: refused without words or with a link, then kept and shown.
+    await visit.getByRole('button', { name: 'Ask for another time' }).click();
+    const ask = visit.getByRole('form', { name: 'Ask for another time' });
+    await ask.getByLabel('When would suit you better?').fill('see https://example.test/now');
+    await ask.getByRole('button', { name: 'Send' }).click();
+    await expect(ask.getByRole('alert')).toContainText('without a link');
+    await ask.getByLabel('When would suit you better?').fill('Thursday morning, please');
+    await ask.getByRole('button', { name: 'Send' }).click();
+    await expect(visit).toContainText('You asked for another time: “Thursday morning, please”', { timeout: 30_000 });
+    await expect(visit.getByRole('button', { name: 'Ask for another time' })).toHaveCount(0);
+    expect(deliveryTool('visit-request', orderNumber).note).toBe('Thursday morning, please');
+    await page.reload();
+    await expect(page.getByRole('region', { name: 'Your visit' })).toContainText('You asked for another time', { timeout: 60_000 });
+    await noHorizontalScroll(page);
+
     // The order is cancelled, and the visit with it: the page says so.
     deliveryTool('cancel-order', orderNumber);
     deliveryTool('close-closed', 'x');

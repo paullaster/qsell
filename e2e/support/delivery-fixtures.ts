@@ -203,6 +203,22 @@ async function visitInstant(orderNumber: string): Promise<Record<string, string>
   return { startsAt: row.startsAt.toISOString(), endsAt: row.endsAt.toISOString() };
 }
 
+/** What a visit's request for another time holds now (empty when none), and one made as the customer would make it. */
+async function visitRequest(orderNumber: string, ask?: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { orders, orderVisits } = await import('@/server/db/drizzle/schema');
+  const company = await getContainer().companySettings.ensureSeeded();
+  const [row] = await db.select({ id: orderVisits.id, orderId: orderVisits.orderId }).from(orderVisits).innerJoin(orders, eq(orders.id, orderVisits.orderId)).where(eq(orders.orderNumber, orderNumber));
+  if (row === undefined) throw new Error(`e2e fixture: no visit for ${orderNumber}`);
+  if (ask !== undefined) {
+    const made = await getContainer().orderVisits.requestChange(company.id, row.orderId, row.id, ask, 'e2e-customer');
+    if (!made.ok) throw new Error(`e2e fixture: ${made.error}`);
+  }
+  const [after] = await db.select({ note: orderVisits.timeRequestNote }).from(orderVisits).where(eq(orderVisits.id, row.id));
+  return { note: after?.note ?? '' };
+}
+
 /** A member of staff with the manager role, who has not been given the permission to change the business time zone. */
 async function managerStaff(tag: string): Promise<Record<string, string>> {
   const { getContainer } = await import('@/server/di/container');
@@ -425,6 +441,7 @@ async function main(): Promise<void> {
   if (command === 'collection-ready' && extra !== undefined) result = await markCollectionReady(tag, extra);
   if (command === 'set-time-zone' && extra !== undefined) result = await setTimeZone(extra);
   if (command === 'visit-instant') result = await visitInstant(tag);
+  if (command === 'visit-request') result = await visitRequest(tag, extra);
   if (command === 'manager-staff') result = await managerStaff(tag);
   if (command === 'book-visit') result = await bookVisit(tag);
   if (command === 'close-closed') result = await closeForClosedOrders();

@@ -108,6 +108,15 @@ export function signOffProblem(name: unknown): string | null {
   return typeof name === 'string' && name.trim().length >= 2 ? null : 'Say who signed the work off for the customer.';
 }
 
+/** What a customer writes when they ask for another time: a few words to a short paragraph, not a link or a page of text. Returns the note cleaned up, or what is wrong with it. */
+export function checkTimeRequest(raw: unknown): { ok: true; note: string } | { ok: false; error: string } {
+  const note = typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim() : '';
+  if (note.length < 3) return { ok: false, error: 'Tell us in a few words when would suit you better.' };
+  if (note.length > 300) return { ok: false, error: 'Please keep it to 300 characters.' };
+  if (/https?:\/\/|www\./i.test(note)) return { ok: false, error: 'Please write it in words, without a link.' };
+  return { ok: true, note };
+}
+
 export const reasonProblem = (reason: unknown, what: string): string | null => (typeof reason === 'string' && reason.trim().length >= 5 ? null : `Say why ${what}, in a few words.`);
 
 /** "2026-11-07T08:00" typed in a date-time box is a time on the business's own clock, in the business's time zone; this is the instant it means. Null when it is not a time. */
