@@ -1,0 +1,2 @@
+ALTER TABLE "delivery_text_settings" DROP CONSTRAINT "delivery_text_settings_kinds_chk";--> statement-breakpoint
+ALTER TABLE "delivery_text_settings" ADD CONSTRAINT "delivery_text_settings_kinds_chk" CHECK ("delivery_text_settings"."kinds" <@ ARRAY['out_for_delivery','delivered','part_delivered','attempt_failed','returned','slot_not_kept','ready_for_collection','collection_reminder','visit_booked','visit_moved','visit_cancelled']::text[]);

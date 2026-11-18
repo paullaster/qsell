@@ -3,7 +3,7 @@ import type { DeliveryAction } from './delivery-document';
 /** The messages a customer gets as their delivery moves. Pure: the words and the rules; the sending is the server's. */
 export const MESSAGE_KINDS = ['out_for_delivery', 'delivered', 'part_delivered', 'attempt_failed', 'returned', 'slot_not_kept', 'ready_for_collection', 'collection_reminder', 'visit_booked', 'visit_moved', 'visit_cancelled'] as const;
 export type MessageKind = (typeof MESSAGE_KINDS)[number];
-/** The messages about a visit (an installation or site job). Mail only: they are not offered as text messages. */
+/** The messages about a visit (an installation or site job). They point at the customer's own orders, where the visit is shown, not at the tracking page. */
 export const VISIT_MESSAGE_KINDS = ['visit_booked', 'visit_moved', 'visit_cancelled'] as const;
 export type VisitMessageKind = (typeof VISIT_MESSAGE_KINDS)[number];
 export const isVisitMessageKind = (value: unknown): value is VisitMessageKind => typeof value === 'string' && (VISIT_MESSAGE_KINDS as readonly string[]).includes(value);
@@ -150,6 +150,9 @@ export const TEXT_KIND_CHOICES: readonly { kind: MessageKind; label: string; hin
   { kind: 'slot_not_kept', label: 'Delivery time not kept', hint: 'Says the chosen time could not be held.', onByDefault: false },
   { kind: 'ready_for_collection', label: 'Ready to collect', hint: 'For orders collected from a branch: says where, and carries the collection code to show at the counter. Also covers a new code.', onByDefault: true },
   { kind: 'collection_reminder', label: 'Reminder for an order left at the counter', hint: 'Says how long the order has waited and carries the collection code. Mail is always sent when reminders are on; this adds a text.', onByDefault: true },
+  { kind: 'visit_booked', label: 'Visit booked', hint: 'Says the day and hours of the visit (an installation or site job), never the address, a phone number or a note.', onByDefault: false },
+  { kind: 'visit_moved', label: 'Visit moved', hint: 'Says the new day and hours.', onByDefault: false },
+  { kind: 'visit_cancelled', label: 'Visit cancelled', hint: 'Says the visit was cancelled.', onByDefault: false },
 ];
 
 export type TextKindsInput = { ok: true; kinds: MessageKind[] } | { ok: false; error: string };
@@ -175,7 +178,8 @@ export function textContent(kind: MessageKind, f: MessageFacts): string {
   const store = f.tradingName.trim();
   const hello = f.firstName.trim() === '' ? 'Hello,' : `Hello ${f.firstName.trim()},`;
   const order = `order ${f.orderNumber}`;
-  const link = `Track: ${f.trackUrl}`;
+  // A visit is not on the tracking page: its text points at the customer's own orders, where the visit is shown.
+  const link = `${isVisitMessageKind(kind) ? 'Your orders' : 'Track'}: ${f.trackUrl}`;
   const build = (shop: string): string => {
     switch (kind) {
       case 'out_for_delivery':

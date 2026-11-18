@@ -304,6 +304,36 @@ describe.skipIf(!has(url))('booked visits (database)', () => {
     expect(open.status).toBe('scheduled');
   });
 
+  it('also texts the customer about a visit when the company has turned that on: a text of its own for each change, the day and hours only, to their own orders, and not for a kind that is not ticked', async () => {
+    const { DeliveryMessages } = await import('./messages');
+    const set = async (enabled: boolean, kinds: string[]) => await c.deliveryTextSettings.set({ companyId, userId: 'office-1' }, { enabled, kinds, expectedVersion: (await c.deliveryTextSettings.get(companyId)).version });
+    expect(await set(true, ['visit_booked', 'visit_cancelled'])).toMatchObject({ ok: true });
+    try {
+      const o = await order();
+      const texts = async () => (await db.select().from(schema.deliveryMessages).where(and(eq(schema.deliveryMessages.orderId, o), eq(schema.deliveryMessages.channel, 'sms')))).map((m) => `${m.kind}:${m.status}`).sort();
+      const v = await must(book(o, { notes: 'Dog in the yard', contactPhone: '0799888777' }));
+      const moved = await must(c.orderVisits.reschedule(office(), v.id, { startsAt: day(6, 8), endsAt: day(6, 11), reason: 'Customer asked for later', expectedVersion: v.version }));
+      // The move is not ticked: no text for it, but the booking has one.
+      expect(await texts()).toEqual(['visit_booked:queued']);
+      await must(c.orderVisits.cancel(office(), v.id, { reason: 'Customer is travelling', expectedVersion: moved.version }));
+      expect(await texts()).toEqual(['visit_booked:queued', 'visit_cancelled:queued']);
+      const sent: { to: string; text: string }[] = [];
+      const flusher = new DeliveryMessages(db, { name: 'test', send: () => Promise.resolve({ messageId: 'm', provider: 'test' }) }, c.companySettings, { tokenFor: () => Promise.resolve(null) }, { settings: c.deliveryTextSettings, sender: () => Promise.resolve({ name: 'test', send: (m: { to: string; text: string }) => { sent.push(m); return Promise.resolve({ messageId: 's', provider: 'test' }); } } as never) });
+      // The quiet hours are off (none set), so the texts go now.
+      await flusher.flush(500, new Date());
+      const mine = sent.filter((m) => m.text.includes(v.orderNumber));
+      // The booking is skipped (the visit has since been cancelled), and the cancellation is sent: with no address, phone or note, and a link to the customer's own orders.
+      expect(mine).toHaveLength(1);
+      expect(mine[0]?.text).toContain('was cancelled');
+      expect(mine[0]?.text).toContain('Your orders: ');
+      expect(mine[0]?.text).toContain('/profile/orders');
+      expect(mine[0]?.text).not.toMatch(/Dog in the yard|0799888777|Kileleshwa|Gate 4|Track:/);
+      expect(await texts()).toEqual(['visit_booked:skipped', 'visit_cancelled:sent']);
+    } finally {
+      await set(false, ['out_for_delivery', 'delivered', 'attempt_failed']);
+    }
+  });
+
   it('shows the customer only when, where and how it stands, soonest first, for their own order', async () => {
     const a = await staff();
     const o = await order();
