@@ -522,6 +522,8 @@ export const orderCollections = pgTable(
   },
   (t) => [
     index('order_collections_branch_status_idx').on(t.companyId, t.branchId, t.status),
+    /** The orders left at the counter, longest wait first, without reading the collections that are done. */
+    index('order_collections_waiting_idx').on(t.readyAt, t.orderId).where(sql`${t.status} IN ('ready','locked')`),
     check('order_collections_status_chk', sql`${t.status} IN ('waiting','ready','collected','locked','cancelled')`),
     check('order_collections_attempts_chk', sql`${t.failedAttempts} >= 0`),
     check('order_collections_how_chk', sql`${t.collectedHow} IS NULL OR ${t.collectedHow} IN ('code','id_check')`),

@@ -1,0 +1,1 @@
+CREATE INDEX "order_collections_waiting_idx" ON "order_collections" USING btree ("ready_at","order_id") WHERE "order_collections"."status" IN ('ready','locked');
