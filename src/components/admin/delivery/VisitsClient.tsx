@@ -2,7 +2,7 @@
 
 import { useBusinessTimeZone, useWhen } from '@/components/business-time';
 import { use, useId, useState } from 'react';
-import { assignCrewAction, bookVisitAction, cancelVisitAction, completeVisitAction, giveBackMaterialAction, moveVisitAction, recordMaterialAction, signOffVisitAction, startVisitAction, tickVisitItemAction, visitsPageAction } from '@/server/domains/delivery/visit-actions';
+import { assignCrewAction, bookVisitAction, cancelVisitAction, completeVisitAction, giveBackMaterialAction, moveVisitAction, recordMaterialAction, setVisitRequestAsideAction, signOffVisitAction, startVisitAction, tickVisitItemAction, visitsPageAction } from '@/server/domains/delivery/visit-actions';
 import type { MaterialView, VisitView } from '@/server/domains/delivery/visits';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
@@ -237,6 +237,19 @@ function VisitCard({ visit, onDone, onError }: { visit: VisitView; onDone: (text
         </div>
         <Chip tone={TONES[visit.status]}>{VISIT_STATUS_WORDS[visit.status]}</Chip>
       </div>
+
+      {visit.timeRequest === null ? null : (
+        <div role="note" className="space-y-1 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-fg">
+          <p className="font-semibold text-fg-strong">The customer asked for another time</p>
+          <p className="break-words">“{visit.timeRequest.note}”</p>
+          <p className="text-xs text-fg-muted">Asked {when(visit.timeRequest.at)}. Moving or cancelling the visit answers it.</p>
+          {visit.status === 'scheduled' || visit.status === 'crew_assigned' ? (
+            <button type="button" className={buttonClass} disabled={busy} onClick={() => void go(setVisitRequestAsideAction({ id: visit.id }), 'The request is set aside.')}>
+              Set the request aside
+            </button>
+          ) : null}
+        </div>
+      )}
 
       <p className="text-sm text-fg">{visit.crew.length === 0 ? 'No crew yet.' : `Crew: ${visit.crew.map((m) => m.name).join(', ')}`}</p>
 

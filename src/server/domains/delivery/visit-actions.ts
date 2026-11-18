@@ -71,6 +71,11 @@ export async function cancelVisitAction(raw: unknown) {
   }, PATHS);
 }
 
+/** The office sets a customer's request for another time aside without moving the visit. */
+export async function setVisitRequestAsideAction(raw: unknown) {
+  return await runDelivery('visits:manage', async (ctx) => dataOf(await getContainer().orderVisits.setRequestAside(await actorOf(ctx), idOf(objectOf(raw).id, 'visit'))), PATHS);
+}
+
 export async function startVisitAction(raw: unknown) {
   return await runDelivery('visits:work', async (ctx) => dataOf(await getContainer().orderVisits.start(await actorOf(ctx), idOf(objectOf(raw).id, 'visit'))), PATHS);
 }

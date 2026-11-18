@@ -171,6 +171,21 @@ test.describe('visits', () => {
     const card = page.getByRole('list', { name: 'Visit list' }).getByRole('listitem').filter({ hasText: `Order ${orderNumber}` }).first();
     await expect(card).toContainText('Booked', { timeout: 30_000 });
 
+    // The customer asks for another time: the card says so in their words; the office can set it aside, and a second request can follow.
+    deliveryTool('visit-request', orderNumber, 'Any weekday after the 20th');
+    await open(page, '/admin/delivery/visits', 'Visits');
+    await expect(card).toContainText('The customer asked for another time', { timeout: 30_000 });
+    await expect(card).toContainText('Any weekday after the 20th');
+    await noHorizontalScroll(page);
+    await card.getByRole('button', { name: 'Set the request aside' }).click();
+    await expect(page.getByText('The request is set aside.')).toBeVisible({ timeout: 30_000 });
+    await expect(card).not.toContainText('The customer asked for another time', { timeout: 30_000 });
+    expect(deliveryTool('visit-request', orderNumber).note).toBe('');
+    deliveryTool('visit-request', orderNumber, 'Better on a Friday');
+    await open(page, '/admin/delivery/visits', 'Visits');
+    await expect(card).toContainText('Better on a Friday', { timeout: 30_000 });
+
+    // Moving the visit answers the request.
     await card.getByRole('button', { name: 'Move the visit' }).click();
     const move = card.getByRole('form', { name: `Move the visit for order ${orderNumber}` });
     await move.getByLabel('New start (business time)').fill(boxTime(4, 9));
@@ -183,6 +198,8 @@ test.describe('visits', () => {
     await expect(page.getByText('The visit is moved.')).toBeVisible({ timeout: 30_000 });
     // The card is rebuilt from the saved visit; cancelling before that would use the old version.
     await expect(move).toHaveCount(0, { timeout: 30_000 });
+    await expect(card).not.toContainText('The customer asked for another time');
+    expect(deliveryTool('visit-request', orderNumber).note).toBe('');
 
     await card.getByLabel('Why it is being cancelled').fill('Customer is travelling');
     await card.getByRole('button', { name: `Cancel the visit for order ${orderNumber}` }).click();

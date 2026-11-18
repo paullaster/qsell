@@ -1365,6 +1365,9 @@ export const orderVisits = pgTable(
     signedOffBy: text('signed_off_by'),
     cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
     cancelReason: text('cancel_reason'),
+    /** What the customer wrote when they asked for another time, until the visit is moved, cancelled or the request set aside. At most one open request. */
+    timeRequestNote: text('time_request_note'),
+    timeRequestAt: timestamp('time_request_at', { withTimezone: true }),
     version: integer('version').notNull().default(1),
     createdBy: text('created_by').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -1377,6 +1380,7 @@ export const orderVisits = pgTable(
     check('order_visits_status_chk', sql`${t.status} IN ('scheduled','crew_assigned','on_site','completed','signed_off','cancelled')`),
     check('order_visits_window_chk', sql`${t.endsAt} > ${t.startsAt}`),
     check('order_visits_signoff_chk', sql`(${t.status} = 'signed_off') = (${t.signedOffAt} IS NOT NULL AND ${t.signedOffBy} IS NOT NULL)`),
+    check('order_visits_time_request_chk', sql`(${t.timeRequestNote} IS NULL) = (${t.timeRequestAt} IS NULL) AND (${t.timeRequestNote} IS NULL OR char_length(${t.timeRequestNote}) BETWEEN 3 AND 300)`),
     check('order_visits_cancel_chk', sql`(${t.status} = 'cancelled') = (${t.cancelledAt} IS NOT NULL AND ${t.cancelReason} IS NOT NULL)`),
   ],
 );

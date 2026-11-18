@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { deliveryMessages, mediaAssets, orderVisitCrew, orderVisitItems, orderVisitMaterials, orderVisitPhotos, orderVisits, orders, products, stockLocations, users } from '@/server/db/drizzle/schema';
-import { checkCrew, checkItems, checkWindow, checklistProblem, nextVisitStatus, reasonProblem, signOffProblem, type VisitAction, type VisitStatus } from '@/lib/visit';
+import { checkCrew, checkTimeRequest, checkItems, checkWindow, checklistProblem, nextVisitStatus, reasonProblem, signOffProblem, type VisitAction, type VisitStatus } from '@/lib/visit';
 import type { StockLedger } from '@/server/domains/stock/ledger';
 import { StockError } from '@/server/domains/stock/errors';
 import { OrderStages } from '@/server/domains/orders/stages';
@@ -38,6 +38,8 @@ export interface VisitView {
   photos: PhotoView[];
   /** What the customer was sent about this visit (booked, moved, cancelled), with where it went (hidden but for its ends) and whether it left. Empty for the crew. */
   messages: MessageView[];
+  /** The customer asked for another time (their words, and when), until the visit is moved or cancelled or the request is set aside. */
+  timeRequest: { note: string; at: string } | null;
   startedAt: string | null;
   completedAt: string | null;
   signedOffAt: string | null;
@@ -183,6 +185,7 @@ export class OrderVisits {
           at: p.createdAt.toISOString(),
           canRemove: viewer !== null && (v.status === 'on_site' || v.status === 'completed') && (!viewer.crewOnly || p.takenBy === viewer.userId),
         })),
+      timeRequest: v.timeRequestNote === null || v.timeRequestAt === null ? null : { note: v.timeRequestNote, at: v.timeRequestAt.toISOString() },
       messages: sent.filter((m) => visitOfMessageKey(m.messageKey) === v.id).map(viewOfMessage),
       startedAt: v.startedAt?.toISOString() ?? null,
       completedAt: v.completedAt?.toISOString() ?? null,
@@ -316,7 +319,7 @@ export class OrderVisits {
     if (why !== null) return fail('bad_input', why);
     return await this.run(async (tx) => {
       const row = await this.locked(tx, actor, id, 'reschedule', input.expectedVersion);
-      await tx.update(orderVisits).set({ startsAt: window.start, endsAt: window.end, version: row.version + 1, updatedAt: this.clock() }).where(eq(orderVisits.id, id));
+      await tx.update(orderVisits).set({ startsAt: window.start, endsAt: window.end, timeRequestNote: null, timeRequestAt: null, version: row.version + 1, updatedAt: this.clock() }).where(eq(orderVisits.id, id));
       await this.note(tx, actor, row.orderId, id, 'moved', { from: row.startsAt.toISOString(), startsAt: window.start.toISOString(), endsAt: window.end.toISOString() }, String(input.reason).trim());
       await this.messages?.enqueueIn(tx, { companyId: actor.companyId, orderId: row.orderId, deliveryId: null, kind: 'visit_moved', key: visitMessageKey(id, 'visit_moved', row.version + 1) });
       return await this.reloaded(tx, actor, id);
@@ -383,14 +386,57 @@ export class OrderVisits {
    * What the customer of an order may see of its visits: when, where (the address they gave), and how it stands. Never the crew, a
    * contact's phone, the notes, the checklist, the materials or the photos. The caller has already checked that the order is theirs.
    */
-  async forCustomer(companyId: string, orderId: string): Promise<{ status: VisitStatus; startsAt: string; endsAt: string; address: string }[]> {
+  async forCustomer(companyId: string, orderId: string): Promise<{ id: string; status: VisitStatus; startsAt: string; endsAt: string; address: string; asked: { note: string; at: string } | null; canAsk: boolean }[]> {
+    const now = this.clock();
     const rows = await this.db
-      .select({ status: orderVisits.status, startsAt: orderVisits.startsAt, endsAt: orderVisits.endsAt, address: orderVisits.address })
+      .select({ id: orderVisits.id, status: orderVisits.status, startsAt: orderVisits.startsAt, endsAt: orderVisits.endsAt, address: orderVisits.address, note: orderVisits.timeRequestNote, noteAt: orderVisits.timeRequestAt })
       .from(orderVisits)
       .where(and(eq(orderVisits.companyId, companyId), eq(orderVisits.orderId, orderId)))
       .orderBy(asc(orderVisits.startsAt), asc(orderVisits.id))
       .limit(20);
-    return rows.map((r) => ({ status: r.status, startsAt: r.startsAt.toISOString(), endsAt: r.endsAt.toISOString(), address: r.address }));
+    return rows.map((r) => ({
+      id: r.id,
+      status: r.status,
+      startsAt: r.startsAt.toISOString(),
+      endsAt: r.endsAt.toISOString(),
+      address: r.address,
+      asked: r.note === null || r.noteAt === null ? null : { note: r.note, at: r.noteAt.toISOString() },
+      canAsk: (r.status === 'scheduled' || r.status === 'crew_assigned') && r.startsAt.getTime() > now.getTime() && r.note === null,
+    }));
+  }
+
+  /**
+   * The customer asks for another time, in their words. The caller has already checked that the order is theirs; the visit must be this
+   * order's, still to come (booked, with or without a crew) and without a request waiting. One at a time: a second is refused until the
+   * office has answered the first by moving or cancelling the visit, or setting the request aside. It changes nothing about the visit
+   * (the office decides), so it does not move the visit's version under someone editing it. It is recorded with who asked and what.
+   */
+  async requestChange(companyId: string, orderId: string, visitId: string, noteRaw: unknown, asker: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    const checked = checkTimeRequest(noteRaw);
+    if (!checked.ok) return checked;
+    if (!UUID.test(visitId)) return { ok: false, error: 'That visit could not be found.' };
+    const now = this.clock();
+    return await this.db.transaction(async (tx) => {
+      const [row] = await tx.select().from(orderVisits).where(and(eq(orderVisits.id, visitId), eq(orderVisits.companyId, companyId), eq(orderVisits.orderId, orderId))).for('update');
+      if (row === undefined) return { ok: false as const, error: 'That visit could not be found.' };
+      if (row.status !== 'scheduled' && row.status !== 'crew_assigned') return { ok: false as const, error: 'This visit can no longer be moved from here. Please contact us.' };
+      if (row.startsAt.getTime() <= now.getTime()) return { ok: false as const, error: 'This visit is about to start or has started. Please contact us.' };
+      if (row.timeRequestNote !== null) return { ok: false as const, error: 'You have already asked for another time. We will be in touch.' };
+      await tx.update(orderVisits).set({ timeRequestNote: checked.note, timeRequestAt: now, updatedAt: now }).where(eq(orderVisits.id, visitId));
+      await this.note(tx, { companyId, userId: asker, crewOnly: false }, orderId, visitId, 'time_requested', { note: checked.note });
+      return { ok: true as const };
+    });
+  }
+
+  /** The office answers a request without moving the visit (it was settled by phone, or the visit stays): the request is set aside, with who did it. */
+  async setRequestAside(actor: VisitActor, id: string): Promise<DocResult<VisitView>> {
+    return await this.run(async (tx) => {
+      const row = await this.locked(tx, actor, id, 'reschedule');
+      if (row.timeRequestNote === null) return fail('not_found', 'This visit has no request waiting.');
+      await tx.update(orderVisits).set({ timeRequestNote: null, timeRequestAt: null, updatedAt: this.clock() }).where(eq(orderVisits.id, id));
+      await this.note(tx, actor, row.orderId, id, 'time_request_set_aside', { note: row.timeRequestNote });
+      return await this.reloaded(tx, actor, id);
+    });
   }
 
   /** Cancels visits that have not started for an order that is cancelled, refunded or failed (visits booked before they followed their order). Idempotent; returns how many. */
@@ -398,7 +444,7 @@ export class OrderVisits {
     const at = this.clock();
     const closed = await this.db
       .update(orderVisits)
-      .set({ status: 'cancelled', cancelledAt: at, cancelReason: VISIT_ORDER_CLOSED_REASON, version: sql`${orderVisits.version} + 1`, updatedAt: at })
+      .set({ status: 'cancelled', cancelledAt: at, cancelReason: VISIT_ORDER_CLOSED_REASON, timeRequestNote: null, timeRequestAt: null, version: sql`${orderVisits.version} + 1`, updatedAt: at })
       .where(and(inArray(orderVisits.status, ['scheduled', 'crew_assigned']), sql`exists (select 1 from ${orders} o where o.id = ${orderVisits.orderId} and o.status in ('cancelled','refunded','failed'))`))
       .returning({ id: orderVisits.id });
     return closed.length;
@@ -411,7 +457,7 @@ export class OrderVisits {
     return await this.run(async (tx) => {
       const row = await this.locked(tx, actor, id, 'cancel', input.expectedVersion);
       const now = this.clock();
-      await tx.update(orderVisits).set({ status: row.next, cancelledAt: now, cancelReason: reason, version: row.version + 1, updatedAt: now }).where(eq(orderVisits.id, id));
+      await tx.update(orderVisits).set({ status: row.next, cancelledAt: now, cancelReason: reason, timeRequestNote: null, timeRequestAt: null, version: row.version + 1, updatedAt: now }).where(eq(orderVisits.id, id));
       // A crew had been sent: that is a delivery that did not happen, with its reason, on the order's timeline.
       if (row.status !== 'scheduled') await OrderStages.moveIn(tx, row.orderId, 'delivery_failed', 'failed', { actor: { type: 'user', id: actor.userId }, reasonCode: 'visit_cancelled', message: `The visit was cancelled: ${reason}`, ref: { type: 'visit', id }, detail: { method: 'scheduled_visit' } });
       await this.note(tx, actor, row.orderId, id, 'cancelled', {}, reason);
