@@ -177,6 +177,11 @@ test.describe('visits', () => {
     await expect(card).toContainText('The customer asked for another time', { timeout: 30_000 });
     await expect(card).toContainText('Any weekday after the 20th');
     await noHorizontalScroll(page);
+    // They are also found in a list of their own, with a count.
+    await page.getByRole('button', { name: /^Asked for another time \(\d+\)$/ }).click();
+    await expect(card).toContainText('Any weekday after the 20th', { timeout: 30_000 });
+    await page.getByRole('button', { name: 'Coming up' }).click();
+    await expect(card).toBeVisible({ timeout: 30_000 });
     await card.getByRole('button', { name: 'Set the request aside' }).click();
     await expect(page.getByText('The request is set aside.')).toBeVisible({ timeout: 30_000 });
     await expect(card).not.toContainText('The customer asked for another time', { timeout: 30_000 });

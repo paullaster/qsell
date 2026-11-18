@@ -1376,6 +1376,8 @@ export const orderVisits = pgTable(
   (t) => [
     index('order_visits_company_start_idx').on(t.companyId, t.startsAt, t.id),
     index('order_visits_company_status_idx').on(t.companyId, t.status),
+    /** The visits a customer has asked another time for, found without reading the rest. */
+    index('order_visits_asked_idx').on(t.companyId, t.startsAt).where(sql`${t.timeRequestNote} IS NOT NULL`),
     uniqueIndex('order_visits_one_live_per_order_idx').on(t.orderId).where(sql`${t.status} <> 'cancelled'`),
     check('order_visits_status_chk', sql`${t.status} IN ('scheduled','crew_assigned','on_site','completed','signed_off','cancelled')`),
     check('order_visits_window_chk', sql`${t.endsAt} > ${t.startsAt}`),

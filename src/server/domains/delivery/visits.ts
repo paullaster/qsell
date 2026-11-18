@@ -82,6 +82,8 @@ export interface MaterialView {
 export interface VisitPage {
   rows: VisitView[];
   nextCursor: string | null;
+  /** How many visits (of those this person may see) have a customer's request for another time waiting for an answer. */
+  asked: number;
 }
 
 /** What the browser sent to book a visit: orderId, startsAt, endsAt, address, contactName, contactPhone, notes, items (words) and crewIds. All of it is checked here. */
@@ -208,17 +210,23 @@ export class OrderVisits {
   }
 
   /** Visits by their time, soonest first. A crew member sees theirs only. `status` narrows to one state; the live ones are the default. */
-  async list(actor: VisitActor, input: { status?: VisitStatus | 'live'; cursor?: string | null } = {}): Promise<VisitPage> {
+  async list(actor: VisitActor, input: { status?: VisitStatus | 'live' | 'asked'; cursor?: string | null } = {}): Promise<VisitPage> {
     const live = input.status === undefined || input.status === 'live';
+    const askedOnly = input.status === 'asked';
     const mine = actor.crewOnly ? sql`EXISTS (SELECT 1 FROM order_visit_crew c WHERE c.visit_id = ${orderVisits.id} AND c.user_id = ${actor.userId}::uuid)` : sql`true`;
-    const status = input.status === undefined || input.status === 'live' ? 'scheduled' : input.status;
-    const state = live ? sql`${orderVisits.status} NOT IN ('signed_off','cancelled')` : eq(orderVisits.status, status);
+    const status = input.status === undefined || input.status === 'live' || input.status === 'asked' ? 'scheduled' : input.status;
+    let state: SQL = eq(orderVisits.status, status);
+    if (askedOnly) state = sql`${orderVisits.timeRequestNote} IS NOT NULL`;
+    else if (live) state = sql`${orderVisits.status} NOT IN ('signed_off','cancelled')`;
     const after = typeof input.cursor === 'string' && input.cursor !== '' ? decodeCursor(input.cursor) : null;
     const seek = after === null || !UUID.test(after.id) || Number.isNaN(new Date(after.k).getTime()) ? sql`true` : sql`(${orderVisits.startsAt}, ${orderVisits.id}) > (${after.k}::timestamptz, ${after.id}::uuid)`;
-    const rows = await this.viewsIn(this.db, actor.companyId, and(state, mine, seek), PAGE + 1, actor);
+    const [rows, [waiting]] = await Promise.all([
+      this.viewsIn(this.db, actor.companyId, and(state, mine, seek), PAGE + 1, actor),
+      this.db.select({ n: sql<number>`count(*)::int` }).from(orderVisits).where(and(eq(orderVisits.companyId, actor.companyId), sql`${orderVisits.timeRequestNote} IS NOT NULL`, mine)),
+    ]);
     const page = rows.slice(0, PAGE);
     const last = page[page.length - 1];
-    return { rows: page, nextCursor: rows.length > PAGE && last !== undefined ? encodeCursor({ k: last.startsAt, id: last.id }) : null };
+    return { rows: page, nextCursor: rows.length > PAGE && last !== undefined ? encodeCursor({ k: last.startsAt, id: last.id }) : null, asked: waiting?.n ?? 0 };
   }
 
   /** The visit, locked, with the rules every step shares: it is this company's, the person may act on it, and the step is allowed from where it is. */

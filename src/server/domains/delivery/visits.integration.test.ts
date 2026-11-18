@@ -353,12 +353,19 @@ describe.skipIf(!has(url))('booked visits (database)', () => {
     const logged = await db.select().from(schema.decisionLog).where(and(eq(schema.decisionLog.subjectId, o), eq(schema.decisionLog.action, 'visit.time_requested')));
     expect(logged).toHaveLength(1);
     expect(logged[0]).toMatchObject({ actorId: 'customer-1' });
+    // The office finds the visits waiting for an answer in a list of their own, with a count; the crew's count is their own visits only.
+    const waiting = await c.orderVisits.list(office(), { status: 'asked' });
+    expect(waiting.rows.map((r) => r.id)).toContain(v.id);
+    expect(waiting.rows.every((r) => r.timeRequest !== null)).toBe(true);
+    expect(waiting.asked).toBeGreaterThanOrEqual(1);
+    expect((await c.orderVisits.list(crewOf(randomUUID()), { status: 'asked' })).asked).toBe(0);
     // One at a time.
     expect(await ask('Friday')).toMatchObject({ ok: false, error: expect.stringContaining('already asked') as string });
     // The office can set it aside without moving the visit.
     const aside = await must(c.orderVisits.setRequestAside(office(), v.id));
     expect(aside.timeRequest).toBeNull();
     expect(aside.version).toBe(v.version);
+    expect((await c.orderVisits.list(office(), { status: 'asked' })).rows.map((r) => r.id)).not.toContain(v.id);
     expect(await c.orderVisits.setRequestAside(office(), v.id)).toMatchObject({ ok: false, reason: 'not_found' });
     // Asked again, then answered by moving the visit: the request goes with the move.
     expect(await ask('Any day after the 20th')).toEqual({ ok: true });

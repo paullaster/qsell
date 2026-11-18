@@ -18,6 +18,7 @@ type Loaded = Awaited<ReturnType<typeof visitsPageAction>>;
 const TONES: Record<VisitStatus, 'green' | 'amber' | 'red' | 'sky' | 'gray'> = { scheduled: 'amber', crew_assigned: 'sky', on_site: 'sky', completed: 'amber', signed_off: 'green', cancelled: 'gray' };
 const FILTERS: { id: string; label: string }[] = [
   { id: 'live', label: 'Coming up' },
+  { id: 'asked', label: 'Asked for another time' },
   { id: 'signed_off', label: 'Signed off' },
   { id: 'cancelled', label: 'Cancelled' },
 ];
@@ -30,10 +31,12 @@ export function VisitsClient({ firstPromise }: { firstPromise: ReturnType<typeof
 function Screen() {
   const [notice, setNotice] = useState<Notice>(null);
   const [status, setStatus] = useState('live');
+  const [asked, setAsked] = useState(0);
   const list = usePagedList<VisitView, { status: string }>({
     load: async (filters, cursor) => {
       const result = await visitsPageAction({ status: filters.status, cursor });
       if (!result.ok) return { ok: false, error: result.error };
+      setAsked(result.data.asked);
       return { ok: true, data: { rows: result.data.rows, nextCursor: result.data.nextCursor } };
     },
     filters: { status },
@@ -51,7 +54,7 @@ function Screen() {
         <div className="flex flex-wrap gap-2" role="group" aria-label="Show">
           {FILTERS.map((f) => (
             <button key={f.id} type="button" className={status === f.id ? primaryClass : buttonClass} aria-pressed={status === f.id} onClick={() => setStatus(f.id)}>
-              {f.label}
+              {f.id === 'asked' && asked > 0 ? `${f.label} (${String(asked)})` : f.label}
             </button>
           ))}
         </div>

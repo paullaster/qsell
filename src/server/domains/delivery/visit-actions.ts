@@ -22,13 +22,13 @@ async function actorOf(ctx: { companyId: string; userId: string }): Promise<Visi
   return { companyId: ctx.companyId, userId: ctx.userId, crewOnly: !(await canPermission('visits:manage')) };
 }
 
-const STATUSES: readonly string[] = ['live', 'scheduled', 'crew_assigned', 'on_site', 'completed', 'signed_off', 'cancelled'];
+const STATUSES: readonly string[] = ['live', 'asked', 'scheduled', 'crew_assigned', 'on_site', 'completed', 'signed_off', 'cancelled'];
 
 /** Visits by their time, soonest first. */
 export async function visitsPageAction(raw?: unknown) {
   return await runDelivery('visits:work', async (ctx) => {
     const i = objectOf(raw);
-    const status = typeof i.status === 'string' && STATUSES.includes(i.status) ? (i.status as VisitStatus | 'live') : 'live';
+    const status = typeof i.status === 'string' && STATUSES.includes(i.status) ? (i.status as VisitStatus | 'live' | 'asked') : 'live';
     return await getContainer().orderVisits.list(await actorOf(ctx), { status, cursor: typeof i.cursor === 'string' ? i.cursor : null });
   });
 }
