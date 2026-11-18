@@ -10,6 +10,7 @@ import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import type { Choice } from '@/lib/payment-options';
 import { moveStop, type RunAction, type RunStatus } from '@/lib/dispatch-run';
 import { litres, loadWords } from '@/lib/delivery-vehicle';
+import { kmWords, routeSavingWords } from '@/lib/route-plan';
 
 type Loaded = Awaited<ReturnType<typeof runAction>>;
 
@@ -35,7 +36,7 @@ function Screen({ initial }: { initial: RunView }) {
   const [rider, setRider] = useState<Choice | null>(null);
   const [vehicle, setVehicle] = useState<Choice | null>(null);
 
-  const run = async (body: Record<string, unknown>, done: string, after?: () => void) => {
+  const run = async (body: Record<string, unknown>, done: string | ((next: RunView, before: RunView) => string), after?: () => void) => {
     setBusy(true);
     setNotice(null);
     const result = await attempt(runStepAction({ runId: view.id, expectedVersion: view.version, ...body }));
@@ -44,8 +45,9 @@ function Screen({ initial }: { initial: RunView }) {
       setNotice({ kind: 'error', text: result.error });
       return;
     }
+    const said = typeof done === 'string' ? done : done(result.data, view);
     setView({ ...result.data, vehicleNote: null });
-    setNotice({ kind: 'ok', text: result.data.vehicleNote === null || result.data.vehicleNote === undefined ? done : `${done} ${result.data.vehicleNote}` });
+    setNotice({ kind: 'ok', text: result.data.vehicleNote === null || result.data.vehicleNote === undefined ? said : `${said} ${result.data.vehicleNote}` });
     after?.();
   };
 
@@ -129,11 +131,22 @@ function Screen({ initial }: { initial: RunView }) {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-bold text-fg-strong">Stops, in order</h3>
           {view.editable && view.stops.length > 1 ? (
-            <button type="button" className={buttonClass} disabled={busy} onClick={() => void run({ step: 'arrange' }, 'The stops are in the suggested order: nearest next, from the branch.')}>
-              Nearest first
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className={buttonClass} disabled={busy} onClick={() => void run({ step: 'arrange', planner: 'nearest' }, 'The stops are in the suggested order: nearest next, from the branch.')}>
+                Nearest first
+              </button>
+              <button type="button" className={buttonClass} disabled={busy} onClick={() => void run({ step: 'arrange', planner: 'shortest' }, (next, before) => routeSavingWords(before.route?.km ?? null, next.route?.km ?? null))}>
+                Shortest route
+              </button>
+            </div>
           ) : null}
         </div>
+        {view.route === null ? null : (
+          <p className="text-xs text-fg-muted" data-testid="route-length">
+            The route is about {kmWords(view.route.km)} in straight lines from the branch.
+            {view.route.unpinned === 0 ? '' : ` ${String(view.route.unpinned)} ${view.route.unpinned === 1 ? 'stop has' : 'stops have'} no map pin and ${view.route.unpinned === 1 ? 'is' : 'are'} not counted.`}
+          </p>
+        )}
         {view.stops.length === 0 ? (
           <p role="status" className="text-sm text-fg-muted">
             No delivery is on this run yet. Put ready deliveries on it from the dispatch board.

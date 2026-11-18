@@ -69,7 +69,7 @@ export async function runStepAction(raw: unknown) {
         case 'assign_vehicle':
           return dataOf(await runs.assignVehicle(actor, id, { vehicleId: i.vehicleId, vehicle: i.vehicle }, version));
         case 'arrange':
-          return dataOf(await runs.arrange(actor, id, version));
+          return dataOf(await runs.arrange(actor, id, version, i.planner === undefined ? 'nearest' : i.planner));
         case 'start':
           return sent(dataOf(await runs.start(actor, id, version)));
         case 'complete':
