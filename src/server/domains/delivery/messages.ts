@@ -46,7 +46,7 @@ function shownRecipient(channel: string, recipient: string | null): string {
   return recipient === null ? '' : maskedPhone(recipient);
 }
 
-const viewOfMessage = (r: typeof deliveryMessages.$inferSelect): MessageView => ({ id: r.id, kind: r.kind, channel: r.channel, status: r.status, recipient: shownRecipient(r.channel, r.recipient), attempts: r.attempts, note: r.lastError, createdAt: r.createdAt.toISOString(), sentAt: r.sentAt?.toISOString() ?? null });
+export const viewOfMessage = (r: typeof deliveryMessages.$inferSelect): MessageView => ({ id: r.id, kind: r.kind, channel: r.channel, status: r.status, recipient: shownRecipient(r.channel, r.recipient), attempts: r.attempts, note: r.lastError, createdAt: r.createdAt.toISOString(), sentAt: r.sentAt?.toISOString() ?? null });
 
 /** The wait before another try: 5 minutes, then 10, 20, 40. */
 export const retryWaitMinutes = (attempts: number): number => 5 * 2 ** Math.max(0, attempts - 1);

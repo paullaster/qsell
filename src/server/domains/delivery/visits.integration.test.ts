@@ -285,6 +285,17 @@ describe.skipIf(!has(url))('booked visits (database)', () => {
     expect(mine().some((m) => m.subject.includes('has moved'))).toBe(false);
     const skipped = (await queued('visit_moved')).concat(await queued('visit_booked')).filter((m) => m.status === 'skipped' || m.status === 'sent');
     expect(skipped.length).toBeGreaterThanOrEqual(1);
+    // The office sees what was written, in order, with the address hidden and whether it left; the crew see none of it; another visit's messages are not mixed in.
+    const told = (await c.orderVisits.view(office(), v.id))?.messages ?? [];
+    expect(told.map((m) => m.kind)).toEqual(['visit_booked', 'visit_moved', 'visit_cancelled']);
+    expect(told.every((m) => m.channel === 'email')).toBe(true);
+    expect(told.some((m) => m.status === 'sent')).toBe(true);
+    expect(told.every((m) => m.recipient === '' || m.recipient.includes('*'))).toBe(true);
+    expect(JSON.stringify(told)).not.toMatch(/vs-[0-9a-f]{8}-/);
+    const member = await staff();
+    const crewed = await must(book(await order(), { crewIds: [member] }));
+    expect((await c.orderVisits.view(office(), crewed.id))?.messages.map((m) => m.kind)).toEqual(['visit_booked']);
+    expect((await c.orderVisits.view(crewOf(member), crewed.id))?.messages).toEqual([]);
     // The order's own cancellation closes visits quietly: no second message for it.
     const other = await order();
     const open = await must(book(other));

@@ -17,9 +17,9 @@ import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, car
 import { METHOD_WORDS } from '@/lib/delivery-methods';
 import type { DeliveryAction, DeliveryStatus } from '@/lib/delivery-document';
 import type { Choice } from '@/lib/payment-options';
-import { KIND_WORDS, isMessageKind } from '@/lib/delivery-messages';
 import { pinText, readPinText } from '@/lib/pin-text';
 import type { GeoPoint } from '@/lib/geo';
+import { MessageList } from './MessageList';
 
 type Loaded = Awaited<ReturnType<typeof deliveryAction>>;
 
@@ -50,8 +50,6 @@ const DONE: Record<DeliveryAction, string> = {
   cancel: 'Cancelled. What it carried is open on the order again.',
 };
 
-const MESSAGE_TONE = { sent: 'green', failed: 'red', skipped: 'gray', queued: 'gray' } as const;
-const MESSAGE_WORDS = { sent: 'Sent', failed: 'Not sent yet', skipped: 'Not sent', queued: 'Waiting to send' } as const;
 const ATTEMPT_TONE = (result: string): 'green' | 'amber' | 'red' => {
   if (result === 'delivered') return 'green';
   return result === 'part_accepted' ? 'amber' : 'red';
@@ -648,19 +646,7 @@ function DeliveryScreen({ initial, canFulfil, initialExtras }: { initial: Delive
       {extra.messages.length === 0 ? null : (
         <section aria-label="Messages to the customer" className={`${cardClass} space-y-3`}>
           <h2 className="text-sm font-bold text-fg-strong">Messages to the customer</h2>
-          <ul className="space-y-1.5">
-            {extra.messages.map((m) => (
-              <li key={m.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-                <span className="font-semibold text-fg-strong">{isMessageKind(m.kind) ? KIND_WORDS[m.kind] : m.kind}{m.channel === 'sms' ? ' (text message)' : ''}</span>
-                <Chip tone={MESSAGE_TONE[m.status]}>{MESSAGE_WORDS[m.status]}</Chip>
-                <span className="text-xs text-fg-muted">
-                  {m.recipient === '' ? '' : `to ${m.recipient} · `}
-                  {when(m.sentAt ?? m.createdAt)}
-                </span>
-                {m.note === null ? null : <span className="text-xs text-fg-muted">{m.note}</span>}
-              </li>
-            ))}
-          </ul>
+          <MessageList messages={extra.messages} label="Messages sent" />
         </section>
       )}
 
