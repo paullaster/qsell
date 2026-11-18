@@ -124,6 +124,12 @@ Every client sends text messages through their own SMS provider, so the provider
 
 The keys are sealed when saved, are never shown again (not in the list, not when the connection is opened to change it) and are used only at the moment a message is sent. Which fields are secret is part of each provider's definition. Nothing is sent by the test except a fixed sentence naming the business (*Test message from …: your SMS provider is connected.*), so the button cannot be used to send anything else; the number typed is not kept, and the same connection can be tested once every half minute. A client whose provider is not in the list needs a new adapter built (a development task, not a setting); the screen and everything that sends messages stay as they are.
 
+### 7e. Partial billing (`/admin/settings/partial-billing`)
+Whether a **sales order can be invoiced in parts**. Behind its **own permission, *Partial billing: manage*** (in the *Orders & Sales* group), which **no other permission includes**: only people you give it to can switch the feature on or off. **Off by default.**
+- **Switch on / Switch off**: asks for a **reason**, records who changed it, from what, to what and why (the decision log), and shows who last changed it. Switching on to what it already is, is refused.
+- **What it changes**: when on, a sales order that has no tax invoice yet can be invoiced **in parts** from *Sales invoices* (see the Sales Invoicing guide); when off, an order has one invoice for the whole order. **Turning it off never strands an order**: one already invoiced in parts can still be finished with *Invoice what is left*.
+- **Go-live check**: switch it on, raise two part invoices for a test order, confirm the numbers follow the tax invoice series, that each signs with KRA on its own, and that a credit note can be raised against one of them.
+
 ### 7d. Registers (`/admin/settings/registers`)
 The **tills** of each branch, and how far a till may be out. Behind its own permission (**Registers**, in the *Company & Settings* group); every change needs a reason and is recorded.
 - **Tills**: **Add a till** (a name of up to 60 characters, unique within its branch, and the **branch** it is in); **Change** renames it, moves it or switches it off. A till that is *Switched off* cannot have a shift opened on it, and **a till with a shift open cannot be switched off** until that shift is closed. Each row shows whether it is in use and, when a shift is open, **who has it**.

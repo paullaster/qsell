@@ -102,11 +102,13 @@ const invoiceableOrders = tableSource({
     acceptFilters(filters, {});
     return [
       sql`NOT EXISTS (SELECT 1 FROM invoice_documents d WHERE d.order_id = ${orders.id} AND d.document_type = 'tax_invoice')`,
+      // An order invoiced in parts drops out once a part has finished it.
+      sql`NOT EXISTS (SELECT 1 FROM order_billings b WHERE b.order_id = ${orders.id} AND b.finishes_order)`,
       sql`${orders.approvalStatus} NOT IN ('pending', 'rejected', 'draft')`,
       sql`${orders.status} NOT IN ('cancelled', 'failed')`,
     ];
   },
-  toOption: (row) => ({ id: String(row.id), label: String(row.label), description: `${String(row.customer)} · ${String(row.currency)} ${String(row.total)}`, badge: null }),
+  toOption: (row) => ({ id: String(row.id), label: String(row.label), description: `${String(row.customer)} · ${String(row.currency)} ${String(row.total)}`, badge: null, meta: { currency: String(row.currency) } }),
 });
 
 const COUNTER_KIND_WORDS: Record<string, string> = { cash: 'Cash', card: 'Card', mobile_money: 'M-Pesa or mobile money' };

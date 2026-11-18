@@ -113,6 +113,7 @@ const SEED_ROLES: SeedRole[] = [
       'cash_sales:read',
       'cash_sales:create',
       'cash_sales:return',
+      'partial_billing:manage',
       'sales_invoices:read',
       'sales_invoices:create',
       'sales_invoices:send',

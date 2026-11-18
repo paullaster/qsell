@@ -40,6 +40,7 @@ export const REASON_LOOKUP_SOURCES: LookupSource[] = [
   reasons('selling-reasons', 'selling_settings:manage'),
   reasons('shift-reasons', 'registers:manage'),
   reasons('return-reasons', 'cash_sales:return'),
+  reasons('billing-reasons', 'partial_billing:manage'),
   reasons('approval-config-reasons', 'approvals:manage'),
   reasons('approval-reasons', 'approvals:act'),
   reasons('pricing-reasons', 'pricing:read', sql`(jsonb_array_length(${reasonCodes.appliesTo}) = 0 or ${reasonCodes.appliesTo} @> '["pricing_configuration"]'::jsonb)`),

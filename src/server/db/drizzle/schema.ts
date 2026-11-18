@@ -4856,6 +4856,64 @@ export const shiftVariancePostings = pgTable(
   ],
 );
 
+/** Whether a company invoices part of an order (docs/architecture/partial-billing.md). Off by default; changed only with its own permission. */
+export const billingSettings = pgTable('billing_settings', {
+  companyId: uuid('company_id').primaryKey().references(() => companySettings.id, { onDelete: 'cascade' }),
+  partialBilling: boolean('partial_billing').notNull().default(false),
+  version: integer('version').notNull().default(1),
+  updatedBy: text('updated_by').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * A part invoice: some lines of an order, by quantity, as a tax invoice of its own (its own number from the tax invoice series, its own
+ * signing). Numbered 1, 2, 3 for the order. A billing is a document: it is never changed (only its KRA status is written, by signing).
+ */
+export const orderBillings = pgTable(
+  'order_billings',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    orderId: text('order_id').notNull().references(() => orders.id, { onDelete: 'restrict' }),
+    sequence: integer('sequence').notNull(),
+    invoiceNumber: text('invoice_number').notNull(),
+    goodsAmount: numeric('goods_amount', { precision: 14, scale: 2 }).notNull(),
+    /** What this invoice takes beyond its goods: the delivery charge and any rounding, on the invoice that finishes the order. */
+    remainderAmount: numeric('remainder_amount', { precision: 14, scale: 2 }).notNull().default('0'),
+    taxAmount: numeric('tax_amount', { precision: 14, scale: 2 }).notNull(),
+    totalAmount: numeric('total_amount', { precision: 14, scale: 2 }).notNull(),
+    finishesOrder: boolean('finishes_order').notNull().default(false),
+    kraStatus: text('kra_status').notNull().default('not_applicable'),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('order_billings_order_sequence_uidx').on(t.orderId, t.sequence),
+    uniqueIndex('order_billings_invoice_number_uidx').on(t.invoiceNumber),
+    index('order_billings_company_created_idx').on(t.companyId, t.createdAt),
+    check('order_billings_amounts_chk', sql`${t.goodsAmount} > 0 AND ${t.remainderAmount} >= 0 AND ${t.totalAmount} = ${t.goodsAmount} + ${t.remainderAmount}`),
+  ],
+);
+
+export const orderBillingLines = pgTable(
+  'order_billing_lines',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    billingId: uuid('billing_id').notNull().references(() => orderBillings.id, { onDelete: 'restrict' }),
+    orderItemId: uuid('order_item_id').notNull().references(() => orderItems.id, { onDelete: 'restrict' }),
+    productId: text('product_id').notNull(),
+    description: text('description').notNull(),
+    quantity: quantity('quantity').notNull(),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+  },
+  (t) => [
+    index('order_billing_lines_billing_idx').on(t.billingId),
+    index('order_billing_lines_item_idx').on(t.orderItemId),
+    uniqueIndex('order_billing_lines_billing_item_uidx').on(t.billingId, t.orderItemId),
+    check('order_billing_lines_chk', sql`${t.quantity} > 0 AND ${t.amount} >= 0`),
+  ],
+);
+
 export const shiftSettings = pgTable(
   'shift_settings',
   {

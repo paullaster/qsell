@@ -1397,6 +1397,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'sms:manage',
       },
       {
+        id: 'settings-partial-billing',
+        title: 'Partial billing',
+        name: 'settings-partial-billing',
+        href: '/admin/settings/partial-billing',
+        description: 'Switch invoicing part of a sales order (a tax invoice for some lines or quantities) on or off for the company',
+        icon: 'FileCheck',
+        permission: 'partial_billing:manage',
+      },
+      {
         id: 'settings-registers',
         title: 'Registers',
         name: 'settings-registers',

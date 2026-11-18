@@ -353,6 +353,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'Email Routing',
       'Selling Documents',
       'Registers',
+      'Partial billing',
     ],
   },
   {

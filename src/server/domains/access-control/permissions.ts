@@ -597,6 +597,12 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'See till shifts and their X and Z reports',
   },
+  'partial_billing:manage': {
+    resource: 'partial_billing',
+    action: 'manage',
+    category: 'Orders & Sales',
+    description: 'Switch invoicing part of an order (a tax invoice for some lines or quantities) on or off for the company: its own permission, held by no other role',
+  },
   'cash_sales:read': {
     resource: 'cash_sales',
     action: 'read',

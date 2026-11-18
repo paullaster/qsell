@@ -10,15 +10,17 @@ import { SegmentedChoice } from '@/components/ui/SegmentedChoice';
 import { useDebouncedValue } from '@/components/ui/useDebouncedValue';
 import { usePagedList } from '@/components/ui/usePagedList';
 import type { Choice } from '@/lib/payment-options';
+import { PartInvoicePanel } from './PartInvoicePanel';
 import { SalesOrderEditor } from '@/components/admin/sales-orders/SalesOrderEditor';
 import { SalesInvoiceDetail } from './SalesInvoiceDetail';
 
 type FirstPage = Awaited<ReturnType<typeof salesInvoicesPageAction>>;
-type Kind = '' | 'tax_invoice' | 'proforma' | 'delivery_invoice';
+type Kind = '' | 'tax_invoice' | 'tax_invoice_part' | 'proforma' | 'delivery_invoice';
 
 const KINDS: readonly { value: Kind; label: string }[] = [
   { value: '', label: 'All' },
   { value: 'tax_invoice', label: 'Tax invoices' },
+  { value: 'tax_invoice_part', label: 'Part invoices' },
   { value: 'proforma', label: 'Proforma' },
   { value: 'delivery_invoice', label: 'Delivery' },
 ];
@@ -97,6 +99,7 @@ function Body({ first }: { first: Extract<FirstPage, { ok: true }> }) {
             <ChoicePicker key={pickerKey} label="Order to invoice" source="invoiceable-orders" choice={order} onChoice={setOrder} placeholder="Search by order number or customer…" />
             <button type="button" className={`${primaryClass} self-end`} disabled={order === null || raising} onClick={() => void raise()}>{raising ? 'Raising…' : 'Raise invoice'}</button>
           </div>
+          {order === null ? null : <PartInvoicePanel key={order.id} orderId={order.id} currency={order.meta?.currency ?? 'KES'} onIssued={(text) => { setNotice({ kind: 'ok', text }); list.reload(); }} />}
         </section>
       ) : null}
       <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">

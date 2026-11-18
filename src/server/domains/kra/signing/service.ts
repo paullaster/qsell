@@ -9,6 +9,8 @@ import {
   customerLedgerEntries,
   customers,
   kraSigningEvents,
+  orderBillingLines,
+  orderBillings,
   orderDeliveries,
   orderItems,
   orders,
@@ -230,6 +232,55 @@ export class DocumentSigningService {
                 eq(customerLedgerEntries.documentType, 'invoice'),
               ),
             );
+        },
+      });
+    } catch (error: unknown) {
+      return this.unexpected(error);
+    }
+  }
+
+  /**
+   * One part invoice of an order (invoicing part of an order, by quantity): signed on its own, as its own source, so its log and its
+   * status are not mixed with another part's. The lines are the ones this invoice took; the invoice that finishes the order also
+   * carries the delivery charge as the delivery service item, as the whole-order invoice does. The order's own KRA status follows
+   * the most recent result.
+   */
+  async processOrderBillingDocument(input: { billingId: string }): Promise<SigningResult> {
+    try {
+      const [billing] = await this.db.select().from(orderBillings).where(eq(orderBillings.id, input.billingId)).limit(1);
+      if (!billing) throw new Error(`Part invoice ${input.billingId} not found`);
+      const [order] = await this.db.select().from(orders).where(eq(orders.id, billing.orderId)).limit(1);
+      if (!order) throw new Error(`Order ${billing.orderId} not found`);
+      const companyId = await this.companyIdFor(order.tradeCustomerId, order.branchId);
+      return await this.processDocument({
+        source: { kind: 'order_billing', id: billing.id, ref: `${order.orderNumber} part ${String(billing.sequence)}` },
+        companyId,
+        branchId: order.branchId,
+        module: isSigningModule(order.salesModule) ? order.salesModule : 'ecommerce',
+        documentType: 'tax_invoice',
+        customerFlag: has(order.tradeCustomerId) ? order.transmitInvoicesToKra : null,
+        buildInvoice: async () => {
+          const lines = await this.db.select().from(orderBillingLines).where(eq(orderBillingLines.billingId, billing.id));
+          const goods = lines.map((l) => ({ productId: l.productId, qty: l.quantity, unitPrice: l.quantity > 0 ? Math.round((Number(l.amount) / l.quantity) * 100) / 100 : 0, amount: Number(l.amount) }));
+          // The invoice that finishes the order also carries what the lines do not: the delivery charge.
+          let delivery: { productId: string; qty: number; unitPrice: number; amount: number }[] = [];
+          if (Number(billing.remainderAmount) > 0) {
+            const plan = await invoicePlanFor(this.db, companyId, order.id, 'tax_invoice');
+            delivery = [await this.deliveryLine(plan)];
+          }
+          return {
+            traderInvoiceNo: billing.invoiceNumber,
+            currency: order.currency,
+            totalAmount: Number(billing.totalAmount),
+            salesDate: new Date(),
+            customerPin: (await this.buyerPin(order.tradeCustomerId)) ?? undefined,
+            lines: [...goods, ...delivery],
+          };
+        },
+        onStatus: async (status) => {
+          await this.db.update(orderBillings).set({ kraStatus: status }).where(eq(orderBillings.id, billing.id));
+          const { stage, outcome } = stageForKra(status);
+          await OrderStages.move(this.db, order.id, stage, outcome, { source: 'worker', detail: { status, billing: billing.sequence } });
         },
       });
     } catch (error: unknown) {
