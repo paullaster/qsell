@@ -20,6 +20,23 @@ describe('the admin sidebar', () => {
     expect(where('pricing')).toBe('sales');
   });
 
+  it('labels the web shop order screen under Sales', () => {
+    const item = all.find((x) => x.item.id === 'orders');
+    expect(item?.path).toEqual(['sales']);
+    expect(item?.item.title).toBe('Web Shop Orders');
+    expect(item?.item.href).toBe('/admin/orders');
+  });
+
+  it('opens Customers on a hub with List and Customer groups', () => {
+    const parent = all.find((x) => x.item.id === 'customers')?.item;
+    expect(parent?.href).toBe('/admin/customers');
+    expect(parent?.subLinks?.map((x) => x.id)).toEqual(['customers-list', 'pricing-groups']);
+    const list = all.find((x) => x.item.id === 'customers-list')?.item;
+    expect(where('customers-list')).toBe('sales/customers');
+    expect(list?.title).toBe('List');
+    expect(list?.href).toBe('/admin/customers/list');
+  });
+
   it('keeps every pricing screen together under Sales > Pricing, except the master data they use', () => {
     const own = all.filter((x) => x.item.id.startsWith('pricing-')).map((x) => x.item.id);
     for (const id of [
@@ -84,6 +101,7 @@ describe('who sees what in the admin sidebar', () => {
 
   it('hides a section whose own permission is missing, along with everything under it', () => {
     expect(as('pricing:read')).not.toContain('pricing-groups');
+    expect(as('customers:read')).toContain('customers-list');
   });
 
   it('never shows a disabled item, nor anything under it', () => {

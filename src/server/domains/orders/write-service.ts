@@ -59,9 +59,9 @@ export function lineAmounts(
 }
 
 /** Who placed an order and from where, for its first event: a shopper at the shop, staff at the till, staff in the office. */
-function placedBy(channel: string, customerId: string | null, requestedBy: string | null): { source: StageSource; actor: StageActor } {
-  if (channel === 'ecommerce') return { source: 'shop', actor: { type: 'customer', id: customerId } };
-  return { source: channel === 'pos_cash_sale' ? 'pos' : 'staff', actor: { type: 'user', id: requestedBy } };
+function placedBy(origin: string, customerId: string | null, requestedBy: string | null): { source: StageSource; actor: StageActor } {
+  if (origin === 'ecommerce' && requestedBy === null) return { source: 'shop', actor: { type: 'customer', id: customerId } };
+  return { source: origin === 'pos_cash_sale' ? 'pos' : 'staff', actor: { type: 'user', id: requestedBy } };
 }
 
 /** What the shopper is told when the database refused the order. */
@@ -889,7 +889,7 @@ export const OrderWriteService = {
             // An order collected from a branch gets its code in the same transaction, so there is never one without the other.
             if (params.delivery.method === 'pickup') await getContainer().orderCollections.issue(tx, { companyId: company.id, orderId: saved.id, branchId: delivered.branch.id, actor });
             await OrderStages.moveIn(tx, saved.id, 'charge_quoted', 'succeeded', {
-              ...placedBy(channel, params.customerId ?? null, params.requestedBy ?? null),
+              ...placedBy(params.salesModule ?? 'ecommerce', params.customerId ?? null, params.requestedBy ?? null),
               ref: { type: 'delivery_quote', id: saved.id },
               message: delivered.choice.words,
               detail: { charge: delivered.quote.split.gross, tax: delivered.quote.split.tax, policy: delivered.quote.policy === null ? null : `${delivered.quote.policy.code} v${String(delivered.quote.policy.version)}`, branch: delivered.branch.code },
@@ -970,7 +970,7 @@ export const OrderWriteService = {
         },
         // Who placed it and from where is the first event of the order's timeline; a shop checkout carries the time the shopper started it.
         {
-          ...placedBy(channel, params.customerId ?? null, params.requestedBy ?? null),
+          ...placedBy(params.salesModule ?? 'ecommerce', params.customerId ?? null, params.requestedBy ?? null),
           startedAt: params.checkoutStartedAt ?? null,
         },
       );

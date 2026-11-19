@@ -143,10 +143,11 @@ export const ADMIN_NAV: AdminNavItem[] = [
       },
       {
         id: 'orders',
-        title: 'Customer Orders',
+        title: 'Web Shop Orders',
         name: 'orders',
         href: '/admin/orders',
-        description: 'Process orders, track couriers, and print packing slips',
+        description:
+          'Review and fulfil orders customers placed through the web shop; track delivery and print packing slips',
         icon: 'ShoppingBag',
         permission: 'orders:read',
       },
@@ -186,6 +187,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         icon: 'Users',
         permission: 'customers:read',
         subLinks: [
+          {
+            id: 'customers-list',
+            title: 'List',
+            name: 'customers-list',
+            href: '/admin/customers/list',
+            description: 'Search customer cards and open a customer centre',
+            icon: 'ClipboardList',
+            permission: 'customers:read',
+          },
           {
             id: 'pricing-groups',
             title: 'Customer groups',

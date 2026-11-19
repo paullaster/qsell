@@ -7,7 +7,7 @@ import type { PageInput } from '@/server/domains/settings/paging';
 import { accountTypeOf, blockOf } from '@/lib/customer-forms';
 import type { CustomerLedgerEntryRow, CustomerRow, DimensionCodesProjection } from '@/server/db/drizzle/schema';
 
-const PATHS = ['/admin/customers'];
+const PATHS = ['/admin/customers', '/admin/customers/list'];
 
 /** The customer rules speak in words meant for the person ("already exists", "credit limit", "not found"). */
 const friendly = (error: unknown): string | null => {
@@ -38,6 +38,27 @@ export async function customerLedgerAction(id: string) {
     const found = await getContainer().customers.getCustomer(companyId, id);
     if (found === null) throw new SettingsError('That customer does not exist.', 'NOT_FOUND');
     return found.ledger;
+  });
+}
+
+export interface CustomerCard {
+  customer: CustomerRow;
+  ledger: CustomerLedgerEntryRow[];
+  profileLabel: string;
+}
+
+/** One customer card with the ledger open items and profile label needed by the centre and edit screens. */
+export async function customerCardAction(id: string) {
+  return await runSetting('customers:read', async ({ companyId }): Promise<CustomerCard> => {
+    const found = await getContainer().customers.getCustomer(companyId, id);
+    if (found === null) throw new SettingsError('That customer does not exist.', 'NOT_FOUND');
+    let profileLabel = '';
+    const profileId = found.customer.profileId;
+    if (profileId !== null && profileId !== '') {
+      const profile = await getContainer().customers.getProfile(companyId, profileId);
+      profileLabel = profile === null ? '' : `${profile.code} — ${profile.name}`;
+    }
+    return { customer: found.customer, ledger: found.ledger, profileLabel };
   });
 }
 
@@ -79,7 +100,7 @@ export async function saveCustomerAction(input: CustomerInput) {
       const { accountType, blocked, ...rest } = input;
       return await getContainer().customers.saveCustomer(companyId, { ...rest, accountType: accountTypeOf(accountType), blocked: blockOf(blocked) });
     },
-    { paths: PATHS, friendly },
+    { paths: [...PATHS, ...(input.id !== undefined && input.id !== '' ? [`/admin/customers/${input.id}`, `/admin/customers/${input.id}/edit`] : [])], friendly },
   );
 }
 
@@ -90,7 +111,7 @@ export async function deleteCustomerAction(id: string) {
       await getContainer().customers.deleteCustomer(companyId, id);
       return { deleted: true };
     },
-    { paths: PATHS, friendly },
+    { paths: [...PATHS, `/admin/customers/${id}`, `/admin/customers/${id}/edit`], friendly },
   );
 }
 
@@ -98,7 +119,7 @@ export async function receivePaymentAction(customerId: string, amount: number, r
   return await runSetting(
     'transactions:post',
     ({ companyId }) => getContainer().customers.receivePayment(companyId, customerId, { amount, reference }),
-    { paths: [...PATHS, '/admin/transactions/ledger'], friendly },
+    { paths: [...PATHS, `/admin/customers/${customerId}`, `/admin/transactions/ledger`], friendly },
   );
 }
 

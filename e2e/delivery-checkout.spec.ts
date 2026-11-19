@@ -86,7 +86,7 @@ test.describe('delivery at the shop checkout', () => {
 
       // Staff see the order's delivery invoice only when the company bills delivery on an invoice of its own.
       const openOrder = async (): Promise<void> => {
-        await open(page, '/admin/orders', /Customer Orders/);
+        await open(page, '/admin/orders', /Web Shop Orders/);
         await page.getByLabel('Search orders').fill(orderNumber ?? '');
         const manage = page.getByRole('button', { name: /Manage/ }).first();
         await expect(manage).toBeVisible({ timeout: 60_000 });

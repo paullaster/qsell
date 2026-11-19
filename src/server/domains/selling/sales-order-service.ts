@@ -1,7 +1,8 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, not, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { customers, orders, users } from '@/server/db/drizzle/schema';
 import { OrderWriteService } from '@/server/domains/orders/write-service';
+import { WEB_SHOP_ORDER } from '@/server/domains/orders/order-origin';
 import type { PackageOrderService } from '@/server/domains/pricing/package-order-service';
 import { decodeCursor, escapeLike } from '@/server/domains/lookups/request';
 import { PAGE_SIZE, pageOf } from '@/server/domains/settings/paging';
@@ -132,6 +133,7 @@ export class SalesOrderService {
       .where(
         and(
           eq(orders.salesModule, kind),
+          kind === 'credit_sale' ? not(WEB_SHOP_ORDER) : undefined,
           input.status === undefined || input.status === '' ? undefined : eq(orders.status, input.status),
           query === '' ? undefined : sql`(${orders.orderNumber} ILIKE ${pattern} OR ${orders.customerName} ILIKE ${pattern})`,
           after === null ? undefined : sql`(${orders.createdAt}, ${orders.id}) < (${after.k}::timestamptz, ${after.id})`,
@@ -143,4 +145,3 @@ export class SalesOrderService {
     return { rows: page.rows.map((r) => ({ id: r.id, orderNumber: r.orderNumber, customerName: r.customerName, total: Number(r.total), currency: r.currency, status: r.status, paymentStatus: r.paymentStatus, approvalStatus: r.approvalStatus, createdAt: r.key })), nextCursor: page.nextCursor };
   }
 }
-

@@ -3236,6 +3236,7 @@ export const orders = pgTable(
       .on(t.currentStage, t.currentStageSince)
       .where(sql`${t.currentStage} IS NOT NULL`),
     index('orders_created_at_idx').on(t.createdAt),
+    index('orders_sales_module_created_idx').on(t.salesModule, t.createdAt, t.id),
     index('orders_branch_created_idx').on(t.branchId, t.createdAt),
     index('orders_payment_attention_idx')
       .on(t.branchId)
@@ -5312,6 +5313,7 @@ export const checkoutAttempts = pgTable(
   },
   (t) => [
     index('checkout_attempts_started_idx').on(t.startedAt),
+    index('checkout_attempts_order_channel_idx').on(t.orderId, t.channel),
     index('checkout_attempts_outcome_idx').on(t.outcome, t.startedAt),
     check(
       'checkout_attempts_outcome_chk',

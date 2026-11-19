@@ -1,4 +1,4 @@
-# Guide 03: Sales Quotes & Customer Orders (`/admin/sales`)
+# Guide 03: Sales Quotes & Web Shop Orders (`/admin/sales`)
 
 The **Sales & Fulfillment** module orchestrates the complete Order-to-Cash (O2C) lifecycle. It manages proforma sales quotations, omnichannel customer orders (online storefront, physical point-of-sale, and back-office credit sales), customer master cards, credit limit enforcement, newsletter subscribers, and product reviews.
 
@@ -37,7 +37,7 @@ graph TD
 ```
 
 1. **Active Sellable Products**: Products must be assigned a business classification marked as *"Sold to Customers"* with active selling prices.
-2. **Customer Master Cards**: Cash or credit customer accounts must exist under `/admin/customers`.
+2. **Customer Master Cards**: Cash or credit customer accounts must exist under `/admin/customers/list`.
 3. **Number Series**: Document number series for Sales Quotes (`QT-`) and Sales Orders (`ORD-`) must be active under `Settings > Number Series`.
 4. **Order SLA Targets**: Stage timeout targets should be defined under `Settings > Order Targets` to trigger late-stage notifications.
 5. **Staff Permissions**:
@@ -55,7 +55,7 @@ The Sales module coordinates five operational areas:
 graph LR
     subgraph SalesSubModules["Sales Sub-Modules"]
         Q["Sales Quotes\n(/admin/quotes)"]
-        O["Customer Orders\n(/admin/orders)"]
+        O["Web Shop Orders\n(/admin/orders)"]
         C["Customers\n(/admin/customers)"]
         N["Newsletter\n(/admin/newsletter)"]
         R["Product Reviews\n(/admin/reviews)"]
@@ -92,8 +92,8 @@ graph LR
 - **Quote windows**: The quote editor and the quote detail window open extra wide so the lines, prices and margins sit side by side; on a phone they fill the screen.
 - **Quote Detail Modal (`QuoteDetails`)**: Opens with *Created by* (name and time) and *Emailed to customer by* (name and time of the latest send), then shows the full proforma document view with actions to **Print PDF**, **Send via Email**, **Accept**, or **Convert to Order**.
 
-### Sub-Module 2: Customer Orders (`/admin/orders`)
-- **Orders List View**: Filterable by Channel (`Web Shop`, `Counter POS`, `Sales Rep`, `B2B Account`), Status (`Pending`, `Confirmed`, `Processing`, `Dispatched`, `Delivered`, `Cancelled`), Payment Status (`Unpaid`, `Paid`, `Partial`), and Branch.
+### Sub-Module 2: Web Shop Orders (`/admin/orders`)
+- **Orders List View**: Shows only orders placed through the web shop, including ones a shopper bought on account (their invoice is a credit sale, but the order still belongs here). Search by order number, customer, phone, email or tracking number; filter by Status (`Pending`, `Confirmed`, `Processing`, `Dispatched`, `Delivered`, `Cancelled`), Payment Status (`Unpaid`, `Paid`, `Partial`), and Branch.
 - **Order Details Modal (`OrderDetailsModal`)**: Comprehensive multi-tab operational hub:
   1. **Order Summary Tab**: Order lines, quantities, unit prices, applied coupons, delivery fees, and grand total.
   2. **Stage Timeline Panel (`OrderTimelinePanel`)**: Visual vertical timeline showing every stage event with exact server timestamps, actors, and duration spent in each stage.
@@ -113,12 +113,11 @@ For a business that makes what it sells to order (meals, catering, assembled set
 - **Not built yet**: a per-package filter and a count of what is already made.
 
 ### Sub-Module 3: Customers (`/admin/customers`)
-- **Customer Directory**: Tabular list showing Account Code, Customer Name, Account Type (`Cash` or `Credit`), Phone, Email, City, Balance Owed, and Status (`Active`, `Suspended`).
-- **Customer Card Details**:
-  - **Identity & Legal**: Name, Trading Name, KRA PIN, Identity Document (National ID / Passport / Incorporation Cert).
-  - **Credit Terms & Risk**: Credit limit (e.g. KES 500,000), payment grace period (e.g. 30 days), and price group assignment (e.g. *Wholesale Tier 1*).
-  - **Billing & Shipping Addresses**: Multiple physical delivery locations with geo-coordinates.
-  - **Dimension Bindings (`DimensionFields`)**: Cost center, sales territory, or industry vertical tags for financial reporting.
+- **Customer Hub (`/admin/customers`)**: Customers is a parent module like Sales and Pricing. It reveals **List** (`/admin/customers/list`) and **Customer groups** (`/admin/pricing/groups`); the directory is only shown after **List** is chosen.
+- **Customer Directory (`/admin/customers/list`)**: Searchable, paged table (cards on a phone) showing Account Code, Customer Name, Tax PIN, Account Type (`Cash` or `Credit`), Balance Owed, Credit Limit, KRA transmission, and Blocked status. Each row has separate **Open** and **Edit** actions. **Open** never opens the edit form.
+- **Customer Centre (`/admin/customers/{id}`)**: What **Open** reaches. It shows customer information (contact, address, profile, tax PIN, terms, credit limit, notes), the balance and open-item count, and the statement with transactions, ageing, wallet, and PDF actions when the user has the matching finance permissions. A visible **Edit customer** action leads to the card editor.
+- **Customer Card Editor (`/admin/customers/{id}/edit`)**: The dedicated edit screen reached from the row's **Edit** action or the centre. It uses the same card form as **New customer**: identity and tax PIN, account type, profile, credit limit and terms, KRA flag, and dimension bindings (`DimensionFields`). Saving returns to the customer centre.
+- **Customer groups (`/admin/pricing/groups`)**: Wholesale, retail, VIP and other price groups; managed by the pricing permissions even though the entry sits under Customers.
 
 ### Sub-Module 4: Newsletter (`/admin/newsletter`)
 - List of customer email subscribers captured via storefront footers and popups.
@@ -219,11 +218,11 @@ A package set to **Request a quote** (or **Either**) in **Pricing → Packages**
 
 ### Sales Orders (`/admin/sales-orders`)
 Where staff **take an order for a customer**: by phone, at the counter for later, or for an account. Behind two permissions: *Sales orders: read* (the list) and *Sales orders: create* (taking one).
-- **The list**: the sales orders staff took, newest first, 25 at a time with **Show more**; **Find a sales order** searches the order number or the customer's name. Each row shows the number, customer, date, total, status, payment status and **Waiting for approval** when it is held. **Open in Customer Orders** is where an order is processed (courier, packing, delivery).
+- **The list**: the sales orders staff took, newest first, 25 at a time with **Show more**; **Find a sales order** searches the order number or the customer's name. Each row shows the number, customer, date, total, status, payment status and **Waiting for approval** when it is held. **Open for fulfilment** opens that specific sales order in the fulfilment view; the Web Shop Orders list itself shows only web shop orders.
 - **New sales order**: choose the **customer** (search by name, number, email or phone). The card under it shows where they stand: a credit account with its days, the **limit, what is owed and what is available**, **blocked** and **overdue** warnings; a cash customer says so. Add **products** (search; the list price shows) and **packages** (the same builder the shop uses, every option choosable; a package is sold in whole servings). Choose the **expected payment** (a label: M-Pesa, Pesapal, Jenga, KCB Buni; the money is received by receipt) and, if needed, the day it is **needed on**. Where the company's setting allows it, **Hold the stock until this order is paid** appears. **Place order**.
 - **What happens when you place it**: the server prices the order for that customer (the browser never sends a price) and applies the company's **Selling Documents** settings for sales orders: the credit check and limit, what happens over it, the credit days on the invoice's due date, approval, discounts, when the stock leaves and whether the tax invoice is made with the order. A refusal is shown in words ("… would exceed the credit limit of …") and nothing is placed. When an approval is needed the order is placed **waiting for approval** and says so.
 - **On account is not a choice here**: a customer's credit comes from their account (limit and days), whatever the expected payment. Selling to an account customer by "on account" belongs to the Credit Sales module.
-- **Related documents**: an order's details (in Customer Orders) show **Related documents**: the quote it was made from, and the invoices raised for it, with numbers, totals and dates. A quote that has become an order shows **Became the order** with its number. Deliveries and credit notes have their own panels on the order.
+- **Related documents**: an order's details (in Web Shop Orders) show **Related documents**: the quote it was made from, and the invoices raised for it, with numbers, totals and dates. A quote that has become an order shows **Became the order** with its number. Deliveries and credit notes have their own panels on the order.
 
 ### Shifts (`/admin/shifts`)
 A **shift** is one person's time on one till. Cash sales (the Cash Sales module) can only be rung up inside an open shift. Behind four permissions: *Shifts: read* (see everyone's shifts and reports), *open* (open a shift and put cash in or take it out), *close* (close your own) and *supervise* (close another person's, and close a shift that is out by more than the company allows). Someone without *read* sees only their own shifts.
@@ -235,14 +234,14 @@ A **shift** is one person's time on one till. Cash sales (the Cash Sales module)
 
 ### Credit Sales (`/admin/credit-sales`)
 Where staff **sell to a customer's account**: a sale charged to the customer's credit, invoiced at once. Behind two permissions: *Credit sales: read* (the list) and *Credit sales: create* (making one).
-- **The list**: the credit sales, newest first, 25 at a time with **Show more**; **Find a credit sale** searches the order number or the customer. It lists every sale on account, including those shoppers made on the web shop with their account. Each row shows number, customer, date, total, status, payment status and **Waiting for approval** when held.
+- **The list**: the credit sales, newest first, 25 at a time with **Show more**; **Find a credit sale** searches the order number or the customer. It lists the sales staff made on account; a shopper's web shop purchase on account stays in Web Shop Orders even though it is invoiced as a credit sale. Each row shows number, customer, date, total, status, payment status and **Waiting for approval** when held.
 - **New credit sale**: only customers **with a credit account** are offered. The card shows their **limit, what is owed, what is available, their days**, and **blocked** and **overdue** warnings. Add **products** and **packages** (the shop's builder), the day it is needed and, where the company allows it, **Hold the stock until this sale is paid**. There is no payment to choose: it is on the customer's account terms. **Place credit sale**.
 - **What happens**: the server prices it for that customer and applies the company's **Selling Documents** settings for *Credit sales*: the credit limit is checked (over it, the company's approval workflows decide, or it is refused in words), the invoice **falls due on the customer's days**, the **tax invoice is made with the sale** (and automatically once approved if an approval held it, unless *Invoice after approval* is off), and the stock leaves as that setting says (by default at delivery or collection). A customer without a credit account is refused ("is a cash customer and must pay at the invoice"): use a sales invoice or a sales order for them.
 - **Credit hold with release**: a sale over the limit is held for approval by a workflow whose condition is the customer being over their credit limit (set up in Approvals); the approver releases it and the invoice follows. With no workflow to ask, it is refused and the message says so.
 
 ### Sales Invoices (`/admin/sales-invoices`)
 Where staff **find, check and raise invoices**. Behind three permissions: *Sales invoices: read* (the list and an invoice's detail), *create* (raise an invoice) and *send* (send it again, print or download it).
-- **The list**: every invoice document, newest first, 25 at a time with **Show more**. **Find an invoice** searches the invoice number, the order number or the customer; the **Kind** choice narrows to *Tax invoices*, *Proforma* or *Delivery* invoices. Each row shows the number, kind, order, customer, date, total and three things: **how KRA signing stands** (*Signed with KRA*, *Being signed*, *Waiting to be signed*, *Not signed*, *Signing failed*, or *Not considered yet*), **what has been paid** (*Paid*, *Partly paid*, *Unpaid*, or *Credited* when credit notes cover all of it) and any **amount credited**. Payment follows the order's payment status, which receipts keep up to date.
+- **The list**: every invoice document, from whatever kind of sale raised it — a sales order that has been invoiced, a credit sale, a web shop order, or a direct sales invoice — newest first, 25 at a time with **Show more**. **Find an invoice** searches the invoice number, the order number or the customer; the **Kind** choice narrows to *Tax invoices*, *Proforma* or *Delivery* invoices. Each row shows the number, kind, order, customer, date, total and three things: **how KRA signing stands** (*Signed with KRA*, *Being signed*, *Waiting to be signed*, *Not signed*, *Signing failed*, or *Not considered yet*), **what has been paid** (*Paid*, *Partly paid*, *Unpaid*, or *Credited* when credit notes cover all of it) and any **amount credited**. Payment follows the order's payment status, which receipts keep up to date.
 - **Open** shows the invoice's detail: the kind and status chips, the order and customer, whether and when it was emailed, **what was invoiced** (lines and total), its **credit notes** (number, amount, KRA status, date), and the **signing log** (each time KRA signing looked at the invoice and what it decided, newest first). **Send again by email** (to the customer's email on the order; the invoice keeps its number) and **Download PDF** need the *send* permission.
 - **Raise an invoice**: choose an **order to invoice** (search by order number or customer) and press **Raise invoice**. Only orders with no tax invoice yet are offered, and not those waiting for or refused by approval, cancelled or failed. The invoice is for the whole order. The invoicing rules hold: a tax invoice cannot be raised while the order waits for approval, the number is gap-free per branch, and KRA signing never holds the invoice up. An order that already has one is refused in words.
 - **New sales invoice (a direct sale)**: for a sale invoiced at once, with no sales order in front of it. Needs the *Sales invoices: create* permission. The editor is the one for sales orders: choose the **customer** (the credit position shows, as the settings for sales invoices will look at it), add **products** and **packages**, the expected payment, the day needed, and **Hold the stock until this invoice is paid** where the company allows it, then **Issue invoice**. The server prices it and applies the company's **Selling Documents** settings for *Sales invoices*: **by default it checks the credit limit** (over it is refused in words), **falls due on the customer's payment terms**, **makes the tax invoice with it** and **issues the stock at once**; each of these is a setting (credit check, credit days, when stock is released, approval). The invoice is numbered from the fiscal tax-invoice series and signed under its own *Sales invoices* KRA signing switch (set it in the KRA settings like the others). In the list it shows as *(direct sale)*. If an approval is needed it is issued **waiting for approval**; its tax invoice (and its stock, where it leaves when issued) follow **automatically as soon as it is approved**, unless the company turned *Invoice after approval* off in Selling Documents, in which case staff use **Raise an invoice** once it is approved.

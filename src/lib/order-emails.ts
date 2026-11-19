@@ -89,7 +89,7 @@ export function staffOrderEmailContent(kind: OrderEmailKind, f: StaffOrderEmailF
       heading: 'An order was paid',
       greeting: 'Hello,',
       body: `${who} paid for order ${f.orderNumber} on the web shop. It is ready to be prepared.`,
-      cta: 'Open Customer Orders',
+      cta: 'Open Web Shop Orders',
       details: [['Order', f.orderNumber], ...contact, ['Paid by', f.paymentWords], ...(f.reference === null ? [] : ([['Payment reference', f.reference]] as [string, string][])), ...lines, ['Total', f.total]],
     };
   }
@@ -100,7 +100,7 @@ export function staffOrderEmailContent(kind: OrderEmailKind, f: StaffOrderEmailF
     heading: 'A new order was placed',
     greeting: 'Hello,',
     body: `${who} placed order ${f.orderNumber} on the web shop. ${payment}`,
-    cta: 'Open Customer Orders',
+    cta: 'Open Web Shop Orders',
     details: [['Order', f.orderNumber], ...contact, ['Payment', f.paymentWords], ...lines, ['Total', f.total]],
   };
 }

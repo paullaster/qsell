@@ -1,14 +1,17 @@
 'use client';
 
 import { use, useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Plus, Users } from 'lucide-react';
 import type { CustomerLedgerEntryRow, CustomerRow } from '@/server/db/drizzle/schema';
 import {
+  type CustomerCard,
+  type customerCardAction,
   type customerFieldsAction,
   customerLedgerAction,
   customersPageAction,
   deleteCustomerAction,
-  profileLabelAction,
   profilesPageAction,
   receivePaymentAction,
   saveCustomerAction,
@@ -27,27 +30,59 @@ import { ProfilesPanel } from './customers/ProfilesPanel';
 
 type FirstPage = Extract<Awaited<ReturnType<typeof customersPageAction>>, { ok: true }>;
 
+const EMPTY_PAGE: FirstPage = { ok: true, data: { rows: [], nextCursor: null } };
+
 interface Props {
   fieldsPromise: ReturnType<typeof customerFieldsAction>;
   firstPage: ReturnType<typeof customersPageAction>;
+  canEditPromise: Promise<boolean>;
 }
 
-export function AdminCustomersClient({ fieldsPromise, firstPage }: Props) {
+interface EditProps {
+  fieldsPromise: ReturnType<typeof customerFieldsAction>;
+  canEditPromise: Promise<boolean>;
+  cardPromise: ReturnType<typeof customerCardAction>;
+}
+
+export function AdminCustomersClient({ fieldsPromise, firstPage, canEditPromise }: Props) {
   const fields = use(fieldsPromise);
   const first = use(firstPage);
+  const canEdit = use(canEditPromise);
   if (!fields.ok) return <LoadFailed error={fields.error} />;
   if (!first.ok) return <LoadFailed error={first.error} />;
-  return <Customers initialFields={fields.data} first={first} />;
+  return <Customers initialFields={fields.data} first={first} canEdit={canEdit} />;
+}
+
+export function AdminCustomerEditClient({ fieldsPromise, canEditPromise, cardPromise }: EditProps) {
+  const fields = use(fieldsPromise);
+  const canEdit = use(canEditPromise);
+  const card = use(cardPromise);
+  if (!fields.ok) return <LoadFailed error={fields.error} />;
+  if (!card.ok) return <LoadFailed error={card.error} />;
+  return <Customers initialFields={fields.data} first={EMPTY_PAGE} canEdit={canEdit} initialCard={card.data} editOnly />;
 }
 
 const numberOrZero = (text: string): number => (text.trim() === '' ? 0 : Number(text));
 
-function Customers({ initialFields, first }: { initialFields: CardField[]; first: FirstPage }) {
+function Customers({
+  initialFields,
+  first,
+  canEdit,
+  initialCard,
+  editOnly = false,
+}: {
+  initialFields: CardField[];
+  first: FirstPage;
+  canEdit: boolean;
+  initialCard?: CustomerCard;
+  editOnly?: boolean;
+}) {
+  const router = useRouter();
   const [tab, setTab] = useState<'customers' | 'profiles'>('customers');
   const [fields, setFields] = useState(initialFields);
-  const [form, setForm] = useState<CardForm | null>(null);
-  const [selected, setSelected] = useState<CustomerRow | null>(null);
-  const [ledger, setLedger] = useState<CustomerLedgerEntryRow[]>([]);
+  const [form, setForm] = useState<CardForm | null>(initialCard ? cardFrom(initialCard.customer, initialCard.profileLabel, initialFields) : null);
+  const [selected, setSelected] = useState<CustomerRow | null>(initialCard?.customer ?? null);
+  const [ledger, setLedger] = useState<CustomerLedgerEntryRow[]>(initialCard?.ledger ?? []);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentReference, setPaymentReference] = useState('');
   const [newProfile, setNewProfile] = useState(0);
@@ -103,15 +138,6 @@ function Customers({ initialFields, first }: { initialFields: CardField[]; first
     }
   };
 
-  const openCustomer = async (row: CustomerRow) => {
-    setSelected(row);
-    setNotice(null);
-    setForm(cardFrom(row, '', fields));
-    const [res, label] = await Promise.all([attempt(customerLedgerAction(row.id)), has(row.profileId) ? attempt(profileLabelAction(row.profileId)) : Promise.resolve(null)]);
-    setLedger(res.ok ? res.data : []);
-    if (label?.ok === true) setForm((f) => (f === null ? f : { ...f, profileLabel: label.data }));
-  };
-
   const save = async (e: React.SyntheticEvent) => {
     e.preventDefault();
     if (form === null) return;
@@ -148,6 +174,11 @@ function Customers({ initialFields, first }: { initialFields: CardField[]; first
       return;
     }
     setNotice({ kind: 'ok', text: `${res.data.name} saved.` });
+    if (editOnly) {
+      router.push(`/admin/customers/${res.data.id}`);
+      router.refresh();
+      return;
+    }
     setSelected(null);
     setForm(null);
     list.reload();
@@ -164,6 +195,11 @@ function Customers({ initialFields, first }: { initialFields: CardField[]; first
         return;
       }
       setNotice({ kind: 'ok', text: `${row.name} deleted.` });
+      if (editOnly) {
+        router.push('/admin/customers/list');
+        router.refresh();
+        return;
+      }
       if (selected?.id === row.id) {
         setSelected(null);
         setForm(null);
@@ -171,7 +207,7 @@ function Customers({ initialFields, first }: { initialFields: CardField[]; first
       }
       list.reload();
     },
-    [list, selected],
+    [editOnly, list, router, selected],
   );
 
   const receive = async () => {
@@ -190,8 +226,138 @@ function Customers({ initialFields, first }: { initialFields: CardField[]; first
     setPaymentAmount('');
     setPaymentReference('');
     setNotice({ kind: 'ok', text: 'Payment posted.' });
-    list.reload();
+    if (!editOnly) list.reload();
   };
+
+  const cardForm =
+    form === null ? null : (
+      <div className="space-y-4">
+        <Message notice={notice} />
+        <form onSubmit={(e) => void save(e)} noValidate aria-label={selected === null ? 'New customer card' : 'Customer card'} className="space-y-4 rounded-xl border border-line bg-surface-sunken/60 p-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <ChoicePicker
+                label="Profile"
+                source="customer-profiles"
+                choice={has(form.profileId) ? { id: form.profileId, label: form.profileLabel } : null}
+                onChoice={(c) => setForm((f) => (f === null ? f : withProfile(f, c, fields)))}
+                placeholder="No profile"
+                createHref="/admin/customer-profiles/new"
+                createLabel="+ New profile"
+              />
+            </div>
+            <Field id="card-name" label="Name">
+              <input id="card-name" className={fieldClass} value={form.name} onChange={(e) => set('name', e.target.value)} autoComplete="off" />
+            </Field>
+            <Field id="card-email" label="Email">
+              <input id="card-email" className={fieldClass} type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="off" />
+            </Field>
+            <Field id="card-phone" label="Phone">
+              <input id="card-phone" className={fieldClass} type="tel" value={form.phone} onChange={(e) => set('phone', e.target.value)} autoComplete="off" />
+            </Field>
+            <div className="sm:col-span-2">
+              <Field id="card-street" label="Street">
+                <input id="card-street" className={fieldClass} value={form.street} onChange={(e) => set('street', e.target.value)} autoComplete="off" />
+              </Field>
+            </div>
+            <Field id="card-city" label="City">
+              <input id="card-city" className={fieldClass} value={form.city} onChange={(e) => set('city', e.target.value)} autoComplete="off" />
+            </Field>
+            <Field id="card-county" label="County / region">
+              <input id="card-county" className={fieldClass} value={form.countyOrState} onChange={(e) => set('countyOrState', e.target.value)} autoComplete="off" />
+            </Field>
+            <Field id="card-postal" label="Postal code">
+              <input id="card-postal" className={fieldClass} value={form.postalCode} onChange={(e) => set('postalCode', e.target.value)} autoComplete="off" />
+            </Field>
+            <Field id="card-country" label="Country">
+              <input id="card-country" className={fieldClass} value={form.country} onChange={(e) => set('country', e.target.value)} autoComplete="off" />
+            </Field>
+            <ChoicePicker label="Account type" source="customer-account-types" choice={{ id: form.accountType, label: labelOfAccountType(form.accountType) }} onChoice={(c) => setForm((f) => (f === null ? f : withAccountType(f, accountTypeOf(c?.id))))} clearable={false} />
+            <Field id="card-limit" label="Credit limit">
+              <input id="card-limit" className={fieldClass} type="number" min={0} inputMode="decimal" disabled={form.accountType === 'cash'} value={form.accountType === 'cash' ? '0' : form.creditLimit} onChange={(e) => set('creditLimit', e.target.value)} />
+            </Field>
+            <Field id="card-terms" label="Payment terms (days)">
+              <input id="card-terms" className={fieldClass} type="number" min={0} inputMode="numeric" disabled={form.accountType === 'cash'} value={form.accountType === 'cash' ? '0' : form.paymentTermDays} onChange={(e) => set('paymentTermDays', e.target.value)} />
+            </Field>
+            <ChoicePicker label="Blocked" source="customer-blocks" choice={{ id: form.blocked, label: labelOfBlock(form.blocked) }} onChoice={(c) => set('blocked', blockOf(c?.id))} clearable={false} />
+            <Field id="card-pin" label="Tax PIN">
+              <input id="card-pin" className={`${fieldClass} font-mono`} value={form.buyerKraPin} onChange={(e) => set('buyerKraPin', e.target.value)} placeholder="e.g. P051234567X" autoComplete="off" />
+            </Field>
+            <label className="flex min-h-10 cursor-pointer items-center gap-2 text-sm text-fg sm:col-span-2">
+              <input type="checkbox" className="h-5 w-5" checked={form.transmitInvoicesToKra} onChange={(e) => set('transmitInvoicesToKra', e.target.checked)} />
+              Transmit this customer&apos;s invoices to KRA
+            </label>
+          </div>
+          {form.accountType === 'credit' && Number(form.creditLimit) <= 0 ? <p className="text-xs text-amber-700">Credit limit is 0, so this customer cannot be invoiced until you set a limit.</p> : null}
+          <DimensionFields fields={fields} selected={form.dimensions} onChange={(name, code) => setForm((f) => (f === null ? f : { ...f, dimensions: { ...f.dimensions, [name]: code } }))} />
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="submit" disabled={busy} className={primaryClass}>
+              {busy ? 'Saving…' : 'Save customer'}
+            </button>
+            {selected === null ? null : <InlineConfirm label={`Delete ${selected.name}`} action="Delete" confirm="Delete for good" busy={busy} onConfirm={() => void remove(selected)} />}
+            <button
+              type="button"
+              className={buttonClass}
+              onClick={() => (editOnly ? router.push(`/admin/customers/${selected?.id ?? ''}`) : setForm(null))}
+            >
+              Close
+            </button>
+          </div>
+          {selected !== null && Number(selected.balance) > 0 ? (
+            <div className="flex flex-wrap items-end gap-2 border-t border-line pt-3">
+              <Field id="pay-amount" label={`Receive payment against open balance ${money(selected.balance)}`}>
+                <input id="pay-amount" className={`${fieldClass} w-40`} type="number" min={0} inputMode="decimal" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} />
+              </Field>
+              <Field id="pay-reference" label="Transaction reference">
+                <input id="pay-reference" className={`${fieldClass} w-48`} value={paymentReference} onChange={(e) => setPaymentReference(e.target.value)} placeholder="Receipt or bank reference" autoComplete="off" />
+              </Field>
+              <button type="button" disabled={busy} onClick={() => void receive()} className={buttonClass}>
+                Post payment
+              </button>
+            </div>
+          ) : null}
+          {ledger.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-fg">
+                <caption className="sr-only">Open items</caption>
+                <thead className="text-fg-muted">
+                  <tr>
+                    <th scope="col" className="py-1">Document</th>
+                    <th scope="col">Type</th>
+                    <th scope="col">Amount</th>
+                    <th scope="col">Remaining</th>
+                    <th scope="col">KRA</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ledger.map((entry) => (
+                    <tr key={entry.id} className="border-t border-line">
+                      <td className="py-1">{entry.documentNo}</td>
+                      <td>{has(entry.description) ? entry.description : entry.documentType}</td>
+                      <td>{money(entry.amount)}</td>
+                      <td>{money(entry.remainingAmount)}</td>
+                      <td>{entry.kraTransmissionStatus}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </form>
+      </div>
+    );
+
+  if (editOnly) {
+    return (
+      <div className="mx-auto max-w-6xl space-y-4 p-4 sm:p-6">
+        <div>
+          <h2 className="text-xl font-semibold text-fg-strong">Edit customer</h2>
+          <p className="mt-1 text-sm text-fg-muted">Update the card, payment terms, credit limit, and default dimensions for {selected?.name ?? 'this customer'}.</p>
+        </div>
+        {cardForm}
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-4 sm:p-6">
@@ -233,116 +399,7 @@ function Customers({ initialFields, first }: { initialFields: CardField[]; first
 
       {tab === 'customers' ? (
         <div className="space-y-4">
-          <Message notice={notice} />
-          {form === null ? null : (
-            <form onSubmit={(e) => void save(e)} noValidate aria-label={selected === null ? 'New customer card' : 'Customer card'} className="space-y-4 rounded-xl border border-line bg-surface-sunken/60 p-4">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="sm:col-span-2">
-                  <ChoicePicker
-                    label="Profile"
-                    source="customer-profiles"
-                    choice={has(form.profileId) ? { id: form.profileId, label: form.profileLabel } : null}
-                    onChoice={(c) => setForm((f) => (f === null ? f : withProfile(f, c, fields)))}
-                    placeholder="No profile"
-                    createHref="/admin/customer-profiles/new"
-                    createLabel="+ New profile"
-                  />
-                </div>
-                <Field id="card-name" label="Name">
-                  <input id="card-name" className={fieldClass} value={form.name} onChange={(e) => set('name', e.target.value)} autoComplete="off" />
-                </Field>
-                <Field id="card-email" label="Email">
-                  <input id="card-email" className={fieldClass} type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="off" />
-                </Field>
-                <Field id="card-phone" label="Phone">
-                  <input id="card-phone" className={fieldClass} type="tel" value={form.phone} onChange={(e) => set('phone', e.target.value)} autoComplete="off" />
-                </Field>
-                <div className="sm:col-span-2">
-                  <Field id="card-street" label="Street">
-                    <input id="card-street" className={fieldClass} value={form.street} onChange={(e) => set('street', e.target.value)} autoComplete="off" />
-                  </Field>
-                </div>
-                <Field id="card-city" label="City">
-                  <input id="card-city" className={fieldClass} value={form.city} onChange={(e) => set('city', e.target.value)} autoComplete="off" />
-                </Field>
-                <Field id="card-county" label="County / region">
-                  <input id="card-county" className={fieldClass} value={form.countyOrState} onChange={(e) => set('countyOrState', e.target.value)} autoComplete="off" />
-                </Field>
-                <Field id="card-postal" label="Postal code">
-                  <input id="card-postal" className={fieldClass} value={form.postalCode} onChange={(e) => set('postalCode', e.target.value)} autoComplete="off" />
-                </Field>
-                <Field id="card-country" label="Country">
-                  <input id="card-country" className={fieldClass} value={form.country} onChange={(e) => set('country', e.target.value)} autoComplete="off" />
-                </Field>
-                <ChoicePicker label="Account type" source="customer-account-types" choice={{ id: form.accountType, label: labelOfAccountType(form.accountType) }} onChoice={(c) => setForm((f) => (f === null ? f : withAccountType(f, accountTypeOf(c?.id))))} clearable={false} />
-                <Field id="card-limit" label="Credit limit">
-                  <input id="card-limit" className={fieldClass} type="number" min={0} inputMode="decimal" disabled={form.accountType === 'cash'} value={form.accountType === 'cash' ? '0' : form.creditLimit} onChange={(e) => set('creditLimit', e.target.value)} />
-                </Field>
-                <Field id="card-terms" label="Payment terms (days)">
-                  <input id="card-terms" className={fieldClass} type="number" min={0} inputMode="numeric" disabled={form.accountType === 'cash'} value={form.accountType === 'cash' ? '0' : form.paymentTermDays} onChange={(e) => set('paymentTermDays', e.target.value)} />
-                </Field>
-                <ChoicePicker label="Blocked" source="customer-blocks" choice={{ id: form.blocked, label: labelOfBlock(form.blocked) }} onChoice={(c) => set('blocked', blockOf(c?.id))} clearable={false} />
-                <Field id="card-pin" label="Tax PIN">
-                  <input id="card-pin" className={`${fieldClass} font-mono`} value={form.buyerKraPin} onChange={(e) => set('buyerKraPin', e.target.value)} placeholder="e.g. P051234567X" autoComplete="off" />
-                </Field>
-                <label className="flex min-h-10 cursor-pointer items-center gap-2 text-sm text-fg sm:col-span-2">
-                  <input type="checkbox" className="h-5 w-5" checked={form.transmitInvoicesToKra} onChange={(e) => set('transmitInvoicesToKra', e.target.checked)} />
-                  Transmit this customer&apos;s invoices to KRA
-                </label>
-              </div>
-              {form.accountType === 'credit' && Number(form.creditLimit) <= 0 ? <p className="text-xs text-amber-700">Credit limit is 0, so this customer cannot be invoiced until you set a limit.</p> : null}
-              <DimensionFields fields={fields} selected={form.dimensions} onChange={(name, code) => setForm((f) => (f === null ? f : { ...f, dimensions: { ...f.dimensions, [name]: code } }))} />
-              <div className="flex flex-wrap items-center gap-2">
-                <button type="submit" disabled={busy} className={primaryClass}>
-                  {busy ? 'Saving…' : 'Save customer'}
-                </button>
-                {selected === null ? null : <InlineConfirm label={`Delete ${selected.name}`} action="Delete" confirm="Delete for good" busy={busy} onConfirm={() => void remove(selected)} />}
-                <button type="button" className={buttonClass} onClick={() => setForm(null)}>
-                  Close
-                </button>
-              </div>
-              {selected !== null && Number(selected.balance) > 0 ? (
-                <div className="flex flex-wrap items-end gap-2 border-t border-line pt-3">
-                  <Field id="pay-amount" label={`Receive payment against open balance ${money(selected.balance)}`}>
-                    <input id="pay-amount" className={`${fieldClass} w-40`} type="number" min={0} inputMode="decimal" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} />
-                  </Field>
-                  <Field id="pay-reference" label="Transaction reference">
-                    <input id="pay-reference" className={`${fieldClass} w-48`} value={paymentReference} onChange={(e) => setPaymentReference(e.target.value)} placeholder="Receipt or bank reference" autoComplete="off" />
-                  </Field>
-                  <button type="button" disabled={busy} onClick={() => void receive()} className={buttonClass}>
-                    Post payment
-                  </button>
-                </div>
-              ) : null}
-              {ledger.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs text-fg">
-                    <caption className="sr-only">Open items</caption>
-                    <thead className="text-fg-muted">
-                      <tr>
-                        <th scope="col" className="py-1">Document</th>
-                        <th scope="col">Type</th>
-                        <th scope="col">Amount</th>
-                        <th scope="col">Remaining</th>
-                        <th scope="col">KRA</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {ledger.map((entry) => (
-                        <tr key={entry.id} className="border-t border-line">
-                          <td className="py-1">{entry.documentNo}</td>
-                          <td>{has(entry.description) ? entry.description : entry.documentType}</td>
-                          <td>{money(entry.amount)}</td>
-                          <td>{money(entry.remainingAmount)}</td>
-                          <td>{entry.kraTransmissionStatus}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : null}
-            </form>
-          )}
+          {cardForm}
 
           <Field id="customer-search" label="Search customers">
             <input id="customer-search" type="search" className={`${fieldClass} sm:max-w-xs`} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Name, number, email, phone or tax PIN" autoComplete="off" />
@@ -378,7 +435,8 @@ function Customers({ initialFields, first }: { initialFields: CardField[]; first
                   <div><dt className="text-fg-muted">Blocked</dt><dd className="capitalize">{row.blocked}</dd></div>
                 </dl>
                 <div className="flex flex-wrap gap-2">
-                  <button type="button" className={buttonClass} aria-label={`Open ${row.name}`} onClick={() => void openCustomer(row)}>Open</button>
+                  <Link href={`/admin/customers/${row.id}`} className={buttonClass} aria-label={`Open ${row.name}`}>Open</Link>
+                  {canEdit ? <Link href={`/admin/customers/${row.id}/edit`} className={buttonClass} aria-label={`Edit ${row.name}`}>Edit</Link> : null}
                   <InlineConfirm label={`Delete ${row.name}`} action="Delete" confirm="Delete for good" busy={busy} onConfirm={() => void remove(row)} />
                 </div>
               </li>
@@ -420,9 +478,14 @@ function Customers({ initialFields, first }: { initialFields: CardField[]; first
                     <td className="capitalize">{row.blocked}</td>
                     <td className="px-3 py-1 text-right">
                       <span className="inline-flex flex-wrap justify-end gap-2">
-                        <button type="button" className={buttonClass} aria-label={`Open ${row.name}`} onClick={() => void openCustomer(row)}>
+                        <Link href={`/admin/customers/${row.id}`} className={buttonClass} aria-label={`Open ${row.name}`}>
                           Open
-                        </button>
+                        </Link>
+                        {canEdit ? (
+                          <Link href={`/admin/customers/${row.id}/edit`} className={buttonClass} aria-label={`Edit ${row.name}`}>
+                            Edit
+                          </Link>
+                        ) : null}
                         <InlineConfirm label={`Delete ${row.name}`} action="Delete" confirm="Delete for good" busy={busy} onConfirm={() => void remove(row)} />
                       </span>
                     </td>

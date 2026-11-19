@@ -126,6 +126,7 @@ export async function placeOrderAction(raw: unknown): Promise<CheckoutResult<Che
   await CheckoutAttempts.placed(attempt, order.id);
   revalidatePath('/admin/orders');
   revalidatePath('/admin/customers');
+  revalidatePath('/admin/customers/list');
   revalidatePath('/admin/inventory');
   revalidatePath('/');
   // The order holds the cart's stock, so a signed-in shopper's saved cart is spent too (it must not come back on another device or be sent as a reminder).

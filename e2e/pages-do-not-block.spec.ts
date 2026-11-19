@@ -109,7 +109,7 @@ const screens: [string, string, RegExp, string | RegExp][] = [
   ],
   ['company modules', '/admin/company/modules', /Loading the module names/, 'Module names'],
   ['company support', '/admin/company/support', /Loading the support settings/, 'Customer support'],
-  ['customers', '/admin/customers', /Loading customers/, 'Customers'],
+  ['customers', '/admin/customers/list', /Loading customers/, 'Customers'],
   ['exchange rates', '/admin/finance/exchange-rates', /Loading exchange rates/, 'Exchange rates'],
   [
     'stock in the books',

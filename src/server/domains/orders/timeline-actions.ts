@@ -35,7 +35,7 @@ export async function orderFlowAction(days: unknown): Promise<Result<OrderFlow>>
     const span = typeof days === 'number' && Number.isFinite(days) ? Math.min(90, Math.max(1, Math.trunc(days))) : 7;
     const company = await getContainer().companySettings.ensureSeeded();
     const { targets } = await getContainer().orderSla.settings(company.id);
-    return { ok: true, data: await orderFlow(drizzleDb, span, new Date(), targets) };
+    return { ok: true, data: await orderFlow(drizzleDb, span, new Date(), targets, 'web_shop') };
   } catch (error) {
     if (error instanceof AccessDeniedError) return { ok: false, error: 'You do not have permission to do that.', forbidden: true };
     console.error('[orders] flow', error);

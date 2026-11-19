@@ -4,7 +4,7 @@ import { clickUntilVisible, noHorizontalScroll, noNativeSelect } from './support
 
 async function openCustomers(page: Page): Promise<void> {
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    await page.goto('/admin/customers');
+    await page.goto('/admin/customers/list');
     try {
       const title = page.getByRole('heading', { name: 'Customers', level: 2 }).first();
       await expect(title).toBeVisible({ timeout: 30_000 });
@@ -17,6 +17,16 @@ async function openCustomers(page: Page): Promise<void> {
 }
 
 test.describe('customers screen', () => {
+  test('Customers opens a hub with List and Customer groups before the customer list', async ({ page }) => {
+    await page.goto('/admin/customers');
+    await expect(page.getByRole('heading', { name: 'Customers', level: 2 })).toBeVisible();
+    await expect(page.getByRole('link', { name: /^List/ })).toHaveAttribute('href', '/admin/customers/list');
+    await expect(page.getByRole('link', { name: /^Customer groups/ })).toHaveAttribute('href', '/admin/pricing/groups');
+    await page.getByRole('link', { name: /^List/ }).click();
+    await expect(page).toHaveURL(/\/admin\/customers\/list$/);
+    await expect(page.getByRole('heading', { name: 'Customers', level: 2 })).toBeVisible();
+  });
+
   test('the list is paged and searched on the server, a customer is made, found, changed and deleted after asking', async ({ page, isMobile }, testInfo) => {
     const stamp = `${testInfo.project.name}${String(Date.now()).slice(-6)}`;
     const name = `E2E Card ${stamp}`;
@@ -57,15 +67,24 @@ test.describe('customers screen', () => {
     await card.getByRole('button', { name: 'Save customer' }).click();
     await expect(page.getByRole('status').filter({ hasText: `${name} saved.` })).toBeVisible({ timeout: 30_000 });
 
-    // Found, opened, and kept as saved.
+    // Found. Open goes to the customer centre; Edit is a separate way into the card.
     await page.getByLabel('Search customers').fill(stamp);
     await expect(rows).toHaveCount(1 + header, { timeout: 30_000 });
-    await table.getByRole('button', { name: `Open ${name}` }).click();
+    await expect(table.getByRole('link', { name: `Edit ${name}` })).toHaveAttribute('href', /\/edit$/);
+    await table.getByRole('link', { name: `Open ${name}` }).click();
+    await expect(page).toHaveURL(/\/admin\/customers\/[^/]+$/);
+    await expect(page.getByRole('heading', { name: 'Customer information' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Statement and transactions' })).toBeVisible();
+    await page.getByRole('link', { name: 'Edit customer' }).click();
+    await expect(page).toHaveURL(/\/admin\/customers\/[^/]+\/edit$/);
     const again = page.getByRole('form', { name: 'Customer card' });
     await expect(again.getByLabel('Credit limit')).toHaveValue('750.00', { timeout: 30_000 });
     await expect(again.getByRole('combobox', { name: 'Blocked' })).toHaveValue(/invoiced/i);
 
-    // Deleting asks first, and "Keep it" changes nothing.
+    // Back to the list: deleting asks first, and "Keep it" changes nothing.
+    await page.goto('/admin/customers/list');
+    await page.getByLabel('Search customers').fill(stamp);
+    await expect(rows).toHaveCount(1 + header, { timeout: 30_000 });
     await table.getByRole('button', { name: `Delete ${name}` }).click();
     await table.getByRole('button', { name: 'Keep it' }).click();
     await expect(rows).toHaveCount(1 + header);

@@ -1,8 +1,13 @@
 import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { customerLedgerEntries, financeSettings, orders } from '@/server/db/drizzle/schema';
-import { OrderStages } from '@/server/domains/orders/stages';
-import { DEFAULT_CHEQUE_COUNTS, planPaymentMove, settledState, type ChequeCountsMode } from '@/lib/order-payment';
+import { OrderStages, type OrderFields } from '@/server/domains/orders/stages';
+import {
+  DEFAULT_CHEQUE_COUNTS,
+  planPaymentMove,
+  settledState,
+  type ChequeCountsMode,
+} from '@/lib/order-payment';
 import type { OrderStatus } from '@/types/index';
 import { toCents } from '../domain/receivables';
 import type { Tx } from '../engine';
@@ -36,12 +41,19 @@ interface Totals {
 // eslint-disable-next-line @typescript-eslint/no-extraneous-class
 export class OrderPaymentSync {
   static async chequeRule(tx: Tx, companyId: string): Promise<ChequeCountsMode> {
-    const [setting] = await tx.select({ mode: financeSettings.chequeCountsAsPaid }).from(financeSettings).where(eq(financeSettings.companyId, companyId));
+    const [setting] = await tx
+      .select({ mode: financeSettings.chequeCountsAsPaid })
+      .from(financeSettings)
+      .where(eq(financeSettings.companyId, companyId));
     return setting?.mode ?? DEFAULT_CHEQUE_COUNTS;
   }
 
   /** The invoices a credit entry (a receipt) has ever been applied to. */
-  static async invoicesTouchedBy(tx: Tx, companyId: string, creditEntryId: string): Promise<string[]> {
+  static async invoicesTouchedBy(
+    tx: Tx,
+    companyId: string,
+    creditEntryId: string,
+  ): Promise<string[]> {
     const rows = await tx.execute<{ id: string }>(sql`
       SELECT DISTINCT d.ledger_entry_id AS id
         FROM customer_detailed_entries d
@@ -50,9 +62,19 @@ export class OrderPaymentSync {
     return rows.map((r) => r.id);
   }
 
-  private static async totals(tx: Tx, companyId: string, orderIds: string[], mode: ChequeCountsMode): Promise<Totals[]> {
+  private static async totals(
+    tx: Tx,
+    companyId: string,
+    orderIds: string[],
+    mode: ChequeCountsMode,
+  ): Promise<Totals[]> {
     // One statement for all orders: what is owed and what is settled per order, so the work does not grow per order.
-    const result = await tx.execute<{ order_id: string; invoiced: string; reduced: string; paid: string }>(sql`
+    const result = await tx.execute<{
+      order_id: string;
+      invoiced: string;
+      reduced: string;
+      paid: string;
+    }>(sql`
       SELECT inv.order_id,
              SUM(inv.amount)::text AS invoiced,
              COALESCE(SUM(s.reduced), 0)::text AS reduced,
@@ -71,9 +93,58 @@ export class OrderPaymentSync {
         ) s ON true
        WHERE inv.company_id = ${companyId}
          AND inv.document_type = 'invoice'
-         AND inv.order_id IN (${sql.join(orderIds.map((id) => sql`${id}`), sql`, `)})
+         AND inv.order_id IN (${sql.join(
+           orderIds.map((id) => sql`${id}`),
+           sql`, `,
+         )})
        GROUP BY inv.order_id`);
-    return result.map((r) => ({ orderId: r.order_id, payableCents: toCents(r.invoiced) - toCents(r.reduced), paidCents: toCents(r.paid) }));
+    return result.map((r) => ({
+      orderId: r.order_id,
+      payableCents: toCents(r.invoiced) - toCents(r.reduced),
+      paidCents: toCents(r.paid),
+    }));
+  }
+
+  private static async receiptFields(
+    tx: Tx,
+    companyId: string,
+    orderIds: string[],
+  ): Promise<Map<string, OrderFields>> {
+    const result = await tx.execute<{
+      order_id: string;
+      payment_code: string;
+      payment_method_id: string;
+      reference: string;
+    }>(sql`
+      SELECT DISTINCT ON (inv.order_id)
+             inv.order_id, pm.code AS payment_code, r.payment_method_id,
+             COALESCE(r.external_reference, r.number) AS reference
+        FROM customer_ledger_entries inv
+        JOIN customer_detailed_entries d
+          ON d.company_id = ${companyId} AND d.applied_to_entry_id = inv.id
+         AND d.entry_type = 'application' AND d.unapplies_application_id IS NULL
+        JOIN customer_receipts r
+          ON r.company_id = ${companyId} AND r.ledger_entry_id = d.ledger_entry_id AND r.status = 'posted'
+        JOIN payment_methods pm
+          ON pm.company_id = ${companyId} AND pm.id = r.payment_method_id
+       WHERE inv.company_id = ${companyId}
+         AND inv.document_type = 'invoice'
+         AND inv.order_id IN (${sql.join(
+           orderIds.map((id) => sql`${id}`),
+           sql`, `,
+         )})
+         AND NOT EXISTS (SELECT 1 FROM customer_detailed_entries u WHERE u.company_id = ${companyId} AND u.unapplies_application_id = d.application_id)
+       ORDER BY inv.order_id, r.posting_date DESC, r.created_at DESC, d.id DESC`);
+    return new Map(
+      result.map((r) => [
+        r.order_id,
+        {
+          paymentMethod: r.payment_code,
+          paymentMethodId: r.payment_method_id,
+          transactionReference: r.reference,
+        },
+      ]),
+    );
   }
 
   /**
@@ -91,35 +162,92 @@ export class OrderPaymentSync {
     const touched = await tx
       .selectDistinct({ orderId: customerLedgerEntries.orderId })
       .from(customerLedgerEntries)
-      .where(and(eq(customerLedgerEntries.companyId, ctx.companyId), inArray(customerLedgerEntries.id, entryIds), eq(customerLedgerEntries.documentType, 'invoice')));
-    const orderIds = touched.map((t) => t.orderId).filter(has).sort();
+      .where(
+        and(
+          eq(customerLedgerEntries.companyId, ctx.companyId),
+          inArray(customerLedgerEntries.id, entryIds),
+          eq(customerLedgerEntries.documentType, 'invoice'),
+        ),
+      );
+    const orderIds = touched
+      .map((t) => t.orderId)
+      .filter(has)
+      .sort();
     if (orderIds.length === 0) return [];
     const mode = opts.mode ?? (await OrderPaymentSync.chequeRule(tx, ctx.companyId));
     const totals = await OrderPaymentSync.totals(tx, ctx.companyId, orderIds, mode);
     const current = await tx
-      .select({ id: orders.id, status: orders.status, paymentStatus: orders.paymentStatus, approvalStatus: orders.approvalStatus })
+      .select()
       .from(orders)
-      .where(inArray(orders.id, totals.map((t) => t.orderId)));
+      .where(
+        inArray(
+          orders.id,
+          totals.map((t) => t.orderId),
+        ),
+      );
     const byId = new Map(current.map((o) => [o.id, o]));
 
-    const moved: string[] = [];
-    for (const t of totals) {
+    const planned = totals.flatMap((t) => {
       const order = byId.get(t.orderId);
       // An order whose invoices are fully credited has nothing left to pay: it is not decided here (its refund or cancellation is).
       const target = settledState(t.payableCents, t.paidCents);
-      if (order === undefined || target === null) continue;
+      if (order === undefined || target === null) return [];
       const move = planPaymentMove(order.paymentStatus, target);
-      if (move === null) continue;
+      if (move === null) return [];
       // Paying an invoice must not send an order back: only an order still waiting (and not held for approval) is released by its payment.
       const held = ['pending', 'rejected', 'draft'].includes(order.approvalStatus);
-      const keepStatus = opts.release === false || move.stage !== 'payment_confirmed' || order.status !== 'pending' || held;
+      const keepStatus =
+        opts.release === false ||
+        move.stage !== 'payment_confirmed' ||
+        order.status !== 'pending' ||
+        held;
+      return [{ order, move, keepStatus, t }];
+    });
+    const missing = totals.flatMap((t) => {
+      const order = byId.get(t.orderId);
+      if (order === undefined || settledState(t.payableCents, t.paidCents) !== 'paid') return [];
+      if (order.paymentStatus !== 'paid' || planPaymentMove(order.paymentStatus, 'paid') !== null)
+        return [];
+      if (
+        order.paymentMethodId !== null &&
+        has(order.transactionReference) &&
+        order.paymentMethod !== 'on_account'
+      )
+        return [];
+      return [{ order }];
+    });
+    const fieldOrderIds = [
+      ...new Set([
+        ...planned.filter((p) => p.move.paymentStatus === 'paid').map((p) => p.order.id),
+        ...missing.map((m) => m.order.id),
+      ]),
+    ];
+    const fields =
+      fieldOrderIds.length === 0
+        ? new Map<string, OrderFields>()
+        : await OrderPaymentSync.receiptFields(tx, ctx.companyId, fieldOrderIds);
+    const moved: string[] = [];
+    for (const { order, move, keepStatus, t } of planned) {
       const res = await OrderStages.moveIn(tx, order.id, move.stage, 'succeeded', {
         source: 'staff',
         actor: { type: ctx.actor.type === 'user' ? 'user' : 'system', id: ctx.actor.id },
-        set: { paymentStatus: move.paymentStatus, ...(keepStatus ? { status: order.status as OrderStatus } : {}) },
-        detail: { document: cause.document, action: cause.action, payable: t.payableCents / 100, paid: t.paidCents / 100, chequeRule: mode },
+        set: {
+          paymentStatus: move.paymentStatus,
+          ...(keepStatus ? { status: order.status as OrderStatus } : {}),
+        },
+        fields: fields.get(order.id),
+        detail: {
+          document: cause.document,
+          action: cause.action,
+          payable: t.payableCents / 100,
+          paid: t.paidCents / 100,
+          chequeRule: mode,
+        },
       });
       if (res.recorded) moved.push(order.id);
+    }
+    for (const { order } of missing) {
+      await OrderStages.saveFields(tx, order, fields.get(order.id));
     }
     return moved;
   }
@@ -150,7 +278,13 @@ export class OrderPaymentSync {
       .orderBy(asc(customerLedgerEntries.id))
       .limit(page.limit);
     if (rows.length === 0) return { last: null, checked: 0, moved: 0 };
-    const moved = await OrderPaymentSync.syncIn(tx, ctx, rows.map((r) => r.id), cause, { release: false });
+    const moved = await OrderPaymentSync.syncIn(
+      tx,
+      ctx,
+      rows.map((r) => r.id),
+      cause,
+      { release: false },
+    );
     return { last: rows[rows.length - 1]?.id ?? null, checked: rows.length, moved: moved.length };
   }
 
@@ -159,13 +293,25 @@ export class OrderPaymentSync {
    * long and can be run again safely: an order already in step is not touched). Used to bring history in step after this feature
    * was added, and after the cheque rule changes.
    */
-  static async recheckAll(db: DrizzleDb, ctx: FinanceContext, opts: { onlyCheques: boolean; action: string; limit?: number }): Promise<{ checked: number; moved: number }> {
+  static async recheckAll(
+    db: DrizzleDb,
+    ctx: FinanceContext,
+    opts: { onlyCheques: boolean; action: string; limit?: number },
+  ): Promise<{ checked: number; moved: number }> {
     let after: string | null = null;
     let checked = 0;
     let moved = 0;
     for (;;) {
       const cursor: string | null = after;
-      const page: { last: string | null; checked: number; moved: number } = await db.transaction((tx) => OrderPaymentSync.recheckPageIn(tx, ctx, { after: cursor, limit: opts.limit ?? 200, onlyCheques: opts.onlyCheques }, { document: 'recheck', action: opts.action }));
+      const page: { last: string | null; checked: number; moved: number } = await db.transaction(
+        (tx) =>
+          OrderPaymentSync.recheckPageIn(
+            tx,
+            ctx,
+            { after: cursor, limit: opts.limit ?? 200, onlyCheques: opts.onlyCheques },
+            { document: 'recheck', action: opts.action },
+          ),
+      );
       checked += page.checked;
       moved += page.moved;
       if (page.last === null) return { checked, moved };

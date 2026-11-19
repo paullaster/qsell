@@ -100,7 +100,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'Credit Sales',
       'Shifts',
       'Sales Invoices',
-      'Customer Orders',
+      'Web Shop Orders',
       'Preparation sheet',
       'Newsletter',
       'Product Reviews',

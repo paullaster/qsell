@@ -32,6 +32,6 @@ export async function createCustomerAction(form: CustomerForm) {
       const row = await getContainer().customers.saveCustomer(companyId, { ...checked.payload, blocked: 'none' });
       return { id: row.id, number: row.number, name: row.name, email: row.email, accountType: row.accountType };
     },
-    { paths: ['/admin/customers'], friendly },
+    { paths: ['/admin/customers', '/admin/customers/list'], friendly },
   );
 }

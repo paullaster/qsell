@@ -27,7 +27,16 @@ export function CustomerStatementClient({ statementPromise, walletPromise, canRe
   const canReadReceipts = use(canReadReceiptsPromise);
   const canReadOrders = use(canReadOrdersPromise);
   if (!statement.ok) return <LoadFailed error={statement.error} />;
-  return <CustomerStatementView initial={statement.data} canReceive={canReceive} canReadReceipts={canReadReceipts} canReadOrders={canReadOrders} walletPromise={walletPromise} />;
+  return (
+    <div className="max-w-6xl space-y-5">
+      <PageHeader
+        title={statement.data.customer.name}
+        intro={<span className="flex flex-wrap items-center gap-2">Customer {statement.data.customer.number} · <Chip tone={statement.data.customer.accountType === 'credit' ? 'sky' : 'gray'}>{statement.data.customer.accountType === 'credit' ? 'Credit account' : 'Cash customer'}</Chip>{statement.data.customer.blocked !== 'none' ? <Chip tone="red">Blocked: {statement.data.customer.blocked}</Chip> : null}</span>}
+        actions={canReceive ? <Link className={primaryClass} href={`/admin/finance/receipts/new?customer=${encodeURIComponent(statement.data.customer.number)}`}>Record a receipt</Link> : null}
+      />
+      <CustomerStatementPanel initial={statement.data} canReadReceipts={canReadReceipts} canReadOrders={canReadOrders} walletPromise={walletPromise} />
+    </div>
+  );
 }
 
 /** The wallet loads on its own, so the statement never waits for it. */
@@ -36,7 +45,7 @@ function WalletSection({ customerId, walletPromise }: { customerId: string; wall
   return wallet.ok ? <CustomerWalletPanel customerId={customerId} view={wallet.data} /> : null;
 }
 
-function CustomerStatementView({ initial, canReceive, canReadReceipts, canReadOrders, walletPromise }: { initial: View; canReceive: boolean; canReadReceipts: boolean; canReadOrders: boolean; walletPromise: ReturnType<typeof customerWalletAction> }) {
+export function CustomerStatementPanel({ initial, canReadReceipts, canReadOrders, walletPromise }: { initial: View; canReadReceipts: boolean; canReadOrders: boolean; walletPromise: ReturnType<typeof customerWalletAction> | null }) {
   const uid = useId();
   // The position (owed, ageing) always follows the page; only the list of entries is what a date range replaces.
   const [ranged, setRanged] = useState<View['lines'] | null>(null);
@@ -60,12 +69,7 @@ function CustomerStatementView({ initial, canReceive, canReadReceipts, canReadOr
   const c = view.customer;
 
   return (
-    <div className="max-w-6xl space-y-5">
-      <PageHeader
-        title={c.name}
-        intro={<span className="flex flex-wrap items-center gap-2">Customer {c.number} · <Chip tone={c.accountType === 'credit' ? 'sky' : 'gray'}>{c.accountType === 'credit' ? 'Credit account' : 'Cash customer'}</Chip>{c.blocked !== 'none' ? <Chip tone="red">Blocked: {c.blocked}</Chip> : null}</span>}
-        actions={canReceive ? <Link className={primaryClass} href={`/admin/finance/receipts/new?customer=${encodeURIComponent(c.number)}`}>Record a receipt</Link> : null}
-      />
+    <div className="space-y-5">
       <Message notice={notice} />
       <section aria-label="Position" className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <div className={cardClass}><p className="text-xs text-fg-muted">Owes</p><p className="text-lg font-bold tabular-nums text-fg-strong">{money(view.owed)}</p></div>
@@ -74,9 +78,11 @@ function CustomerStatementView({ initial, canReceive, canReadReceipts, canReadOr
         <div className={cardClass}><p className="text-xs text-fg-muted">Credit limit</p><p className="text-lg font-bold tabular-nums text-fg-strong">{c.accountType === 'credit' ? money(c.creditLimit) : '—'}</p></div>
       </section>
 
-      <Suspense fallback={<p className="text-xs text-fg-muted" role="status">Loading the wallet…</p>}>
-        <WalletSection customerId={c.id} walletPromise={walletPromise} />
-      </Suspense>
+      {walletPromise === null ? null : (
+        <Suspense fallback={<p className="text-xs text-fg-muted" role="status">Loading the wallet…</p>}>
+          <WalletSection customerId={c.id} walletPromise={walletPromise} />
+        </Suspense>
+      )}
 
       <section aria-labelledby={`${uid}-age`} className="space-y-2">
         <h3 id={`${uid}-age`} className="text-sm font-bold text-fg-strong">By age</h3>

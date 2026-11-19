@@ -41,6 +41,7 @@ export async function saveCustomerProfileAction(input: {
   await requirePermission('customers:update');
   const row = await master().saveProfile(await companyId(), input);
   revalidatePath('/admin/customers');
+  revalidatePath('/admin/customers/list');
   return row;
 }
 
@@ -80,6 +81,7 @@ export async function saveTradeCustomerAction(input: {
   await requirePermission('customers:update');
   const row = await master().saveCustomer(await companyId(), input);
   revalidatePath('/admin/customers');
+  revalidatePath('/admin/customers/list');
   return row;
 }
 
@@ -87,6 +89,7 @@ export async function deleteTradeCustomerAction(id: string): Promise<void> {
   await requirePermission('customers:delete');
   await master().deleteCustomer(await companyId(), id);
   revalidatePath('/admin/customers');
+  revalidatePath('/admin/customers/list');
 }
 
 export async function receiveCustomerPaymentAction(
@@ -97,6 +100,7 @@ export async function receiveCustomerPaymentAction(
   await requirePermission('transactions:post');
   const row = await master().receivePayment(await companyId(), customerId, { amount, reference });
   revalidatePath('/admin/customers');
+  revalidatePath('/admin/customers/list');
   revalidatePath('/admin/transactions/ledger');
   return row;
 }

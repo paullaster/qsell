@@ -92,7 +92,7 @@ function Body({ first, variant }: { first: Extract<FirstPage, { ok: true }>; var
               <Chip tone={STATUS_TONE[row.status] ?? 'gray'}>{row.status}</Chip>
               <Chip tone={row.paymentStatus === 'paid' ? 'green' : 'gray'}>{row.paymentStatus.replaceAll('_', ' ')}</Chip>
               {row.approvalStatus === 'pending' ? <Chip tone="amber">Waiting for approval</Chip> : null}
-              <Link href="/admin/orders" className="min-h-10 content-center text-sm font-medium text-indigo-600 underline">Open in Customer Orders</Link>
+              <Link href={`/admin/orders?order=${encodeURIComponent(row.id)}`} className="min-h-10 content-center text-sm font-medium text-indigo-600 underline">Open for fulfilment</Link>
             </div>
           </li>
         ))}

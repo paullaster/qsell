@@ -48,7 +48,7 @@ Staff can sell today only through a **quote** (Sales Quotes, then accept, then c
 
 **Link to quotes:** a quote converted to an order already becomes a `sales_order`. The order shows its **source quote** and the quote shows its **order**, both ways.
 
-**Screens:** `Sales and Fulfillment → Sales Orders` (new): a list (paged, keyset, filtered by status, customer, date, branch) of orders with sales module `sales_order`, and **New sales order**. The existing *Customer Orders* screen stays the place to **process** any order (courier, packing, delivery); Sales Orders is where staff **take** them.
+**Screens:** `Sales and Fulfillment → Sales Orders` (new): a list (paged, keyset, filtered by status, customer, date, branch) of orders with sales module `sales_order`, and **New sales order**. The existing *Web Shop Orders* screen stays the place to **process** web shop orders (courier, packing, delivery); Sales Orders is where staff **take** them.
 
 **Permissions (new):** `sales_orders:read`, `sales_orders:create`. Cancelling and approving stay `orders:cancel` and `orders:approve`.
 
@@ -205,7 +205,7 @@ Each slice follows the standing rules: server-side validation and permissions, n
 4. **One invoice per order until partial billing.** Recommended. It matches what exists and keeps the fiscal numbering simple; billing per delivery is its own design.
 5. **When is an invoice raised for a sales order?** Recommended: when staff press **Raise invoice** (usually at collection or delivery), not at placing, except credit sales, which are invoiced at once. Alternative: invoice every sales order at placing.
 6. **Voiding a cash sale.** Recommended: a **return** with reason and approval (never an edit), which needs the returns flow; until it exists, the till can reprint but not void.
-7. **Menu placement.** Recommended: under *Sales and Fulfillment*, after Sales Quotes: Sales Orders, Cash Sales, Credit Sales, Sales Invoices; *Customer Orders* stays as the place to process.
+7. **Menu placement.** Recommended: under *Sales and Fulfillment*, after Sales Quotes: Sales Orders, Cash Sales, Credit Sales, Sales Invoices; *Web Shop Orders* stays as the place to process web shop orders.
 8. **Branch rule for staff sales.** Recommended: a person sells in their own branch only; a permission grants other branches.
 9. **Credit hold with release.** Recommended: build it with Credit Sales (S-3), because a sales person who is refused at the limit needs a way to ask for an exception; the approval engine already supports the request. Alternative: keep today's refusal and let the customer's limit be raised by finance.
 
