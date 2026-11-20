@@ -5,9 +5,11 @@ import { DEFAULT_AT_RISK_MINUTES, slaState, type SlaState } from '@/lib/delivery
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { branches, deliveries, deliveryLines, deliveryRiders, deliveryRunStops, deliveryRuns, deliverySlaSettings, deliveryShipments, orderItems, orders, products } from '@/server/db/drizzle/schema';
-import { RUN_ACTION_WORDS, RUN_STATUS_WORDS, canJoinRun, isReordering, isRunEditable, nearestNext, nextRunStatus, runActionsFrom, runCloseProblem, runTotals, waitingSince, type RunAction, type RunStatus, type RunTotals } from '@/lib/dispatch-run';
+import { RUN_ACTION_WORDS, RUN_STATUS_WORDS, canJoinRun, isReordering, isRunEditable, nextRunStatus, runActionsFrom, runCloseProblem, runTotals, waitingSince, type RunAction, type RunStatus, type RunTotals } from '@/lib/dispatch-run';
 import { STATUS_WORDS, type DeliveryStatus } from '@/lib/delivery-document';
 import { readGeoPoint, type GeoPoint } from '@/lib/geo';
+import { routeKm } from '@/lib/route-plan';
+import type { RoutePlannerPort } from '@/server/ports/route-optimiser';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { NumberSeriesService } from '@/server/kernel/numbering/service';
 import { businessDate } from '@/server/kernel/numbering/business-date';
@@ -35,6 +37,15 @@ export interface RunStopView {
   value: number;
   weightKg: number | null;
   volumeLitres: number | null;
+  /** Where the customer pinned the place on the map, when they did. */
+  pin: GeoPoint | null;
+}
+
+/** How far the run goes, in straight lines from the branch through the stops in their order; stops with no map pin cannot be counted. */
+export interface RunRoute {
+  km: number;
+  pinned: number;
+  unpinned: number;
 }
 
 export interface RunView {
@@ -58,6 +69,8 @@ export interface RunView {
   startedAt: string | null;
   closedAt: string | null;
   stops: RunStopView[];
+  /** Null when there is no stop or nothing on the map to measure. */
+  route: RunRoute | null;
   totals: RunTotals;
   editable: boolean;
   actions: { action: RunAction; words: string }[];
@@ -137,6 +150,8 @@ export class DeliveryRuns {
     private readonly riders: Pick<DeliveryRiders, 'carrier'>,
     private readonly costs: Pick<DeliveryCosts, 'accrueDayIn' | 'accrueDeliveryIn'>,
     private readonly vehicles: Pick<DeliveryVehicles, 'usable' | 'limitsOf'>,
+    /** The planner of that id (a port; the in-house ones, or a vendor's later), or null for none such. */
+    private readonly planners: (id: unknown) => RoutePlannerPort | null,
   ) {}
 
   /** The rider a run is given to: someone from the rider list who may carry now (their name is kept on the run as it is today), or a name typed in. */
@@ -304,7 +319,7 @@ export class DeliveryRuns {
   }
 
   /** Puts the stops in the order given (delivery ids): exactly the stops of the run, each once. */
-  async reorder(actor: DocActor, runId: string, deliveryIds: unknown, expectedVersion?: number): Promise<DocResult<RunView>> {
+  async reorder(actor: DocActor, runId: string, deliveryIds: unknown, expectedVersion?: number, how?: { planner: string; km: number | null }): Promise<DocResult<RunView>> {
     if (!Array.isArray(deliveryIds) || deliveryIds.some((d) => typeof d !== 'string')) return fail('bad_input', 'Give the stops in the order they should be done.');
     const wanted = deliveryIds as string[];
     return await this.db.transaction(async (tx): Promise<DocResult<RunView>> => {
@@ -315,18 +330,26 @@ export class DeliveryRuns {
       const byDelivery = new Map(live.map((s) => [s.deliveryId, s.id]));
       await this.renumber(tx, wanted.map((d) => byDelivery.get(d) ?? ''));
       await tx.update(deliveryRuns).set({ version: run.version + 1, updatedAt: new Date() }).where(eq(deliveryRuns.id, runId));
-      await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_run', id: runId }, action: 'run.reordered', actor: { type: 'user', id: actor.userId } }, tx);
+      await this.decisions.record({ companyId: actor.companyId, subject: { type: 'delivery_run', id: runId }, action: 'run.reordered', actor: { type: 'user', id: actor.userId }, ...(how === undefined ? {} : { inputs: { planner: how.planner, km: how.km } }) }, tx);
       return { ok: true, data: await this.viewIn(tx, actor.companyId, runId) };
     });
   }
 
-  /** Puts the stops in the suggested order: nearest next from the branch. A person can still change it. */
-  async arrange(actor: DocActor, runId: string, expectedVersion?: number): Promise<DocResult<RunView>> {
+  /**
+   * Puts the stops in the order a planner suggests: nearest next from the branch (the default), or the shortest route the in-house planner
+   * can find. The planner is a port, so another can be added without changing this. A person can still change the order. The planner's name
+   * and the length of the route it made are kept with the change in the decision log.
+   */
+  async arrange(actor: DocActor, runId: string, expectedVersion?: number, plannerId: unknown = 'nearest'): Promise<DocResult<RunView>> {
+    const planner = this.planners(plannerId);
+    if (planner === null) return fail('bad_input', 'That way of ordering the stops is not offered.');
     const view = await this.get(actor.companyId, runId);
     if (view === null) return fail('not_found', 'That run could not be found.');
     const pins = await this.pinsOf(actor.companyId, runId, view.branch.id);
-    const order = nearestNext(pins.start, pins.stops);
-    return await this.reorder(actor, runId, order, expectedVersion);
+    const plan = await planner.plan({ start: pins.start, stops: pins.stops });
+    const byId = new Map(pins.stops.map((s) => [s.id, s.point]));
+    const km = routeKm(pins.start, plan.order.flatMap((id) => { const p = byId.get(id); return p === undefined || p === null ? [] : [p]; }));
+    return await this.reorder(actor, runId, plan.order, expectedVersion, { planner: planner.name, km });
   }
 
   private async pinsOf(companyId: string, runId: string, branchId: string): Promise<{ start: GeoPoint | null; stops: { id: string; point: GeoPoint | null }[] }> {
@@ -339,7 +362,7 @@ export class DeliveryRuns {
       .innerJoin(deliveries, eq(deliveries.id, deliveryRunStops.deliveryId))
       .where(and(eq(deliveryRunStops.runId, runId), isNull(deliveryRunStops.leftAt)))
       .orderBy(asc(deliveryRunStops.sequence));
-    return { start, stops: rows.map((r) => ({ id: r.deliveryId, point: r.destination.pin })) };
+    return { start, stops: rows.map((r) => ({ id: r.deliveryId, point: r.destination.pin ?? null })) };
   }
 
   /**
@@ -424,7 +447,7 @@ export class DeliveryRuns {
   private async viewIn(db: Tx | DrizzleDb, companyId: string, runId: string, nullable: true): Promise<RunView | null>;
   private async viewIn(db: Tx | DrizzleDb, companyId: string, runId: string, nullable = false): Promise<RunView | null> {
     const [row] = await db
-      .select({ r: deliveryRuns, branchName: branches.name })
+      .select({ r: deliveryRuns, branchName: branches.name, branchLatitude: branches.latitude, branchLongitude: branches.longitude })
       .from(deliveryRuns)
       .innerJoin(branches, eq(branches.id, deliveryRuns.branchId))
       .where(and(eq(deliveryRuns.id, runId), eq(deliveryRuns.companyId, companyId)));
@@ -452,6 +475,7 @@ export class DeliveryRuns {
       startedAt: r.startedAt?.toISOString() ?? null,
       closedAt: r.closedAt?.toISOString() ?? null,
       stops,
+      route: routeOf(row.branchLatitude, row.branchLongitude, stops),
       totals: runTotals(stops.map((s) => ({ units: s.units, value: s.value, weightKg: s.weightKg, volumeLitres: s.volumeLitres }))),
       editable: isRunEditable(r.status),
       actions: runActionsFrom(r.status).map((action) => ({ action, words: RUN_ACTION_WORDS[action] })),
@@ -481,6 +505,8 @@ export class DeliveryRuns {
       value: facts.get(r.d.id)?.value ?? 0,
       weightKg: facts.get(r.d.id)?.weightKg ?? null,
       volumeLitres: facts.get(r.d.id)?.volumeLitres ?? null,
+      // A destination written without a pin has no such key at all, which is not the same as null.
+      pin: r.d.destination.pin ?? null,
     }));
   }
 
@@ -590,4 +616,12 @@ class RunRefusal extends Error {
   constructor(readonly result: { ok: false; reason: DocRefusal; message: string }) {
     super(result.message);
   }
+}
+
+/** The length of a run's route, from the branch's pin (or from the first stop when the branch has none) through the stops that have a pin, in their order. */
+function routeOf(latitude: string | number | null, longitude: string | number | null, stops: readonly RunStopView[]): RunRoute | null {
+  const placed = stops.flatMap((s) => (s.pin === null ? [] : [s.pin]));
+  if (placed.length === 0) return null;
+  const read = readGeoPoint(latitude, longitude);
+  return { km: routeKm(read.ok ? read.point : null, placed), pinned: placed.length, unpinned: stops.length - placed.length };
 }
