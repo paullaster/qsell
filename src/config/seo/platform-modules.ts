@@ -354,6 +354,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'Selling Documents',
       'Registers',
       'Partial billing',
+      'Offline selling',
     ],
   },
   {

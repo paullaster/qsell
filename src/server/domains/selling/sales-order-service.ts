@@ -49,6 +49,10 @@ export interface PlaceExtra {
   shiftId?: string;
   idempotencyKey?: string;
   checkTotal?: (totals: { subtotal: number; tax: number; totalAmount: number }) => string | null;
+  /** Prices fixed beforehand (a sale rung up offline is accepted at the price the customer paid), and the totals that come of them. */
+  quotedItems?: Parameters<typeof OrderWriteService.createOrder>[0]['quotedItems'];
+  quotedTotals?: Parameters<typeof OrderWriteService.createOrder>[0]['quotedTotals'];
+  skipOfferedCheck?: boolean;
 }
 
 /** Sales orders taken by staff: placing one (through the order writer, with the company's settings for the kind), the customer's credit position, and the list. */

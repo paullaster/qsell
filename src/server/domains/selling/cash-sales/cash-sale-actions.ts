@@ -24,6 +24,8 @@ export interface CashSalesScreen {
   can: { create: boolean; readAll: boolean; return: boolean };
   /** Returns started and not finished (a refund waiting for approval, or approved and still to be handed over). */
   returns: { returnId: string; orderNumber: string; amount: number; status: string }[];
+  /** Whether tills may keep selling with no connection (the company's setting). */
+  offlineEnabled: boolean;
 }
 
 const cursorOf = (raw: unknown): { k: string; id: string } | null => {
@@ -51,7 +53,7 @@ export async function cashSalesScreenAction(): Promise<{ ok: true; data: CashSal
     const shift = mine === null ? null : await c.shifts.report(companyId, mine);
     const listed = await c.cashSales.list(companyId, who.readAll ? {} : { userId: who.userId });
     const canReturn = await canPermission('cash_sales:return');
-    return { ok: true, data: { shift, sales: { rows: listed.rows, next: encode(listed.next) }, can: { create: who.create, readAll: who.readAll, return: canReturn }, returns: canReturn ? await c.counterReturns.unfinished(companyId, who.readAll ? {} : { userId: who.userId }) : [] } };
+    return { ok: true, data: { shift, sales: { rows: listed.rows, next: encode(listed.next) }, can: { create: who.create, readAll: who.readAll, return: canReturn }, returns: canReturn ? await c.counterReturns.unfinished(companyId, who.readAll ? {} : { userId: who.userId }) : [], offlineEnabled: (await c.offlineSales.settings(companyId)).enabled } };
   } catch (error) {
     console.error('[cash sales] screen', error);
     return { ok: false, error: 'The counter could not be loaded. Please try again.' };

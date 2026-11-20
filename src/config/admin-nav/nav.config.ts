@@ -1397,6 +1397,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
         permission: 'sms:manage',
       },
       {
+        id: 'settings-offline-selling',
+        title: 'Offline selling',
+        name: 'settings-offline-selling',
+        href: '/admin/settings/offline-selling',
+        description: 'Switch selling at the counter with no connection on or off, and set how much may be sold and for how long before it must be sent',
+        icon: 'Wallet',
+        permission: 'offline_selling:manage',
+      },
+      {
         id: 'settings-partial-billing',
         title: 'Partial billing',
         name: 'settings-partial-billing',

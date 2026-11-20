@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { bankAccounts, branches, counterReturns, orders, glAccounts, orderTenders, registers, shiftCloseRequests, shiftMovements, shiftSettings, shiftVariancePostings, shifts, users } from '@/server/db/drizzle/schema';
+import { bankAccounts, branches, counterReturns, offlineSales, orders, glAccounts, orderTenders, registers, shiftCloseRequests, shiftMovements, shiftSettings, shiftVariancePostings, shifts, users } from '@/server/db/drizzle/schema';
 import type { Actor } from '@/server/kernel/context';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { ReasonCodes, ReasonInput } from '@/server/kernel/reason-codes/service';
@@ -300,6 +300,8 @@ export class ShiftService {
         if (shift.status !== 'open') return { ok: false as const, error: 'That shift is already closed.' };
         const own = shift.openedBy === who.userId;
         if (!own && !who.supervisor) return { ok: false as const, error: 'This is another person\'s shift: only a supervisor can close it.' };
+        const [parked] = await tx.select({ n: sql<string>`COUNT(*)::text` }).from(offlineSales).where(and(eq(offlineSales.shiftId, shift.id), eq(offlineSales.status, 'parked')));
+        if (Number(parked?.n ?? 0) > 0) return { ok: false as const, error: `${parked?.n ?? '0'} offline sale(s) from this shift could not be made yet (see Cash sales, Offline sales to look at). Put the stock right and try them again, or give them up with a reason, before closing.` };
         const [unfinished] = await tx.select({ n: sql<string>`COUNT(*)::text` }).from(orders).where(and(eq(orders.shiftId, shift.id), eq(orders.salesModule, 'pos_cash_sale'), sql`${orders.paymentStatus} NOT IN ('paid', 'reconciled', 'refunded', 'partially_refunded')`, sql`${orders.status} NOT IN ('cancelled', 'failed')`));
         if (Number(unfinished?.n ?? 0) > 0) return { ok: false as const, error: `${unfinished?.n ?? '0'} sale(s) rung up in this shift are still waiting for their payment to be recorded. Finish or cancel them on the Cash Sales screen before closing.` };
         const f = await this.figures(shift.id, Number(shift.openingFloat));

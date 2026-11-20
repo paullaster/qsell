@@ -597,6 +597,12 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'See till shifts and their X and Z reports',
   },
+  'offline_selling:manage': {
+    resource: 'offline_selling',
+    action: 'manage',
+    category: 'Orders & Sales',
+    description: 'Switch selling at the counter with no connection on or off for the company, and set its limits: its own permission, held by no other role',
+  },
   'partial_billing:manage': {
     resource: 'partial_billing',
     action: 'manage',

@@ -7,6 +7,8 @@ import { finishReturnAction, cashSaleReceiptAction, cashSalesMoreAction, cashSal
 import type { SaleSummary } from '@/server/domains/selling/cash-sales/cash-sale-service';
 import { planTenders, type TenderKind } from '@/server/domains/selling/cash-sales/tender-rules';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
+import { OfflineReview } from './OfflineReview';
+import { OFFLINE_TILL_PATH, prepareOfflineTill } from '@/lib/offline-till/ready';
 import { ReturnPanel } from './ReturnPanel';
 import { Chip, Field, LoadFailed, PageHeader, PageSkeleton, buttonClass, cardClass, fieldClass, primaryClass } from '@/components/ui/screen-kit';
 import { useDebouncedValue } from '@/components/ui/useDebouncedValue';
@@ -148,6 +150,7 @@ function Counter({ initial }: { initial: CashSalesScreen }) {
     <>
       <PageHeader title="Cash Sales" intro="Ring up a sale at the counter in your open shift: add what is bought, take the payment (cash with change, M-Pesa or card, or a mix) and give the receipt." />
       <ShiftBar shift={shift} />
+      {canSell && data.offlineEnabled ? <OfflineReady /> : null}
       {receipt === null ? null : <Receipt sale={receipt} onClose={() => setReceipt(null)} />}
       {canSell ? (
         <section className="grid gap-4 lg:grid-cols-[1fr_20rem] print:hidden" aria-label="New sale">
@@ -207,8 +210,33 @@ function Counter({ initial }: { initial: CashSalesScreen }) {
       {returning === null ? null : <ReturnPanel key={returning} orderId={returning} onClose={() => setReturning(null)} onChanged={reload} />}
       {finishNotice === null ? null : <p role="status" className="rounded-lg border border-line p-3 text-sm" data-testid="finish-notice">{finishNotice}</p>}
       <ToFinish data={data} onFinish={(id) => void finishReturn(id)} />
+      {data.can.readAll ? <OfflineReview /> : null}
       <Sales key={version} data={data} onReceipt={(id) => void showReceipt(id)} onReturn={data.can.return ? setReturning : undefined} />
     </>
+  );
+}
+
+/** Keeps this browser ready to go on selling if the connection drops: the offline till and what it needs, refreshed every few minutes while online. */
+function OfflineReady() {
+  const [state, setState] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => {
+    let live = true;
+    const run = async () => {
+      const r = await prepareOfflineTill();
+      if (live) setState(r.ok ? { ok: true, text: `Ready to sell with no connection (kept ${new Date(r.savedAt).toLocaleTimeString()}).` } : { ok: false, text: `Not ready for offline selling: ${r.error}` });
+    };
+    void run();
+    const timer = setInterval(() => void run(), 5 * 60_000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, []);
+  return (
+    <p className={`text-sm print:hidden ${state?.ok === false ? 'text-amber-700' : 'text-fg-muted'}`} data-testid="offline-ready">
+      {state === null ? 'Getting the till ready for offline selling…' : state.text}{' '}
+      <Link href={OFFLINE_TILL_PATH} className="underline">Open the offline till</Link>
+    </p>
   );
 }
 

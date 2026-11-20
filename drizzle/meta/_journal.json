@@ -1366,6 +1366,13 @@
       "when": 1794977231874,
       "tag": "0194_partial_billing",
       "breakpoints": true
+    },
+    {
+      "idx": 195,
+      "version": "7",
+      "when": 1794988751912,
+      "tag": "0195_offline_selling",
+      "breakpoints": true
     }
   ]
 }

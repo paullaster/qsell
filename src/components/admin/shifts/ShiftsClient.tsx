@@ -3,6 +3,7 @@
 import { Suspense, use, useState } from 'react';
 import { closeShiftAction, openShiftAction, shiftHistoryAction, shiftMovementAction, shiftReportAction, shiftsScreenAction, withdrawShiftCloseAction, type ShiftsScreen } from '@/server/domains/selling/shifts/shift-actions';
 import type { ShiftReport, ShiftRow } from '@/server/domains/selling/shifts/shift-service';
+import { waitingOnThisTill } from '@/lib/offline-till/store';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { Chip, Field, LoadFailed, PageHeader, PageSkeleton, buttonClass, cardClass, fieldClass, primaryClass } from '@/components/ui/screen-kit';
 import { SegmentedChoice } from '@/components/ui/SegmentedChoice';
@@ -140,6 +141,13 @@ function CloseForm({ shiftId, supervisor, approval, onClosed }: { shiftId: strin
     if (declared === null) return;
     setBusy(true);
     setProblem(null);
+    // Sales rung up with no connection and still on this till are not in the books: the shift cannot be closed until they are sent.
+    const waiting = await waitingOnThisTill();
+    if (waiting > 0) {
+      setBusy(false);
+      setProblem(`${String(waiting)} sale(s) rung up with no connection are still on this till. Connect and let them be sent (open the offline till) before closing the shift.`);
+      return;
+    }
     const r = await closeShiftAction({ shiftId, declared, reason: why });
     setBusy(false);
     if (r.ok) await onClosed(r.data.zNumber, r.data.variance);

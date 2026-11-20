@@ -4914,6 +4914,61 @@ export const orderBillingLines = pgTable(
   ],
 );
 
+/** Whether tills may keep selling with no connection, and the limits that keep it honest (docs/architecture/offline-selling.md). Off by default; changed only with its own permission. */
+export const offlineSellingSettings = pgTable('offline_selling_settings', {
+  companyId: uuid('company_id').primaryKey().references(() => companySettings.id, { onDelete: 'cascade' }),
+  enabled: boolean('enabled').notNull().default(false),
+  /** The most (in KES) that may be sold offline in one shift. */
+  maxPerShift: numeric('max_per_shift', { precision: 14, scale: 2 }).notNull().default('50000'),
+  /** The longest (in hours) an offline sale may wait before it is sent. */
+  maxHours: integer('max_hours').notNull().default(24),
+  version: integer('version').notNull().default(1),
+  updatedBy: text('updated_by').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** The secret a till signs its offline sales with, made while the shift is online and kept with the shift: a sale changed after it was signed is refused. */
+export const offlineShiftKeys = pgTable('offline_shift_keys', {
+  shiftId: uuid('shift_id').primaryKey().references(() => shifts.id, { onDelete: 'restrict' }),
+  companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+  secret: text('secret').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * A sale rung up with no connection, as it arrived: kept whole (`payload`) whatever became of it. `accepted` made a normal cash sale,
+ * `needs_review` did too but something differs (the price, the product no longer offered), `parked` could not be made yet (the stock was
+ * not there: it is kept until the shortage is put right), `rejected` was refused (changed after it was signed, over a limit, into a shift
+ * that is closed), `discarded` was given up by a supervisor with a reason.
+ */
+export const offlineSales = pgTable(
+  'offline_sales',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    shiftId: uuid('shift_id').notNull().references(() => shifts.id, { onDelete: 'restrict' }),
+    saleKey: text('sale_key').notNull(),
+    deviceRef: text('device_ref').notNull(),
+    /** The time on the till's clock when it was sold: kept beside the server's, never used for order. */
+    deviceTime: timestamp('device_time', { withTimezone: true }).notNull(),
+    receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+    total: numeric('total', { precision: 14, scale: 2 }).notNull(),
+    status: text('status').$type<'accepted' | 'needs_review' | 'parked' | 'rejected' | 'discarded'>().notNull(),
+    flags: jsonb('flags').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    reason: text('reason'),
+    orderId: text('order_id').references(() => orders.id, { onDelete: 'restrict' }),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('offline_sales_key_uidx').on(t.saleKey),
+    index('offline_sales_shift_idx').on(t.shiftId, t.status),
+    index('offline_sales_review_idx').on(t.companyId, t.receivedAt).where(sql`${t.status} IN ('needs_review', 'parked', 'rejected')`),
+    check('offline_sales_status_chk', sql`${t.status} IN ('accepted', 'needs_review', 'parked', 'rejected', 'discarded')`),
+    check('offline_sales_total_chk', sql`${t.total} > 0`),
+  ],
+);
+
 export const shiftSettings = pgTable(
   'shift_settings',
   {

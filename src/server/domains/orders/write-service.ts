@@ -184,6 +184,8 @@ export const OrderWriteService = {
     checkTotal?: (totals: { subtotal: number; tax: number; totalAmount: number }) => string | null;
     /** Prices the order and stops there: nothing is held, saved or sent. For a screen that shows the total as lines are added. */
     previewOnly?: boolean;
+    /** The sale was rung up already (offline at the counter), so where a product is offered is not asked again: the sale is kept and flagged instead. */
+    skipOfferedCheck?: boolean;
     /** Hold this one document's stock until it is paid, where its kind allows it (the staff member switched it on). */
     holdUntilPaid?: boolean;
     /**
@@ -367,7 +369,7 @@ export const OrderWriteService = {
       }
       // Where it is offered: a staff document refuses a product that is not offered in it (an order made from a quote was checked when the quote was).
       const offerType = offerTypeOfModule(params.salesModule, params.paymentMethod === 'on_account');
-      if (offerType !== null && params.sourceQuoteId === undefined && !isOfferedIn(prod.offeredIn, offerType)) {
+      if (offerType !== null && params.sourceQuoteId === undefined && params.skipOfferedCheck !== true && !isOfferedIn(prod.offeredIn, offerType)) {
         return { success: false, error: notOfferedRefusal(prod.name, offerType), code: 'not_for_sale' };
       }
       const quoted = quotedFor(item, index);

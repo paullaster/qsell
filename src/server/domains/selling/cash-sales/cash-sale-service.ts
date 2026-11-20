@@ -3,7 +3,7 @@ import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { customers, invoiceDocuments, orders, orderTenders, paymentMethods, shifts } from '@/server/db/drizzle/schema';
 import { OrderStages } from '@/server/domains/orders/stages';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
-import type { SalesOrderService } from '../sales-order-service';
+import type { PlaceExtra, SalesOrderService } from '../sales-order-service';
 import type { SalesOrderLineInput } from '../domain/sales-order-input';
 import type { ShiftService } from '../shifts/shift-service';
 import { planTenders, TENDER_KINDS, type TenderKind, type TenderPlan, type TenderRequest } from './tender-rules';
@@ -17,6 +17,8 @@ export interface CashSaleInput {
   tenders: { methodId: string; amount: number; reference: string }[];
   /** One key for one attempt at one sale: a retry of the same sale (the connection dropped, the button pressed twice) finds the order it made. */
   saleKey: string;
+  /** A sale rung up offline: the prices the customer paid (accepted as they are), and that it was sold already. */
+  offline?: { quotedItems: NonNullable<PlaceExtra['quotedItems']>; quotedTotals: NonNullable<PlaceExtra['quotedTotals']> };
 }
 
 export interface SaleSummary {
@@ -71,6 +73,16 @@ export class CashSaleService {
       if (raced === undefined) throw error;
       return raced;
     }
+  }
+
+  /** The ways of paying a till in this branch may use (for the offline till's snapshot): the same rule as completing a sale. */
+  async tenderMethods(companyId: string, branchId: string): Promise<{ id: string; name: string; kind: TenderKind; requiresReference: boolean }[]> {
+    const rows = await this.db
+      .select({ id: paymentMethods.id, name: paymentMethods.name, kind: paymentMethods.kind, requiresReference: paymentMethods.requiresReference })
+      .from(paymentMethods)
+      .where(and(eq(paymentMethods.companyId, companyId), eq(paymentMethods.enabled, true), inArray(paymentMethods.kind, [...TENDER_KINDS]), isNotNull(paymentMethods.balancingBankAccountId), or(isNull(paymentMethods.branchId), eq(paymentMethods.branchId, branchId)), sql`${paymentMethods.usableFor} @> '["customer_receipt"]'::jsonb`))
+      .orderBy(paymentMethods.sortOrder, paymentMethods.name);
+    return rows.map((r) => ({ ...r, kind: r.kind as TenderKind }));
   }
 
   /** The ways of paying this till may use: switched on, paying into a real cash or bank account, for cash, M-Pesa or card, in this branch or every branch. */
@@ -128,6 +140,7 @@ export class CashSaleService {
       {
         shiftId: shift.shiftId,
         idempotencyKey: input.saleKey,
+        ...(input.offline === undefined ? {} : { quotedItems: input.offline.quotedItems, quotedTotals: input.offline.quotedTotals, skipOfferedCheck: true }),
         // The payment is checked against the priced total before anything is held or saved: a short payment never makes an unpaid sale.
         checkTotal: (totals) => {
           const worked = planTenders(totals.totalAmount, requests);
