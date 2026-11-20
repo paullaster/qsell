@@ -1,5 +1,6 @@
 'use server';
 
+import { displayedAvailableCredit, type CreditLimitDisplay } from '@/lib/customer-credit-settings';
 import { requirePermission } from '@/server/domains/access-control/guard';
 import { auth } from '@/auth';
 
@@ -41,6 +42,7 @@ export async function saveCustomerProfileAction(input: {
   await requirePermission('customers:update');
   const row = await master().saveProfile(await companyId(), input);
   revalidatePath('/admin/customers');
+  revalidatePath('/admin/customers/list');
   return row;
 }
 
@@ -80,6 +82,7 @@ export async function saveTradeCustomerAction(input: {
   await requirePermission('customers:update');
   const row = await master().saveCustomer(await companyId(), input);
   revalidatePath('/admin/customers');
+  revalidatePath('/admin/customers/list');
   return row;
 }
 
@@ -87,6 +90,7 @@ export async function deleteTradeCustomerAction(id: string): Promise<void> {
   await requirePermission('customers:delete');
   await master().deleteCustomer(await companyId(), id);
   revalidatePath('/admin/customers');
+  revalidatePath('/admin/customers/list');
 }
 
 export async function receiveCustomerPaymentAction(
@@ -97,6 +101,7 @@ export async function receiveCustomerPaymentAction(
   await requirePermission('transactions:post');
   const row = await master().receivePayment(await companyId(), customerId, { amount, reference });
   revalidatePath('/admin/customers');
+  revalidatePath('/admin/customers/list');
   revalidatePath('/admin/transactions/ledger');
   return row;
 }
@@ -108,6 +113,9 @@ export async function lookupCheckoutCustomerAction(email: string): Promise<{
   blocked: boolean;
   creditLimit: number;
   balance: number;
+  creditAvailable: number;
+  creditLimitDisplay: CreditLimitDisplay;
+  allowOverCreditLimit: boolean;
   transmitInvoicesToKra: boolean;
 }> {
   // Credit terms and balances are private: only the shopper signed in with this
@@ -116,8 +124,10 @@ export async function lookupCheckoutCustomerAction(email: string): Promise<{
   const session = await auth();
   const isSelf = session?.user.email.toLowerCase() === email.trim().toLowerCase();
   const allowed = isSelf || session?.user.isStaff === true;
-  const customer = allowed ? await master().lookupByEmail(await companyId(), email) : null;
-  if (!customer?.isActive) {
+  const cid = await companyId();
+  const display = await getContainer().customerCreditSettings.get(cid);
+  const customer = allowed ? await master().lookupByEmail(cid, email) : null;
+  if (customer?.isActive !== true) {
     return {
       found: false,
       accountType: null,
@@ -125,16 +135,24 @@ export async function lookupCheckoutCustomerAction(email: string): Promise<{
       blocked: false,
       creditLimit: 0,
       balance: 0,
+      creditAvailable: 0,
+      creditLimitDisplay: display.creditLimitDisplay,
+      allowOverCreditLimit: display.allowOverCreditLimit,
       transmitInvoicesToKra: true,
     };
   }
+  const creditLimit = Number(customer.creditLimit);
+  const netOwedCents = customer.accountType === 'credit' ? await getContainer().finance.customerLedger.netOwedCents(cid, customer.id) : 0;
   return {
     found: true,
     accountType: customer.accountType as CustomerAccountType,
     name: customer.name,
     blocked: customer.blocked === 'invoice' || customer.blocked === 'all',
-    creditLimit: Number(customer.creditLimit),
-    balance: Number(customer.balance),
+    creditLimit,
+    balance: netOwedCents / 100,
+    creditAvailable: displayedAvailableCredit(Math.round(creditLimit * 100), netOwedCents, display.creditLimitDisplay) / 100,
+    creditLimitDisplay: display.creditLimitDisplay,
+    allowOverCreditLimit: display.allowOverCreditLimit,
     transmitInvoicesToKra: customer.transmitInvoicesToKra,
   };
 }

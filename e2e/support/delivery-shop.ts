@@ -65,7 +65,7 @@ export async function placePayOnDeliveryOrder(page: Page): Promise<string> {
 }
 
 export async function openOrder(page: Page, orderNumber: string): Promise<void> {
-  await open(page, '/admin/orders', /Customer Orders/);
+  await open(page, '/admin/orders', /Web Shop Orders/);
   await page.getByLabel('Search orders').fill(orderNumber);
   const manage = page.getByRole('button', { name: /Manage/ }).first();
   await expect(manage).toBeVisible({ timeout: 60_000 });
@@ -78,4 +78,3 @@ export async function step(page: Page, button: string, done: string | RegExp): P
   await page.getByRole('button', { name: button, exact: true }).click();
   await expect(page.getByText(done).first()).toBeVisible({ timeout: 30_000 });
 }
-

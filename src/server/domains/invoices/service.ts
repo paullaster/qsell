@@ -1,10 +1,11 @@
 import { lineDisplay } from '@/lib/unit-rules';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   communicationOutbox,
   customers,
   invoiceDocuments,
+  orderItems,
   orders,
   type OrderDeliveryRow,
 } from '@/server/db/drizzle/schema';
@@ -265,7 +266,10 @@ export class InvoiceService {
       .limit(1);
     if (existing) return existing.invoiceNumber;
 
-    const kind = documentType === 'proforma' ? 'proforma_invoice' : 'tax_invoice';
+    // A counter sale's tax invoice is its till receipt: one fiscal document, numbered from the POS receipt series.
+    let kind: 'proforma_invoice' | 'pos_receipt' | 'tax_invoice' = 'tax_invoice';
+    if (documentType === 'proforma') kind = 'proforma_invoice';
+    else if (order.salesModule === 'pos_cash_sale' && documentType === 'tax_invoice') kind = 'pos_receipt';
     // The delivery service's own invoice comes from the same tax invoice series (one legal sequence), as its own document.
     const documentId = documentType === 'delivery_invoice' ? `${order.id}#delivery` : order.id;
     const company = await this.deps.companySettings.ensureSeeded();
@@ -428,6 +432,10 @@ export class InvoiceService {
   ): Promise<GeneratedInvoice> {
     const order = await this.resolveOrder(orderId);
     this.assertProformaAllowed(order, documentType);
+    // An order invoiced in parts is finished with its remaining part invoice, never with a second invoice for the whole.
+    if (documentType === 'tax_invoice' && (await getContainer().partialBilling.hasPartInvoices(orderId))) {
+      throw new Error('This order is invoiced in parts: invoice what is left instead of the whole order.');
+    }
     // A tax invoice is a fiscal document: not before the sale has been approved.
     if (
       documentType !== 'proforma' &&
@@ -465,6 +473,48 @@ export class InvoiceService {
       filename,
       mimeType: 'application/pdf',
     };
+  }
+
+  /**
+   * The PDF of one part invoice of an order (invoicing part of an order): the lines it took, at the order's own amounts, and (on the
+   * invoice that finishes the order) the delivery charge. Made from the saved invoice every time, so it never differs from what
+   * was numbered and signed.
+   */
+  async generatePartPdf(billingId: string): Promise<GeneratedInvoice> {
+    const detail = await getContainer().partialBilling.detail(billingId);
+    if (detail === null) throw new Error('That part invoice does not exist.');
+    const { billing, lines } = detail;
+    const order = await this.resolveOrder(billing.orderId);
+    const company = await this.deps.companySettings.getProfile();
+    const buyerTaxPin = await this.buyerTaxPin(order);
+    const rows = await this.deps.db.select().from(orderItems).where(inArray(orderItems.id, lines.map((l) => l.orderItemId)));
+    const items = lines.map((l) => {
+      const original = rows.find((r) => r.id === l.orderItemId);
+      if (original === undefined) throw new Error('A line of this part invoice is no longer on the order.');
+      const perUnit = has(original.qtyPerUnit) && Number(original.qtyPerUnit) > 0 ? Number(original.qtyPerUnit) : null;
+      return {
+        productId: l.productId,
+        productName: l.description,
+        sku: original.sku,
+        quantity: l.quantity,
+        unitPrice: Number(original.unitPrice),
+        totalPrice: Number(l.amount),
+        imageUrl: original.imageUrl,
+        unitId: original.unitId,
+        unitCode: original.unitCode,
+        enteredQuantity: perUnit === null ? null : Math.round((l.quantity / perUnit) * 1000) / 1000,
+        qtyPerUnit: original.qtyPerUnit,
+        enteredUnitPrice: original.enteredUnitPrice === null ? null : Number(original.enteredUnitPrice),
+      };
+    });
+    const total = Number(billing.totalAmount);
+    const tax = Number(billing.taxAmount);
+    let deliveryLine: InvoiceFigures['deliveryLine'] = null;
+    if (Number(billing.remainderAmount) > 0) deliveryLine = (await this.planFor(order, 'tax_invoice')).figures.deliveryLine;
+    const figures: InvoiceFigures = { subtotal: Math.round((total - tax) * 100) / 100, shippingFee: 0, totalTax: tax, totalAmount: total, taxRows: [{ label: 'Tax', amount: tax }], deliveryLine };
+    const payload = this.buildPayload({ ...order, items }, billing.invoiceNumber, company, 'tax_invoice', buyerTaxPin, figures);
+    const pdf = await this.deps.invoicePdf.generate(payload);
+    return { invoiceNumber: billing.invoiceNumber, documentType: 'tax_invoice', orderId: order.id, orderNumber: order.orderNumber, pdfBase64: pdf.toString('base64'), filename: `${billing.invoiceNumber}.pdf`, mimeType: 'application/pdf' };
   }
 
   async generateAndEmail(

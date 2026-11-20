@@ -63,7 +63,7 @@ export async function saveOrderTargetsAction(input: unknown) {
 export async function lateOrdersAction(cursor?: unknown) {
   return await runSetting('orders:timeline', async (ctx): Promise<{ rows: BreachView[]; nextCursor: string | null }> => {
     const after = typeof cursor === 'string' && cursor.length > 0 && cursor.length <= 400 ? cursor : null;
-    return await getContainer().orderSla.open(ctx.companyId, after, new Date());
+    return await getContainer().orderSla.open(ctx.companyId, after, new Date(), undefined, 'web_shop');
   });
 }
 

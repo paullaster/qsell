@@ -119,7 +119,7 @@ describe.skipIf(url === undefined || url === '')('till shifts (database)', () =>
     expect(noReason.ok).toBe(false);
     const closed = await c.shifts.close(companyId, { userId: person.id, supervisor: false }, shiftId, { declared: counted(5450), reason: 'gave wrong change' });
     expect(closed).toMatchObject({ ok: true, variance: -50 });
-    const z = closed.ok ? closed.zNumber : '';
+    const z = closed.ok && !closed.pending ? closed.zNumber : '';
     expect(z).toMatch(/^Z-/);
     const report = await c.shifts.report(companyId, shiftId);
     expect(report).toMatchObject({ status: 'closed', declaredCash: 5450, expectedCash: 5500, variance: -50, varianceReason: 'gave wrong change', zNumber: z, paidIn: 500, closedBy: 'closer' });
@@ -137,7 +137,7 @@ describe.skipIf(url === undefined || url === '')('till shifts (database)', () =>
       const person = await user('zed');
       const id = await open(person, t.id, 1000);
       const r = await c.shifts.close(companyId, { userId: person.id, supervisor: false }, id, { declared: counted(1000), reason: '' });
-      if (!r.ok) throw new Error(r.error);
+      if (!r.ok || r.pending) throw new Error(r.ok ? 'held' : r.error);
       numbers.push(r.zNumber);
     }
     const last = (z: string) => Number(z.slice(z.lastIndexOf('-') + 1));
@@ -159,7 +159,7 @@ describe.skipIf(url === undefined || url === '')('till shifts (database)', () =>
 
   it('follows the company\'s tolerance, which is changed with a reason and recorded', async () => {
     expect(await c.shifts.tolerance(companyId)).toEqual({ amount: 100, percent: 1 });
-    await c.shifts.saveTolerance(companyId, actor, { amount: 0, percent: 0 }, reason);
+    await c.shifts.saveSettings(companyId, actor, { tolerance: { amount: 0, percent: 0 }, supervisorClose: 'direct' }, reason);
     try {
       const t = await till();
       const person = await user('strict');
@@ -167,9 +167,9 @@ describe.skipIf(url === undefined || url === '')('till shifts (database)', () =>
       expect((await c.shifts.close(companyId, { userId: person.id, supervisor: false }, shiftId, { declared: counted(4995), reason: 'a few coins' })).ok).toBe(false);
       expect((await c.shifts.close(companyId, { userId: person.id, supervisor: false }, shiftId, { declared: counted(5000), reason: '' })).ok).toBe(true);
     } finally {
-      await c.shifts.saveTolerance(companyId, actor, { amount: 100, percent: 1 }, reason);
+      await c.shifts.saveSettings(companyId, actor, { tolerance: { amount: 100, percent: 1 }, supervisorClose: 'direct' }, reason);
     }
-    await expect(c.shifts.saveTolerance(companyId, actor, { amount: -5, percent: 1 }, reason)).rejects.toThrow('allowed difference');
+    await expect(c.shifts.saveSettings(companyId, actor, { tolerance: { amount: -5, percent: 1 }, supervisorClose: 'direct' }, reason)).rejects.toThrow('allowed difference');
     const entries = await db.select().from(schema.decisionLog).where(eq(schema.decisionLog.subjectType, 'shift_settings'));
     expect(entries.length).toBeGreaterThanOrEqual(2);
   });

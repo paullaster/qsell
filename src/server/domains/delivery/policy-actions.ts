@@ -13,6 +13,7 @@ import { idOf, objectOf, runDelivery, versionOf } from './action-support';
 import { DeliveryError } from './errors';
 import { readPolicyInput } from './domain/read';
 import type { ChargePolicyDef } from './domain/types';
+import { findPlacesForStaff } from './staff-places';
 
 const PATHS = ['/admin/delivery/charges'];
 
@@ -190,6 +191,11 @@ const num = (v: unknown, what: string, fallback?: number): number => {
   if (!Number.isFinite(n) || n < 0) throw new DeliveryError(`${what} must be a number of zero or more.`, 'BAD_INPUT');
   return n;
 };
+
+/** Staff on the charge simulator: places by name, to fill the pin the charge is worked out for. */
+export async function findChargePlaceAction(q: unknown) {
+  return await runDelivery('deliveries:read', async (ctx) => await findPlacesForStaff(ctx.userId, q));
+}
 
 /** What a delivery would cost, and why: the same pipeline an order uses, for any branch, address, pin, weight, value and time. */
 export async function quoteDeliveryAction(raw: unknown) {

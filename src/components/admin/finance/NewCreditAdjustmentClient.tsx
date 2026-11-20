@@ -57,7 +57,7 @@ function NewCreditAdjustmentView({ start }: { start: Start }) {
       <PageHeader title="Change a customer's credit" intro="Give up credit a customer is owed, or add to or take from their wallet, without any money moving. Someone other than you has to decide it." />
       <Message notice={notice} />
       <form className={`${cardClass} space-y-4`} aria-label="Change a customer's credit" onSubmit={(e) => void save(e)}>
-        <ChoicePicker label="Customer" source="adjustment-customers" choice={customer} onChoice={chooseCustomer} clearable={false} required placeholder="Name, number or phone" listHref="/admin/customers" listLabel="View all customers" />
+        <ChoicePicker label="Customer" source="adjustment-customers" choice={customer} onChoice={chooseCustomer} clearable={false} required placeholder="Name, number or phone" listHref="/admin/customers/list" listLabel="View all customers" />
         {customer !== null ? (
           <>
             <ChoicePicker label="What to do" source="adjustment-kinds" choice={kind} onChoice={(c) => { setKind(c); setSource(null); }} clearable={false} required placeholder="Choose…" />

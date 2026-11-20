@@ -36,7 +36,7 @@ graph TD
     USR --> PROJ[5. Project Created & Opened]
 ```
 
-1. **Customer Master Card**: A customer must be selected under `/admin/customers` (unless the project is an internal company project).
+1. **Customer Master Card**: A customer must be selected under `/admin/customers/list` (unless the project is an internal company project).
 2. **Catalog SKUs**: Physical items (e.g. solar panels, inverters) and labor services (e.g. technical installation per day) must exist in the catalog.
 3. **Staff Permissions**: `projects:read` to view and `projects:manage` to create, edit, change status, and add tasks.
 

@@ -1,8 +1,10 @@
 'use client';
 
 import { useId, useState } from 'react';
-import { createDeliveryZoneAction, updateDeliveryZoneAction, type ZoneView } from '@/server/domains/delivery/actions';
+import { createDeliveryZoneAction, findZonePlaceAction, updateDeliveryZoneAction, type ZoneView } from '@/server/domains/delivery/actions';
 import { Field, Message, attempt, buttonClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
+import { FindPlace } from './FindPlace';
+import { boxesOf } from '@/lib/find-place';
 
 /** Adds a delivery zone, or changes one. The server checks everything again and refuses a stale edit; this only saves a round trip. */
 export function DeliveryZoneForm({ zone, autoFocus, onCancel, onSaved }: { zone: ZoneView | null; autoFocus?: boolean; onCancel: () => void; onSaved: (saved: { code: string }) => void }) {
@@ -54,6 +56,14 @@ export function DeliveryZoneForm({ zone, autoFocus, onCancel, onSaved }: { zone:
         <legend className="px-1 text-xs font-semibold text-fg">Coverage circle (optional)</legend>
         <p className="text-[11px] text-fg-muted">A customer who drops a pin on the map inside this circle is in this zone. Leave it empty to reach this zone by the places you add to it, which is how a written address finds its zone.</p>
         <div className="grid gap-3 sm:grid-cols-3">
+          <FindPlace
+            search={findZonePlaceAction}
+            onPick={(p) => {
+              const boxes = boxesOf(p.point);
+              setLatitude(boxes.latitude);
+              setLongitude(boxes.longitude);
+            }}
+          />
           <Field id={`${uid}-lat`} label="Centre latitude">
             <input id={`${uid}-lat`} inputMode="decimal" value={latitude} onChange={(e) => setLatitude(e.target.value)} className={`${fieldClass} font-mono`} placeholder="-1.286389" autoComplete="off" />
           </Field>

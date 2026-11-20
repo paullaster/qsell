@@ -1,11 +1,13 @@
 'use client';
 
 import { use, useId, useState } from 'react';
-import { branchesPageAction, clearBranchPinAction, createBranchAction, setBranchPinAction, updateBranchAction, type BranchView } from '@/server/domains/branches/actions';
+import { branchesPageAction, clearBranchPinAction, createBranchAction, findBranchPlaceAction, setBranchPinAction, updateBranchAction, type BranchView } from '@/server/domains/branches/actions';
 import { usePagedList } from '@/components/ui/usePagedList';
 import { attempt, buttonClass, Chip, Field, fieldClass, LoadFailed, Message, PageHeader, primaryClass, cardClass, type Notice } from '@/components/ui/screen-kit';
 import { branchPayload, emptyBranchForm, pinFormFor, type BranchForm, type PinForm } from '@/lib/branch-forms';
 import { readGeoPoint } from '@/lib/geo';
+import { FindPlace } from '@/components/admin/delivery/FindPlace';
+import { boxesOf, pinLabelFor } from '@/lib/find-place';
 
 type FirstPage = Awaited<ReturnType<typeof branchesPageAction>>;
 
@@ -216,6 +218,10 @@ function BranchPin({ branch, may, busy, onSave, onClear }: { branch: BranchView;
             });
           }}
         >
+          <FindPlace
+            search={findBranchPlaceAction}
+            onPick={(p) => setForm((f) => ({ ...f, ...boxesOf(p.point), label: pinLabelFor(f.label, p.label) }))}
+          />
           <Field id={`${uid}-lat`} label="Latitude">
             <input id={`${uid}-lat`} inputMode="decimal" value={form.latitude} onChange={(e) => setForm({ ...form, latitude: e.target.value })} placeholder="-1.286389" className={`${fieldClass} font-mono`} autoComplete="off" required />
           </Field>

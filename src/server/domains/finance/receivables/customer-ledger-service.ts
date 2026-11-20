@@ -1,6 +1,6 @@
 import { businessTimeZone } from '@/server/kernel/numbering/business-date';
 import { randomUUID } from 'node:crypto';
-import { and, asc, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, lte, sql, type SQL } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import {
   customerDetailedEntries,
@@ -11,6 +11,7 @@ import {
   type CustomerLedgerEntryRow,
 } from '@/server/db/drizzle/schema';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
+import type { InvoiceReferenceView } from '@/lib/invoice-reference';
 import {
   ageOpenItems,
   checkApplications,
@@ -24,6 +25,13 @@ import { FinanceError, type FinanceContext } from '../errors';
 import { OrderPaymentSync } from './order-payment-sync';
 
 import { has } from '@/lib/values';
+import { statementRowBalances } from '@/lib/customer-statement';
+import { loadInvoiceReferences } from './invoice-references';
+import {
+  encodeStatementCursor,
+  STATEMENT_PAGE_SIZE,
+  type StatementCursor,
+} from './statement-cursor';
 
 export type Writer = DrizzleDb | Tx;
 
@@ -106,12 +114,31 @@ export class CustomerLedgerService {
    * invoice: the difference is the business's gain or loss, posted to the books shortly after by the sales-posting queue.
    * Nothing is queued before the books are live, or for the books' own currency.
    */
-  private async queueFx(tx: Tx, companyId: string, kind: 'fx_application' | 'fx_unapplication', subjectId: string, date: string, currency: string | null): Promise<void> {
+  private async queueFx(
+    tx: Tx,
+    companyId: string,
+    kind: 'fx_application' | 'fx_unapplication',
+    subjectId: string,
+    date: string,
+    currency: string | null,
+  ): Promise<void> {
     if (currency === null) return;
-    const [s] = await tx.select({ base: financeSettings.baseCurrency, live: financeSettings.salesGlGoLive }).from(financeSettings).where(eq(financeSettings.companyId, companyId));
+    const [s] = await tx
+      .select({ base: financeSettings.baseCurrency, live: financeSettings.salesGlGoLive })
+      .from(financeSettings)
+      .where(eq(financeSettings.companyId, companyId));
     if (s === undefined) return;
     if (s.live === null || currency.toUpperCase() === s.base) return;
-    await tx.insert(financeSalesPostings).values({ companyId, kind, subjectId, eventDate: date < s.live ? s.live : date }).onConflictDoNothing({ target: [financeSalesPostings.companyId, financeSalesPostings.kind, financeSalesPostings.subjectId] });
+    await tx
+      .insert(financeSalesPostings)
+      .values({ companyId, kind, subjectId, eventDate: date < s.live ? s.live : date })
+      .onConflictDoNothing({
+        target: [
+          financeSalesPostings.companyId,
+          financeSalesPostings.kind,
+          financeSalesPostings.subjectId,
+        ],
+      });
   }
 
   /** Moves `remaining_amount` by the given signed cents, per entry, in one statement. */
@@ -200,7 +227,10 @@ export class CustomerLedgerService {
         throw new FinanceError('NOT_FOUND', 'One of the invoices was not found for this customer.');
       }
       if (inv.documentType !== 'invoice') {
-        throw new FinanceError('NOT_AN_INVOICE', `${inv.documentNo} is not an invoice, so a payment cannot be applied to it.`);
+        throw new FinanceError(
+          'NOT_AN_INVOICE',
+          `${inv.documentNo} is not an invoice, so a payment cannot be applied to it.`,
+        );
       }
       if (inv.currency !== credit.currency) {
         throw new FinanceError(
@@ -232,17 +262,39 @@ export class CustomerLedgerService {
     };
     await tx.insert(customerDetailedEntries).values(
       planned.flatMap((a) => [
-        { ...base, ledgerEntryId: a.entryId, amount: fromCents(-a.amountCents), appliedToEntryId: input.creditEntryId },
-        { ...base, ledgerEntryId: input.creditEntryId, amount: fromCents(a.amountCents), appliedToEntryId: a.entryId },
+        {
+          ...base,
+          ledgerEntryId: a.entryId,
+          amount: fromCents(-a.amountCents),
+          appliedToEntryId: input.creditEntryId,
+        },
+        {
+          ...base,
+          ledgerEntryId: input.creditEntryId,
+          amount: fromCents(a.amountCents),
+          appliedToEntryId: a.entryId,
+        },
       ]),
     );
     const deltas = new Map<string, number>(planned.map((a) => [a.entryId, -a.amountCents]));
     deltas.set(input.creditEntryId, total);
     await this.shiftRemaining(tx, deltas);
     await this.moveBalance(tx, input.customerId, -total);
-    await this.queueFx(tx, ctx.companyId, 'fx_application', applicationId, input.postingDate, credit.currency);
+    await this.queueFx(
+      tx,
+      ctx.companyId,
+      'fx_application',
+      applicationId,
+      input.postingDate,
+      credit.currency,
+    );
     // Every route that settles an invoice (receipt, wallet, credit note) passes here, so the orders behind the invoices follow in the same transaction.
-    await OrderPaymentSync.syncIn(tx, ctx, planned.map((a) => a.entryId), { document: credit.documentNo, action: 'applied' });
+    await OrderPaymentSync.syncIn(
+      tx,
+      ctx,
+      planned.map((a) => a.entryId),
+      { document: credit.documentNo, action: 'applied' },
+    );
 
     await this.decisions.record(
       {
@@ -250,8 +302,15 @@ export class CustomerLedgerService {
         subject: { type: 'customer_application', id: applicationId },
         action: 'finance.receipt_applied',
         actor: ctx.actor,
-        inputs: { origin: ctx.origin, creditEntryId: input.creditEntryId, customerId: input.customerId },
-        outcome: { total: fromCents(total), invoices: planned.map((a) => ({ entry: a.entryId, amount: fromCents(a.amountCents) })) },
+        inputs: {
+          origin: ctx.origin,
+          creditEntryId: input.creditEntryId,
+          customerId: input.customerId,
+        },
+        outcome: {
+          total: fromCents(total),
+          invoices: planned.map((a) => ({ entry: a.entryId, amount: fromCents(a.amountCents) })),
+        },
       },
       tx,
     );
@@ -262,7 +321,13 @@ export class CustomerLedgerService {
   async unapplyIn(
     tx: Tx,
     ctx: FinanceContext,
-    input: { applicationId: string; reasonCode: string; reasonText?: string | null; postingDate: string; createdBy: string | null },
+    input: {
+      applicationId: string;
+      reasonCode: string;
+      reasonText?: string | null;
+      postingDate: string;
+      createdBy: string | null;
+    },
   ): Promise<{ restoredCents: number }> {
     const original = await tx
       .select()
@@ -274,13 +339,15 @@ export class CustomerLedgerService {
           eq(customerDetailedEntries.entryType, 'application'),
         ),
       );
-    if (original.length === 0) throw new FinanceError('NOT_FOUND', 'That application does not exist.');
+    if (original.length === 0)
+      throw new FinanceError('NOT_FOUND', 'That application does not exist.');
     const already = await tx
       .select({ id: customerDetailedEntries.id })
       .from(customerDetailedEntries)
       .where(eq(customerDetailedEntries.unappliesApplicationId, input.applicationId))
       .limit(1);
-    if (already.length > 0) throw new FinanceError('ALREADY_UNAPPLIED', 'That application has already been undone.');
+    if (already.length > 0)
+      throw new FinanceError('ALREADY_UNAPPLIED', 'That application has already been undone.');
 
     const entryIds = [...new Set(original.map((r) => r.ledgerEntryId))];
     await this.lockEntries(tx, entryIds);
@@ -310,11 +377,33 @@ export class CustomerLedgerService {
     }
     await this.shiftRemaining(tx, deltas);
     await this.moveBalance(tx, original[0].customerId, restoredToInvoices);
-    const [first] = await tx.select({ currency: customerLedgerEntries.currency }).from(customerLedgerEntries).where(eq(customerLedgerEntries.id, original[0].ledgerEntryId));
-    await this.queueFx(tx, ctx.companyId, 'fx_unapplication', newApplication, input.postingDate, first?.currency ?? null);
-    const involved = [...new Set(original.flatMap((r) => (has(r.appliedToEntryId) ? [r.ledgerEntryId, r.appliedToEntryId] : [r.ledgerEntryId])))];
-    const docs = await tx.select({ type: customerLedgerEntries.documentType, no: customerLedgerEntries.documentNo }).from(customerLedgerEntries).where(inArray(customerLedgerEntries.id, involved));
-    await OrderPaymentSync.syncIn(tx, ctx, involved, { document: docs.find((d) => d.type !== 'invoice')?.no ?? 'ledger', action: 'unapplied' });
+    const [first] = await tx
+      .select({ currency: customerLedgerEntries.currency })
+      .from(customerLedgerEntries)
+      .where(eq(customerLedgerEntries.id, original[0].ledgerEntryId));
+    await this.queueFx(
+      tx,
+      ctx.companyId,
+      'fx_unapplication',
+      newApplication,
+      input.postingDate,
+      first?.currency ?? null,
+    );
+    const involved = [
+      ...new Set(
+        original.flatMap((r) =>
+          has(r.appliedToEntryId) ? [r.ledgerEntryId, r.appliedToEntryId] : [r.ledgerEntryId],
+        ),
+      ),
+    ];
+    const docs = await tx
+      .select({ type: customerLedgerEntries.documentType, no: customerLedgerEntries.documentNo })
+      .from(customerLedgerEntries)
+      .where(inArray(customerLedgerEntries.id, involved));
+    await OrderPaymentSync.syncIn(tx, ctx, involved, {
+      document: docs.find((d) => d.type !== 'invoice')?.no ?? 'ledger',
+      action: 'unapplied',
+    });
     await this.decisions.record(
       {
         companyId: ctx.companyId,
@@ -331,7 +420,17 @@ export class CustomerLedgerService {
   }
 
   /** Writes off what is left of a credit entry (a reversed receipt): zero it with a reversal row. */
-  async closeCreditIn(tx: Tx, ctx: FinanceContext, entryId: string, input: { postingDate: string; reasonCode: string; reasonText?: string | null; createdBy: string | null }) {
+  async closeCreditIn(
+    tx: Tx,
+    ctx: FinanceContext,
+    entryId: string,
+    input: {
+      postingDate: string;
+      reasonCode: string;
+      reasonText?: string | null;
+      createdBy: string | null;
+    },
+  ) {
     const locked = await this.lockEntries(tx, [entryId]);
     const e = locked.get(entryId);
     if (!e) throw new FinanceError('NOT_FOUND', 'Ledger entry not found.');
@@ -369,14 +468,25 @@ export class CustomerLedgerService {
     ctx: FinanceContext,
     entryId: string,
     cents: number,
-    p: { postingDate: string; createdBy: string | null; registerId?: string | null; reasonCode?: string | null; reasonText?: string | null; type?: 'wallet_transfer' | 'refund_transfer' | 'write_off' },
+    p: {
+      postingDate: string;
+      createdBy: string | null;
+      registerId?: string | null;
+      reasonCode?: string | null;
+      reasonText?: string | null;
+      type?: 'wallet_transfer' | 'refund_transfer' | 'write_off';
+    },
   ): Promise<void> {
     const locked = await this.lockEntries(tx, [entryId]);
     const e = locked.get(entryId);
-    if (e?.companyId !== ctx.companyId) throw new FinanceError('NOT_FOUND', 'Ledger entry not found.');
+    if (e?.companyId !== ctx.companyId)
+      throw new FinanceError('NOT_FOUND', 'Ledger entry not found.');
     const remaining = toCents(e.remainingAmount);
     if (cents > 0 && -remaining < cents) {
-      throw new FinanceError('OVER_CREDIT', `Only ${fromCents(Math.max(-remaining, 0))} is unapplied on that receipt.`);
+      throw new FinanceError(
+        'OVER_CREDIT',
+        `Only ${fromCents(Math.max(-remaining, 0))} is unapplied on that receipt.`,
+      );
     }
     await tx.insert(customerDetailedEntries).values({
       companyId: e.companyId,
@@ -398,7 +508,10 @@ export class CustomerLedgerService {
     if (deltaCents === 0) return;
     await tx
       .update(customers)
-      .set({ balance: sql`GREATEST(${customers.balance} + ${fromCents(deltaCents)}::numeric, 0)`, updatedAt: new Date() })
+      .set({
+        balance: sql`GREATEST(${customers.balance} + ${fromCents(deltaCents)}::numeric, 0)`,
+        updatedAt: new Date(),
+      })
       .where(eq(customers.id, customerId));
   }
 
@@ -419,22 +532,116 @@ export class CustomerLedgerService {
       .orderBy(asc(customerLedgerEntries.dueDate), asc(customerLedgerEntries.createdAt));
   }
 
-  async statement(companyId: string, customerId: string, from: string | null, to: string | null) {
-    const conds = [eq(customerLedgerEntries.companyId, companyId), eq(customerLedgerEntries.customerId, customerId)];
+  async netOwedCents(companyId: string, customerId: string): Promise<number> {
+    const [row] = await this.db.execute<{ net: string | null }>(sql`
+      SELECT COALESCE(SUM(remaining_amount), 0)::text AS net
+      FROM customer_ledger_entries
+      WHERE company_id = ${companyId} AND customer_id = ${customerId} AND remaining_amount <> 0`);
+    return toCents(row?.net ?? '0');
+  }
+
+  private statementAfter(cursor: StatementCursor): SQL {
+    if (cursor.date === null)
+      return sql`(${customerLedgerEntries.postingDate} IS NULL AND ${customerLedgerEntries.id}::text > ${cursor.id}) OR ${customerLedgerEntries.postingDate} IS NOT NULL`;
+    return sql`(${customerLedgerEntries.postingDate} > ${cursor.date} OR (${customerLedgerEntries.postingDate} = ${cursor.date} AND ${customerLedgerEntries.id}::text > ${cursor.id}))`;
+  }
+
+  private async statementTotals(
+    companyId: string,
+    customerId: string,
+    from: string | null,
+    to: string | null,
+    cursor: StatementCursor | null,
+  ) {
+    const beforeFrom = has(from)
+      ? sql`(e.posting_date IS NULL OR e.posting_date < ${from})`
+      : sql`FALSE`;
+    const inPeriod = has(from)
+      ? sql`(e.posting_date IS NOT NULL AND e.posting_date >= ${from})`
+      : sql`TRUE`;
+    let beforeCursor: SQL = sql`FALSE`;
+    if (cursor !== null) {
+      beforeCursor =
+        cursor.date === null
+          ? sql`(e.posting_date IS NULL AND e.id::text <= ${cursor.id})`
+          : sql`(e.posting_date IS NULL OR e.posting_date < ${cursor.date} OR (e.posting_date = ${cursor.date} AND e.id::text <= ${cursor.id}))`;
+    }
+    const [row] = await this.db.execute<{
+      opening: string;
+      period: string;
+      before_cursor: string;
+      debit: string;
+      credit: string;
+    }>(sql`
+      SELECT
+        COALESCE(SUM(CASE WHEN ${beforeFrom} THEN e.amount ELSE 0 END), 0) AS opening,
+        COALESCE(SUM(CASE WHEN ${inPeriod} THEN e.amount ELSE 0 END), 0) AS period,
+        COALESCE(SUM(CASE WHEN ${inPeriod} AND ${beforeCursor} THEN e.amount ELSE 0 END), 0) AS before_cursor,
+        COALESCE(SUM(CASE WHEN ${inPeriod} AND e.amount > 0 THEN e.amount ELSE 0 END), 0) AS debit,
+        COALESCE(SUM(CASE WHEN ${inPeriod} AND e.amount < 0 THEN -e.amount ELSE 0 END), 0) AS credit
+      FROM customer_ledger_entries e
+      WHERE e.company_id = ${companyId} AND e.customer_id = ${customerId}
+      ${has(to) ? sql`AND e.posting_date <= ${to}` : sql``}`);
+    return {
+      openingCents: toCents(row?.opening ?? '0'),
+      periodCents: toCents(row?.period ?? '0'),
+      beforeCursorCents: toCents(row?.before_cursor ?? '0'),
+      debitCents: toCents(row?.debit ?? '0'),
+      creditCents: toCents(row?.credit ?? '0'),
+    };
+  }
+
+  async statement(
+    companyId: string,
+    customerId: string,
+    from: string | null,
+    to: string | null,
+    cursor: StatementCursor | null = null,
+    limit = STATEMENT_PAGE_SIZE,
+  ) {
+    const conds = [
+      eq(customerLedgerEntries.companyId, companyId),
+      eq(customerLedgerEntries.customerId, customerId),
+    ];
     if (has(from)) conds.push(gte(customerLedgerEntries.postingDate, from));
     if (has(to)) conds.push(lte(customerLedgerEntries.postingDate, to));
-    const [lines, open] = await Promise.all([
+    if (cursor !== null) conds.push(this.statementAfter(cursor));
+    const [rows, totals, open] = await Promise.all([
       this.db
         .select()
         .from(customerLedgerEntries)
         .where(and(...conds))
-        .orderBy(desc(customerLedgerEntries.postingDate), desc(customerLedgerEntries.createdAt))
-        .limit(500),
+        .orderBy(
+          sql`${customerLedgerEntries.postingDate} ASC NULLS FIRST`,
+          asc(customerLedgerEntries.id),
+        )
+        .limit(limit + 1),
+      this.statementTotals(companyId, customerId, from, to, cursor),
       this.openItems(companyId, customerId),
     ]);
+    const pageRows = rows.slice(0, limit);
+    const balances = statementRowBalances(
+      pageRows.map((r) => toCents(r.amount)),
+      totals.beforeCursorCents,
+    );
+    const lines = pageRows.map((row, index) => ({
+      ...row,
+      debit: fromCents(balances[index]?.debitCents ?? 0),
+      credit: fromCents(balances[index]?.creditCents ?? 0),
+      runningBalance: fromCents(balances[index]?.runningCents ?? 0),
+    }));
+    const last = pageRows[pageRows.length - 1];
+    const nextCursor =
+      rows.length > limit && last !== undefined
+        ? encodeStatementCursor({ date: last.postingDate, id: last.id })
+        : null;
     const asOf = new Date();
     const aged = ageOpenItems(
-      open.map((o) => ({ remainingCents: toCents(o.remainingAmount), dueDate: o.dueDate, createdAt: o.createdAt })),
+      open.map((o) => ({
+        remainingCents: toCents(o.remainingAmount),
+        dueDate: o.dueDate,
+        createdAt: o.createdAt,
+      })),
       asOf,
     );
     const openInvoices = open.filter((o) => toCents(o.remainingAmount) > 0);
@@ -442,6 +649,11 @@ export class CustomerLedgerService {
     const owed = openInvoices.reduce((n, o) => n + toCents(o.remainingAmount), 0);
     return {
       lines,
+      openingBalanceCents: totals.openingCents,
+      closingBalanceCents: totals.openingCents + totals.periodCents,
+      debitCents: totals.debitCents,
+      creditCents: totals.creditCents,
+      nextCursor,
       openInvoices,
       credits,
       owedCents: owed,
@@ -456,9 +668,29 @@ export class CustomerLedgerService {
     const [row] = await this.db
       .select({ id: customerLedgerEntries.id })
       .from(customerLedgerEntries)
-      .where(and(eq(customerLedgerEntries.companyId, companyId), eq(customerLedgerEntries.orderId, orderId), eq(customerLedgerEntries.documentType, 'invoice')))
+      .where(
+        and(
+          eq(customerLedgerEntries.companyId, companyId),
+          eq(customerLedgerEntries.orderId, orderId),
+          eq(customerLedgerEntries.documentType, 'invoice'),
+        ),
+      )
       .limit(1);
     return row !== undefined;
+  }
+
+  async entriesByIds(companyId: string, customerId: string, ids: string[]) {
+    if (ids.length === 0) return [];
+    return await this.db
+      .select()
+      .from(customerLedgerEntries)
+      .where(
+        and(
+          eq(customerLedgerEntries.companyId, companyId),
+          eq(customerLedgerEntries.customerId, customerId),
+          inArray(customerLedgerEntries.id, ids),
+        ),
+      );
   }
 
   /** Detailed history of one ledger entry (what happened to it, in order). */
@@ -466,8 +698,59 @@ export class CustomerLedgerService {
     return await this.db
       .select()
       .from(customerDetailedEntries)
-      .where(and(eq(customerDetailedEntries.companyId, companyId), eq(customerDetailedEntries.ledgerEntryId, ledgerEntryId)))
+      .where(
+        and(
+          eq(customerDetailedEntries.companyId, companyId),
+          eq(customerDetailedEntries.ledgerEntryId, ledgerEntryId),
+        ),
+      )
       .orderBy(asc(customerDetailedEntries.id));
+  }
+
+  async detail(companyId: string, ledgerEntryId: string) {
+    const [entry] = await this.db
+      .select()
+      .from(customerLedgerEntries)
+      .where(
+        and(
+          eq(customerLedgerEntries.companyId, companyId),
+          eq(customerLedgerEntries.id, ledgerEntryId),
+        ),
+      )
+      .limit(1);
+    if (entry === undefined) return null;
+    const history = await this.history(companyId, ledgerEntryId);
+    const appliedIds = [...new Set(history.map((h) => h.appliedToEntryId).filter(has))];
+    const [invoice, appliedRows] = await Promise.all([
+      entry.documentType === 'invoice'
+        ? loadInvoiceReferences(this.db, companyId, [ledgerEntryId])
+        : Promise.resolve(new Map<string, InvoiceReferenceView>()),
+      appliedIds.length === 0
+        ? Promise.resolve([])
+        : this.db
+            .select({
+              id: customerLedgerEntries.id,
+              documentNo: customerLedgerEntries.documentNo,
+              documentType: customerLedgerEntries.documentType,
+              documentId: customerLedgerEntries.documentId,
+              orderId: customerLedgerEntries.orderId,
+              amount: customerLedgerEntries.amount,
+              remainingAmount: customerLedgerEntries.remainingAmount,
+            })
+            .from(customerLedgerEntries)
+            .where(
+              and(
+                eq(customerLedgerEntries.companyId, companyId),
+                inArray(customerLedgerEntries.id, appliedIds),
+              ),
+            ),
+    ]);
+    return {
+      entry,
+      history,
+      invoice: invoice.get(ledgerEntryId) ?? null,
+      applied: new Map(appliedRows.map((row) => [row.id, row])),
+    };
   }
 
   /** Receivables ageing for the company (or one customer) as of now. */
@@ -488,7 +771,11 @@ export class CustomerLedgerService {
         ),
       );
     return ageOpenItems(
-      rows.map((r) => ({ remainingCents: toCents(r.remaining), dueDate: r.dueDate, createdAt: r.createdAt })),
+      rows.map((r) => ({
+        remainingCents: toCents(r.remaining),
+        dueDate: r.dueDate,
+        createdAt: r.createdAt,
+      })),
       new Date(),
     );
   }
@@ -505,8 +792,16 @@ export class CustomerLedgerService {
         `COALESCE(SUM(CASE WHEN e.remaining_amount > 0 AND x.d >= ${lo}${hi === null ? '' : ` AND x.d <= ${hi}`} THEN e.remaining_amount END), 0)`,
       );
     const rows = await this.db.execute<{
-      id: string; number: string; name: string; owed: string; credits: string;
-      current: string; d1_30: string; d31_60: string; d61_90: string; d90_plus: string;
+      id: string;
+      number: string;
+      name: string;
+      owed: string;
+      credits: string;
+      current: string;
+      d1_30: string;
+      d31_60: string;
+      d61_90: string;
+      d90_plus: string;
     }>(sql`
       SELECT c.id, c.number, c.name,
         COALESCE(SUM(CASE WHEN e.remaining_amount > 0 THEN e.remaining_amount END), 0) AS owed,
@@ -547,7 +842,12 @@ export class CustomerLedgerService {
    * for the one denormalised figure. Empty means the books agree with their history.
    */
   async drift(companyId: string) {
-    const rows = await this.db.execute<{ id: string; document_no: string; remaining: string; detail_sum: string }>(sql`
+    const rows = await this.db.execute<{
+      id: string;
+      document_no: string;
+      remaining: string;
+      detail_sum: string;
+    }>(sql`
       SELECT e.id, e.document_no, e.remaining_amount AS remaining, COALESCE(SUM(d.amount), 0) AS detail_sum
       FROM customer_ledger_entries e
       LEFT JOIN customer_detailed_entries d ON d.ledger_entry_id = e.id

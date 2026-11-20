@@ -8,6 +8,7 @@ import {
   priceChangeExecutors,
   priceListApprovalHandler,
 } from '@/server/domains/pricing/approval';
+import { shiftApprovalHandler } from '@/server/domains/selling/shifts/shift-approval';
 import { quoteApprovalHandler } from '@/server/domains/quotes/approval';
 import { refundApprovalHandler } from '@/server/domains/finance/refund-approval';
 import { creditAdjustmentApprovalHandler } from '@/server/domains/finance/credit-adjustment-approval';
@@ -27,6 +28,7 @@ const payouts = async () => {
 
 export function registerApprovalHandlers(engine: ApprovalEngine, gate: ParkedActions): void {
   engine.registerDocument('sales_order', orderApprovalHandler(drizzleDb));
+  engine.registerDocument('shift_close', shiftApprovalHandler(drizzleDb));
   engine.registerDocument('sales_quote', quoteApprovalHandler(drizzleDb));
   engine.registerDocument('price_list', priceListApprovalHandler(drizzleDb));
   engine.registerDocument('discount_rule', discountRuleApprovalHandler(drizzleDb));
@@ -44,6 +46,17 @@ export function registerApprovalHandlers(engine: ApprovalEngine, gate: ParkedAct
   for (const [kind, handler] of Object.entries(vendorApprovalHandlers(drizzleDb))) engine.registerDocument(kind, handler);
 
   gate.attach('price_list_change', priceChangeExecutors());
+
+  gate.attach('customer_credit_settings', {
+    enable_over_limit: {
+      async execute(tx, row) {
+        const { getContainer } = await import('@/server/di/container');
+        const p = row.payload as { reason: { code: string; text?: string } };
+        const result = await getContainer().customerCreditSettings.setAllowOverCreditLimit(row.companyId, true, p.reason, { type: 'user', id: row.requestedBy }, tx);
+        return { ...result };
+      },
+    },
+  });
 
   gate.attach('credit_note', {
     order_credit_note: {

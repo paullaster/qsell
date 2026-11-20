@@ -11,7 +11,7 @@ export function CustomerCreateModal({ presentation }: { presentation: 'intercept
   const router = useRouter();
   const close = () => {
     if (presentation === 'intercepted') router.back();
-    else router.push('/admin/customers');
+    else router.push('/admin/customers/list');
   };
 
   const form = (
@@ -22,7 +22,7 @@ export function CustomerCreateModal({ presentation }: { presentation: 'intercept
           publishCustomerCreated({ id: customer.id, label: customer.name });
           router.back();
         } else {
-          router.push('/admin/customers');
+          router.push('/admin/customers/list');
           router.refresh();
         }
       }}

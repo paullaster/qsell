@@ -3,6 +3,7 @@ import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { checkoutAttempts, orderStageEvents, orders } from '@/server/db/drizzle/schema';
 import { ORDER_STAGES, STUCK_RULES, customerTimeline, isOrderStage } from '@/lib/order-stages';
 import { effectiveTargets, type StageTarget } from '@/lib/order-sla';
+import { WEB_SHOP_ORDER } from './order-origin';
 
 /** One event of an order's timeline as a screen shows it. The staff-only parts are present only for someone allowed to see them. */
 export interface TimelineEventView {
@@ -108,29 +109,33 @@ export interface OrderFlow {
 const MILESTONES = ['order_placed', 'payment_confirmed', 'dispatched', 'delivered', 'completed'] as const;
 
 /** The funnel, the failures and the stuck orders over the last `days` days. The numbers come from events and attempts, with keyset-free aggregates over an indexed time range. */
-export async function orderFlow(db: DrizzleDb, days = 7, now = new Date(), targets: readonly StageTarget[] = effectiveTargets([])): Promise<OrderFlow> {
+export async function orderFlow(db: DrizzleDb, days = 7, now = new Date(), targets: readonly StageTarget[] = effectiveTargets([]), origin?: 'web_shop'): Promise<OrderFlow> {
   const since = new Date(now.getTime() - days * 86_400_000);
+  const orderOrigin = origin === 'web_shop' ? WEB_SHOP_ORDER : undefined;
+  const attemptOrigin = origin === 'web_shop' ? eq(checkoutAttempts.channel, 'ecommerce') : undefined;
   const attempts = await db
     .select({ outcome: checkoutAttempts.outcome, n: sql<number>`count(*)::int` })
     .from(checkoutAttempts)
-    .where(gte(checkoutAttempts.startedAt, since))
+    .where(and(gte(checkoutAttempts.startedAt, since), attemptOrigin))
     .groupBy(checkoutAttempts.outcome);
   const count = (outcome: string) => attempts.find((row) => row.outcome === outcome)?.n ?? 0;
   const refusals = await db
     .select({ reason: sql<string>`coalesce(${checkoutAttempts.reasonCode}, 'other')`, n: sql<number>`count(*)::int` })
     .from(checkoutAttempts)
-    .where(and(gte(checkoutAttempts.startedAt, since), eq(checkoutAttempts.outcome, 'refused')))
+    .where(and(gte(checkoutAttempts.startedAt, since), attemptOrigin, eq(checkoutAttempts.outcome, 'refused')))
     .groupBy(sql`coalesce(${checkoutAttempts.reasonCode}, 'other')`)
     .orderBy(desc(sql`count(*)`));
   const milestones = await db
     .select({ stage: orderStageEvents.stage, n: sql<number>`count(distinct ${orderStageEvents.orderId})::int` })
     .from(orderStageEvents)
-    .where(and(gte(orderStageEvents.occurredAt, since), eq(orderStageEvents.approximate, false), inArray(orderStageEvents.stage, [...MILESTONES])))
+    .innerJoin(orders, eq(orders.id, orderStageEvents.orderId))
+    .where(and(gte(orderStageEvents.occurredAt, since), orderOrigin, eq(orderStageEvents.approximate, false), inArray(orderStageEvents.stage, [...MILESTONES])))
     .groupBy(orderStageEvents.stage);
   const failures = await db
     .select({ stage: orderStageEvents.stage, reason: sql<string>`coalesce(${orderStageEvents.reasonCode}, 'unspecified')`, n: sql<number>`count(*)::int` })
     .from(orderStageEvents)
-    .where(and(gte(orderStageEvents.occurredAt, since), eq(orderStageEvents.outcome, 'failed')))
+    .innerJoin(orders, eq(orders.id, orderStageEvents.orderId))
+    .where(and(gte(orderStageEvents.occurredAt, since), orderOrigin, eq(orderStageEvents.outcome, 'failed')))
     .groupBy(orderStageEvents.stage, sql`coalesce(${orderStageEvents.reasonCode}, 'unspecified')`)
     .orderBy(desc(sql`count(*)`))
     .limit(20);
@@ -142,9 +147,15 @@ export async function orderFlow(db: DrizzleDb, days = 7, now = new Date(), targe
           .select({ id: orders.id, number: orders.orderNumber, stage: orders.currentStage, since: orders.currentStageSince })
           .from(orders)
           .where(
-            or(
-              ...watched.map((target) =>
-                and(eq(orders.currentStage, target.stage), lt(orders.currentStageSince, new Date(now.getTime() - target.targetMinutes * 60_000))),
+            and(
+              orderOrigin,
+              or(
+                ...watched.map((target) =>
+                  and(
+                    eq(orders.currentStage, target.stage),
+                    lt(orders.currentStageSince, new Date(now.getTime() - target.targetMinutes * 60_000)),
+                  ),
+                ),
               ),
             ),
           )
@@ -153,7 +164,8 @@ export async function orderFlow(db: DrizzleDb, days = 7, now = new Date(), targe
   const [unrecorded] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(orderStageEvents)
-    .where(and(eq(orderStageEvents.source, 'trigger'), gte(orderStageEvents.occurredAt, new Date(now.getTime() - 30 * 86_400_000))));
+    .innerJoin(orders, eq(orders.id, orderStageEvents.orderId))
+    .where(and(orderOrigin, eq(orderStageEvents.source, 'trigger'), gte(orderStageEvents.occurredAt, new Date(now.getTime() - 30 * 86_400_000))));
   return {
     days,
     checkouts: { started: count('started'), refused: count('refused'), placed: count('placed'), abandoned: count('abandoned_after_payment_start') },

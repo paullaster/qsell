@@ -39,6 +39,9 @@ export const PAYMENT_WORDS: Record<PaymentState, { label: string; tone: 'green' 
   credited: { label: 'Credited', tone: 'sky' },
 };
 
-export const INVOICE_KIND_WORDS: Record<string, string> = { tax_invoice: 'Tax invoice', proforma: 'Proforma invoice', delivery_invoice: 'Delivery invoice' };
+export const INVOICE_KIND_WORDS: Record<string, string> = { tax_invoice: 'Tax invoice', tax_invoice_part: 'Part invoice', proforma: 'Proforma invoice', delivery_invoice: 'Delivery invoice' };
 export const INVOICE_KINDS = ['tax_invoice', 'proforma', 'delivery_invoice'] as const;
+/** The kinds the invoice list can be narrowed to: the documents that can be made for an order, and the part invoices of an order invoiced in parts. */
+export const LIST_KINDS = ['tax_invoice', 'tax_invoice_part', 'proforma', 'delivery_invoice'] as const;
+export const isListKind = (value: unknown): value is (typeof LIST_KINDS)[number] => typeof value === 'string' && (LIST_KINDS as readonly string[]).includes(value);
 export const isInvoiceKind = (value: unknown): value is (typeof INVOICE_KINDS)[number] => typeof value === 'string' && (INVOICE_KINDS as readonly string[]).includes(value);
