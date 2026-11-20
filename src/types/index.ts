@@ -93,6 +93,8 @@ export interface Product {
   isCheckoutPackaging?: boolean;
   /** Sold only inside packages: real stock, but never listed and never sold on its own. Such a product is never shown in the web shop. */
   soldOnlyInPackages?: boolean;
+  /** The selling documents this is offered in; everywhere when left out. */
+  offeredIn?: string[];
   /** A configurable package: the shopper builds it from choices, so it is never added to the cart as it stands. */
   isPackage?: boolean;
   /** Per-product capacity rules, loaded for packaging administration only. */
@@ -259,7 +261,7 @@ export interface InventoryLedgerEntry {
 }
 
 export type PaymentProvider =
-  'mpesa_daraja' | 'pesapal_v3' | 'jenga_hq' | 'kcb_buni' | 'card_direct' | 'on_account' | 'pay_on_delivery';
+  'mpesa_daraja' | 'pesapal_v3' | 'jenga_hq' | 'kcb_buni' | 'card_direct' | 'on_account' | 'pay_on_delivery' | 'counter';
 
 export interface PaymentGatewayConfig {
   id: string;
@@ -375,6 +377,8 @@ export interface Order {
   invoiceWhenApproved?: boolean;
   /** The quote this order was made from. */
   sourceQuoteId?: string | null;
+  shiftId?: string | null;
+  idempotencyKey?: string | null;
   createdAt: string;
   updatedAt: string;
   /** The discounts applied when the order was priced (rules, coupons, amounts). */

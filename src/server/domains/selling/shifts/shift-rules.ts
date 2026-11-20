@@ -61,10 +61,12 @@ export interface ShiftFigures {
   paidOut: number;
   /** Cash taken for sales in the shift (from the cash sales recorded against it). */
   cashSales: number;
+  /** Cash handed back to customers at the till for returned sales (left out where there are none). */
+  cashRefunds?: number;
 }
 
-/** What the till should hold now: the float, plus cash sales and cash put in, less cash taken out. */
-export const expectedCash = (f: ShiftFigures): number => round2(f.openingFloat + f.cashSales + f.paidIn - f.paidOut);
+/** What the till should hold now: the float, plus cash sales and cash put in, less cash taken out and cash refunded to customers. */
+export const expectedCash = (f: ShiftFigures): number => round2(f.openingFloat + f.cashSales + f.paidIn - f.paidOut - (f.cashRefunds ?? 0));
 
 /** The difference at the close: what was counted less what the till should hold (negative is short). */
 export const varianceOf = (declared: number, expected: number): number => round2(declared - expected);
@@ -90,18 +92,28 @@ export function varianceKind(variance: number, expected: number, tolerance: Tole
 export const REASON_MIN = 3;
 export const REASON_MAX = 200;
 
-export type CloseCheck = { ok: true; kind: VarianceKind } | { ok: false; error: string };
+/** What happens to a difference beyond the allowance: a supervisor closes the shift on the spot, or the close goes to the approval queue. */
+export type SupervisorClose = 'direct' | 'approval';
+export const SUPERVISOR_CLOSE_MODES: readonly SupervisorClose[] = ['direct', 'approval'];
+export const isSupervisorClose = (value: unknown): value is SupervisorClose => value === 'direct' || value === 'approval';
+
+/** `close` finishes the shift now; `approval` sends the count to the approval queue and holds the shift until it is decided. */
+export type CloseCheck = { ok: true; kind: VarianceKind; route: 'close' | 'approval' } | { ok: false; error: string };
 
 /**
- * Whether a shift can be closed with this difference by this person: a difference needs a reason in words, and one beyond the
- * tolerance can only be closed by a supervisor (someone who may close another person's shift).
+ * Whether a shift can be closed with this difference by this person, and how. A difference needs a reason in words. One beyond the
+ * allowance is closed by a supervisor on the spot (direct), or, when the company chose the approval queue, goes to it: a supervisor
+ * still closes another person's shift on the spot (they are the second pair of eyes), but a shift counted by its own holder, supervisor
+ * or not, is approved by someone else.
  */
-export function checkClose(input: { variance: number; expected: number; reason: string; tolerance: Tolerance; supervisor: boolean }): CloseCheck {
+export function checkClose(input: { variance: number; expected: number; reason: string; tolerance: Tolerance; supervisor: boolean; mode?: SupervisorClose; ownShift?: boolean }): CloseCheck {
   const kind = varianceKind(input.variance, input.expected, input.tolerance);
   const reason = input.reason.trim();
   if (kind !== 'none' && (reason.length < REASON_MIN || reason.length > REASON_MAX)) return { ok: false, error: `There is a difference of ${String(input.variance)}: say why, in ${String(REASON_MIN)} to ${String(REASON_MAX)} characters.` };
-  if (kind === 'beyond' && !input.supervisor) return { ok: false, error: 'The difference is more than the company allows a till to be out by. A supervisor has to close this shift.' };
-  return { ok: true, kind };
+  if (kind !== 'beyond') return { ok: true, kind, route: 'close' };
+  if ((input.mode ?? 'direct') === 'approval') return input.supervisor && input.ownShift === false ? { ok: true, kind, route: 'close' } : { ok: true, kind, route: 'approval' };
+  if (!input.supervisor) return { ok: false, error: 'The difference is more than the company allows a till to be out by. A supervisor has to close this shift.' };
+  return { ok: true, kind, route: 'close' };
 }
 
 export const toleranceProblem = (t: Tolerance): string | null => {

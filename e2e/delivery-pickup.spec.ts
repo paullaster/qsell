@@ -68,7 +68,7 @@ async function trackOrder(page: Page, orderNumber: string, email: string): Promi
 
 /** Finds an order in the admin list and opens it for work. */
 async function openOrder(page: Page, orderNumber: string): Promise<void> {
-  await open(page, '/admin/orders', /Customer Orders/);
+  await open(page, '/admin/orders', /Web Shop Orders/);
   await page.getByLabel('Search orders').fill(orderNumber);
   const manage = page.getByRole('button', { name: /Manage/ }).first();
   await expect(manage).toBeVisible({ timeout: 60_000 });
@@ -161,7 +161,7 @@ test.describe('collecting an order from a branch', () => {
       const orderNumber = await placeCollectedOrder(page, branchName, email);
       deliveryTool('pay', orderNumber);
       const find = async (): Promise<ReturnType<Page['locator']>> => {
-        await open(page, '/admin/orders', /Customer Orders/);
+        await open(page, '/admin/orders', /Web Shop Orders/);
         await page.getByLabel('Search orders').fill(orderNumber);
         const row = page.locator('tr, li').filter({ hasText: orderNumber }).filter({ has: page.getByRole('button', { name: /Manage/ }) }).first();
         await expect(row).toBeVisible({ timeout: 60_000 });
@@ -220,7 +220,7 @@ test.describe('collecting an order from a branch', () => {
       deliveryTool('pay', orderNumber);
       deliveryTool('collection-ready', orderNumber, '4');
       deliveryTool('cancel-order', orderNumber);
-      await open(page, '/admin/orders', /Customer Orders/);
+      await open(page, '/admin/orders', /Web Shop Orders/);
       await page.getByLabel('Search orders').fill(orderNumber);
       const row = page.locator('tr, li').filter({ hasText: orderNumber }).filter({ has: page.getByRole('button', { name: /Manage/ }) }).first();
       await expect(row).toBeVisible({ timeout: 60_000 });

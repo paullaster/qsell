@@ -1,6 +1,7 @@
 import { eq, sql } from 'drizzle-orm';
 import { customerProfiles, dimensionValues, dimensions } from '@/server/db/drizzle/schema';
 import { ACCOUNT_TYPES, BLOCKS } from '@/lib/customer-forms';
+import { CREDIT_LIMIT_DISPLAYS } from '@/lib/customer-credit-settings';
 import { acceptFilters, LookupFilterError, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
 
 const text = (v: unknown): string => (typeof v === 'string' || typeof v === 'number' ? String(v) : '');
@@ -61,4 +62,13 @@ const dimensionChoices = tableSource({
   toOption: (row) => ({ id: text(row.id), label: `${text(row.label)} — ${text(row.name)}`, description: null, badge: null }),
 });
 
-export const CUSTOMER_LOOKUP_SOURCES: LookupSource[] = [dimensionChoices, fixed('customer-account-types', ACCOUNT_TYPES), fixed('customer-blocks', BLOCKS), profiles];
+const creditLimitDisplays = staticSource({
+  key: 'customer-credit-limit-displays',
+  permission: 'selling_settings:manage',
+  items: ({ filters }) => {
+    acceptFilters(filters, {});
+    return CREDIT_LIMIT_DISPLAYS.map((d) => ({ id: d.id, label: d.label, description: d.description }));
+  },
+});
+
+export const CUSTOMER_LOOKUP_SOURCES: LookupSource[] = [dimensionChoices, fixed('customer-account-types', ACCOUNT_TYPES), fixed('customer-blocks', BLOCKS), profiles, creditLimitDisplays];

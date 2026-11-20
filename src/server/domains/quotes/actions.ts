@@ -1,5 +1,6 @@
 'use server';
 
+import { isOfferedIn } from '@/lib/offered-in';
 import { revalidatePath } from 'next/cache';
 import { canPermission, requirePermission } from '@/server/domains/access-control/guard';
 import { getContainer } from '@/server/di/container';
@@ -102,7 +103,7 @@ export async function getQuoteCatalogueProductAction(id: unknown): Promise<Catal
   await requirePermission('quotes:read');
   if (typeof id !== 'string' || !PRODUCT_ID.test(id)) return null;
   const product = await getProductAction(id);
-  return product === null || product.soldOnlyInPackages === true ? null : toCatalogueProduct(product);
+  return product === null || product.soldOnlyInPackages === true || !isOfferedIn(product.offeredIn, 'quote') ? null : toCatalogueProduct(product);
 }
 
 /**
@@ -120,7 +121,7 @@ export async function getSalesQuoteEditorDataAction() {
   ]);
   // Only what the editors use: descriptions, specifications and media would make a long catalogue
   // slow to open, and nothing on the screen shows them.
-  const slim = products.filter((p) => p.soldOnlyInPackages !== true).map(toCatalogueProduct);
+  const slim = products.filter((p) => p.soldOnlyInPackages !== true && isOfferedIn(p.offeredIn, 'quote')).map(toCatalogueProduct);
   return { products: slim, settings, kits };
 }
 

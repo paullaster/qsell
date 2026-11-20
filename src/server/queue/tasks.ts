@@ -103,6 +103,13 @@ export const stockReleaseSweep = async (_payload: unknown, helpers: JobHelpers) 
   if (issued > 0) helpers.logger.info(`Stock issued for ${String(issued)} paid or approved documents`);
 };
 
+/** Differences of closed till shifts that are waiting for the books (an account not chosen yet, a period closed): tried again with a growing wait. */
+export const shiftDifferenceSweep = async (_payload: unknown, helpers: JobHelpers) => {
+  const { getContainer } = await import('@/server/di/container');
+  const posted = await getContainer().shifts.postDueDifferences(50);
+  if (posted > 0) helpers.logger.info(`Written to the books: ${String(posted)} till differences`);
+};
+
 /** A mail to a shopper about their order (placed, payment received). A failure is thrown so the worker tries again later. */
 export const shopOrderEmail = async (payload: unknown, helpers: JobHelpers) => {
   const { orderId, kind, audience } = (payload ?? {}) as { orderId?: unknown; kind?: unknown; audience?: unknown };
@@ -575,6 +582,7 @@ export const tasks = {
   'provider-sweep': providerSweep,
   'delivery-messages-sweep': deliveryMessagesSweep,
   'stock-release-sweep': stockReleaseSweep,
+  'shift-difference-sweep': shiftDifferenceSweep,
   'shop-order-email': shopOrderEmail,
   'shop-quote-request-email': shopQuoteRequestEmail,
   'shop-cart-reminder-sweep': shopCartReminderSweep,

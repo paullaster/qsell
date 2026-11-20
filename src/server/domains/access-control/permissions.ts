@@ -603,6 +603,36 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'See till shifts and their X and Z reports',
   },
+  'offline_selling:manage': {
+    resource: 'offline_selling',
+    action: 'manage',
+    category: 'Orders & Sales',
+    description: 'Switch selling at the counter with no connection on or off for the company, and set its limits: its own permission, held by no other role',
+  },
+  'partial_billing:manage': {
+    resource: 'partial_billing',
+    action: 'manage',
+    category: 'Orders & Sales',
+    description: 'Switch invoicing part of an order (a tax invoice for some lines or quantities) on or off for the company: its own permission, held by no other role',
+  },
+  'cash_sales:read': {
+    resource: 'cash_sales',
+    action: 'read',
+    category: 'Orders & Sales',
+    description: 'See the counter sales rung up, and their receipts',
+  },
+  'cash_sales:create': {
+    resource: 'cash_sales',
+    action: 'create',
+    category: 'Orders & Sales',
+    description: 'Ring up a counter sale in your own open shift, take the payment and give the receipt',
+  },
+  'cash_sales:return': {
+    resource: 'cash_sales',
+    action: 'return',
+    category: 'Orders & Sales',
+    description: 'Take goods back from a counter sale: a credit note, the goods back into stock and the money handed back',
+  },
   'shifts:open': {
     resource: 'shifts',
     action: 'open',

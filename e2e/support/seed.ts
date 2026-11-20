@@ -276,6 +276,15 @@ async function seedFinance(): Promise<void> {
     await fin.setup.applyTemplate(ctx, 'kenya', { fiscalYearStart: '2026-01-01' });
   }
   const methods = await fin.paymentMethods.list(company.id);
+  if (!methods.some((m) => m.method.code === 'E2ETILL')) {
+    // A cash account for the tills, with a way of paying into it, so a till's closing difference has somewhere to be written.
+    const till = await fin.bankAccounts.create(ctx, { code: 'E2ETILL', name: 'E2E Till cash', kind: 'cash', currency: 'KES' });
+    const tillGl = (await fin.setup.listAccounts(company.id)).find((a) => a.no === '1110') ?? (await fin.setup.listAccounts(company.id)).find((a) => a.no === '1120');
+    const manualProvider = (await fin.paymentMethods.providerChoices(company.id)).find((p) => p.isSystem);
+    if (tillGl !== undefined && manualProvider !== undefined) {
+      await fin.paymentMethods.create(ctx, { code: 'E2ETILL', name: 'E2E Till cash', kind: 'cash', balancingBankAccountId: till.id, providerId: manualProvider.id, glAccountId: tillGl.id, usableFor: ['customer_receipt'] });
+    }
+  }
   if (methods.some((m) => m.method.code === 'E2ECASH')) return;
   const bank = await fin.bankAccounts.create(ctx, { code: 'E2EBANK', name: 'E2E Bank', kind: 'bank', currency: 'KES' });
   const accounts = await fin.setup.listAccounts(company.id);

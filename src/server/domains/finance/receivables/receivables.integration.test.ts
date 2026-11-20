@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 
 import { has, required } from '@/lib/values';
@@ -7,6 +8,7 @@ import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
 import type { FinanceServices } from '../index';
 import type * as mod_errors from '../errors';
 import type { FinanceContext } from '../errors';
+import { decodeStatementCursor } from './statement-cursor';
 
 /** Needs a Postgres built from the migrations:  TEST_DATABASE_URL=postgres://... pnpm test */
 const url = process.env.TEST_DATABASE_URL;
@@ -142,6 +144,102 @@ describe.skipIf(!has(url))('receivables (database)', () => {
       expect(rows[0].payment_method_id).toBe(ids.methods.MPESA);
       expect(rows[2].payment_method_id).toBeNull(); // on_account is a credit sale, not a way of paying
       expect(await fin.paymentMethods.backfillOrders(ctx)).toBe(0); // run again: nothing left to link
+    });
+  });
+
+  describe('customer statement', () => {
+    async function statementCustomer() {
+      seq += 1;
+      const [c] = await db
+        .insert(schema.customers)
+        .values({ companyId, number: `S${seq}`, name: `Statement ${seq}`, accountType: 'credit', creditLimit: '1000000' })
+        .returning();
+      const entry = (documentType: 'invoice' | 'payment' | 'credit_note', documentNo: string, amountCents: number, postingDate: string) =>
+        fin.customerLedger.addEntry(db, { companyId, customerId: c.id, documentType, documentNo, amountCents, currency: 'KES', postingDate });
+      return {
+        id: c.id,
+        invoice: await entry('invoice', 'ST-INV', 10000, '2026-09-01'),
+        payment: await entry('payment', 'ST-PAY', -4000, '2026-09-10'),
+        creditNote: await entry('credit_note', 'ST-CN', -1000, '2026-10-02'),
+      };
+    }
+
+    it('shows opening, debit, credit, running and closing balances in date order', async () => {
+      const c = await statementCustomer();
+      const all = await fin.customerLedger.statement(companyId, c.id, null, null);
+      expect(all.openingBalanceCents).toBe(0);
+      expect(all.debitCents).toBe(10000);
+      expect(all.creditCents).toBe(5000);
+      expect(all.closingBalanceCents).toBe(5000);
+      expect(all.lines.map((l) => [l.documentNo, l.debit, l.credit, l.runningBalance])).toEqual([
+        ['ST-INV', '100.00', '0.00', '100.00'],
+        ['ST-PAY', '0.00', '40.00', '60.00'],
+        ['ST-CN', '0.00', '10.00', '50.00'],
+      ]);
+
+      const range = await fin.customerLedger.statement(companyId, c.id, '2026-10-01', null);
+      expect(range.openingBalanceCents).toBe(6000);
+      expect(range.debitCents).toBe(0);
+      expect(range.creditCents).toBe(1000);
+      expect(range.closingBalanceCents).toBe(5000);
+      expect(range.lines.map((l) => l.runningBalance)).toEqual(['50.00']);
+    });
+
+    it('keeps the running balance continuous across pages and scopes drilldown to the company', async () => {
+      const c = await statementCustomer();
+      const first = await fin.customerLedger.statement(companyId, c.id, null, null, null, 2);
+      expect(first.lines.map((l) => l.runningBalance)).toEqual(['100.00', '60.00']);
+      const cursor = decodeStatementCursor(first.nextCursor);
+      expect(cursor).not.toBeNull();
+      const second = await fin.customerLedger.statement(companyId, c.id, null, null, cursor, 2);
+      expect(second.lines.map((l) => l.runningBalance)).toEqual(['50.00']);
+      expect(second.nextCursor).toBeNull();
+
+      const detail = await fin.customerLedger.detail(companyId, c.invoice);
+      expect(detail?.entry.documentNo).toBe('ST-INV');
+      expect(detail?.history).toHaveLength(1);
+      expect(await fin.customerLedger.detail('00000000-0000-4000-8000-000000000000', c.invoice)).toBeNull();
+    });
+
+    it('pages through undated legacy rows before dated rows without losing any', async () => {
+      const c = await statementCustomer();
+      const legacyIds = [randomUUID(), randomUUID()].sort();
+      await db.insert(schema.customerLedgerEntries).values([
+        {
+          id: legacyIds[0],
+          companyId,
+          customerId: c.id,
+          documentType: 'invoice',
+          documentNo: 'ST-LEGACY-1',
+          amount: '10.00',
+          remainingAmount: '10.00',
+          currency: 'KES',
+          postingDate: null,
+        },
+        {
+          id: legacyIds[1],
+          companyId,
+          customerId: c.id,
+          documentType: 'invoice',
+          documentNo: 'ST-LEGACY-2',
+          amount: '20.00',
+          remainingAmount: '20.00',
+          currency: 'KES',
+          postingDate: null,
+        },
+      ]);
+
+      const first = await fin.customerLedger.statement(companyId, c.id, null, null, null, 1);
+      expect(first.lines.map((l) => l.documentNo)).toEqual(['ST-LEGACY-1']);
+      expect(decodeStatementCursor(first.nextCursor)).toEqual({ date: null, id: legacyIds[0] });
+
+      const second = await fin.customerLedger.statement(companyId, c.id, null, null, decodeStatementCursor(first.nextCursor), 1);
+      expect(second.lines.map((l) => l.documentNo)).toEqual(['ST-LEGACY-2']);
+      expect(second.lines[0]?.runningBalance).toBe('30.00');
+
+      const third = await fin.customerLedger.statement(companyId, c.id, null, null, decodeStatementCursor(second.nextCursor), 1);
+      expect(third.lines.map((l) => l.documentNo)).toEqual(['ST-INV']);
+      expect(third.lines[0]?.runningBalance).toBe('130.00');
     });
   });
 

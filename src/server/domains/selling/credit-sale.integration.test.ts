@@ -78,6 +78,10 @@ describe.skipIf(url === undefined || url === '')('credit sales (database)', () =
     expect((await c.salesOrders.page(companyId, { query: placed.orderNumber }, 'credit_sale')).rows.map((r) => r.orderNumber)).toEqual([placed.orderNumber]);
     expect((await c.salesOrders.page(companyId, { query: placed.orderNumber })).rows).toEqual([]);
     expect(await c.salesInvoices.page({ query: placed.orderNumber }).then((p) => p.rows[0]?.salesModule)).toBe('credit_sale');
+
+    await db.insert(schema.checkoutAttempts).values({ companyId, channel: 'ecommerce', outcome: 'placed', orderId: placed.orderId, sessionRef: `web-${randomUUID().slice(0, 8)}`, cartSummary: {} });
+    expect((await c.salesOrders.page(companyId, { query: placed.orderNumber }, 'credit_sale')).rows).toEqual([]);
+    expect(await c.salesInvoices.page({ query: placed.orderNumber }).then((p) => p.rows[0]?.salesModule)).toBe('credit_sale');
   });
 
   it('refuses a customer without a credit account, in words', async () => {

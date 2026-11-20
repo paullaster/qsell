@@ -77,7 +77,11 @@ export function QuoteDetails({
             detail={quote.sentAt === null ? undefined : when(quote.sentAt)}
           />
           {quote.convertedOrderNumber === undefined || quote.convertedOrderNumber === null ? null : (
-            <Summary label="Became the order" value={quote.convertedOrderNumber} detail="Find it in Sales Orders or Customer Orders" />
+            <Summary
+              label="Became the order"
+              value={quote.convertedOrderNumber}
+              detail="Find it in Sales Orders or Web Shop Orders"
+            />
           )}
           <Summary
             label="Customer"

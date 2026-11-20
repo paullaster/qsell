@@ -17,7 +17,7 @@ export type SalesOrderPaymentMethod = (typeof SALES_ORDER_PAYMENT_METHODS)[numbe
 export interface SalesOrderInput {
   customerId: string;
   lines: SalesOrderLineInput[];
-  paymentMethod: SalesOrderPaymentMethod;
+  paymentMethod: SalesOrderPaymentMethod | 'counter';
   /** The day it is needed (`YYYY-MM-DD`), or empty. */
   neededOn: string;
   holdUntilPaid: boolean;

@@ -6,6 +6,7 @@ import { orders, orderItems, orderCollections, type OrderRow } from '@/server/db
 import type { Order, OrderItem, OrderStatus, PaymentStatus, PaymentProvider } from '@/types/index';
 import { OrderStages, type StageActor } from './stages';
 import type { StageSource } from '@/lib/order-stages';
+import { WEB_SHOP_ORDER } from './order-origin';
 
 function num(v: string | number): number {
   return typeof v === 'number' ? v : Number(v);
@@ -46,6 +47,8 @@ export function mapOrderRow(row: OrderRow, items: OrderItem[]): Order {
     salesModule: row.salesModule,
     stockRelease: row.stockRelease,
     sourceQuoteId: row.sourceQuoteId,
+    shiftId: row.shiftId,
+    idempotencyKey: row.idempotencyKey,
     invoiceWhenApproved: row.invoiceWhenApproved,
     approvalStatus: row.approvalStatus,
     discounts: row.discounts ?? null,
@@ -125,6 +128,8 @@ export class OrderRepository {
         salesModule: order.salesModule ?? 'ecommerce',
         stockRelease: order.stockRelease ?? null,
         sourceQuoteId: order.sourceQuoteId ?? null,
+        shiftId: order.shiftId ?? null,
+        idempotencyKey: order.idempotencyKey ?? null,
         invoiceWhenApproved: order.invoiceWhenApproved ?? false,
         kraTransmissionStatus: order.kraTransmissionStatus || 'not_applicable',
         approvalStatus: order.approvalStatus ?? 'none',
@@ -194,7 +199,7 @@ export class OrderRepository {
    * Narrowed to the orders left at the counter, the list is in the order to chase them: the longest wait first (the time each was marked
    * ready, oldest first), its place in the list kept by that time and the order's id.
    */
-  async page(input: { query?: string; status?: OrderStatus | null; leftAtCounterDays?: number | null; cursor?: string | null; limit?: number }): Promise<{ rows: Order[]; nextCursor: string | null }> {
+  async page(input: { origin?: 'web_shop'; query?: string; status?: OrderStatus | null; leftAtCounterDays?: number | null; cursor?: string | null; limit?: number }): Promise<{ rows: Order[]; nextCursor: string | null }> {
     const limit = Math.min(Math.max(input.limit ?? 25, 1), 100);
     const after = typeof input.cursor === 'string' && input.cursor !== '' ? decodeCursor(input.cursor) : null;
     const text = (input.query ?? '').trim().slice(0, 100);
@@ -204,6 +209,7 @@ export class OrderRepository {
       .from(orders)
       .where(
         and(
+          input.origin === 'web_shop' ? WEB_SHOP_ORDER : undefined,
           input.status == null ? undefined : eq(orders.status, input.status),
           input.leftAtCounterDays == null ? undefined : leftAtCounterFor(input.leftAtCounterDays),
           matching(text, [orders.orderNumber, orders.customerName, orders.customerPhone, orders.paymentPhone, orders.customerEmail, orders.trackingNumber]),

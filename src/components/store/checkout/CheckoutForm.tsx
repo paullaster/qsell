@@ -92,6 +92,9 @@ interface LookedUp {
   blocked: boolean;
   creditLimit: number;
   balance: number;
+  creditAvailable: number;
+  creditLimitDisplay: 'running' | 'static';
+  allowOverCreditLimit: boolean;
   transmitInvoicesToKra: boolean;
 }
 
@@ -241,8 +244,8 @@ export function CheckoutForm({ lines, packages = [], defaultCountry, submitting,
   const deliveryQuote = delivery.quote.phase === 'ok' ? delivery.quote.quote : null;
   const payable = (basket === null ? totals.totalAmount : basket.goodsTotal) + (deliveryQuote?.gross ?? 0);
   const enabled = providers ?? [];
-  const creditAvailable = accountCustomer?.accountType === 'credit' ? accountCustomer.creditLimit - accountCustomer.balance : 0;
-  const canPayOnAccount = accountCustomer?.found === true && accountCustomer.accountType === 'credit' && !accountCustomer.blocked && creditAvailable >= payable;
+  const runningAvailable = accountCustomer?.accountType === 'credit' ? Math.max(0, accountCustomer.creditLimit - accountCustomer.balance) : 0;
+  const canPayOnAccount = accountCustomer?.found === true && accountCustomer.accountType === 'credit' && !accountCustomer.blocked && (accountCustomer.allowOverCreditLimit || runningAvailable >= payable);
   // On account is open only to a credit customer with room; otherwise the first enabled provider stands.
   // Pay on delivery is open only for a delivery by the shop's own rider, within the company's limit: the server checks it again.
   const canPayOnDelivery = offerPayOnDelivery(podOffer, deliveryOn ? delivery.method : null, payable);
@@ -275,7 +278,7 @@ export function CheckoutForm({ lines, packages = [], defaultCountry, submitting,
                   <span>
                     <span className="block text-sm font-semibold text-fg-strong">On account</span>
                     <span className="mt-0.5 block text-xs text-fg-muted">
-                      {accountCustomer.name} · credit available {money(creditAvailable)}
+                      {accountCustomer.name} · {accountCustomer.creditLimitDisplay === 'static' ? `set credit limit ${money(accountCustomer.creditLimit)}` : `credit available ${money(accountCustomer.creditAvailable)}`}
                       {accountCustomer.transmitInvoicesToKra ? ' · invoice will be marked for KRA' : ' · invoice will not be sent to KRA'}
                     </span>
                   </span>

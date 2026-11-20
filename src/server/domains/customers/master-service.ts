@@ -633,8 +633,9 @@ export class CustomerMasterService {
     }
 
     if (customer.accountType === 'credit') {
-      const nextBalance = num(customer.balance) + input.amount;
-      if (nextBalance > num(customer.creditLimit) && input.allowOverLimit !== true) {
+      const netOwedCents = await getContainer().finance.customerLedger.netOwedCents(input.companyId, customer.id);
+      const nextBalanceCents = netOwedCents + Math.round(input.amount * 100);
+      if (nextBalanceCents > Math.round(num(customer.creditLimit) * 100) && input.allowOverLimit !== true) {
         throw new Error(
           `${customer.name} would exceed the credit limit of ${num(customer.creditLimit).toLocaleString()}.`,
         );

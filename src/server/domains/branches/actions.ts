@@ -7,6 +7,7 @@ import type { PageInput } from '@/server/domains/settings/paging';
 import type { BranchRow } from '@/server/db/drizzle/schema';
 import { orElse, trimToNull } from '@/lib/values';
 import { readGeoPoint } from '@/lib/geo';
+import { findPlacesForStaff } from '@/server/domains/delivery/staff-places';
 
 const PATHS = ['/admin/settings/branches', '/admin/settings/payments', '/admin/settings/tax-compliance/kra-tims-etims'];
 
@@ -83,6 +84,11 @@ export async function updateBranchAction(id: string, patch: { actsIndependently?
     },
     { paths: PATHS, friendly },
   );
+}
+
+/** Staff on the branch pin form: places by name, to fill the latitude and longitude. */
+export async function findBranchPlaceAction(q: unknown) {
+  return runSetting('branches:manage', async ({ userId }) => await findPlacesForStaff(userId, q));
 }
 
 /** Where a branch is. A pin the person dropped, typed in, or took from their phone's location; checked here, never trusted from the browser. */

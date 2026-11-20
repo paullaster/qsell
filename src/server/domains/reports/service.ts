@@ -278,7 +278,7 @@ export class ReportsService {
         key: 'overdue_customers',
         label: 'Customers with overdue invoices',
         count: receivables.overdueCustomers,
-        href: '/admin/customers',
+        href: '/admin/customers/list',
         tone: 'warning',
       });
     }

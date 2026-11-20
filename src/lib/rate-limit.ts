@@ -33,6 +33,8 @@ export const RATE_RULES = {
   /** A courier's system pushing news of parcels to its address: per source address, since one courier sends many a minute. */
   courier_webhook_ip: { limit: 600, seconds: 60 },
   shop_map_search_ip: { limit: 40, seconds: 600 },
+  /** A member of staff looking up a place by name to fill a map pin: per person, since each search may cost what the map service charges. */
+  staff_map_search_user: { limit: 60, seconds: 600 },
   /** A customer looking up the code to collect an order: per address, and per order number so the number and contact cannot be guessed. */
   collection_lookup_ip: { limit: 30, seconds: 600 },
   collection_lookup_order: { limit: 8, seconds: 600 },

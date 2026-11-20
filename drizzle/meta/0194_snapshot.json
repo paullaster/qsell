@@ -1,5 +1,5 @@
 {
-  "id": "0c2b8b88-2871-4377-9fde-e0488793ac93",
+  "id": "b7d9cd65-3269-4228-8163-002e56b867d9",
   "prevId": "03864378-16c9-4b32-a829-1edbae94a619",
   "version": "7",
   "dialect": "postgresql",
@@ -24543,28 +24543,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "order_collections_waiting_idx": {
-          "name": "order_collections_waiting_idx",
-          "columns": [
-            {
-              "expression": "ready_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "order_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"order_collections\".\"status\" IN ('ready','locked')",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -27253,6 +27231,33 @@
           "columns": [
             {
               "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "orders_sales_module_created_idx": {
+          "name": "orders_sales_module_created_idx",
+          "columns": [
+            {
+              "expression": "sales_module",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

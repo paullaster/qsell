@@ -1,6 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { SegmentedChoice } from '@/components/ui/SegmentedChoice';
+import { orderBillingViewAction } from '@/server/domains/selling/partial-billing-actions';
+import type { PartInvoiceRow } from '@/server/domains/selling/partial-billing-service';
 import {
   getOrderCreditableAction,
   issueDeliveryCreditNoteAction,
@@ -65,6 +68,9 @@ export function OrderCreditNotesPanel({ orderId }: { orderId: string }) {
   // and a transition would keep the buttons disabled until that refresh lands.
   const [issuing, setIssuing] = useState(false);
   const [retrying, setRetrying] = useState<string | null>(null);
+  // An order invoiced in parts is credited against one of its part invoices.
+  const [parts, setParts] = useState<PartInvoiceRow[]>([]);
+  const [billingId, setBillingId] = useState<string | null>(null);
   // The order this panel is showing right now, and follow-up refreshes still waiting to run.
   // Both exist so a slow response or a timer from a previous order can never write its data
   // into the panel after another order has been opened.
@@ -72,16 +78,21 @@ export function OrderCreditNotesPanel({ orderId }: { orderId: string }) {
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const load = useCallback(async () => {
+    const billing = await orderBillingViewAction(orderId);
+    const partInvoices = billing.ok && billing.data !== null ? billing.data.invoices : [];
+    const part = partInvoices.length === 0 ? undefined : (partInvoices.find((i) => i.id === billingId) ?? partInvoices[partInvoices.length - 1]);
     const [c, n] = await Promise.all([
-      getOrderCreditableAction(orderId),
+      getOrderCreditableAction(orderId, part?.id),
       listOrderCreditNotesAction(orderId),
     ]);
     if (currentOrder.current !== orderId) return;
+    setParts(partInvoices);
+    if (part !== undefined && part.id !== billingId) setBillingId(part.id);
     if ((!c.ok && c.forbidden) || (!n.ok && n.forbidden)) { setHidden(true); return; }
     if (c.ok) setData(c.data);
     else setError(c.error);
     if (n.ok) setNotes(n.data);
-  }, [orderId]);
+  }, [orderId, billingId]);
 
   useEffect(() => {
     // The panel is keyed by order, so each order starts with fresh state; this only fetches.
@@ -110,7 +121,7 @@ export function OrderCreditNotesPanel({ orderId }: { orderId: string }) {
       setError(null);
       setNotice(null);
       try {
-        const res = await issueOrderCreditNoteAction(creditNoteRequest(orderId, chosen, reason?.id ?? '', note, restock, data?.canRestock === true) as never);
+        const res = await issueOrderCreditNoteAction({ ...creditNoteRequest(orderId, chosen, reason?.id ?? '', note, restock, data?.canRestock === true), ...(billingId === null ? {} : { billingId }) } as never);
         if (!res.ok) {
           setError(res.error);
           return;
@@ -269,6 +280,18 @@ export function OrderCreditNotesPanel({ orderId }: { orderId: string }) {
         </ul>
       ) : null}
       {notes.length === 0 && data?.hasTaxInvoice === true ? <p className="text-fg-muted">No credit notes yet.</p> : null}
+
+      {parts.length === 0 ? null : (
+        <div className="space-y-1" data-testid="credit-which-invoice">
+          <p className="text-sm text-fg-muted">This order was invoiced in parts. Credit notes are raised against one part invoice.</p>
+          <SegmentedChoice
+            label="Credit which invoice"
+            value={billingId ?? ''}
+            options={parts.map((i) => ({ value: i.id, label: `${i.invoiceNumber} (part ${String(i.sequence)})` }))}
+            onChange={(value) => { setBillingId(value); setOpen(false); setQty({}); }}
+          />
+        </div>
+      )}
 
       {open && data !== null ? (
         <form

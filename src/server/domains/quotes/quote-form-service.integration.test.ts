@@ -150,6 +150,18 @@ describe.skipIf(url === '')('quote form choices (database)', () => {
       );
     });
 
+    it('refuses a product that is not offered in quotes, and takes it again once it is', async () => {
+      const { drizzleDb } = await import('@/server/db/drizzle/client');
+      const { products } = await import('@/server/db/drizzle/schema');
+      const { eq } = await import('drizzle-orm');
+      await drizzleDb.update(products).set({ offeredIn: ['sales_order'] }).where(eq(products.id, productId));
+      try {
+        await expect(quotes.create(userId, quote({ customerId: cash }))).rejects.toThrow(/not offered in sales quotes/);
+      } finally {
+        await drizzleDb.update(products).set({ offeredIn: ['quote', 'sales_order', 'credit_sale', 'pos_cash_sale', 'sales_invoice'] }).where(eq(products.id, productId));
+      }
+    });
+
     it('refuses an unknown payment method', async () => {
       await expect(quotes.create(userId, quote({ paymentMethod: 'free_money' }))).rejects.toThrow(
         /valid payment method/,

@@ -59,6 +59,8 @@ export async function issueOrderCreditNoteAction(input: {
   reasonCode: CreditNoteReason;
   reasonNote?: string;
   restock?: boolean;
+  /** The part invoice credited, for an order invoiced in parts. */
+  billingId?: string;
 }): Promise<CreditNoteActionResult<IssueCreditNoteOutcome>> {
   return run(async () => {
     const userId = await requirePermission('credit_notes:create');
@@ -68,6 +70,7 @@ export async function issueOrderCreditNoteAction(input: {
       reason: { code: input.reasonCode, note: input.reasonNote },
       issuedBy: userId,
       restock: input.restock,
+      ...(input.billingId === undefined ? {} : { billingId: input.billingId }),
     });
     if (outcome.status === 'pending_approval') return outcome;
     // The orders page does not show credit notes (the panel loads its own), so it is not
@@ -141,10 +144,10 @@ export async function listOrderCreditNotesAction(
 }
 
 /** What the issue screen needs: per-line creditable quantities and whether restock applies. */
-export async function getOrderCreditableAction(orderId: string) {
+export async function getOrderCreditableAction(orderId: string, billingId?: string) {
   return run(async () => {
     await requirePermission('credit_notes:create');
-    return getContainer().creditNotes.creditableForOrder(orderId);
+    return getContainer().creditNotes.creditableForOrder(orderId, billingId);
   });
 }
 
