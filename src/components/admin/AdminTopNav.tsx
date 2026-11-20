@@ -46,8 +46,9 @@ export function AdminTopNav({
       subtitle: 'Receive supplier goods (PO), write off damaged stock, and conduct physical audits',
     },
     orders: {
-      title: 'Customer Orders & Shipments',
-      subtitle: 'Process orders, track courier dispatches, and print warehouse packing slips',
+      title: 'Web Shop Orders & Fulfillment',
+      subtitle:
+        'Review and fulfil orders placed through the web shop, track courier dispatches, and print packing slips',
     },
     gateways: {
       title: 'Payment Methods & Settings',

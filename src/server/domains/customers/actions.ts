@@ -12,7 +12,7 @@ import { ownsOrder, readAddress, toCustomerOrder, type CustomerOrder, type Order
 import { CUSTOMER_STATUS_WORDS, HEADLINE, collectionWords } from '@/lib/tracking-view';
 import { customerVisitWords, type CustomerVisitState } from '@/lib/visit-customer';
 import { resolvePublicBaseUrl } from '@/server/domains/auth/account-service';
-import { DEFAULT_BUSINESS_TIMEZONE } from '@/server/kernel/numbering/business-date';
+import { businessTimeZone } from '@/server/kernel/numbering/business-date';
 
 function mapAddress(row: CustomerAddressRow): CustomerAddress {
   return {
@@ -399,6 +399,11 @@ export interface MyVisit {
   /** The business's timezone, in which the day and hours are written (the shop's, not the server's or the browser's). */
   timeZone: string;
   address: string;
+  /** The visit's own id, for asking about it. */
+  id: string;
+  /** What the customer asked for, when they have, and whether they may ask now (a visit still to come, with no request waiting). */
+  asked: { note: string; at: string } | null;
+  canAsk: boolean;
 }
 
 /** The scheduled visits (an installation, a site job) of one of the signed-in shopper's own orders, soonest first. */
@@ -411,10 +416,28 @@ export async function myOrderVisitsAction(id: string): Promise<AccountResult<MyV
     if (!order || !ownsOrder(order, mine.owner)) return { ok: false, error: 'This order was not found.', code: 'ORDER_NOT_FOUND' };
     const company = await c.companySettings.ensureSeeded();
     const visits = await c.orderVisits.forCustomer(company.id, order.id);
-    return { ok: true, data: visits.map((v) => ({ ...customerVisitWords(v.status), startsAt: v.startsAt, endsAt: v.endsAt, timeZone: DEFAULT_BUSINESS_TIMEZONE, address: v.address })) };
+    return { ok: true, data: visits.map((v) => ({ ...customerVisitWords(v.status), startsAt: v.startsAt, endsAt: v.endsAt, timeZone: businessTimeZone(), address: v.address, id: v.id, asked: v.asked, canAsk: v.canAsk })) };
   } catch (error) {
     console.error('[storefront] my order visits', error);
     return { ok: false, error: 'The visit could not be checked just now.' };
+  }
+}
+
+/** The signed-in shopper asks for another time for a visit of their own order, in their words. Answers with their visits as they now stand. */
+export async function requestVisitTimeAction(orderId: string, visitId: string, note: string): Promise<AccountResult<MyVisit[]>> {
+  try {
+    const mine = await ownerOf();
+    if (!mine) return NEEDS_SIGN_IN;
+    const c = getContainer();
+    const order = typeof orderId === 'string' && orderId !== '' ? await c.orders.getById(orderId) : null;
+    if (!order || !ownsOrder(order, mine.owner)) return { ok: false, error: 'This order was not found.', code: 'ORDER_NOT_FOUND' };
+    const company = await c.companySettings.ensureSeeded();
+    const asked = await c.orderVisits.requestChange(company.id, order.id, typeof visitId === 'string' ? visitId : '', note, mine.owner.ids[0] ?? 'customer');
+    if (!asked.ok) return { ok: false, error: asked.error };
+    return await myOrderVisitsAction(order.id);
+  } catch (error) {
+    console.error('[storefront] request visit time', error);
+    return { ok: false, error: 'Your request could not be sent just now. Please try again.' };
   }
 }
 

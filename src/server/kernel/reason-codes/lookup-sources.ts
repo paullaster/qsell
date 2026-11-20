@@ -38,6 +38,7 @@ export const REASON_LOOKUP_SOURCES: LookupSource[] = [
   reasons('numbering-reasons', 'numbering:manage'),
   reasons('email-routing-reasons', 'email_routing:manage'),
   reasons('selling-reasons', 'selling_settings:manage'),
+  reasons('business-time-reasons', 'timezone:manage'),
   reasons('shift-reasons', 'registers:manage'),
   reasons('return-reasons', 'cash_sales:return'),
   reasons('billing-reasons', 'partial_billing:manage'),

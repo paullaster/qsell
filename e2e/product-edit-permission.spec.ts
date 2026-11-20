@@ -11,7 +11,7 @@ const productWindow = (page: Page) =>
   page.getByRole('dialog').filter({ has: page.getByRole('button', { name: 'Save Changes' }) });
 
 async function openOrder(page: Page, number: string) {
-  await open(page, '/admin/orders', /Customer Orders/);
+    await open(page, '/admin/orders', /Web Shop Orders/);
   await page.getByLabel('Search orders').fill(number);
   // The button of the row that names this order: the list is filtered by the search a moment after it is typed, and the first
   // button on the screen before that belongs to some other order.

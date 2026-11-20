@@ -1,3 +1,5 @@
+import { BusinessTimeZoneProvider } from '@/components/business-time';
+import { getContainer } from '@/server/di/container';
 import type { Metadata, Viewport } from 'next';
 import { auth } from '@/auth';
 import { RegisterWorker } from '@/components/rider/RegisterWorker';
@@ -15,11 +17,13 @@ export const viewport: Viewport = { width: 'device-width', initialScale: 1, view
 
 export default async function RiderLayout({ children }: { children: React.ReactNode }) {
   // The sign-out button is only for someone who is signed in; the sign-in screen has none.
-  const session = await auth();
+  const [session, company] = await Promise.all([auth(), getContainer().companySettings.ensureSeeded()]);
   return (
-    <RiderShell signedIn={session?.user !== undefined}>
-      <RegisterWorker />
-      {children}
-    </RiderShell>
+    <BusinessTimeZoneProvider timeZone={company.timezone}>
+      <RiderShell signedIn={session?.user !== undefined}>
+        <RegisterWorker />
+        {children}
+      </RiderShell>
+    </BusinessTimeZoneProvider>
   );
 }

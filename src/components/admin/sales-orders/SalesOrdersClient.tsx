@@ -10,6 +10,7 @@ import { Chip, LoadFailed, PageHeader, PageSkeleton, buttonClass, fieldClass, pr
 import { useDebouncedValue } from '@/components/ui/useDebouncedValue';
 import { usePagedList } from '@/components/ui/usePagedList';
 import { SalesOrderEditor } from './SalesOrderEditor';
+import { useDate } from '@/components/business-time';
 
 type FirstPage = Awaited<ReturnType<typeof salesOrdersPageAction>>;
 
@@ -39,6 +40,7 @@ function Loaded({ firstPromise, variant }: { firstPromise: Promise<FirstPage>; v
 const STATUS_TONE: Record<string, 'green' | 'amber' | 'red' | 'sky' | 'gray'> = { pending: 'amber', processing: 'sky', shipped: 'sky', delivered: 'green', cancelled: 'red' };
 
 function Body({ first, variant }: { first: Extract<FirstPage, { ok: true }>; variant: ListVariant }) {
+  const date = useDate();
   const v = VARIANTS[variant];
   const [typed, setTyped] = useState('');
   const query = useDebouncedValue(typed, 300);
@@ -83,14 +85,14 @@ function Body({ first, variant }: { first: Extract<FirstPage, { ok: true }>; var
           <li key={row.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface-raised p-4" data-testid="sales-order">
             <div className="min-w-0">
               <p className="font-semibold break-words text-fg-strong">{row.orderNumber}</p>
-              <p className="text-sm break-words text-fg-muted">{row.customerName} · {new Date(row.createdAt).toLocaleDateString()}</p>
+              <p className="text-sm break-words text-fg-muted">{row.customerName} · {date(row.createdAt)}</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono text-sm font-semibold text-fg-strong">{row.currency} {row.total.toLocaleString()}</span>
               <Chip tone={STATUS_TONE[row.status] ?? 'gray'}>{row.status}</Chip>
               <Chip tone={row.paymentStatus === 'paid' ? 'green' : 'gray'}>{row.paymentStatus.replaceAll('_', ' ')}</Chip>
               {row.approvalStatus === 'pending' ? <Chip tone="amber">Waiting for approval</Chip> : null}
-              <Link href="/admin/orders" className="min-h-10 content-center text-sm font-medium text-indigo-600 underline">Open in Customer Orders</Link>
+              <Link href={`/admin/orders?order=${encodeURIComponent(row.id)}`} className="min-h-10 content-center text-sm font-medium text-indigo-600 underline">Open for fulfilment</Link>
             </div>
           </li>
         ))}

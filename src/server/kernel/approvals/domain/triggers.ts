@@ -221,6 +221,13 @@ export const TRIGGERS: TriggerDefinition[] = [
     ],
   },
   {
+    code: 'customer_credit_settings.enable_over_limit',
+    module: 'sales',
+    documentKind: 'customer_credit_settings',
+    label: 'Allowing sales beyond available customer credit',
+    fields: [...common, { path: 'allowOverCreditLimit', label: 'Allow over-limit sales', type: 'boolean' }],
+  },
+  {
     code: 'price_list.publish',
     module: 'sales',
     documentKind: 'price_list',
@@ -292,6 +299,7 @@ export const DOCUMENT_KIND_LABELS: Record<string, string> = {
   refund: 'Refunds',
   stock_adjustment: 'Stock adjustments',
   customer_credit_limit: 'Customer credit limits',
+  customer_credit_settings: 'Customer credit settings',
   price_list: 'Price lists',
   price_list_change: 'Price changes',
   discount_rule: 'Discount rules',

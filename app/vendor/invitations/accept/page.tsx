@@ -1,4 +1,6 @@
 import type { Metadata } from 'next';
+import { BusinessTimeZoneProvider } from '@/components/business-time';
+import { getContainer } from '@/server/di/container';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { VendorInvitationAcceptClient } from '@/components/vendor/VendorInvitationAcceptClient';
 
@@ -7,10 +9,13 @@ export const metadata: Metadata = { title: 'Accept vendor invitation', robots: {
 export default async function AcceptVendorInvitationPage({ searchParams }: { searchParams: Promise<{ token?: string | string[] }> }) {
   const query = await searchParams;
   const token = typeof query.token === 'string' ? query.token : '';
+  const company = await getContainer().companySettings.ensureSeeded();
   return (
     <div className="relative flex min-h-dvh flex-col items-center justify-center gap-4 bg-canvas px-4 py-10">
       <div className="absolute top-4 right-4"><ThemeToggle /></div>
-      <VendorInvitationAcceptClient token={token} />
+      <BusinessTimeZoneProvider timeZone={company.timezone}>
+        <VendorInvitationAcceptClient token={token} />
+      </BusinessTimeZoneProvider>
     </div>
   );
 }

@@ -1,3 +1,5 @@
+import { BusinessTimeService } from '@/server/domains/company/business-time-service';
+import { followBusinessTimeZone } from '@/server/kernel/numbering/business-date';
 import { ParkedActions } from '@/server/kernel/approvals/parked-actions';
 import { registerApprovalHandlers } from '@/server/di/approval-wiring';
 import { ApprovalConfigService } from '@/server/kernel/approvals/config-service';
@@ -60,6 +62,7 @@ import { UnitRepository } from '@/server/domains/units/repository';
 import { UnitWriteService } from '@/server/domains/units/write-service';
 import { DimensionSetService } from '@/server/domains/dimensions/set-service';
 import { CustomerMasterService } from '@/server/domains/customers/master-service';
+import { CustomerCreditSettingsService } from '@/server/domains/customers/customer-credit-settings-service';
 import { VendorService } from '@/server/domains/vendors/service';
 import { VendorFileStore } from '@/server/domains/vendors/file-store';
 import { VendorProfileService } from '@/server/domains/vendors/profile-service';
@@ -391,6 +394,8 @@ export interface AppContainer {
   packageConfig: PackageConfigService;
   emailRoutes: EmailRouteService;
   sellingSettings: SellingSettingsService;
+  customerCreditSettings: CustomerCreditSettingsService;
+  businessTime: BusinessTimeService;
   salesOrders: SalesOrderService;
   shifts: ShiftService;
   cashSales: CashSaleService;
@@ -504,6 +509,8 @@ export function getContainer(): AppContainer {
   const email = createEmailPort();
   const deliveryPush = new DeliveryPush(drizzleDb, createPushPort());
   const companySettings = new CompanySettingsRepository(drizzleDb);
+  // A new process learns the company's business time zone at once (read only; every request and job reads it again afterwards).
+  void companySettings.getActive().then((row) => followBusinessTimeZone(row?.timezone)).catch(() => undefined);
   const invoices = new InvoiceService({
     db: drizzleDb,
     companySettings,
@@ -620,12 +627,14 @@ export function getContainer(): AppContainer {
   const packageConfig = new PackageConfigService(drizzleDb, decisionLog, reasonCodes);
   const emailRoutes = new EmailRouteService(drizzleDb, decisionLog, reasonCodes, companySettings);
   const sellingSettings = new SellingSettingsService(drizzleDb, decisionLog, reasonCodes);
+  const customerCreditSettings = new CustomerCreditSettingsService(drizzleDb, decisionLog, reasonCodes);
+  const businessTime = new BusinessTimeService(drizzleDb, decisionLog, reasonCodes);
   const packageShop = new PackageShopService(drizzleDb, packageConfig, deliveryServices.stockSettings, deliveryServices.stockAvailability);
   const packageOrders = new PackageOrderService(drizzleDb, packageShop);
   const orderDocuments = new OrderDocumentsService(drizzleDb);
   const shifts = new ShiftService(drizzleDb, decisionLog, reasonCodes, numbering, approvals, async () => (await import('@/server/di/container')).getContainer().finance);
   const salesInvoices = new SalesInvoiceService(drizzleDb, invoices);
-  const salesOrders = new SalesOrderService(drizzleDb, sellingSettings, packageOrders, customers, branches);
+  const salesOrders = new SalesOrderService(drizzleDb, sellingSettings, packageOrders, customers, branches, customerCreditSettings, finance.customerLedger);
   const counterReturns = new CounterReturnService(drizzleDb, shifts, async () => (await import('@/server/di/container')).getContainer());
   const partialBilling = new PartialBillingService(drizzleDb, decisionLog, reasonCodes, numbering, async (billingId) => await (await import('@/server/di/container')).getContainer().kraSigning.processOrderBillingDocument({ billingId }));
   const cashSales = new CashSaleService(drizzleDb, decisionLog, shifts, salesOrders, async () => (await import('@/server/di/container')).getContainer());
@@ -805,6 +814,8 @@ export function getContainer(): AppContainer {
     packageConfig,
     emailRoutes,
     sellingSettings,
+    customerCreditSettings,
+    businessTime,
     salesOrders,
     shifts,
     cashSales,

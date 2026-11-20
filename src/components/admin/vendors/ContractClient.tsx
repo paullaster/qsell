@@ -17,6 +17,7 @@ import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { CONTRACT_STATUS, emptyContractLine, type ContractLineForm } from '@/lib/vendor-contract';
 import type { Choice } from '@/lib/payment-options';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
+import { useWhen } from '@/components/business-time';
 
 type Data = Extract<Awaited<ReturnType<typeof contractAction>>, { ok: true }>['data'];
 type Result = { ok: true; data?: unknown } | { ok: false; error: string };
@@ -28,6 +29,7 @@ export function ContractClient({ viewPromise }: { viewPromise: ReturnType<typeof
 }
 
 function View({ data }: { data: Data }) {
+  const when = useWhen();
   const uid = useId();
   const router = useRouter();
   const found = data.found;
@@ -170,7 +172,7 @@ function View({ data }: { data: Data }) {
       {found === null ? null : (
         <section className={cardClass} aria-label="History">
           <h2 className="text-sm font-bold text-fg-strong">History</h2>
-          <ol className="mt-1 space-y-1 text-sm text-fg">{found.events.map((e) => <li key={e.id}>{EVENT_WORDS[e.event] ?? e.event} <span className="text-xs text-fg-muted">· {e.who ?? 'System'} · {new Date(e.at).toLocaleString()}</span>{e.reason === null || e.reason === '' ? null : <span className="block text-xs text-fg-muted">{e.reason}</span>}</li>)}</ol>
+          <ol className="mt-1 space-y-1 text-sm text-fg">{found.events.map((e) => <li key={e.id}>{EVENT_WORDS[e.event] ?? e.event} <span className="text-xs text-fg-muted">· {e.who ?? 'System'} · {when(e.at)}</span>{e.reason === null || e.reason === '' ? null : <span className="block text-xs text-fg-muted">{e.reason}</span>}</li>)}</ol>
         </section>
       )}
     </div>

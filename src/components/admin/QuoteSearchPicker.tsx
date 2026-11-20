@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from 'react';
 import { Search } from 'lucide-react';
+import { useDate } from '@/components/business-time';
 import { searchSalesQuotesAction } from '@/server/domains/quotes/actions';
 import type { QuoteSearchHit } from '@/server/domains/quotes/service';
 
@@ -21,7 +22,6 @@ export const statusText = (status: string) => status.replace(/_/g, ' ');
 
 const money = (n: number, currency: string) =>
   `${currency} ${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString() : 'No expiry');
 
 const tone = (status: string, expired: boolean) =>
   expired
@@ -34,6 +34,7 @@ const tone = (status: string, expired: boolean) =>
 
 /** One quote, as the picker shows it: number, customer, total, status, valid until. */
 export function QuoteSummary({ hit }: { hit: QuoteSearchHit }) {
+  const date = useDate();
   return (
     <span className="grid w-full gap-x-3 gap-y-1 sm:grid-cols-[9rem_minmax(0,1fr)_8rem_7rem_6rem] sm:items-center">
       <span className="font-mono text-xs font-semibold text-fg-strong">{hit.quoteNumber}</span>
@@ -50,7 +51,7 @@ export function QuoteSummary({ hit }: { hit: QuoteSearchHit }) {
       </span>
       <span className="text-xs text-fg-muted">
         <span className="sm:hidden">Valid until </span>
-        {day(hit.validUntil)}
+        {hit.validUntil === null ? 'No expiry' : date(hit.validUntil)}
       </span>
     </span>
   );

@@ -25,14 +25,14 @@ export function durationWords(ms: number | null): string {
   return hours === 0 ? `${String(days)} d` : `${String(days)} d ${String(hours)} h`;
 }
 
-/** A stage time as people in Kenya read it (Nairobi time), with seconds so two stages a moment apart can be told apart. */
-export function stageTime(iso: string): string {
-  return new Date(iso).toLocaleString('en-KE', { timeZone: 'Africa/Nairobi', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+/** A stage time as the business reads it (in the business's time zone), with seconds so two stages a moment apart can be told apart. */
+export function stageTime(iso: string, timeZone: string): string {
+  return new Date(iso).toLocaleString('en-KE', { timeZone, day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 }
 
 /** The same without the seconds, for the customer. */
-export function stageTimeShort(iso: string): string {
-  return new Date(iso).toLocaleString('en-KE', { timeZone: 'Africa/Nairobi', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
+export function stageTimeShort(iso: string, timeZone: string): string {
+  return new Date(iso).toLocaleString('en-KE', { timeZone, day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
 export type StageTone = 'good' | 'bad' | 'neutral';

@@ -1,5 +1,6 @@
 'use client';
 
+import { useWhen } from '@/components/business-time';
 import Link from 'next/link';
 import { use, useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -19,7 +20,6 @@ import { Field, LoadFailed, Message, PageHeader, Chip, attempt, buttonClass, car
 import { TRANSFER_STATE_WORDS, isTransferState } from '@/lib/stock-documents';
 import type { Choice } from '@/lib/payment-options';
 
-const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' });
 const number = (text: string): number => (text.trim() === '' ? 0 : Number(text.trim()));
 
 export function TransferDetailClient({ viewPromise }: { viewPromise: ReturnType<typeof stockTransferAction> }) {
@@ -30,6 +30,7 @@ export function TransferDetailClient({ viewPromise }: { viewPromise: ReturnType<
 type Quantities = Record<string, string>;
 
 function Detail({ t }: { t: TransferDetail }) {
+  const when = useWhen();
   const uid = useId();
   const router = useRouter();
   const [editing, setEditing] = useState(false);

@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
 
 import { has } from '@/lib/values';
+import type { SalesChannel } from '@/lib/stock';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';
 import type { OrderRepository } from './repository';
@@ -15,6 +16,7 @@ describe.skipIf(!has(url))('the orders list (database)', () => {
   let schema: typeof mod_server_db_drizzle_schema;
   let repo: OrderRepository;
   let branchId: string;
+  let companyId: string;
   const tag = randomUUID().slice(0, 6).toUpperCase();
   const ids: string[] = [];
 
@@ -30,13 +32,18 @@ describe.skipIf(!has(url))('the orders list (database)', () => {
       tracking?: string;
       items?: number;
       at?: string;
+      salesModule?: SalesChannel;
+      webShopOrigin?: boolean;
     } = {},
   ) {
     const id = `op_${tag}_${String(n).padStart(2, '0')}`;
     ids.push(id);
     const created = o.at ?? new Date(Date.now() - (o.minutesAgo ?? n) * 60_000).toISOString();
-    await db.execute(sql`INSERT INTO orders (id, order_number, user_id, branch_id, customer_name, customer_email, customer_phone, shipping_address, subtotal, tax, shipping_fee, total_amount, payment_method, status, tracking_number, created_at)
-      VALUES (${id}, ${`OP-${tag}-${String(n).padStart(2, '0')}`}, 'u', ${branchId}::uuid, ${o.name ?? `Buyer ${tag} ${n}`}, ${o.email ?? `b${n}-${tag}@x.test`}, ${o.phone ?? `07000${String(n).padStart(5, '0')}`}, '{"street":"s","city":"c","countyOrState":"x","country":"k"}'::jsonb, 100, 16, 0, 116, 'mpesa_daraja', ${o.status ?? 'pending'}, ${o.tracking ?? null}, ${created}::timestamptz)`);
+    await db.execute(sql`INSERT INTO orders (id, order_number, user_id, branch_id, customer_name, customer_email, customer_phone, shipping_address, subtotal, tax, shipping_fee, total_amount, payment_method, status, tracking_number, created_at, sales_module)
+      VALUES (${id}, ${`OP-${tag}-${String(n).padStart(2, '0')}`}, 'u', ${branchId}::uuid, ${o.name ?? `Buyer ${tag} ${n}`}, ${o.email ?? `b${n}-${tag}@x.test`}, ${o.phone ?? `07000${String(n).padStart(5, '0')}`}, '{"street":"s","city":"c","countyOrState":"x","country":"k"}'::jsonb, 100, 16, 0, 116, 'mpesa_daraja', ${o.status ?? 'pending'}, ${o.tracking ?? null}, ${created}::timestamptz, ${o.salesModule ?? 'ecommerce'})`);
+    if (o.webShopOrigin === true) {
+      await db.execute(sql`INSERT INTO checkout_attempts (company_id, channel, outcome, order_id) VALUES (${companyId}::uuid, 'ecommerce', 'placed', ${id})`);
+    }
     for (let i = 0; i < (o.items ?? 2); i++) {
       await db
         .insert(schema.orderItems)
@@ -76,6 +83,7 @@ describe.skipIf(!has(url))('the orders list (database)', () => {
         kraPin: 'P',
       })
       .returning();
+    companyId = company.id;
     const [branch] = await db
       .insert(schema.branches)
       .values({ companyId: company.id, code: `OP${tag}`, name: 'OP branch', isDefault: true })
@@ -138,6 +146,17 @@ describe.skipIf(!has(url))('the orders list (database)', () => {
     expect(mine((await repo.page({ query: tag, status: 'cancelled', limit: 50 })).rows)).toEqual(
       [],
     );
+  });
+
+  it('can restrict the page to web shop orders without including staff sales', async () => {
+    await order(50, { salesModule: 'sales_order' });
+    await order(51, { salesModule: 'credit_sale', webShopOrigin: true });
+    await order(52, { salesModule: 'credit_sale' });
+    await order(53, { salesModule: 'ecommerce' });
+
+    const webShop = await repo.page({ query: `OP-${tag}-5`, origin: 'web_shop', limit: 50 });
+
+    expect(mine(webShop.rows)).toEqual([`OP-${tag}-53`, `OP-${tag}-51`]);
   });
 
   it('searches the number, the customer, the phone, the email and the tracking code, without case', async () => {

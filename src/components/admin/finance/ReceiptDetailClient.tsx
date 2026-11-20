@@ -24,6 +24,7 @@ import { invoiceHref, orderHref } from '@/lib/order-links';
 import { allocationFor, applications, canApply, fromCents, groupApplications, needsComment, postedMessage } from '@/lib/receipt-detail';
 import type { Choice } from '@/lib/payment-options';
 import { Chip, Field, LoadFailed, Message, PageHeader, buttonClass, cardClass, dangerClass, fieldClass, money, primaryClass, today, type Notice, attempt } from './ui';
+import { useWhen } from '@/components/business-time';
 
 type View = Extract<Awaited<ReturnType<typeof receiptDetailAction>>, { ok: true }>['data'];
 
@@ -55,6 +56,7 @@ export function ReceiptDetailClient({ viewPromise, postingFailedPromise }: { vie
 }
 
 function ReceiptDetailView({ view, postingFailed }: { view: View; postingFailed?: string }) {
+  const when = useWhen();
   const uid = useId();
   const router = useRouter();
   const r = view.receipt;
@@ -337,7 +339,7 @@ function ReceiptDetailView({ view, postingFailed }: { view: View; postingFailed?
             <li key={e.id} className="rounded-lg border border-line bg-surface-raised p-3 text-xs">
               <p className="font-semibold text-fg-strong">{plain(e.event)}{has(e.toStatus) && e.fromStatus !== e.toStatus ? ` · ${e.fromStatus ?? 'new'} → ${e.toStatus}` : ''}</p>
               <p className="text-fg-muted">
-                {new Date(e.at).toLocaleString()} · by {e.actorId ?? e.actorType}{has(e.surface) ? ` · from ${e.surface}` : ''}{has(e.permission) ? ` · allowed by ${e.permission}` : ''}
+                {when(e.at)} · by {e.actorId ?? e.actorType}{has(e.surface) ? ` · from ${e.surface}` : ''}{has(e.permission) ? ` · allowed by ${e.permission}` : ''}
               </p>
               {has(e.reasonCode) ? <p className="mt-0.5 text-fg">Reason: {e.reasonCode}{has(e.reasonText) ? ` — ${e.reasonText}` : ''}</p> : null}
             </li>

@@ -8,6 +8,7 @@ import { makeOrderFromAwardAction, toMakeAction } from '@/server/domains/vendors
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import type { Choice } from '@/lib/payment-options';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, dangerClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
+import { useWhen } from '@/components/business-time';
 
 type View = Extract<Awaited<ReturnType<typeof rfqQuotesAction>>, { ok: true }>['data'];
 type Open = Extract<View, { sealed: false }>;
@@ -88,12 +89,13 @@ function Cell({ ql, alt, lowest }: { ql: QuoteLine | undefined; alt: QuoteLine[]
 }
 
 function Sealed({ rfqId, view }: { rfqId: string; view: Extract<View, { sealed: true }> }) {
+  const when = useWhen();
   return (
     <div className="max-w-3xl space-y-5">
       <PageHeader title="Quotes" actions={<Link href={`/admin/vendors/rfqs/${rfqId}`} className={buttonClass}>Back to the request</Link>} />
       <section className={cardClass} aria-label="Sealed quotes">
         <p className="text-sm font-semibold text-fg-strong">The quotes are sealed.</p>
-        <p className="mt-1 text-sm text-fg">{view.received} {view.received === 1 ? 'quote has' : 'quotes have'} arrived. Nobody can read them, and the vendors are not named, until the deadline{view.opensAt === null ? '' : ` (${new Date(view.opensAt).toLocaleString()})`} or until the request is closed.</p>
+        <p className="mt-1 text-sm text-fg">{view.received} {view.received === 1 ? 'quote has' : 'quotes have'} arrived. Nobody can read them, and the vendors are not named, until the deadline{view.opensAt === null ? '' : ` (${when(view.opensAt)})`} or until the request is closed.</p>
       </section>
     </div>
   );
@@ -200,7 +202,7 @@ function Quotes({ rfqId, view }: { rfqId: string; view: Open }) {
                   <form className="space-y-2 rounded-lg border border-line p-3" aria-label={mode.kind === 'reject' ? `Refuse the quote from ${v.name}` : `Ask ${v.name} to revise`} onSubmit={(e) => { e.preventDefault(); void act(decideQuoteAction(rfqId, v.vendorId, mode.kind, { reasonCode: reason?.id ?? '', text, due }), mode.kind === 'reject' ? 'The quote is refused and the vendor told.' : 'The vendor was asked to revise its quote.'); }}>
                     {mode.kind === 'reject' ? <ChoicePicker label="Reason" source="rfq-rejection-reasons" choice={reason} onChoice={setReason} clearable={false} required placeholder="Choose a reason…" /> : null}
                     <Field id={`${uid}-n`} label={noteLabel(mode.kind, needsComment)} hint={mode.kind === 'reject' ? 'The vendor is told this, and never another vendor’s name or price.' : undefined}><input id={`${uid}-n`} value={text} onChange={(e) => setText(e.target.value)} className={fieldClass} required={mode.kind === 'revise' || needsComment} maxLength={1000} autoComplete="off" /></Field>
-                    {mode.kind === 'revise' ? <Field id={`${uid}-d`} label="Send the revision by"><input id={`${uid}-d`} type="datetime-local" value={due} onChange={(e) => setDue(e.target.value)} className={fieldClass} required /></Field> : null}
+                    {mode.kind === 'revise' ? <Field id={`${uid}-d`} label="Send the revision by (business time)"><input id={`${uid}-d`} type="datetime-local" value={due} onChange={(e) => setDue(e.target.value)} className={fieldClass} required /></Field> : null}
                     <div className="flex gap-2"><button type="submit" className={mode.kind === 'reject' ? dangerClass : primaryClass} disabled={busy || (mode.kind === 'reject' && reason === null)}>{mode.kind === 'reject' ? 'Refuse the quote' : 'Ask for a revision'}</button><button type="button" className={buttonClass} onClick={() => setMode(null)}>Cancel</button></div>
                   </form>
               ) : null}

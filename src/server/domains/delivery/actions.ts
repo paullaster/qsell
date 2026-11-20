@@ -9,6 +9,7 @@ import { DELIVERY_METHODS, isDeliveryMethod, readMethodSettings, type DeliveryMe
 import { afterCursor, matching, pageOf, searchText, PAGE_SIZE } from '@/server/domains/settings/paging';
 import { idOf, objectOf, runDelivery, versionOf } from './action-support';
 import { DeliveryError } from './errors';
+import { findPlacesForStaff } from './staff-places';
 
 const ZONE_PATHS = ['/admin/delivery/zones'];
 const METHOD_PATHS = ['/admin/delivery/methods'];
@@ -63,6 +64,11 @@ export async function deliveryZonesPageAction(input: unknown) {
     const countOf = new Map(counts.map((c) => [c.zoneId, c.n]));
     return { rows: page.rows.map((z) => toView(z, countOf.get(z.id) ?? 0)), nextCursor: page.nextCursor };
   });
+}
+
+/** Staff on the zone form: places by name, to fill the centre of the coverage circle. */
+export async function findZonePlaceAction(q: unknown) {
+  return await runDelivery('deliveries:manage', async (ctx) => await findPlacesForStaff(ctx.userId, q));
 }
 
 export async function createDeliveryZoneAction(input: unknown) {

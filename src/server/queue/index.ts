@@ -1,11 +1,26 @@
 import 'dotenv/config';
-import { run, type TaskList } from 'graphile-worker';
+import { run, type Task, type TaskList } from 'graphile-worker';
+import { getContainer } from '@/server/di/container';
 import { tasks } from './tasks';
 import { getWorkerUtils } from './worker';
 
 /** Start the background worker (call from a dedicated process or Next.js serverless). */
 export async function startWorker(): Promise<void> {
-  const taskList = tasks as TaskList;
+  // Before each job the worker reads the company row, which brings its business time zone up to date: a change made in Settings (by the
+  // web process) reaches the worker at its next job, so a day, a quiet hour or a posting date is never worked out in the old zone.
+  const taskList: TaskList = Object.fromEntries(
+    Object.entries(tasks as TaskList).map(([name, task]): [string, Task] => {
+      const work: Task | undefined = typeof task === 'function' ? task : undefined;
+      if (work === undefined) throw new Error(`The task ${name} is not a function.`);
+      return [
+        name,
+        async (payload, helpers) => {
+          await getContainer().companySettings.ensureSeeded().catch((error: unknown) => helpers.logger.error(`Business time zone: ${String(error)}`));
+          return await work(payload, helpers);
+        },
+      ];
+    }),
+  );
 
   await releaseImportLocksFromDeadWorkers();
 

@@ -2,7 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { and, eq, inArray } from 'drizzle-orm';
 import { has } from '@/lib/values';
-import { addDays, nairobiDay } from '@/lib/delivery-slot';
+import { addDays } from '@/lib/delivery-slot';
+import { dayInZone } from '@/lib/business-timezone';
+
+/** The business day in the zone these tests run in (the company's, Africa/Nairobi until changed). */
+const nairobiDay = (at: Date): string => dayInZone(at, 'Africa/Nairobi');
 import type * as mod_server_di_container from '@/server/di/container';
 import type * as mod_server_db_drizzle_client from '@/server/db/drizzle/client';
 import type * as mod_server_db_drizzle_schema from '@/server/db/drizzle/schema';

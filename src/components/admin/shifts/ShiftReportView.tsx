@@ -2,12 +2,13 @@
 
 import type { ShiftReport } from '@/server/domains/selling/shifts/shift-service';
 import { Chip, buttonClass } from '@/components/ui/screen-kit';
+import { useWhen } from '@/components/business-time';
 
 const money = (amount: number): string => `KES ${amount.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const when = (iso: string): string => new Date(iso).toLocaleString();
 
 /** A shift's report: the X report while it is open (figures so far), the Z report once it is closed (kept as it closed, with its number). */
 export function ShiftReportView({ report }: { report: ShiftReport }) {
+  const when = useWhen();
   const open = report.status === 'open';
   const row = (label: string, value: string, strong = false) => (
     <div key={label} className={`flex justify-between gap-3 ${strong ? 'font-semibold text-fg-strong' : ''}`}><dt>{label}</dt><dd className="font-mono">{value}</dd></div>

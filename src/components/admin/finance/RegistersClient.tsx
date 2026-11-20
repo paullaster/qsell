@@ -9,6 +9,7 @@ import { needsComment } from '@/lib/receipt-detail';
 import { has } from '@/lib/values';
 import type { Choice } from '@/lib/payment-options';
 import { Chip, Field, LoadFailed, Message, PageHeader, buttonClass, cardClass, fieldClass, money, primaryClass, today, type Notice, attempt } from './ui';
+import { useWhen } from '@/components/business-time';
 
 type Detail = Extract<Awaited<ReturnType<typeof registerDetailAction>>, { ok: true }>['data'];
 type Chain = Extract<Awaited<ReturnType<typeof verifyChainAction>>, { ok: true }>['data'];
@@ -20,6 +21,7 @@ export function RegistersClient({ viewPromise }: { viewPromise: ReturnType<typeo
 }
 
 function RegistersView({ view }: { view: Overview }) {
+  const when = useWhen();
   const uid = useId();
   const router = useRouter();
   const [open, setOpen] = useState<string | null>(null);
@@ -133,7 +135,7 @@ function RegistersView({ view }: { view: Overview }) {
                       ))}
                     </ul>
                     <dl className="grid grid-cols-1 gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
-                      <div><dt className="inline text-fg-muted">Posted by </dt><dd className="inline text-fg">{r.postedBy ?? 'system'} at {new Date(r.postedAt).toLocaleString()}</dd></div>
+                      <div><dt className="inline text-fg-muted">Posted by </dt><dd className="inline text-fg">{r.postedBy ?? 'system'} at {when(r.postedAt)}</dd></div>
                       <div><dt className="inline text-fg-muted">From </dt><dd className="inline text-fg">{originSurface(detail.origin)}</dd></div>
                       <div><dt className="inline text-fg-muted">Permission </dt><dd className="inline text-fg">{originPermission(detail.origin)}</dd></div>
                       <div><dt className="inline text-fg-muted">IP </dt><dd className="inline text-fg">{originIp(detail.origin)}</dd></div>
@@ -141,7 +143,7 @@ function RegistersView({ view }: { view: Overview }) {
                     </dl>
                     {detail.trail.length > 0 ? (
                       <ol className="space-y-1 border-l border-line pl-3 text-xs">
-                        {detail.trail.map((t) => <li key={`${t.at}-${t.action}`}><span className="text-fg-muted">{new Date(t.at).toLocaleString()}</span> {t.action} {has(t.reason) ? `— ${t.reason}` : ''}</li>)}
+                        {detail.trail.map((t) => <li key={`${t.at}-${t.action}`}><span className="text-fg-muted">{when(t.at)}</span> {t.action} {has(t.reason) ? `— ${t.reason}` : ''}</li>)}
                       </ol>
                     ) : null}
                     {view.canReverse && !r.isReversal && !r.reversed ? <button type="button" className={buttonClass} onClick={() => { setNotice(null); setReversing(r.id); }}>Reverse…</button> : null}

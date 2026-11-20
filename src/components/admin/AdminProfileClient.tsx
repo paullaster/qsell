@@ -231,7 +231,7 @@ export function AdminProfileClient({
           <div className="mt-6 border-t border-line pt-6">
             <h3 className="mb-4 text-lg font-semibold text-fg-strong">Customer Profile</h3>
             <Link
-              href="/admin/customers"
+              href="/admin/customers/list"
               className="flex items-center gap-2 rounded-xl border border-line bg-surface p-4 transition-colors hover:border-indigo-500 hover:bg-indigo-50/50"
             >
               <Building2 className="h-5 w-5 text-indigo-400" />

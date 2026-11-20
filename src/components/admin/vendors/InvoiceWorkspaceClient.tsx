@@ -22,6 +22,7 @@ import { InlineConfirm } from '@/components/ui/InlineConfirm';
 import { INVOICE_STATE, STAFF_RETURNABLE, reasonLabel } from '@/lib/supplier-invoice';
 import type { Choice } from '@/lib/payment-options';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
+import { useDate, useWhen } from '@/components/business-time';
 
 type View = Extract<Awaited<ReturnType<typeof invoiceAction>>, { ok: true }>['data'];
 type Result = { ok: true; data?: unknown } | { ok: false; error: string };
@@ -50,6 +51,8 @@ export function InvoiceWorkspaceClient({ viewPromise }: { viewPromise: ReturnTyp
 }
 
 function Workspace({ view }: { view: View }) {
+  const when = useWhen();
+  const date = useDate();
   const uid = useId();
   const router = useRouter();
   const inv = view.invoice;
@@ -232,7 +235,7 @@ function Workspace({ view }: { view: View }) {
         ) : null}
         {inv.state === 'returned' ? <p className="text-sm text-fg">Returned to the vendor: {reasonLabel(inv.returnReasonCode ?? 'other')}. {inv.returnNote}</p> : null}
         {inv.state === 'rejected' ? <p className="text-sm text-fg">Refused: {reasonLabel(inv.rejectReasonCode ?? 'other')}. {inv.rejectNote}</p> : null}
-        {inv.state === 'posted' ? <p className="text-sm text-fg">Booked{inv.postedAt === null ? '' : ` on ${new Date(inv.postedAt).toLocaleDateString()}`}. It can no longer be changed. A correction is a credit memo.</p> : null}
+        {inv.state === 'posted' ? <p className="text-sm text-fg">Booked{inv.postedAt === null ? '' : ` on ${date(inv.postedAt)}`}. It can no longer be changed. A correction is a credit memo.</p> : null}
         {inv.state === 'posted' && view.bookedInvoice !== null ? (
           <div className="flex flex-wrap gap-2">
             {view.can.pay ? <Link href={`/admin/vendors/payments/new?invoice=${view.bookedInvoice.id}`} className={primaryClass}>Pay this invoice</Link> : null}
@@ -245,7 +248,7 @@ function Workspace({ view }: { view: View }) {
       <section className={cardClass} aria-label="History">
         <h2 className="text-sm font-bold text-fg-strong">History</h2>
         <ol className="mt-1 space-y-1 text-sm text-fg">
-          {view.events.map((e) => <li key={e.id}>{EVENT_WORDS[e.event] ?? e.event} <span className="text-xs text-fg-muted">· {e.who ?? 'System'} · {new Date(e.at).toLocaleString()}</span>{e.reason === null || e.reason === '' ? null : <span className="block text-xs text-fg-muted">{e.reason}</span>}</li>)}
+          {view.events.map((e) => <li key={e.id}>{EVENT_WORDS[e.event] ?? e.event} <span className="text-xs text-fg-muted">· {e.who ?? 'System'} · {when(e.at)}</span>{e.reason === null || e.reason === '' ? null : <span className="block text-xs text-fg-muted">{e.reason}</span>}</li>)}
         </ol>
       </section>
     </div>

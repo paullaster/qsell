@@ -5,9 +5,11 @@ import { useRouter } from 'next/navigation';
 import { closeRefundPayoutAction, recheckRefundPayoutAction } from '@/server/domains/finance/refund-actions';
 import { attemptTone, closedNext, doubtfulAdvice, payoutState, reasonLongEnough, type PayoutAttempt } from '@/lib/refund-payout';
 import { Chip, Field, Message, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from './ui';
+import { useWhen } from '@/components/business-time';
 
 /** What happened when the refund was sent through M-Pesa, and what a person can do when it could not be confirmed. */
 export function RefundPayoutPanel({ id, payouts, canResolve }: { id: string; payouts: PayoutAttempt[]; canResolve: boolean }) {
+  const when = useWhen();
   const router = useRouter();
   const state = payoutState(payouts);
   const [closing, setClosing] = useState(false);
@@ -41,7 +43,7 @@ export function RefundPayoutPanel({ id, payouts, canResolve }: { id: string; pay
         {payouts.map((p) => (
           <li key={p.id} className="flex flex-wrap items-center gap-2">
             <Chip tone={attemptTone(p.status)}>{p.status.replace(/_/g, ' ')}</Chip>
-            <span className="text-xs text-fg-muted">{new Date(p.at).toLocaleString()}</span>
+            <span className="text-xs text-fg-muted">{when(p.at)}</span>
             {p.reference !== null ? <span className="font-mono text-xs">{p.reference}</span> : null}
             {p.failure !== null ? <span className="min-w-0 break-words text-xs text-fg-muted">{p.failure}</span> : null}
           </li>

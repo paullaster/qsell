@@ -100,6 +100,7 @@ const SEED_ROLES: SeedRole[] = [
       'credit_notes:create',
       'numbering:manage',
       'email_routing:manage',
+      'timezone:manage',
       'selling_settings:manage',
       'sales_orders:read',
       'sales_orders:create',

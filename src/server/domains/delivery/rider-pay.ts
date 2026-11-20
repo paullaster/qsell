@@ -2,13 +2,12 @@ import { and, desc, eq, gte, inArray, notExists, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { deliveries, deliveryCosts, deliveryPayPayoutItems, deliveryPayPayouts, paymentMethods } from '@/server/db/drizzle/schema';
 import { COST_WORDS, PAYS_RIDERS, money } from '@/lib/delivery-cost';
-import { businessDate } from '@/server/kernel/numbering/business-date';
+import { businessDate, businessTimeZone } from '@/server/kernel/numbering/business-date';
 import type { RiderSelf } from './riders';
 
 const cents = (v: unknown): number => Math.round(Number(v ?? 0) * 100);
 const RECENT = 30;
 const PAYOUTS = 10;
-const TZ = 'Africa/Nairobi';
 
 export interface RiderPayView {
   currency: string;
@@ -38,7 +37,7 @@ export class RiderPay {
       this.db
         .select({
           owed: sql<string>`COALESCE(sum(${deliveryCosts.amount}) FILTER (WHERE ${notExists(this.db.select({ x: sql`1` }).from(deliveryPayPayoutItems).where(eq(deliveryPayPayoutItems.costId, deliveryCosts.id)))}), 0)`,
-          month: sql<string>`COALESCE(sum(${deliveryCosts.amount}) FILTER (WHERE ${gte(deliveryCosts.createdAt, sql`(${monthFrom}::date)::timestamp AT TIME ZONE ${TZ}`)}), 0)`,
+          month: sql<string>`COALESCE(sum(${deliveryCosts.amount}) FILTER (WHERE ${gte(deliveryCosts.createdAt, sql`(${monthFrom}::date)::timestamp AT TIME ZONE ${businessTimeZone()}`)}), 0)`,
           currency: sql<string | null>`max(${deliveryCosts.currency})`,
         })
         .from(deliveryCosts)

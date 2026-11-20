@@ -11,10 +11,18 @@ export default function Page({ params }: { params: Promise<{ id: string }> }) {
   const canReceive = canPermission('receipts:create');
   const canReadReceipts = canPermission('receipts:read');
   const canReadOrders = canPermission('orders:read');
+  const canReadRefunds = canPermission('refunds:read');
   return (
     <FinancePage label="the customer's account">
       <MissingAs404 result={statement}>
-        <CustomerStatementClient statementPromise={statement} walletPromise={wallet} canReceivePromise={canReceive} canReadReceiptsPromise={canReadReceipts} canReadOrdersPromise={canReadOrders} />
+        <CustomerStatementClient
+          statementPromise={statement}
+          walletPromise={wallet}
+          canReceivePromise={canReceive}
+          canReadReceiptsPromise={canReadReceipts}
+          canReadOrdersPromise={canReadOrders}
+          canReadRefundsPromise={canReadRefunds}
+        />
       </MissingAs404>
     </FinancePage>
   );

@@ -101,10 +101,10 @@ function SlotForm({ slot, onSaved, onError }: { slot?: SlotView; onSaved: (text:
         </div>
       </fieldset>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Field id={`${uid}-s`} label="Starts (Nairobi)">
+        <Field id={`${uid}-s`} label="Starts (business time)">
           <input id={`${uid}-s`} type="time" className={fieldClass} value={startsAt} onChange={(e) => setStartsAt(e.target.value)} required />
         </Field>
-        <Field id={`${uid}-e`} label="Ends (Nairobi)">
+        <Field id={`${uid}-e`} label="Ends (business time)">
           <input id={`${uid}-e`} type="time" className={fieldClass} value={endsAt} onChange={(e) => setEndsAt(e.target.value)} required />
         </Field>
         <Field id={`${uid}-c`} label="Deliveries a day">

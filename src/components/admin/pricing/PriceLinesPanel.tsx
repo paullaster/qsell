@@ -20,11 +20,11 @@ import {
   primaryButtonClass,
   type Message,
 } from '../approvals/shared';
+import { useBusinessTimeZone, useDate } from '@/components/business-time';
 import { fromLocalInput } from './PriceListForm';
 
 const fmt = (n: number, d = 2) =>
   n.toLocaleString('en-KE', { minimumFractionDigits: d, maximumFractionDigits: 4 });
-const day = (iso: string) => new Date(iso).toLocaleDateString('en-KE');
 
 interface Draft {
   productId: string;
@@ -61,6 +61,8 @@ export function PriceLinesPanel({
   quantityMode: 'all_units' | 'incremental';
   onChanged: () => void;
 }) {
+  const day = useDate();
+  const timeZone = useBusinessTimeZone();
   const uid = useId();
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -138,7 +140,7 @@ export function PriceLinesPanel({
         },
       ],
       reason,
-      { validFrom: fromLocalInput(draft.startsAt), overrideLock: lockOverride },
+      { validFrom: fromLocalInput(draft.startsAt, timeZone), overrideLock: lockOverride },
     );
     setBusy(false);
     if (r.ok) {
@@ -294,7 +296,7 @@ export function PriceLinesPanel({
             </div>
             <div>
               <label htmlFor={`${uid}-starts`} className={labelClass}>
-                Starts (empty means now)
+                Starts, business time (empty means now)
               </label>
               <input
                 id={`${uid}-starts`}

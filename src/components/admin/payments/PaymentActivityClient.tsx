@@ -15,7 +15,8 @@ import {
 } from '@/server/domains/payments/activity-actions';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import type { Choice } from '@/lib/payment-options';
-import { countTone, rowDetail, rowState, rowTitle, type ActivityRow, when, words } from '@/lib/payment-activity-format';
+import { useWhen } from '@/components/business-time';
+import { countTone, rowDetail, rowState, rowTitle, type ActivityRow, words } from '@/lib/payment-activity-format';
 import { Chip, Field, LoadFailed, Message, PageHeader, buttonClass, cardClass, dangerClass, fieldClass, money, primaryClass, type Notice, attempt } from '../finance/ui';
 
 type Data = Extract<Awaited<ReturnType<typeof paymentActivityAction>>, { ok: true }>['data'];
@@ -30,6 +31,7 @@ export function PaymentActivityClient({ initialPromise }: { initialPromise: Retu
 }
 
 function ActivityView({ initial }: { initial: Data }) {
+  const when = useWhen();
   const uid = useId();
   const [data, setData] = useState(initial);
   const [tab, setTab] = useState<Tab>('attention');

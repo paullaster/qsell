@@ -1,6 +1,6 @@
 {
-  "id": "560f7df2-b8cf-46b0-825d-5cb19bbb4422",
-  "prevId": "4ec67a68-f31f-4b20-8e15-d5e5bf9fd968",
+  "id": "5d737a50-6f9d-4c6e-8695-545b67663b8c",
+  "prevId": "da1d4416-e7d1-4a63-904d-083f76aa1c0c",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -6512,6 +6512,13 @@
           "notNull": true,
           "default": "'{}'::jsonb"
         },
+        "timezone": {
+          "name": "timezone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'Africa/Nairobi'"
+        },
         "is_active": {
           "name": "is_active",
           "type": "boolean",
@@ -6570,280 +6577,10 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.counter_returns": {
-      "name": "counter_returns",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "company_id": {
-          "name": "company_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "order_id": {
-          "name": "order_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "idempotency_key": {
-          "name": "idempotency_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "credit_note_id": {
-          "name": "credit_note_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "refund_id": {
-          "name": "refund_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "shift_id": {
-          "name": "shift_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "requested_by": {
-          "name": "requested_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "reason_code": {
-          "name": "reason_code",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "reason_text": {
-          "name": "reason_text",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "restock": {
-          "name": "restock",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "stock_back": {
-          "name": "stock_back",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "refund_method_id": {
-          "name": "refund_method_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "payout_details": {
-          "name": "payout_details",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'{}'::jsonb"
-        },
-        "amount": {
-          "name": "amount",
-          "type": "numeric(14, 2)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "cash_paid": {
-          "name": "cash_paid",
-          "type": "numeric(14, 2)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'0'"
-        },
-        "lines": {
-          "name": "lines",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'credited'"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "counter_returns_key_uidx": {
-          "name": "counter_returns_key_uidx",
-          "columns": [
-            {
-              "expression": "idempotency_key",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "counter_returns_order_idx": {
-          "name": "counter_returns_order_idx",
-          "columns": [
-            {
-              "expression": "order_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "counter_returns_shift_idx": {
-          "name": "counter_returns_shift_idx",
-          "columns": [
-            {
-              "expression": "shift_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"counter_returns\".\"shift_id\" IS NOT NULL",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "counter_returns_company_id_company_settings_id_fk": {
-          "name": "counter_returns_company_id_company_settings_id_fk",
-          "tableFrom": "counter_returns",
-          "tableTo": "company_settings",
-          "columnsFrom": [
-            "company_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "counter_returns_order_id_orders_id_fk": {
-          "name": "counter_returns_order_id_orders_id_fk",
-          "tableFrom": "counter_returns",
-          "tableTo": "orders",
-          "columnsFrom": [
-            "order_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        },
-        "counter_returns_credit_note_id_credit_notes_id_fk": {
-          "name": "counter_returns_credit_note_id_credit_notes_id_fk",
-          "tableFrom": "counter_returns",
-          "tableTo": "credit_notes",
-          "columnsFrom": [
-            "credit_note_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        },
-        "counter_returns_refund_id_refund_requests_id_fk": {
-          "name": "counter_returns_refund_id_refund_requests_id_fk",
-          "tableFrom": "counter_returns",
-          "tableTo": "refund_requests",
-          "columnsFrom": [
-            "refund_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        },
-        "counter_returns_shift_id_shifts_id_fk": {
-          "name": "counter_returns_shift_id_shifts_id_fk",
-          "tableFrom": "counter_returns",
-          "tableTo": "shifts",
-          "columnsFrom": [
-            "shift_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        },
-        "counter_returns_refund_method_id_payment_methods_id_fk": {
-          "name": "counter_returns_refund_method_id_payment_methods_id_fk",
-          "tableFrom": "counter_returns",
-          "tableTo": "payment_methods",
-          "columnsFrom": [
-            "refund_method_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
       "checkConstraints": {
-        "counter_returns_status_chk": {
-          "name": "counter_returns_status_chk",
-          "value": "\"counter_returns\".\"status\" IN ('credited', 'refund_pending', 'refund_approved', 'completed')"
-        },
-        "counter_returns_cash_chk": {
-          "name": "counter_returns_cash_chk",
-          "value": "\"counter_returns\".\"cash_paid\" >= 0 AND \"counter_returns\".\"cash_paid\" <= \"counter_returns\".\"amount\" AND (\"counter_returns\".\"cash_paid\" = 0 OR \"counter_returns\".\"shift_id\" IS NOT NULL)"
+        "company_settings_timezone_chk": {
+          "name": "company_settings_timezone_chk",
+          "value": "\"company_settings\".\"timezone\" ~ '^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$' AND char_length(\"company_settings\".\"timezone\") <= 64"
         }
       },
       "isRLSEnabled": false
@@ -10579,13 +10316,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "is_walk_in": {
-          "name": "is_walk_in",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
         "name": {
           "name": "name",
           "type": "text",
@@ -10746,22 +10476,6 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "customers_one_walk_in_uidx": {
-          "name": "customers_one_walk_in_uidx",
-          "columns": [
-            {
-              "expression": "company_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"customers\".\"is_walk_in\"",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -13353,6 +13067,27 @@
           "columns": [
             {
               "expression": "delivery_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "delivery_messages_order_idx": {
+          "name": "delivery_messages_order_idx",
+          "columns": [
+            {
+              "expression": "order_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -16435,7 +16170,7 @@
       "checkConstraints": {
         "delivery_text_settings_kinds_chk": {
           "name": "delivery_text_settings_kinds_chk",
-          "value": "\"delivery_text_settings\".\"kinds\" <@ ARRAY['out_for_delivery','delivered','part_delivered','attempt_failed','returned','slot_not_kept','ready_for_collection','collection_reminder']::text[]"
+          "value": "\"delivery_text_settings\".\"kinds\" <@ ARRAY['out_for_delivery','delivered','part_delivered','attempt_failed','returned','slot_not_kept','ready_for_collection','collection_reminder','visit_booked','visit_moved','visit_cancelled']::text[]"
         },
         "delivery_text_settings_reminder_days_chk": {
           "name": "delivery_text_settings_reminder_days_chk",
@@ -26072,30 +25807,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "method_kind": {
-          "name": "method_kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "handed_over": {
-          "name": "handed_over",
-          "type": "numeric(14, 2)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "change_due": {
-          "name": "change_due",
-          "type": "numeric(14, 2)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "external_reference": {
-          "name": "external_reference",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "actor": {
           "name": "actor",
           "type": "text",
@@ -26122,28 +25833,6 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "order_tenders_counter_method_uidx": {
-          "name": "order_tenders_counter_method_uidx",
-          "columns": [
-            {
-              "expression": "order_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "reference",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"order_tenders\".\"kind\" = 'payment_method'",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -26902,6 +26591,18 @@
           "primaryKey": false,
           "notNull": false
         },
+        "time_request_note": {
+          "name": "time_request_note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "time_request_at": {
+          "name": "time_request_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "version": {
           "name": "version",
           "type": "integer",
@@ -27039,6 +26740,10 @@
         "order_visits_signoff_chk": {
           "name": "order_visits_signoff_chk",
           "value": "(\"order_visits\".\"status\" = 'signed_off') = (\"order_visits\".\"signed_off_at\" IS NOT NULL AND \"order_visits\".\"signed_off_by\" IS NOT NULL)"
+        },
+        "order_visits_time_request_chk": {
+          "name": "order_visits_time_request_chk",
+          "value": "(\"order_visits\".\"time_request_note\" IS NULL) = (\"order_visits\".\"time_request_at\" IS NULL) AND (\"order_visits\".\"time_request_note\" IS NULL OR char_length(\"order_visits\".\"time_request_note\") BETWEEN 3 AND 300)"
         },
         "order_visits_cancel_chk": {
           "name": "order_visits_cancel_chk",
@@ -27328,18 +27033,6 @@
           "notNull": true,
           "default": false
         },
-        "shift_id": {
-          "name": "shift_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "idempotency_key": {
-          "name": "idempotency_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "source_quote_id": {
           "name": "source_quote_id",
           "type": "uuid",
@@ -27453,38 +27146,6 @@
           ],
           "isUnique": false,
           "where": "\"orders\".\"source_quote_id\" IS NOT NULL",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "orders_shift_idx": {
-          "name": "orders_shift_idx",
-          "columns": [
-            {
-              "expression": "shift_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"orders\".\"shift_id\" IS NOT NULL",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "orders_idempotency_key_uidx": {
-          "name": "orders_idempotency_key_uidx",
-          "columns": [
-            {
-              "expression": "idempotency_key",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"orders\".\"idempotency_key\" IS NOT NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -27685,19 +27346,6 @@
             "id"
           ],
           "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "orders_shift_id_shifts_id_fk": {
-          "name": "orders_shift_id_shifts_id_fk",
-          "tableFrom": "orders",
-          "tableTo": "shifts",
-          "columnsFrom": [
-            "shift_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
           "onUpdate": "no action"
         },
         "orders_source_quote_id_sales_quotes_id_fk": {
@@ -41251,12 +40899,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "cash_account_id": {
-          "name": "cash_account_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "is_active": {
           "name": "is_active",
           "type": "boolean",
@@ -41334,19 +40976,6 @@
           "tableTo": "branches",
           "columnsFrom": [
             "branch_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        },
-        "registers_cash_account_id_bank_accounts_id_fk": {
-          "name": "registers_cash_account_id_bank_accounts_id_fk",
-          "tableFrom": "registers",
-          "tableTo": "bank_accounts",
-          "columnsFrom": [
-            "cash_account_id"
           ],
           "columnsTo": [
             "id"
@@ -46409,158 +46038,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.shift_close_requests": {
-      "name": "shift_close_requests",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "shift_id": {
-          "name": "shift_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "requested_by": {
-          "name": "requested_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "declared_cash": {
-          "name": "declared_cash",
-          "type": "numeric(14, 2)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "closing_counted": {
-          "name": "closing_counted",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'[]'::jsonb"
-        },
-        "expected_cash": {
-          "name": "expected_cash",
-          "type": "numeric(14, 2)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "variance": {
-          "name": "variance",
-          "type": "numeric(14, 2)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "variance_reason": {
-          "name": "variance_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "closing_figures": {
-          "name": "closing_figures",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'pending'"
-        },
-        "decision_note": {
-          "name": "decision_note",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "decided_at": {
-          "name": "decided_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "shift_close_requests_one_pending_uidx": {
-          "name": "shift_close_requests_one_pending_uidx",
-          "columns": [
-            {
-              "expression": "shift_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"shift_close_requests\".\"status\" = 'pending'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "shift_close_requests_shift_idx": {
-          "name": "shift_close_requests_shift_idx",
-          "columns": [
-            {
-              "expression": "shift_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "shift_close_requests_shift_id_shifts_id_fk": {
-          "name": "shift_close_requests_shift_id_shifts_id_fk",
-          "tableFrom": "shift_close_requests",
-          "tableTo": "shifts",
-          "columnsFrom": [
-            "shift_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "shift_close_requests_status_chk": {
-          "name": "shift_close_requests_status_chk",
-          "value": "\"shift_close_requests\".\"status\" IN ('pending', 'approved', 'rejected', 'canceled')"
-        }
-      },
-      "isRLSEnabled": false
-    },
     "public.shift_movements": {
       "name": "shift_movements",
       "schema": "",
@@ -46687,19 +46164,6 @@
           "notNull": true,
           "default": "'1'"
         },
-        "variance_gl_account_id": {
-          "name": "variance_gl_account_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "supervisor_close": {
-          "name": "supervisor_close",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'direct'"
-        },
         "version": {
           "name": "version",
           "type": "integer",
@@ -46735,166 +46199,12 @@
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"
-        },
-        "shift_settings_variance_gl_account_id_gl_accounts_id_fk": {
-          "name": "shift_settings_variance_gl_account_id_gl_accounts_id_fk",
-          "tableFrom": "shift_settings",
-          "tableTo": "gl_accounts",
-          "columnsFrom": [
-            "variance_gl_account_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {
-        "shift_settings_supervisor_close_chk": {
-          "name": "shift_settings_supervisor_close_chk",
-          "value": "\"shift_settings\".\"supervisor_close\" IN ('direct', 'approval')"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.shift_variance_postings": {
-      "name": "shift_variance_postings",
-      "schema": "",
-      "columns": {
-        "shift_id": {
-          "name": "shift_id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "company_id": {
-          "name": "company_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "amount": {
-          "name": "amount",
-          "type": "numeric(14, 2)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'pending'"
-        },
-        "note": {
-          "name": "note",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "attempts": {
-          "name": "attempts",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "register_id": {
-          "name": "register_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "bank_entry_id": {
-          "name": "bank_entry_id",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "posted_at": {
-          "name": "posted_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "shift_variance_postings_due_idx": {
-          "name": "shift_variance_postings_due_idx",
-          "columns": [
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"shift_variance_postings\".\"status\" = 'pending'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "shift_variance_postings_shift_id_shifts_id_fk": {
-          "name": "shift_variance_postings_shift_id_shifts_id_fk",
-          "tableFrom": "shift_variance_postings",
-          "tableTo": "shifts",
-          "columnsFrom": [
-            "shift_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        },
-        "shift_variance_postings_company_id_company_settings_id_fk": {
-          "name": "shift_variance_postings_company_id_company_settings_id_fk",
-          "tableFrom": "shift_variance_postings",
-          "tableTo": "company_settings",
-          "columnsFrom": [
-            "company_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "shift_variance_postings_status_chk": {
-          "name": "shift_variance_postings_status_chk",
-          "value": "\"shift_variance_postings\".\"status\" IN ('pending', 'posted')"
-        },
-        "shift_variance_postings_amount_chk": {
-          "name": "shift_variance_postings_amount_chk",
-          "value": "\"shift_variance_postings\".\"amount\" <> 0"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.shifts": {
@@ -47034,7 +46344,7 @@
             }
           ],
           "isUnique": true,
-          "where": "\"shifts\".\"status\" IN ('open', 'closing')",
+          "where": "\"shifts\".\"status\" = 'open'",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -47050,7 +46360,7 @@
             }
           ],
           "isUnique": true,
-          "where": "\"shifts\".\"status\" IN ('open', 'closing')",
+          "where": "\"shifts\".\"status\" = 'open'",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -47058,12 +46368,6 @@
         "shifts_z_number_uidx": {
           "name": "shifts_z_number_uidx",
           "columns": [
-            {
-              "expression": "company_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
             {
               "expression": "z_number",
               "isExpression": false,
@@ -47146,11 +46450,11 @@
       "checkConstraints": {
         "shifts_status_chk": {
           "name": "shifts_status_chk",
-          "value": "\"shifts\".\"status\" IN ('open', 'closing', 'closed')"
+          "value": "\"shifts\".\"status\" IN ('open', 'closed')"
         },
         "shifts_closed_chk": {
           "name": "shifts_closed_chk",
-          "value": "(\"shifts\".\"status\" IN ('open', 'closing') AND \"shifts\".\"closed_at\" IS NULL) OR (\"shifts\".\"status\" = 'closed' AND \"shifts\".\"closed_at\" IS NOT NULL AND \"shifts\".\"declared_cash\" IS NOT NULL AND \"shifts\".\"z_number\" IS NOT NULL)"
+          "value": "(\"shifts\".\"status\" = 'open' AND \"shifts\".\"closed_at\" IS NULL) OR (\"shifts\".\"status\" = 'closed' AND \"shifts\".\"closed_at\" IS NOT NULL AND \"shifts\".\"declared_cash\" IS NOT NULL AND \"shifts\".\"z_number\" IS NOT NULL)"
         },
         "shifts_float_chk": {
           "name": "shifts_float_chk",

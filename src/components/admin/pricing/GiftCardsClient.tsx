@@ -29,6 +29,7 @@ import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { FUNDING_CHOICES, fundingInput, fundingProblem, type FundingKind } from '@/lib/gift-card-funding';
 import type { Choice } from '@/lib/payment-options';
 import { money } from './DiscountsClient';
+import { useDate } from '@/components/business-time';
 
 const KIND: Record<string, string> = {
   issue: 'Issued',
@@ -51,6 +52,7 @@ export function GiftCardsClient({
   initial: GiftCardView[];
   canManage: boolean;
 }) {
+  const date = useDate();
   const router = useRouter();
   const uid = useId();
   const [cards, setCards] = useState(initial);
@@ -317,7 +319,7 @@ export function GiftCardsClient({
                   <p className="text-xs text-fg-muted">
                     {c.currency} {money(c.balance)} left of {money(c.initialValue)}
                     {has(c.expiresAt)
-                      ? ` · expires ${new Date(c.expiresAt).toLocaleDateString('en-KE')}`
+                      ? ` · expires ${date(c.expiresAt)}`
                       : ''}
                     {has(c.customerName) ? ` · ${c.customerName}` : ''}
                     {has(c.note) ? ` · ${c.note}` : ''}

@@ -5,6 +5,7 @@ import { WAITING_STAGES, effectiveTargets, waitedMinutes, type StageTarget } fro
 import { SettingsError } from '@/server/domains/settings/errors';
 import { decodeCursor, encodeCursor } from '@/server/domains/lookups/request';
 import type { OrderSlaNotifier } from './sla-notifier';
+import { WEB_SHOP_ORDER } from './order-origin';
 
 /** Orders raised, escalated and resolved in one run are limited so a run stays short; the next run carries on. */
 const BATCH = 500;
@@ -175,7 +176,7 @@ export class OrderSlaService {
   }
 
   /** The open breaches, oldest first, a page at a time. `now` gives each its running wait. */
-  async open(companyId: string, cursor: string | null, now: Date, limit = PAGE): Promise<{ rows: BreachView[]; nextCursor: string | null }> {
+  async open(companyId: string, cursor: string | null, now: Date, limit = PAGE, origin?: 'web_shop'): Promise<{ rows: BreachView[]; nextCursor: string | null }> {
     const after = cursor === null ? null : decodeCursor(cursor);
     const rows = await this.db
       .select({
@@ -193,7 +194,7 @@ export class OrderSlaService {
       })
       .from(orderSlaBreaches)
       .innerJoin(orders, eq(orders.id, orderSlaBreaches.orderId))
-      .where(and(eq(orderSlaBreaches.companyId, companyId), isNull(orderSlaBreaches.resolvedAt), after === null ? undefined : sql`(${orderSlaBreaches.raisedAt}, ${orderSlaBreaches.id}) > (${after.k}::timestamptz, ${after.id}::uuid)`))
+      .where(and(eq(orderSlaBreaches.companyId, companyId), origin === 'web_shop' ? WEB_SHOP_ORDER : undefined, isNull(orderSlaBreaches.resolvedAt), after === null ? undefined : sql`(${orderSlaBreaches.raisedAt}, ${orderSlaBreaches.id}) > (${after.k}::timestamptz, ${after.id}::uuid)`))
       .orderBy(asc(orderSlaBreaches.raisedAt), asc(orderSlaBreaches.id))
       .limit(limit + 1);
     const page = rows.slice(0, limit);

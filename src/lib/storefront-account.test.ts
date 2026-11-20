@@ -153,8 +153,11 @@ describe('formatting', () => {
     expect(formatAmount(-5, 'USD')).toBe('-USD 5.00');
   });
   it('dates in Nairobi time', () => {
-    expect(formatOrderDate('2026-10-23T22:30:00.000Z')).toBe('24 Oct 2026');
-    expect(formatOrderDate('nope')).toBe('');
+    expect(formatOrderDate('2026-10-23T22:30:00.000Z', 'Africa/Nairobi')).toBe('24 Oct 2026');
+    // On another business clock the same instant is still the 23rd.
+    expect(formatOrderDate('2026-10-23T22:30:00.000Z', 'Europe/London')).toBe('23 Oct 2026');
+    expect(formatOrderDate('2026-10-23T22:30:00.000Z', 'Asia/Tokyo')).toBe('24 Oct 2026');
+    expect(formatOrderDate('nope', 'Africa/Nairobi')).toBe('');
   });
   it('counts units', () => {
     expect(itemCountLabel({ items: [{ quantity: 2 }, { quantity: 1 }] } as never)).toBe('3 items');

@@ -67,7 +67,7 @@ function CreditCard({ credit }: { credit: CreditPosition }) {
   return (
     <div className="space-y-1 text-sm" data-testid="credit-position">
       <p className="font-medium text-fg-strong">{credit.name}: credit account on {credit.termDays} days</p>
-      <p className="text-fg-muted">Limit {money(credit.creditLimit)} · owed {money(credit.balance)} · available {money(credit.available)}</p>
+      <p className="text-fg-muted">{credit.creditLimitDisplay === 'static' ? `Set credit limit ${money(credit.creditLimit)} · owed ${money(credit.balance)}` : `Limit ${money(credit.creditLimit)} · owed ${money(credit.balance)} · available ${money(credit.available)}`}</p>
       {credit.blocked ? <p role="alert" className="text-red-700">This customer is blocked from buying.</p> : null}
       {credit.overdue ? <p role="alert" className="text-amber-700">This customer has an invoice that is overdue.</p> : null}
     </div>

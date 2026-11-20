@@ -1,10 +1,14 @@
 'use client';
 
 import { useId, useState } from 'react';
-import { quoteDeliveryAction } from '@/server/domains/delivery/policy-actions';
+import { findChargePlaceAction, quoteDeliveryAction } from '@/server/domains/delivery/policy-actions';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { Field, Message, attempt, cardClass, Chip, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
 import type { Choice } from '@/lib/payment-options';
+import { useBusinessTimeZone } from '@/components/business-time';
+import { fromBusinessInput } from '@/lib/visit';
+import { FindPlace } from './FindPlace';
+import { boxesOf } from '@/lib/find-place';
 
 type Answer = Extract<Awaited<ReturnType<typeof quoteDeliveryAction>>, { ok: true }>['data'];
 type Charge = Extract<Answer, { ok: true }>;
@@ -15,6 +19,7 @@ const money = (currency: string, n: number): string => `${currency} ${n.toLocale
 /** Asks the server what a delivery would cost, with the same rules an order uses, and shows how it was worked out. Nothing is saved. */
 export function ChargeSimulator() {
   const uid = useId();
+  const timeZone = useBusinessTimeZone();
   const [branch, setBranch] = useState<Choice | null>(null);
   const [channel, setChannel] = useState<Choice | null>(null);
   const [group, setGroup] = useState<Choice | null>(null);
@@ -32,7 +37,7 @@ export function ChargeSimulator() {
     setBusy(true);
     setNotice(null);
     setAnswer(null);
-    const res = await attempt(quoteDeliveryAction({ branchId: branch.id, county: f.county, town: f.town, area: f.area, latitude: f.latitude, longitude: f.longitude, weightKg: f.weightKg, orderValue: f.orderValue, at: f.at, channel: channel?.id ?? '', customerGroupId: group?.id ?? '' }));
+    const res = await attempt(quoteDeliveryAction({ branchId: branch.id, county: f.county, town: f.town, area: f.area, latitude: f.latitude, longitude: f.longitude, weightKg: f.weightKg, orderValue: f.orderValue, at: f.at === '' ? '' : (fromBusinessInput(f.at, timeZone) ?? f.at), channel: channel?.id ?? '', customerGroupId: group?.id ?? '' }));
     setBusy(false);
     if (res.ok) setAnswer(res.data);
     else setNotice({ kind: 'error', text: res.error });
@@ -63,6 +68,14 @@ export function ChargeSimulator() {
           <Field id={`${uid}-area`} label="Estate or area">
             <input id={`${uid}-area`} value={f.area} onChange={(e) => set('area', e.target.value)} className={fieldClass} autoComplete="off" />
           </Field>
+          <FindPlace
+            search={findChargePlaceAction}
+            onPick={(p) => {
+              const boxes = boxesOf(p.point);
+              set('latitude', boxes.latitude);
+              set('longitude', boxes.longitude);
+            }}
+          />
           <Field id={`${uid}-lat`} label="Pin latitude (optional)">
             <input id={`${uid}-lat`} inputMode="decimal" value={f.latitude} onChange={(e) => set('latitude', e.target.value)} className={`${fieldClass} font-mono`} placeholder="-1.286389" autoComplete="off" />
           </Field>

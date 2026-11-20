@@ -14,6 +14,7 @@ import type { ImportJobView, ImportProblem } from '@/server/domains/catalog/impo
 import { MAX_IMPORT_BYTES, MAX_IMPORT_ROWS, productCsvColumnGuide } from '@/lib/productCsv';
 import { toCsv, UTF8_BOM } from '@/lib/csv';
 import { downloadCsv } from '@/lib/downloadPdf';
+import { useWhen } from '@/components/business-time';
 
 const POLL_MS = 1500;
 /** After this long in the queue, hint that the background worker may not be running. */
@@ -45,6 +46,7 @@ export function ProductImportDialog({ isOpen, onClose, onImported }: ProductImpo
 }
 
 function ImportDialogContent({ onClose, onImported }: Omit<ProductImportDialogProps, 'isOpen'>) {
+  const when = useWhen();
   const titleId = useId();
   const fileInputId = useId();
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -353,7 +355,7 @@ function ImportDialogContent({ onClose, onImported }: Omit<ProductImportDialogPr
                     >
                       <span className="min-w-0 truncate text-fg-strong">{job.fileName}</span>
                       <span className="shrink-0 text-fg-muted">
-                        {statusLabel(job)} · {new Date(job.createdAt).toLocaleString()}
+                        {statusLabel(job)} · {when(job.createdAt)}
                       </span>
                     </button>
                   </li>

@@ -1,11 +1,15 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, not, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { customers, orders, users } from '@/server/db/drizzle/schema';
 import { OrderWriteService } from '@/server/domains/orders/write-service';
+import { WEB_SHOP_ORDER } from '@/server/domains/orders/order-origin';
 import type { PackageOrderService } from '@/server/domains/pricing/package-order-service';
 import { decodeCursor, escapeLike } from '@/server/domains/lookups/request';
 import { PAGE_SIZE, pageOf } from '@/server/domains/settings/paging';
 import type { CustomerMasterService } from '@/server/domains/customers/master-service';
+import type { CustomerCreditSettingsService } from '@/server/domains/customers/customer-credit-settings-service';
+import type { CustomerLedgerService } from '@/server/domains/finance/receivables/customer-ledger-service';
+import { displayedAvailableCredit, type CreditLimitDisplay } from '@/lib/customer-credit-settings';
 import type { BranchRepository } from '@/server/domains/branches/repository';
 import type { SalesOrderInput } from './domain/sales-order-input';
 import type { SellingSettingsService } from './selling-settings-service';
@@ -21,6 +25,7 @@ export interface CreditPosition {
   balance: number;
   /** What is left of the limit (never below nothing). */
   available: number;
+  creditLimitDisplay: CreditLimitDisplay;
   termDays: number;
   blocked: boolean;
   /** An invoice is overdue by more than the days the kind of sale looks at (only when it looks at overdue invoices). */
@@ -63,6 +68,8 @@ export class SalesOrderService {
     private readonly packageOrders: PackageOrderService,
     private readonly customerMaster: CustomerMasterService,
     private readonly branches: BranchRepository,
+    private readonly customerCreditSettings: CustomerCreditSettingsService,
+    private readonly customerLedger: CustomerLedgerService,
   ) {}
 
   /** The branch a member of staff works in, or null (then the company's default branch is used). */
@@ -78,9 +85,12 @@ export class SalesOrderService {
     const settings = await this.settings.get(companyId, kind);
     const hasCreditAccount = c.accountType === 'credit';
     const creditLimit = Number(c.creditLimit);
-    const balance = Number(c.balance);
+    const display = await this.customerCreditSettings.get(companyId);
+    const netOwedCents = hasCreditAccount ? await this.customerLedger.netOwedCents(companyId, c.id) : 0;
+    const balance = netOwedCents / 100;
+    const available = displayedAvailableCredit(Math.round(creditLimit * 100), netOwedCents, display.creditLimitDisplay) / 100;
     const overdue = settings.creditCheck === 'limit_and_overdue' && hasCreditAccount && (await this.customerMaster.hasOverdueInvoice(c.id, settings.overdueDays));
-    return { customerId: c.id, name: c.name, hasCreditAccount, creditLimit, balance, available: Math.max(0, creditLimit - balance), termDays: c.paymentTermDays, blocked: c.blocked !== 'none', overdue };
+    return { customerId: c.id, name: c.name, hasCreditAccount, creditLimit, balance, available, creditLimitDisplay: display.creditLimitDisplay, termDays: c.paymentTermDays, blocked: c.blocked !== 'none', overdue };
   }
 
   /** Everything the writer needs to price or place this order, or why it cannot be (an unknown customer, a blocked one, a package choice that is not real). */
@@ -162,6 +172,7 @@ export class SalesOrderService {
       .where(
         and(
           eq(orders.salesModule, kind),
+          kind === 'credit_sale' ? not(WEB_SHOP_ORDER) : undefined,
           input.status === undefined || input.status === '' ? undefined : eq(orders.status, input.status),
           query === '' ? undefined : sql`(${orders.orderNumber} ILIKE ${pattern} OR ${orders.customerName} ILIKE ${pattern})`,
           after === null ? undefined : sql`(${orders.createdAt}, ${orders.id}) < (${after.k}::timestamptz, ${after.id})`,
@@ -173,4 +184,3 @@ export class SalesOrderService {
     return { rows: page.rows.map((r) => ({ id: r.id, orderNumber: r.orderNumber, customerName: r.customerName, total: Number(r.total), currency: r.currency, status: r.status, paymentStatus: r.paymentStatus, approvalStatus: r.approvalStatus, createdAt: r.key })), nextCursor: page.nextCursor };
   }
 }
-

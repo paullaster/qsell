@@ -111,7 +111,7 @@ export function AdminView({
 
   const tabs: { id: AdminTab; label: string; icon: any }[] = [
     { id: 'dashboard', label: 'Business Overview', icon: LayoutDashboard },
-    { id: 'orders', label: 'Customer Orders', icon: ShoppingBag },
+    { id: 'orders', label: 'Web Shop Orders', icon: ShoppingBag },
     { id: 'inventory', label: 'Stock & Warehouse', icon: Layers },
     { id: 'products', label: 'Product Catalog', icon: Package },
     { id: 'categories', label: 'Categories & Departments', icon: FolderTree },

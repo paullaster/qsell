@@ -7,6 +7,7 @@ import { closeCreditAction, recallCreditAction, saveCreditAction, submitCreditAc
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
 import { CREDIT_STATE, checkCreditLine, creditAmounts, creditTotals, type CreditLineForm, type OriginalLine } from '@/lib/vendor-credit-memo';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
+import { useWhen } from '@/components/business-time';
 
 type View = Extract<Awaited<ReturnType<typeof vendorCreditAction>>, { ok: true }>['data'];
 
@@ -33,6 +34,7 @@ async function upload(file: File): Promise<{ id: string; name: string } | string
 const asOriginal = (o: View['originals'][number]): OriginalLine => ({ id: o.id, description: o.description, quantity: o.quantity, unitPriceCents: Math.round(Number(o.unitPrice) * 100), taxRate: o.taxRate, netCents: Math.round(Number(o.net) * 100), creditedQuantity: o.creditedQuantity, creditedNetCents: Math.round(Number(o.creditedNet) * 100) });
 
 function Detail({ view }: { view: View }) {
+  const when = useWhen();
   const router = useRouter();
   const uid = useId();
   const state = CREDIT_STATE[view.state];
@@ -204,7 +206,7 @@ function Detail({ view }: { view: View }) {
         <h2 className="text-sm font-bold text-fg-strong">Progress</h2>
         {view.timeline.length === 0 ? <p className="text-sm text-fg-muted">Nothing has happened yet.</p> : (
           <ol className="mt-1 space-y-1 text-sm text-fg">
-            {view.timeline.map((e) => <li key={`${e.event}-${e.at}`}>{EVENT_WORDS[e.event] ?? e.event} <span className="text-xs text-fg-muted">· {new Date(e.at).toLocaleString()}</span>{e.note === '' ? null : <span className="block text-xs text-fg-muted">{e.note}</span>}</li>)}
+            {view.timeline.map((e) => <li key={`${e.event}-${e.at}`}>{EVENT_WORDS[e.event] ?? e.event} <span className="text-xs text-fg-muted">· {when(e.at)}</span>{e.note === '' ? null : <span className="block text-xs text-fg-muted">{e.note}</span>}</li>)}
           </ol>
         )}
       </section>

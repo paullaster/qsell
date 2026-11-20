@@ -1,6 +1,14 @@
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, orderCollections, orderStageEvents, orderVisits, orders, paymentAttempts, type OrderRow } from '@/server/db/drizzle/schema';
+import {
+  branches,
+  orderCollections,
+  orderStageEvents,
+  orderVisits,
+  orders,
+  paymentAttempts,
+  type OrderRow,
+} from '@/server/db/drizzle/schema';
 import { VISIT_ORDER_CLOSED_REASON } from '@/server/domains/delivery/order-readiness';
 import { currentContext } from '@/server/kernel/context';
 import { backfillEvents } from '@/lib/order-stage-backfill';
@@ -87,14 +95,20 @@ async function companyFor(tx: Tx, branchId: string | null): Promise<string | nul
   if (branchId === null) return null;
   const known = companyOfBranch.get(branchId);
   if (known !== undefined) return known;
-  const [row] = await tx.select({ companyId: branches.companyId }).from(branches).where(eq(branches.id, branchId)).limit(1);
+  const [row] = await tx
+    .select({ companyId: branches.companyId })
+    .from(branches)
+    .where(eq(branches.id, branchId))
+    .limit(1);
   const companyId = row?.companyId ?? null;
   companyOfBranch.set(branchId, companyId);
   return companyId;
 }
 
 /** The changes as the events keep them: the database's column names, the same as the placement and the trigger write. */
-function storedChanges(changes: StageChanges): Record<string, { from: string | null; to: string | null }> {
+function storedChanges(
+  changes: StageChanges,
+): Record<string, { from: string | null; to: string | null }> {
   const out: Record<string, { from: string | null; to: string | null }> = {};
   for (const column of STAGE_COLUMN_NAMES) {
     const change = changes[column];
@@ -134,11 +148,25 @@ const stageTimes = (row: OrderRow): Record<StageTimeColumn, Date | null> => ({
 // eslint-disable-next-line @typescript-eslint/no-extraneous-class
 export class OrderStages {
   /** Moves an order in a transaction of its own. Use `moveIn` inside an existing one. */
-  static async move(db: DrizzleDb, orderId: string, stage: OrderStage, outcome: StageOutcome, options: MoveOptions = {}): Promise<MoveResult> {
-    return await db.transaction(async (tx) => await OrderStages.moveIn(tx, orderId, stage, outcome, options));
+  static async move(
+    db: DrizzleDb,
+    orderId: string,
+    stage: OrderStage,
+    outcome: StageOutcome,
+    options: MoveOptions = {},
+  ): Promise<MoveResult> {
+    return await db.transaction(
+      async (tx) => await OrderStages.moveIn(tx, orderId, stage, outcome, options),
+    );
   }
 
-  static async moveIn(tx: Tx, orderId: string, stage: OrderStage, outcome: StageOutcome, options: MoveOptions = {}): Promise<MoveResult> {
+  static async moveIn(
+    tx: Tx,
+    orderId: string,
+    stage: OrderStage,
+    outcome: StageOutcome,
+    options: MoveOptions = {},
+  ): Promise<MoveResult> {
     let [row] = await tx.select().from(orders).where(eq(orders.id, orderId)).for('update').limit(1);
     if (row === undefined) return { recorded: false, order: null };
     // An order that was made before the timeline existed gets its history rebuilt first, so its timeline is whole from the start.
@@ -151,9 +179,14 @@ export class OrderStages {
     }
     const changes = changesFor(currentColumns(row), effect);
     const times = stageTimes(row);
-    const stamps = (stageEffect(stage, outcome).stamps ?? []).filter((column) => times[column] === null);
-    const clears = (stageEffect(stage, outcome).clears ?? []).filter((column) => times[column] !== null);
-    const informational = Object.keys(stageEffect(stage, outcome)).length === 0 && options.set === undefined;
+    const stamps = (stageEffect(stage, outcome).stamps ?? []).filter(
+      (column) => times[column] === null,
+    );
+    const clears = (stageEffect(stage, outcome).clears ?? []).filter(
+      (column) => times[column] !== null,
+    );
+    const informational =
+      Object.keys(stageEffect(stage, outcome)).length === 0 && options.set === undefined;
 
     let skip = false;
     if (options.ref !== undefined) {
@@ -171,7 +204,12 @@ export class OrderStages {
         )
         .limit(1);
       skip = seen !== undefined;
-    } else if (!informational && Object.keys(changes).length === 0 && stamps.length === 0 && clears.length === 0) {
+    } else if (
+      !informational &&
+      Object.keys(changes).length === 0 &&
+      stamps.length === 0 &&
+      clears.length === 0
+    ) {
       skip = true;
     }
     if (skip) {
@@ -198,7 +236,8 @@ export class OrderStages {
     const [updated] = await tx.update(orders).set(set).where(eq(orders.id, orderId)).returning();
     if (updated === undefined) return { recorded: false, order: null };
     const movedTo = changes.status?.to;
-    if (movedTo !== undefined && movedTo !== null) await OrderStages.followCollection(tx, orderId, movedTo);
+    if (movedTo !== undefined && movedTo !== null)
+      await OrderStages.followCollection(tx, orderId, movedTo);
 
     const ctx = currentContext();
     const actor = options.actor ?? actorFromContext();
@@ -240,25 +279,58 @@ export class OrderStages {
    */
   private static async followCollection(tx: Tx, orderId: string, status: string): Promise<void> {
     if (status === 'cancelled' || status === 'refunded' || status === 'failed') {
-      await tx.update(orderCollections).set({ status: 'cancelled', updatedAt: new Date() }).where(and(eq(orderCollections.orderId, orderId), inArray(orderCollections.status, ['waiting', 'ready', 'locked'])));
+      await tx
+        .update(orderCollections)
+        .set({ status: 'cancelled', updatedAt: new Date() })
+        .where(
+          and(
+            eq(orderCollections.orderId, orderId),
+            inArray(orderCollections.status, ['waiting', 'ready', 'locked']),
+          ),
+        );
       // A visit that has not started is cancelled too, so no crew is sent for an order that is gone. One already on site is left to a person.
       const at = new Date();
       await tx
         .update(orderVisits)
-        .set({ status: 'cancelled', cancelledAt: at, cancelReason: VISIT_ORDER_CLOSED_REASON, version: sql`${orderVisits.version} + 1`, updatedAt: at })
-        .where(and(eq(orderVisits.orderId, orderId), inArray(orderVisits.status, ['scheduled', 'crew_assigned'])));
+        .set({
+          status: 'cancelled',
+          cancelledAt: at,
+          cancelReason: VISIT_ORDER_CLOSED_REASON,
+          version: sql`${orderVisits.version} + 1`,
+          updatedAt: at,
+        })
+        .where(
+          and(
+            eq(orderVisits.orderId, orderId),
+            inArray(orderVisits.status, ['scheduled', 'crew_assigned']),
+          ),
+        );
     } else {
       await tx
         .update(orderCollections)
-        .set({ status: sql`case when ${orderCollections.readyAt} is null then 'waiting' else 'ready' end`, failedAttempts: 0, updatedAt: new Date() })
-        .where(and(eq(orderCollections.orderId, orderId), eq(orderCollections.status, 'cancelled')));
+        .set({
+          status: sql`case when ${orderCollections.readyAt} is null then 'waiting' else 'ready' end`,
+          failedAttempts: 0,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(eq(orderCollections.orderId, orderId), eq(orderCollections.status, 'cancelled')),
+        );
     }
   }
 
   /** The non-stage fields of an order, saved on their own when a stage had nothing new to record. */
-  private static async saveFields(tx: Tx, row: OrderRow, fields: OrderFields | undefined): Promise<OrderRow> {
+  static async saveFields(
+    tx: Tx,
+    row: OrderRow,
+    fields: OrderFields | undefined,
+  ): Promise<OrderRow> {
     if (fields === undefined || Object.keys(fields).length === 0) return row;
-    const [updated] = await tx.update(orders).set({ ...fields, updatedAt: sql`clock_timestamp()` }).where(eq(orders.id, row.id)).returning();
+    const [updated] = await tx
+      .update(orders)
+      .set({ ...fields, updatedAt: sql`clock_timestamp()` })
+      .where(eq(orders.id, row.id))
+      .returning();
     return updated ?? row;
   }
 
@@ -268,8 +340,20 @@ export class OrderStages {
    */
   static async placedIn(
     tx: Tx,
-    order: { id: string; status: string; paymentStatus: string; approvalStatus: string; kraTransmissionStatus: string; branchId: string | null },
-    options: { source?: StageSource; actor?: StageActor; startedAt?: Date | null; detail?: Record<string, unknown> } = {},
+    order: {
+      id: string;
+      status: string;
+      paymentStatus: string;
+      approvalStatus: string;
+      kraTransmissionStatus: string;
+      branchId: string | null;
+    },
+    options: {
+      source?: StageSource;
+      actor?: StageActor;
+      startedAt?: Date | null;
+      detail?: Record<string, unknown>;
+    } = {},
   ): Promise<void> {
     const ctx = currentContext();
     const actor = options.actor ?? actorFromContext();
@@ -292,7 +376,10 @@ export class OrderStages {
       actorType: actor.type,
       actorId: actor.id,
       correlationId: ctx.correlationId,
-      detail: { ...options.detail, ...(options.startedAt ? { checkoutStartedAt: options.startedAt.toISOString() } : {}) },
+      detail: {
+        ...options.detail,
+        ...(options.startedAt ? { checkoutStartedAt: options.startedAt.toISOString() } : {}),
+      },
     });
   }
 
@@ -330,7 +417,8 @@ export class OrderStages {
         approximate: true,
       })),
     );
-    const at = (stage: OrderStage): Date | null => events.find((event) => event.stage === stage)?.occurredAt ?? null;
+    const at = (stage: OrderStage): Date | null =>
+      events.find((event) => event.stage === stage)?.occurredAt ?? null;
     const lastEvent = events.at(-1);
     const [seeded] = await tx
       .update(orders)
@@ -352,11 +440,21 @@ export class OrderStages {
 
   /** Rebuilds the timelines of orders that have none, a batch at a time (the worker runs this until it finds nothing). Returns how many it did. */
   static async seedBatch(db: DrizzleDb, limit = 200): Promise<number> {
-    const due = await db.select({ id: orders.id }).from(orders).where(eq(orders.stageSeq, 0)).orderBy(asc(orders.id)).limit(limit);
+    const due = await db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(eq(orders.stageSeq, 0))
+      .orderBy(asc(orders.id))
+      .limit(limit);
     let done = 0;
     for (const { id } of due) {
       await db.transaction(async (tx) => {
-        const [row] = await tx.select().from(orders).where(and(eq(orders.id, id), eq(orders.stageSeq, 0))).for('update', { skipLocked: true }).limit(1);
+        const [row] = await tx
+          .select()
+          .from(orders)
+          .where(and(eq(orders.id, id), eq(orders.stageSeq, 0)))
+          .for('update', { skipLocked: true })
+          .limit(1);
         if (row !== undefined) {
           await OrderStages.seedIn(tx, row);
           done += 1;
@@ -368,12 +466,19 @@ export class OrderStages {
 
   /** The events of an order, in the order they happened. */
   static async timeline(db: DrizzleDb | Tx, orderId: string) {
-    return await db.select().from(orderStageEvents).where(eq(orderStageEvents.orderId, orderId)).orderBy(asc(orderStageEvents.sequence));
+    return await db
+      .select()
+      .from(orderStageEvents)
+      .where(eq(orderStageEvents.orderId, orderId))
+      .orderBy(asc(orderStageEvents.sequence));
   }
 
   /** How many orders are still waiting for their history to be rebuilt. */
   static async unseeded(db: DrizzleDb): Promise<number> {
-    const [row] = await db.select({ n: sql<number>`count(*)::int` }).from(orders).where(eq(orders.stageSeq, 0));
+    const [row] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(orders)
+      .where(eq(orders.stageSeq, 0));
     return row?.n ?? 0;
   }
 }

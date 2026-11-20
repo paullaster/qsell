@@ -40,6 +40,7 @@ export function PdfActions({ url, noun, number, compact = false }: { url: string
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const size = compact ? 'min-h-10 px-3 py-2' : '';
+  const label = noun.charAt(0).toUpperCase() + noun.slice(1);
   const print = async () => {
     setBusy(true);
     setError(null);
@@ -53,8 +54,8 @@ export function PdfActions({ url, noun, number, compact = false }: { url: string
   };
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
-      <a href={url} download className={`${buttonClass} ${size}`} aria-label={`Download ${noun} ${number} as PDF`}>Download PDF</a>
-      <button type="button" className={`${buttonClass} ${size}`} disabled={busy} onClick={() => void print()} aria-label={`Print ${noun} ${number}`}>{busy ? 'Preparing…' : 'Print'}</button>
+      <a href={url} download className={`${buttonClass} ${size}`} aria-label={`Download ${noun} ${number} as PDF`}>Download {label}</a>
+      <button type="button" className={`${buttonClass} ${size}`} disabled={busy} onClick={() => void print()} aria-label={`Print ${noun} ${number}`}>{busy ? 'Preparing…' : `Print ${label}`}</button>
       {error !== null ? <span role="alert" className="basis-full text-xs text-red-700">{error}</span> : null}
     </span>
   );

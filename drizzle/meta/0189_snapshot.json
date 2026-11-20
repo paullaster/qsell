@@ -1,5 +1,5 @@
 {
-  "id": "fb9b6964-daeb-4be3-9979-f3eaa42eaae4",
+  "id": "88ae509b-19fa-4b0c-8801-2bd958f61088",
   "prevId": "ff34ba75-04df-41a3-ba2e-2ae5d6d5cd63",
   "version": "7",
   "dialect": "postgresql",
@@ -6532,6 +6532,13 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "timezone": {
+          "name": "timezone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'Africa/Nairobi'"
         }
       },
       "indexes": {
@@ -6570,7 +6577,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "company_settings_timezone_chk": {
+          "name": "company_settings_timezone_chk",
+          "value": "\"company_settings\".\"timezone\" ~ '^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$' AND char_length(\"company_settings\".\"timezone\") <= 64"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.courier_accounts": {
@@ -45989,158 +46001,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.shift_close_requests": {
-      "name": "shift_close_requests",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "shift_id": {
-          "name": "shift_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "requested_by": {
-          "name": "requested_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "declared_cash": {
-          "name": "declared_cash",
-          "type": "numeric(14, 2)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "closing_counted": {
-          "name": "closing_counted",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'[]'::jsonb"
-        },
-        "expected_cash": {
-          "name": "expected_cash",
-          "type": "numeric(14, 2)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "variance": {
-          "name": "variance",
-          "type": "numeric(14, 2)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "variance_reason": {
-          "name": "variance_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "closing_figures": {
-          "name": "closing_figures",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'pending'"
-        },
-        "decision_note": {
-          "name": "decision_note",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "decided_at": {
-          "name": "decided_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "shift_close_requests_one_pending_uidx": {
-          "name": "shift_close_requests_one_pending_uidx",
-          "columns": [
-            {
-              "expression": "shift_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"shift_close_requests\".\"status\" = 'pending'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "shift_close_requests_shift_idx": {
-          "name": "shift_close_requests_shift_idx",
-          "columns": [
-            {
-              "expression": "shift_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "shift_close_requests_shift_id_shifts_id_fk": {
-          "name": "shift_close_requests_shift_id_shifts_id_fk",
-          "tableFrom": "shift_close_requests",
-          "tableTo": "shifts",
-          "columnsFrom": [
-            "shift_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "shift_close_requests_status_chk": {
-          "name": "shift_close_requests_status_chk",
-          "value": "\"shift_close_requests\".\"status\" IN ('pending', 'approved', 'rejected', 'canceled')"
-        }
-      },
-      "isRLSEnabled": false
-    },
     "public.shift_movements": {
       "name": "shift_movements",
       "schema": "",
@@ -46267,13 +46127,6 @@
           "notNull": true,
           "default": "'1'"
         },
-        "supervisor_close": {
-          "name": "supervisor_close",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'direct'"
-        },
         "version": {
           "name": "version",
           "type": "integer",
@@ -46314,12 +46167,7 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {
-        "shift_settings_supervisor_close_chk": {
-          "name": "shift_settings_supervisor_close_chk",
-          "value": "\"shift_settings\".\"supervisor_close\" IN ('direct', 'approval')"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.shifts": {
@@ -46459,7 +46307,7 @@
             }
           ],
           "isUnique": true,
-          "where": "\"shifts\".\"status\" IN ('open', 'closing')",
+          "where": "\"shifts\".\"status\" = 'open'",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -46475,7 +46323,7 @@
             }
           ],
           "isUnique": true,
-          "where": "\"shifts\".\"status\" IN ('open', 'closing')",
+          "where": "\"shifts\".\"status\" = 'open'",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -46565,11 +46413,11 @@
       "checkConstraints": {
         "shifts_status_chk": {
           "name": "shifts_status_chk",
-          "value": "\"shifts\".\"status\" IN ('open', 'closing', 'closed')"
+          "value": "\"shifts\".\"status\" IN ('open', 'closed')"
         },
         "shifts_closed_chk": {
           "name": "shifts_closed_chk",
-          "value": "(\"shifts\".\"status\" IN ('open', 'closing') AND \"shifts\".\"closed_at\" IS NULL) OR (\"shifts\".\"status\" = 'closed' AND \"shifts\".\"closed_at\" IS NOT NULL AND \"shifts\".\"declared_cash\" IS NOT NULL AND \"shifts\".\"z_number\" IS NOT NULL)"
+          "value": "(\"shifts\".\"status\" = 'open' AND \"shifts\".\"closed_at\" IS NULL) OR (\"shifts\".\"status\" = 'closed' AND \"shifts\".\"closed_at\" IS NOT NULL AND \"shifts\".\"declared_cash\" IS NOT NULL AND \"shifts\".\"z_number\" IS NOT NULL)"
         },
         "shifts_float_chk": {
           "name": "shifts_float_chk",

@@ -1,5 +1,6 @@
 'use client';
 
+import { useWhen } from '@/components/business-time';
 import { useEffect, useId, useState } from 'react';
 import { Boxes } from 'lucide-react';
 import { orderStockAction, resourceOrderStockAction, type OrderStockLine, type OrderStockView } from '@/server/domains/stock/order-stock-actions';
@@ -8,13 +9,13 @@ import { attempt, buttonClass, fieldClass, primaryClass } from '@/components/ui/
 import type { Choice } from '@/lib/payment-options';
 
 const STATE_WORDS: Record<string, string> = { held: 'Held', partly_consumed: 'Partly issued', consumed: 'Issued', released: 'Given back', expired: 'Ran out' };
-const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' });
 
 /**
  * Where the order's stock is held, since when, and why that place; and, before it is picked, a way to take it from another place
  * with a reason. Without the new stock ledger nothing is held per place, and the panel says so.
  */
 export function OrderStockPanel({ orderId, canMove }: { orderId: string; canMove: boolean }) {
+  const when = useWhen();
   const uid = useId();
   const [view, setView] = useState<OrderStockView | null>(null);
   const [error, setError] = useState<string | null>(null);

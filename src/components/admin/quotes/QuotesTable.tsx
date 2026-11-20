@@ -27,6 +27,7 @@ import { statusFilterLabel, type QuoteStatusFilter } from '@/lib/quote-statuses'
 import type { QuoteActionResult } from '@/server/domains/quotes/action-result';
 import { listSalesQuotesPageAction } from '@/server/domains/quotes/actions';
 import type { QuoteListPage, QuoteListRow } from '@/server/domains/quotes/service';
+import { useDate } from '@/components/business-time';
 
 export interface QuoteRowHandlers {
   view: (row: QuoteListRow) => void;
@@ -248,6 +249,7 @@ function QuoteRow({
   busy: boolean;
   handlers: QuoteRowHandlers;
 }) {
+  const date = useDate();
   const badge = quoteBadge(quote);
   const can = rowActions(quote, permissions);
   const note = approvalNote(quote);
@@ -265,7 +267,7 @@ function QuoteRow({
           <span className="text-xs font-medium">View details</span>
         </button>
         <div className="mt-0.5 text-xs text-fg-subtle">
-          {new Date(quote.createdAt).toLocaleDateString()}
+          {date(quote.createdAt)}
         </div>
       </td>
       <td role="cell" className="block px-4 py-1.5 md:table-cell md:py-3">
@@ -316,7 +318,7 @@ function QuoteRow({
       </td>
       <td role="cell" className="block px-4 py-1.5 md:table-cell md:py-3 text-xs text-fg-muted">
         <span className="mr-1 md:hidden">Valid until</span>
-        {quote.validUntil === null ? 'No expiry' : new Date(quote.validUntil).toLocaleDateString()}
+        {quote.validUntil === null ? 'No expiry' : date(quote.validUntil)}
       </td>
       <td role="cell" className="block px-4 py-1.5 md:table-cell md:py-3">
         <div className="flex flex-wrap gap-1 md:justify-end">

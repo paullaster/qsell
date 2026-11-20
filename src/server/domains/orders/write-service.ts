@@ -60,9 +60,9 @@ export function lineAmounts(
 }
 
 /** Who placed an order and from where, for its first event: a shopper at the shop, staff at the till, staff in the office. */
-function placedBy(channel: string, customerId: string | null, requestedBy: string | null): { source: StageSource; actor: StageActor } {
-  if (channel === 'ecommerce') return { source: 'shop', actor: { type: 'customer', id: customerId } };
-  return { source: channel === 'pos_cash_sale' ? 'pos' : 'staff', actor: { type: 'user', id: requestedBy } };
+function placedBy(origin: string, customerId: string | null, requestedBy: string | null): { source: StageSource; actor: StageActor } {
+  if (origin === 'ecommerce' && requestedBy === null) return { source: 'shop', actor: { type: 'customer', id: customerId } };
+  return { source: origin === 'pos_cash_sale' ? 'pos' : 'staff', actor: { type: 'user', id: requestedBy } };
 }
 
 /** What the shopper is told when the database refused the order. */
@@ -803,8 +803,10 @@ export const OrderWriteService = {
     const creditOff = params.selling?.creditCheck === 'off';
 
     try {
-      const { companySettings, dimensionSets, customers } = getContainer();
+      const { companySettings, dimensionSets, customers, customerCreditSettings, finance } = getContainer();
       const company = await companySettings.ensureSeeded();
+      const creditSettings = await customerCreditSettings.get(company.id);
+      const allowOverCreditLimit = creditSettings.allowOverCreditLimit;
       const onAccount = params.paymentMethod === 'on_account';
       const tradeCustomer = await customers.prepareSale({
         companyId: company.id,
@@ -816,16 +818,18 @@ export const OrderWriteService = {
         amount: totalAmount,
         onAccount,
         // Over the limit is let through to approval only when the kind of sale asks for approval; with the credit check off it is not looked at.
-        allowOverLimit: creditOff || (gated && params.selling?.overLimit !== 'refuse'),
+        allowOverLimit: creditOff || allowOverCreditLimit || (gated && params.selling?.overLimit !== 'refuse'),
         updateExisting: params.identityVerified !== false || has(params.requestedBy),
       });
       if (params.selling?.noAccount === 'refuse' && tradeCustomer.accountType !== 'credit') {
         throw new Error(`${tradeCustomer.name} has no credit account, and this kind of sale is only for customers who do.`);
       }
+      const netOwedCents =
+        tradeCustomer.accountType === 'credit' ? await finance.customerLedger.netOwedCents(company.id, tradeCustomer.id) : 0;
       const overLimit =
         !creditOff &&
         tradeCustomer.accountType === 'credit' &&
-        Number(tradeCustomer.balance) + totalAmount > Number(tradeCustomer.creditLimit);
+        netOwedCents + Math.round(totalAmount * 100) > Math.round(Number(tradeCustomer.creditLimit) * 100);
       // The stricter check also stops a customer who has an invoice overdue by more than the days the company chose.
       const overdue =
         params.selling?.creditCheck === 'limit_and_overdue' &&
@@ -840,7 +844,7 @@ export const OrderWriteService = {
         order.stockRelease = stockReleaseFor(params.selling, { holdUntilPaid: params.holdUntilPaid === true, hasCreditAccount: tradeCustomer.accountType === 'credit' });
       }
       // A kind of sale that refuses over the limit never asks for approval: it is refused here, before anything is requested.
-      if (overCreditLimit && params.selling?.overLimit === 'refuse') throw new Error(overCreditWords);
+      if (!allowOverCreditLimit && overCreditLimit && params.selling?.overLimit === 'refuse') throw new Error(overCreditWords);
       // The trade customer is the durable identity for this order.
       if (!has(resolvedUserId)) resolvedUserId = tradeCustomer.id;
       const callerDimensions = params.dimensionFields;
@@ -911,7 +915,7 @@ export const OrderWriteService = {
             // An order collected from a branch gets its code in the same transaction, so there is never one without the other.
             if (params.delivery.method === 'pickup') await getContainer().orderCollections.issue(tx, { companyId: company.id, orderId: saved.id, branchId: delivered.branch.id, actor });
             await OrderStages.moveIn(tx, saved.id, 'charge_quoted', 'succeeded', {
-              ...placedBy(channel, params.customerId ?? null, params.requestedBy ?? null),
+              ...placedBy(params.salesModule ?? 'ecommerce', params.customerId ?? null, params.requestedBy ?? null),
               ref: { type: 'delivery_quote', id: saved.id },
               message: delivered.choice.words,
               detail: { charge: delivered.quote.split.gross, tax: delivered.quote.split.tax, policy: delivered.quote.policy === null ? null : `${delivered.quote.policy.code} v${String(delivered.quote.policy.version)}`, branch: delivered.branch.code },
@@ -985,14 +989,14 @@ export const OrderWriteService = {
             throw new Error(
               `${floorBreach.text} It needs approval, but no approval workflow covers it. Ask an administrator to set one up for orders below their price floor.`,
             );
-          } else if (overCreditLimit) {
+          } else if (!allowOverCreditLimit && overCreditLimit) {
             // Over the limit and nothing releases it: that is exactly what the limit is for.
             throw new Error(overCreditWords);
           }
         },
         // Who placed it and from where is the first event of the order's timeline; a shop checkout carries the time the shopper started it.
         {
-          ...placedBy(channel, params.customerId ?? null, params.requestedBy ?? null),
+          ...placedBy(params.salesModule ?? 'ecommerce', params.customerId ?? null, params.requestedBy ?? null),
           startedAt: params.checkoutStartedAt ?? null,
         },
       );

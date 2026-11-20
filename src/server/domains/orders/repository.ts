@@ -6,6 +6,7 @@ import { orders, orderItems, orderCollections, type OrderRow } from '@/server/db
 import type { Order, OrderItem, OrderStatus, PaymentStatus, PaymentProvider } from '@/types/index';
 import { OrderStages, type StageActor } from './stages';
 import type { StageSource } from '@/lib/order-stages';
+import { WEB_SHOP_ORDER } from './order-origin';
 
 function num(v: string | number): number {
   return typeof v === 'number' ? v : Number(v);
@@ -196,7 +197,7 @@ export class OrderRepository {
    * One page of orders, newest first, narrowed by text (order number, customer, phone, email, tracking) and by status. The place to
    * start the next page is the database's own text for the time of the last order, so no microsecond is lost; their items are read in one query.
    */
-  async page(input: { query?: string; status?: OrderStatus | null; leftAtCounterDays?: number | null; cursor?: string | null; limit?: number }): Promise<{ rows: Order[]; nextCursor: string | null }> {
+  async page(input: { origin?: 'web_shop'; query?: string; status?: OrderStatus | null; leftAtCounterDays?: number | null; cursor?: string | null; limit?: number }): Promise<{ rows: Order[]; nextCursor: string | null }> {
     const limit = Math.min(Math.max(input.limit ?? 25, 1), 100);
     const after = typeof input.cursor === 'string' && input.cursor !== '' ? decodeCursor(input.cursor) : null;
     const text = (input.query ?? '').trim().slice(0, 100);
@@ -205,6 +206,7 @@ export class OrderRepository {
       .from(orders)
       .where(
         and(
+          input.origin === 'web_shop' ? WEB_SHOP_ORDER : undefined,
           input.status == null ? undefined : eq(orders.status, input.status),
           input.leftAtCounterDays == null ? undefined : leftAtCounterFor(input.leftAtCounterDays),
           matching(text, [orders.orderNumber, orders.customerName, orders.customerPhone, orders.paymentPhone, orders.customerEmail, orders.trackingNumber]),

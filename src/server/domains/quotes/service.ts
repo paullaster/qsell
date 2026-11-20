@@ -8,7 +8,7 @@ import { priceItemFor } from '@/server/domains/pricing/service';
 import { repairsFor } from './unit-repair';
 import { and, desc, eq, ilike, inArray, lt, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { businessDate } from '@/server/kernel/numbering/business-date';
+import { businessDate, businessTimeZone } from '@/server/kernel/numbering/business-date';
 import { withAfterCommit } from '@/server/kernel/after-commit';
 import { getContainer } from '@/server/di/container';
 import { drizzleDb } from '@/server/db/drizzle/client';
@@ -1957,7 +1957,7 @@ export class SalesQuoteService {
     const acceptUrl = baseUrl ? `${baseUrl}/quote/${token}` : '';
     const contacts = await this.contactsOf(quote);
     const pdf = await this.renderPdf(quote, company, contacts);
-    const html = `<div style="font-family:Arial,sans-serif;color:#111827"><h2>${escapeHtml(company.tradingName)}</h2><p>Your quotation <strong>${escapeHtml(quote.quoteNumber)}</strong> totals ${escapeHtml(quote.currency)} ${num(quote.totalAmount).toFixed(2)}.</p>${quote.validUntil ? `<p>Valid until ${quote.validUntil.toLocaleDateString()}.</p>` : ''}${quote.publicNotes ? `<p>${escapeHtml(quote.publicNotes)}</p>` : ''}${acceptUrl ? `<p><a href="${acceptUrl}">Review and respond to this quote</a></p>` : ''}${contacts.length === 0 ? '' : `<p>Questions? Contact ${escapeHtml(contacts.join(', '))}.</p>`}<p>This proforma quotation is not a tax invoice and does not confirm receipt of funds.</p></div>`;
+    const html = `<div style="font-family:Arial,sans-serif;color:#111827"><h2>${escapeHtml(company.tradingName)}</h2><p>Your quotation <strong>${escapeHtml(quote.quoteNumber)}</strong> totals ${escapeHtml(quote.currency)} ${num(quote.totalAmount).toFixed(2)}.</p>${quote.validUntil === null ? '' : `<p>Valid until ${quote.validUntil.toLocaleDateString('en-GB', { timeZone: businessTimeZone() })}.</p>`}${has(quote.publicNotes) ? `<p>${escapeHtml(quote.publicNotes)}</p>` : ''}${acceptUrl !== '' ? `<p><a href="${acceptUrl}">Review and respond to this quote</a></p>` : ''}${contacts.length === 0 ? '' : `<p>Questions? Contact ${escapeHtml(contacts.join(', '))}.</p>`}<p>This proforma quotation is not a tax invoice and does not confirm receipt of funds.</p></div>`;
     const sent = await getContainer().email.send({
       ...addressing(route),
       subject: `${company.tradingName} quotation ${quote.quoteNumber}`,
@@ -2060,7 +2060,7 @@ export class SalesQuoteService {
       paymentDetails: quote.paymentDetails,
       paymentTerms: quote.paymentTerms,
       termsAndConditions: quote.termsAndConditions,
-      validUntil: quote.validUntil?.toLocaleDateString(),
+      validUntil: quote.validUntil?.toLocaleDateString('en-GB', { timeZone: businessTimeZone() }),
     });
   }
 

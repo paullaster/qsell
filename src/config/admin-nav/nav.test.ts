@@ -6,7 +6,7 @@ import type { AdminNavItem } from './types';
 const walk = (
   items: AdminNavItem[],
   path: string[] = [],
-): Array<{ item: AdminNavItem; path: string[] }> =>
+): { item: AdminNavItem; path: string[] }[] =>
   items.flatMap((i) => [{ item: i, path }, ...walk(i.subLinks ?? [], [...path, i.id])]);
 
 const nav = getAdminNav();
@@ -18,6 +18,31 @@ describe('the admin sidebar', () => {
   it('has no module called Pricing: pricing is a part of Sales', () => {
     expect(nav.map((m) => m.id)).not.toContain('pricing');
     expect(where('pricing')).toBe('sales');
+  });
+
+  it('labels the web shop order screen under Sales', () => {
+    const item = all.find((x) => x.item.id === 'orders');
+    expect(item?.path).toEqual(['sales']);
+    expect(item?.item.title).toBe('Web Shop Orders');
+    expect(item?.item.href).toBe('/admin/orders');
+  });
+
+  it('puts customer credit and selling documents under Settings > Sales', () => {
+    const parent = all.find((x) => x.item.id === 'settings-sales')?.item;
+    expect(where('settings-sales')).toBe('settings');
+    expect(parent?.href).toBe('/admin/settings/sales');
+    expect(parent?.subLinks?.map((x) => x.id)).toEqual(['settings-sales-customer', 'settings-selling-documents']);
+    expect(where('settings-selling-documents')).toBe('settings/settings-sales');
+  });
+
+  it('opens Customers on a hub with List and Customer groups', () => {
+    const parent = all.find((x) => x.item.id === 'customers')?.item;
+    expect(parent?.href).toBe('/admin/customers');
+    expect(parent?.subLinks?.map((x) => x.id)).toEqual(['customers-list', 'pricing-groups']);
+    const list = all.find((x) => x.item.id === 'customers-list')?.item;
+    expect(where('customers-list')).toBe('sales/customers');
+    expect(list?.title).toBe('List');
+    expect(list?.href).toBe('/admin/customers/list');
   });
 
   it('keeps every pricing screen together under Sales > Pricing, except the master data they use', () => {
@@ -49,7 +74,7 @@ describe('the admin sidebar', () => {
     const ids = all.map((x) => x.item.id);
     expect(new Set(ids).size).toBe(ids.length);
     // A group may open on its first screen, so only the screens themselves must differ.
-    const hrefs = all.filter((x) => !x.item.subLinks?.length).map((x) => x.item.href);
+    const hrefs = all.filter((x) => (x.item.subLinks ?? []).length === 0).map((x) => x.item.href);
     expect(new Set(hrefs).size).toBe(hrefs.length);
   });
 
@@ -84,6 +109,7 @@ describe('who sees what in the admin sidebar', () => {
 
   it('hides a section whose own permission is missing, along with everything under it', () => {
     expect(as('pricing:read')).not.toContain('pricing-groups');
+    expect(as('customers:read')).toContain('customers-list');
   });
 
   it('never shows a disabled item, nor anything under it', () => {
@@ -102,6 +128,6 @@ describe('who sees what in the admin sidebar', () => {
 
   it('is not disabled unless the config says so, and every screen names its permission', () => {
     expect(all.every((x) => x.item.disabled === false)).toBe(true);
-    expect(all.filter((x) => !x.item.subLinks?.length && !x.item.permission)).toEqual([]);
+    expect(all.filter((x) => (x.item.subLinks ?? []).length === 0 && x.item.permission === undefined)).toEqual([]);
   });
 });

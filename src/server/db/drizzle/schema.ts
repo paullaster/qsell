@@ -133,6 +133,11 @@ export const companySettings = pgTable(
      * Validated at read-time via resolveCompanyUiConfig — never trust raw JSON.
      */
     uiConfig: jsonb('ui_config').$type<CompanyUiConfigRaw>().notNull().default({}),
+    /**
+     * The business's time zone (an IANA name such as Africa/Nairobi): the day a posting, a quiet hour, a delivery window or a report
+     * period belongs to. Changed only in Settings, by someone with the timezone:manage permission, with a reason; read by every screen.
+     */
+    timezone: text('timezone').notNull().default('Africa/Nairobi'),
     isActive: boolean('is_active').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -141,6 +146,7 @@ export const companySettings = pgTable(
     index('company_settings_active_updated_idx')
       .on(t.updatedAt.desc())
       .where(sql`${t.isActive}`),
+    check('company_settings_timezone_chk', sql`${t.timezone} ~ '^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$' AND char_length(${t.timezone}) <= 64`),
   ],
 );
 
@@ -1359,6 +1365,9 @@ export const orderVisits = pgTable(
     signedOffBy: text('signed_off_by'),
     cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
     cancelReason: text('cancel_reason'),
+    /** What the customer wrote when they asked for another time, until the visit is moved, cancelled or the request set aside. At most one open request. */
+    timeRequestNote: text('time_request_note'),
+    timeRequestAt: timestamp('time_request_at', { withTimezone: true }),
     version: integer('version').notNull().default(1),
     createdBy: text('created_by').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -1367,10 +1376,13 @@ export const orderVisits = pgTable(
   (t) => [
     index('order_visits_company_start_idx').on(t.companyId, t.startsAt, t.id),
     index('order_visits_company_status_idx').on(t.companyId, t.status),
+    /** The visits a customer has asked another time for, found without reading the rest. */
+    index('order_visits_asked_idx').on(t.companyId, t.startsAt).where(sql`${t.timeRequestNote} IS NOT NULL`),
     uniqueIndex('order_visits_one_live_per_order_idx').on(t.orderId).where(sql`${t.status} <> 'cancelled'`),
     check('order_visits_status_chk', sql`${t.status} IN ('scheduled','crew_assigned','on_site','completed','signed_off','cancelled')`),
     check('order_visits_window_chk', sql`${t.endsAt} > ${t.startsAt}`),
     check('order_visits_signoff_chk', sql`(${t.status} = 'signed_off') = (${t.signedOffAt} IS NOT NULL AND ${t.signedOffBy} IS NOT NULL)`),
+    check('order_visits_time_request_chk', sql`(${t.timeRequestNote} IS NULL) = (${t.timeRequestAt} IS NULL) AND (${t.timeRequestNote} IS NULL OR char_length(${t.timeRequestNote}) BETWEEN 3 AND 300)`),
     check('order_visits_cancel_chk', sql`(${t.status} = 'cancelled') = (${t.cancelledAt} IS NOT NULL AND ${t.cancelReason} IS NOT NULL)`),
   ],
 );
@@ -1684,6 +1696,8 @@ export const deliveryMessages = pgTable(
     uniqueIndex('delivery_messages_key_uidx').on(t.companyId, t.messageKey),
     index('delivery_messages_due_idx').on(t.status, t.nextTryAt),
     index('delivery_messages_delivery_idx').on(t.deliveryId, t.createdAt),
+    /** A visit's messages are found by its order (they have no delivery). */
+    index('delivery_messages_order_idx').on(t.orderId, t.createdAt),
     check('delivery_messages_status_chk', sql`${t.status} IN ('queued','sent','failed','skipped')`),
     check('delivery_messages_attempts_chk', sql`${t.attempts} >= 0`),
   ],
@@ -3228,6 +3242,7 @@ export const orders = pgTable(
       .on(t.currentStage, t.currentStageSince)
       .where(sql`${t.currentStage} IS NOT NULL`),
     index('orders_created_at_idx').on(t.createdAt),
+    index('orders_sales_module_created_idx').on(t.salesModule, t.createdAt, t.id),
     index('orders_branch_created_idx').on(t.branchId, t.createdAt),
     index('orders_payment_attention_idx')
       .on(t.branchId)
@@ -5010,6 +5025,19 @@ export const sellingDocumentSettings = pgTable(
   (t) => [uniqueIndex('selling_document_settings_company_type_uidx').on(t.companyId, t.docType)],
 );
 
+export const customerCreditSettings = pgTable(
+  'customer_credit_settings',
+  {
+    companyId: uuid('company_id')
+      .primaryKey()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    creditLimitDisplay: text('credit_limit_display').notNull().default('running'),
+    allowOverCreditLimit: boolean('allow_over_credit_limit').notNull().default(false),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check('customer_credit_settings_display_chk', sql`${t.creditLimitDisplay} IN ('running','static')`)],
+);
+
 /**
  * Who each business mail is written to, copied, blind-copied and answered by, and which business emails a quote shows, per point
  * (see docs/architecture/email-routing.md). The config is read through the pure `readRouteConfig`, never trusted as stored.
@@ -5530,6 +5558,7 @@ export const checkoutAttempts = pgTable(
   },
   (t) => [
     index('checkout_attempts_started_idx').on(t.startedAt),
+    index('checkout_attempts_order_channel_idx').on(t.orderId, t.channel),
     index('checkout_attempts_outcome_idx').on(t.outcome, t.startedAt),
     check(
       'checkout_attempts_outcome_chk',
@@ -12232,7 +12261,7 @@ export const deliveryTextSettings = pgTable(
     updatedBy: text('updated_by'),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [check('delivery_text_settings_kinds_chk', sql`${t.kinds} <@ ARRAY['out_for_delivery','delivered','part_delivered','attempt_failed','returned','slot_not_kept','ready_for_collection','collection_reminder']::text[]`),
+  (t) => [check('delivery_text_settings_kinds_chk', sql`${t.kinds} <@ ARRAY['out_for_delivery','delivered','part_delivered','attempt_failed','returned','slot_not_kept','ready_for_collection','collection_reminder','visit_booked','visit_moved','visit_cancelled']::text[]`),
     check('delivery_text_settings_reminder_days_chk', sql`${t.collectionReminderFirstDays} between 1 and 30 and (${t.collectionReminderSecondDays} is null or (${t.collectionReminderSecondDays} > ${t.collectionReminderFirstDays} and ${t.collectionReminderSecondDays} <= 60))`),
     check('delivery_text_settings_quiet_chk', sql`(${t.quietFromMinute} is null and ${t.quietUntilMinute} is null) or (${t.quietFromMinute} between 0 and 1439 and ${t.quietUntilMinute} between 0 and 1439 and ${t.quietFromMinute} <> ${t.quietUntilMinute})`),
 ],

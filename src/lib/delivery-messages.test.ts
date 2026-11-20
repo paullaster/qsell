@@ -105,9 +105,10 @@ describe('customer text messages', () => {
     expect(readTextKinds('delivered').ok).toBe(false);
     // The reminder is a choice of its own, listed after the first message about collecting.
     expect(readTextKinds(['collection_reminder', 'ready_for_collection'])).toEqual({ ok: true, kinds: ['ready_for_collection', 'collection_reminder'] });
-    // The messages about a visit are mail only: they are not on the list of texts to choose.
-    expect(TEXT_KIND_CHOICES.map((c) => c.kind)).toEqual(MESSAGE_KINDS.filter((k) => !isVisitMessageKind(k)));
-    expect(readTextKinds(['visit_booked']).ok).toBe(false);
+    // The messages about a visit can be texted too, each a choice of its own, off until the company turns it on.
+    expect(TEXT_KIND_CHOICES.map((c) => c.kind)).toEqual([...MESSAGE_KINDS]);
+    expect(TEXT_KIND_CHOICES.filter((c) => isVisitMessageKind(c.kind)).every((c) => !c.onByDefault)).toBe(true);
+    expect(readTextKinds(['visit_cancelled', 'visit_booked'])).toEqual({ ok: true, kinds: ['visit_booked', 'visit_cancelled'] });
   });
 });
 
@@ -209,6 +210,20 @@ describe('the messages about a visit', () => {
     for (const kind of ['visit_booked', 'visit_moved', 'visit_cancelled'] as const) {
       expect(JSON.stringify(messageContent(kind, { ...facts, visit }))).not.toMatch(/\b0[17]\d{8}\b|\+254|street|road|crew list/i);
     }
+  });
+  it('are also written as texts: short, the day and hours, a link to the customer\'s own orders and not the tracking page', () => {
+    const f = { ...facts, visit, trackUrl: 'https://shop.test/profile/orders' };
+    expect(textContent('visit_booked', f)).toContain('a visit is booked');
+    expect(textContent('visit_booked', f)).toContain(visit.window);
+    expect(textContent('visit_moved', f)).toContain(`has moved to ${visit.window}`);
+    expect(textContent('visit_cancelled', f)).toContain('was cancelled');
+    for (const kind of ['visit_booked', 'visit_moved', 'visit_cancelled'] as const) {
+      const t = textContent(kind, f);
+      expect(t).toContain('Your orders: https://shop.test/profile/orders');
+      expect(t).not.toContain('Track:');
+      expect(t.length).toBeLessThanOrEqual(306);
+    }
+    expect(textContent('delivered', facts)).toContain('Track: ');
   });
   it('still read well when the time is not known', () => {
     for (const kind of ['visit_booked', 'visit_moved', 'visit_cancelled'] as const) {

@@ -1,7 +1,9 @@
+import { dayInZone } from '@/lib/business-timezone';
+import { businessTimeZone } from '@/server/kernel/numbering/business-date';
 import { and, asc, eq, gte, inArray, isNull, notInArray, or, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { branches, deliveries, deliveryClosedDays, deliveryLeadTimes, deliveryLines, deliveryMethods, deliverySlotSettings, deliverySlots, deliveryZones, orderDeliveries, orderSlotRequests, orders, products } from '@/server/db/drizzle/schema';
-import { UNAVAILABLE_WORDS, checkLead, checkSlot, daysFrom, earliestReady, isDay, leadWords, nairobiDay, unavailable, weekdayOf, weekdaysWords, windowOf, type Lead, type SlotExtra, type SlotRule } from '@/lib/delivery-slot';
+import { UNAVAILABLE_WORDS, checkLead, checkSlot, daysFrom, earliestReady, isDay, leadWords, unavailable, weekdayOf, weekdaysWords, windowOf, type Lead, type SlotExtra, type SlotRule } from '@/lib/delivery-slot';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { DocActor, DocRefusal, DocResult } from './documents';
 
@@ -117,7 +119,7 @@ const BOOKABLE = ['draft', 'released', 'picking', 'packed', 'ready', 'failed_att
 const kgOf = (value: string | null): number | null => (value === null ? null : Number(value));
 const ruleOf = (s: typeof deliverySlots.$inferSelect): SlotRule => ({ weekdays: s.weekdays, startsAt: s.startsAt, endsAt: s.endsAt, capacity: s.capacity, cutoffMinutes: s.cutoffMinutes, maxWeightKg: kgOf(s.maxWeightKg), isActive: s.isActive });
 const storedKg = (kg: number | null): string | null => (kg === null ? null : kg.toFixed(2));
-const nairobiWords = (d: Date): string => d.toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Nairobi' });
+const businessWords = (d: Date): string => d.toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: businessTimeZone() });
 
 /**
  * Delivery slots with room for so many deliveries a day. Booking locks the slot while it counts, so two people booking the last place at the
@@ -213,7 +215,7 @@ export class DeliverySlots {
       .select({ c: deliveryClosedDays, branchName: branches.name })
       .from(deliveryClosedDays)
       .leftJoin(branches, eq(branches.id, deliveryClosedDays.branchId))
-      .where(and(eq(deliveryClosedDays.companyId, companyId), gte(deliveryClosedDays.day, nairobiDay(now))))
+      .where(and(eq(deliveryClosedDays.companyId, companyId), gte(deliveryClosedDays.day, dayInZone(now, businessTimeZone()))))
       .orderBy(asc(deliveryClosedDays.day), asc(deliveryClosedDays.id))
       .limit(200);
     return rows.map((r) => ({ id: r.c.id, day: r.c.day, branchId: r.c.branchId, branchName: r.branchName, reason: r.c.reason }));
@@ -248,7 +250,7 @@ export class DeliverySlots {
     if (!isDay(input.day)) return fail('bad_input', 'Choose the day.');
     const reason = text(input.reason, 120);
     if (reason === null || reason.length < 3) return fail('bad_input', 'Say why, for example "Public holiday".');
-    if (input.day < nairobiDay(this.clock())) return fail('bad_input', 'That day has passed.');
+    if (input.day < dayInZone(this.clock(), businessTimeZone())) return fail('bad_input', 'That day has passed.');
     const branchId = typeof input.branchId === 'string' && input.branchId !== '' ? input.branchId : null;
     if (branchId !== null && !UUID.test(branchId)) return fail('bad_input', 'Choose one of your branches, or leave it empty for all.');
     const day = input.day;
@@ -326,7 +328,7 @@ export class DeliverySlots {
 
   /** The words for why a slot cannot be taken, with the time the goods are ready when that is why. */
   private whyWords(why: NonNullable<ReturnType<typeof unavailable>>, facts: Facts | null): string {
-    if (why === 'too_soon' && facts !== null) return `The goods will not be ready until ${nairobiWords(facts.earliest)}${facts.by === null ? '' : ` (${facts.by})`}.`;
+    if (why === 'too_soon' && facts !== null) return `The goods will not be ready until ${businessWords(facts.earliest)}${facts.by === null ? '' : ` (${facts.by})`}.`;
     return UNAVAILABLE_WORDS[why];
   }
 
@@ -351,7 +353,7 @@ export class DeliverySlots {
   async offer(companyId: string, input: { branchId: unknown; from?: unknown; days?: unknown; deliveryId?: unknown; basket?: BasketForSlots }): Promise<OfferedDay[]> {
     if (typeof input.branchId !== 'string' || !UUID.test(input.branchId)) return [];
     const now = this.clock();
-    const today = nairobiDay(now);
+    const today = dayInZone(now, businessTimeZone());
     const from = isDay(input.from) && input.from >= today ? input.from : today;
     const days = daysFrom(from, typeof input.days === 'number' ? input.days : 7);
     const slots = await this.db.select().from(deliverySlots).where(and(eq(deliverySlots.companyId, companyId), eq(deliverySlots.branchId, input.branchId), eq(deliverySlots.isActive, true))).orderBy(asc(deliverySlots.startsAt), asc(deliverySlots.name));
@@ -365,7 +367,7 @@ export class DeliverySlots {
         .map((s) => {
           const used = taken.get(`${s.id}|${day}`) ?? { n: 0, kg: 0 };
           const rule = ruleOf(s);
-          const why = unavailable(rule, day, now, used.n, closed.get(day) ?? null, this.extraFor(facts, used.kg));
+          const why = unavailable(rule, day, now, used.n, closed.get(day) ?? null, businessTimeZone(), this.extraFor(facts, used.kg));
           return { slotId: s.id, name: s.name, startsAt: s.startsAt, endsAt: s.endsAt, capacity: s.capacity, left: Math.max(0, s.capacity - used.n), weightLeftKg: rule.maxWeightKg === null ? null : Math.max(0, Math.round((rule.maxWeightKg - used.kg) * 100) / 100), available: why === null, why: why === null ? null : this.whyWords(why, facts) };
         }),
     }));
@@ -458,11 +460,11 @@ export class DeliverySlots {
     const [slot] = await tx.select().from(deliverySlots).where(and(eq(deliverySlots.id, slotId), eq(deliverySlots.companyId, companyId))).for('update');
     if (slot === undefined) return fail('not_found', 'That slot could not be found.');
     if (slot.branchId !== d.branchId) return fail('bad_input', 'This delivery leaves from another branch, so it cannot take that branch\'s slot.');
-    const w = windowOf(day, slot);
+    const w = windowOf(day, slot, businessTimeZone());
     if (asOf !== undefined && w.end <= now) return fail('not_allowed', 'That slot has already passed.');
     const [taken, closed, facts] = await Promise.all([this.taken(tx, [slotId], [day], deliveryId), this.closures(tx, companyId, slot.branchId, [day]), this.factsOf(tx, companyId, deliveryId)]);
     const used = taken.get(`${slotId}|${day}`) ?? { n: 0, kg: 0 };
-    const why = unavailable(ruleOf(slot), day, asOf ?? now, used.n, closed.get(day) ?? null, this.extraFor(facts, used.kg));
+    const why = unavailable(ruleOf(slot), day, asOf ?? now, used.n, closed.get(day) ?? null, businessTimeZone(), this.extraFor(facts, used.kg));
     if (why !== null) return fail(why === 'full' || why === 'too_heavy' ? 'conflict' : 'not_allowed', this.whyWords(why, facts));
     await tx.update(deliveries).set({ slotId, slotDay: day, windowStart: w.start, windowEnd: w.end, slotBookedAt: now, slotBookedBy: by.id, scheduledFor: day, version: d.version + 1, updatedAt: now }).where(eq(deliveries.id, deliveryId));
     await this.decisions.record({ companyId, subject: { type: 'delivery', id: deliveryId }, action: 'delivery.slot_booked', actor: by, inputs: { slotId, day, windowStart: w.start.toISOString(), windowEnd: w.end.toISOString(), orderId: d.orderId, ...(asOf === undefined ? {} : { chosenAt: asOf.toISOString() }) } }, tx);
@@ -484,7 +486,7 @@ export class DeliverySlots {
     if (slot === undefined) return 'That delivery time is not offered for your order. Please choose another.';
     const [taken, closed, facts] = await Promise.all([this.taken(this.db, [slot.id], [input.day]), this.closures(this.db, companyId, slot.branchId, [input.day]), this.factsFrom(this.db, companyId, { ...input.basket, branchId: input.branchId, orderedAt: now })]);
     const used = taken.get(`${slot.id}|${input.day}`) ?? { n: 0, kg: 0 };
-    const why = unavailable(ruleOf(slot), input.day, now, used.n, closed.get(input.day) ?? null, this.extraFor(facts, used.kg));
+    const why = unavailable(ruleOf(slot), input.day, now, used.n, closed.get(input.day) ?? null, businessTimeZone(), this.extraFor(facts, used.kg));
     return why === null ? null : `${this.whyWords(why, facts)} Please choose another delivery time.`;
   }
 

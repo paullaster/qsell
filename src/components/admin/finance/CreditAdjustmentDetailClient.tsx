@@ -11,6 +11,7 @@ import { has, historyDetail, historyHeadline, historyReason } from '@/lib/financ
 import { needsComment } from '@/lib/receipt-detail';
 import type { Choice } from '@/lib/payment-options';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, dangerClass, fieldClass, money, primaryClass, type Notice } from './ui';
+import { useWhen } from '@/components/business-time';
 
 type View = Extract<Awaited<ReturnType<typeof creditAdjustmentDetailAction>>, { ok: true }>['data'];
 
@@ -20,6 +21,7 @@ export function CreditAdjustmentDetailClient({ viewPromise }: { viewPromise: Ret
 }
 
 function CreditAdjustmentView({ view }: { view: View }) {
+  const when = useWhen();
   const router = useRouter();
   const [panel, setPanel] = useState<null | 'reject' | 'cancel'>(null);
   const [note, setNote] = useState('');
@@ -57,7 +59,7 @@ function CreditAdjustmentView({ view }: { view: View }) {
       <Message notice={notice} />
       {sentence === '' ? null : <p className="text-sm text-fg" role="note">{sentence}</p>}
       <section className={`${cardClass} grid grid-cols-2 gap-x-4 gap-y-3 text-sm md:grid-cols-4`} aria-label="Details">
-        {([['Amount', `${view.currency} ${money(view.amount)}`], ['Credit', has(view.source) ? view.source : 'Wallet'], ['Reason', `${wordsOf(view.reason)}${has(view.reasonText) ? ` — ${view.reasonText}` : ''}`], ['Asked by', view.requestedBy ?? '—'], ['Decided by', view.decidedBy ?? (view.status === 'applied' ? 'Approval workflow' : '—')], ['Decided on', view.decidedAt === null ? '—' : new Date(view.decidedAt).toLocaleString()]] as [string, string][]).map(([k, v]) => (
+        {([['Amount', `${view.currency} ${money(view.amount)}`], ['Credit', has(view.source) ? view.source : 'Wallet'], ['Reason', `${wordsOf(view.reason)}${has(view.reasonText) ? ` — ${view.reasonText}` : ''}`], ['Asked by', view.requestedBy ?? '—'], ['Decided by', view.decidedBy ?? (view.status === 'applied' ? 'Approval workflow' : '—')], ['Decided on', view.decidedAt === null ? '—' : when(view.decidedAt)]] as [string, string][]).map(([k, v]) => (
           <div key={k}><dt className="text-xs text-fg-muted">{k}</dt><dd className="break-words font-semibold text-fg-strong">{v}</dd></div>
         ))}
       </section>
@@ -91,7 +93,7 @@ function CreditAdjustmentView({ view }: { view: View }) {
           {view.events.map((e) => (
             <li key={e.id} className="border-l-2 border-line pl-3">
               <p className="font-semibold text-fg-strong">{historyHeadline(e)}</p>
-              <p className="text-xs text-fg-muted">{historyDetail(e, (iso) => new Date(iso).toLocaleString())}{has(e.reasonCode) ? ` · ${historyReason(e)}` : ''}</p>
+              <p className="text-xs text-fg-muted">{historyDetail(e, (iso) => when(iso))}{has(e.reasonCode) ? ` · ${historyReason(e)}` : ''}</p>
             </li>
           ))}
         </ol>

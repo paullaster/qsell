@@ -285,6 +285,17 @@ describe.skipIf(!has(url))('booked visits (database)', () => {
     expect(mine().some((m) => m.subject.includes('has moved'))).toBe(false);
     const skipped = (await queued('visit_moved')).concat(await queued('visit_booked')).filter((m) => m.status === 'skipped' || m.status === 'sent');
     expect(skipped.length).toBeGreaterThanOrEqual(1);
+    // The office sees what was written, in order, with the address hidden and whether it left; the crew see none of it; another visit's messages are not mixed in.
+    const told = (await c.orderVisits.view(office(), v.id))?.messages ?? [];
+    expect(told.map((m) => m.kind)).toEqual(['visit_booked', 'visit_moved', 'visit_cancelled']);
+    expect(told.every((m) => m.channel === 'email')).toBe(true);
+    expect(told.some((m) => m.status === 'sent')).toBe(true);
+    expect(told.every((m) => m.recipient === '' || m.recipient.includes('*'))).toBe(true);
+    expect(JSON.stringify(told)).not.toMatch(/vs-[0-9a-f]{8}-/);
+    const member = await staff();
+    const crewed = await must(book(await order(), { crewIds: [member] }));
+    expect((await c.orderVisits.view(office(), crewed.id))?.messages.map((m) => m.kind)).toEqual(['visit_booked']);
+    expect((await c.orderVisits.view(crewOf(member), crewed.id))?.messages).toEqual([]);
     // The order's own cancellation closes visits quietly: no second message for it.
     const other = await order();
     const open = await must(book(other));
@@ -293,13 +304,91 @@ describe.skipIf(!has(url))('booked visits (database)', () => {
     expect(open.status).toBe('scheduled');
   });
 
+  it('also texts the customer about a visit when the company has turned that on: a text of its own for each change, the day and hours only, to their own orders, and not for a kind that is not ticked', async () => {
+    const { DeliveryMessages } = await import('./messages');
+    const set = async (enabled: boolean, kinds: string[]) => await c.deliveryTextSettings.set({ companyId, userId: 'office-1' }, { enabled, kinds, expectedVersion: (await c.deliveryTextSettings.get(companyId)).version });
+    expect(await set(true, ['visit_booked', 'visit_cancelled'])).toMatchObject({ ok: true });
+    try {
+      const o = await order();
+      const texts = async () => (await db.select().from(schema.deliveryMessages).where(and(eq(schema.deliveryMessages.orderId, o), eq(schema.deliveryMessages.channel, 'sms')))).map((m) => `${m.kind}:${m.status}`).sort();
+      const v = await must(book(o, { notes: 'Dog in the yard', contactPhone: '0799888777' }));
+      const moved = await must(c.orderVisits.reschedule(office(), v.id, { startsAt: day(6, 8), endsAt: day(6, 11), reason: 'Customer asked for later', expectedVersion: v.version }));
+      // The move is not ticked: no text for it, but the booking has one.
+      expect(await texts()).toEqual(['visit_booked:queued']);
+      await must(c.orderVisits.cancel(office(), v.id, { reason: 'Customer is travelling', expectedVersion: moved.version }));
+      expect(await texts()).toEqual(['visit_booked:queued', 'visit_cancelled:queued']);
+      const sent: { to: string; text: string }[] = [];
+      const flusher = new DeliveryMessages(db, { name: 'test', send: () => Promise.resolve({ messageId: 'm', provider: 'test' }) }, c.companySettings, { tokenFor: () => Promise.resolve(null) }, { settings: c.deliveryTextSettings, sender: () => Promise.resolve({ name: 'test', send: (m: { to: string; text: string }) => { sent.push(m); return Promise.resolve({ messageId: 's', provider: 'test' }); } } as never) });
+      // The quiet hours are off (none set), so the texts go now.
+      await flusher.flush(500, new Date());
+      const mine = sent.filter((m) => m.text.includes(v.orderNumber));
+      // The booking is skipped (the visit has since been cancelled), and the cancellation is sent: with no address, phone or note, and a link to the customer's own orders.
+      expect(mine).toHaveLength(1);
+      expect(mine[0]?.text).toContain('was cancelled');
+      expect(mine[0]?.text).toContain('Your orders: ');
+      expect(mine[0]?.text).toContain('/profile/orders');
+      expect(mine[0]?.text).not.toMatch(/Dog in the yard|0799888777|Kileleshwa|Gate 4|Track:/);
+      expect(await texts()).toEqual(['visit_booked:skipped', 'visit_cancelled:sent']);
+    } finally {
+      await set(false, ['out_for_delivery', 'delivered', 'attempt_failed']);
+    }
+  });
+
+  it('lets the customer ask for another time, once at a time, and the office answers by moving or cancelling the visit or setting it aside', async () => {
+    const o = await order();
+    const v = await must(book(o));
+    const ask = async (note: unknown, orderId = o, visitId = v.id) => await c.orderVisits.requestChange(companyId, orderId, visitId, note, 'customer-1');
+    const state = async () => (await c.orderVisits.forCustomer(companyId, o))[0];
+    expect(await state()).toMatchObject({ canAsk: true, asked: null });
+    // Refused in words: nothing written, a link, and a visit that is not this order's or not theirs to ask about.
+    expect(await ask('')).toMatchObject({ ok: false });
+    expect(await ask('see https://example.test')).toMatchObject({ ok: false, error: expect.stringContaining('link') as string });
+    expect(await ask('Thursday', randomUUID().slice(0, 8))).toMatchObject({ ok: false, error: expect.stringContaining('could not be found') as string });
+    expect(await c.orderVisits.requestChange(randomUUID(), o, v.id, 'Thursday', 'x')).toMatchObject({ ok: false });
+    // Asked: kept in the customer's words, shown to the office, recorded with who and what; the visit and its version are untouched.
+    expect(await ask('  Thursday   morning ')).toEqual({ ok: true });
+    expect(await state()).toMatchObject({ canAsk: false, asked: { note: 'Thursday morning' } });
+    const seen = await c.orderVisits.view(office(), v.id);
+    expect(seen).toMatchObject({ version: v.version, status: v.status, timeRequest: { note: 'Thursday morning' } });
+    const logged = await db.select().from(schema.decisionLog).where(and(eq(schema.decisionLog.subjectId, o), eq(schema.decisionLog.action, 'visit.time_requested')));
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toMatchObject({ actorId: 'customer-1' });
+    // The office finds the visits waiting for an answer in a list of their own, with a count; the crew's count is their own visits only.
+    const waiting = await c.orderVisits.list(office(), { status: 'asked' });
+    expect(waiting.rows.map((r) => r.id)).toContain(v.id);
+    expect(waiting.rows.every((r) => r.timeRequest !== null)).toBe(true);
+    expect(waiting.asked).toBeGreaterThanOrEqual(1);
+    expect((await c.orderVisits.list(crewOf(randomUUID()), { status: 'asked' })).asked).toBe(0);
+    // One at a time.
+    expect(await ask('Friday')).toMatchObject({ ok: false, error: expect.stringContaining('already asked') as string });
+    // The office can set it aside without moving the visit.
+    const aside = await must(c.orderVisits.setRequestAside(office(), v.id));
+    expect(aside.timeRequest).toBeNull();
+    expect(aside.version).toBe(v.version);
+    expect((await c.orderVisits.list(office(), { status: 'asked' })).rows.map((r) => r.id)).not.toContain(v.id);
+    expect(await c.orderVisits.setRequestAside(office(), v.id)).toMatchObject({ ok: false, reason: 'not_found' });
+    // Asked again, then answered by moving the visit: the request goes with the move.
+    expect(await ask('Any day after the 20th')).toEqual({ ok: true });
+    const moved = await must(c.orderVisits.reschedule(office(), v.id, { startsAt: day(6, 8), endsAt: day(6, 11), reason: 'Customer asked for later', expectedVersion: v.version }));
+    expect(moved.timeRequest).toBeNull();
+    expect(await state()).toMatchObject({ canAsk: true, asked: null });
+    // Answered by cancelling it: the request goes too, and a cancelled visit cannot be asked about.
+    expect(await ask('Monday')).toEqual({ ok: true });
+    const cancelled = await must(c.orderVisits.cancel(office(), v.id, { reason: 'Customer is travelling', expectedVersion: moved.version }));
+    expect(cancelled.timeRequest).toBeNull();
+    expect(await ask('Tuesday')).toMatchObject({ ok: false, error: expect.stringContaining('can no longer be moved') as string });
+    // A visit that has started cannot be asked about from here either.
+    const there = await onSite();
+    expect(await ask('Wednesday', there.v.orderId, there.v.id)).toMatchObject({ ok: false });
+  });
+
   it('shows the customer only when, where and how it stands, soonest first, for their own order', async () => {
     const a = await staff();
     const o = await order();
     const first = await must(book(o, { crewIds: [a], notes: 'Dog in the yard', contactPhone: '0799888777' }));
     expect(first.status).toBe('crew_assigned');
     const seen = await c.orderVisits.forCustomer(companyId, o);
-    expect(seen).toEqual([{ status: 'crew_assigned', startsAt: first.startsAt, endsAt: first.endsAt, address: 'Kileleshwa, Nairobi, Gate 4' }]);
+    expect(seen).toEqual([{ id: first.id, status: 'crew_assigned', startsAt: first.startsAt, endsAt: first.endsAt, address: 'Kileleshwa, Nairobi, Gate 4', asked: null, canAsk: true }]);
     expect(JSON.stringify(seen)).not.toMatch(/Dog in the yard|0799888777|crewIds|userId/);
     // Cancelled visits are still told, and a replacement is listed after it by time.
     await must(c.orderVisits.cancel(office(), first.id, { reason: 'Customer is travelling', expectedVersion: first.version }));

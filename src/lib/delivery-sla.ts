@@ -102,8 +102,8 @@ export function readPhoneList(raw: unknown): { ok: true; numbers: string[] } | {
 }
 
 /** The text message for a level: the delivery, the day and time promised and how late, and the shop. Never the customer, address or payment. */
-export function lateText(input: { level: EscalationLevel; number: string; windowStart: Date | null; windowEnd: Date | null; minutesLate: number; shop: string }): string {
-  const when = input.windowStart !== null && input.windowEnd !== null ? ` Promised ${windowWords(input.windowStart, input.windowEnd)}.` : '';
+export function lateText(input: { level: EscalationLevel; number: string; windowStart: Date | null; windowEnd: Date | null; minutesLate: number; shop: string; timeZone: string }): string {
+  const when = input.windowStart !== null && input.windowEnd !== null ? ` Promised ${windowWords(input.windowStart, input.windowEnd, input.timeZone)}.` : '';
   const state = input.level === 'at_risk' ? 'is at risk of being late' : `is late by ${lateWords(input.minutesLate)}`;
   const head = `Delivery ${input.number} ${state}.${when}`;
   const tail = ` ${input.shop.trim()}`;
@@ -124,8 +124,8 @@ export function checkSlaSettings(raw: { atRiskMinutes?: unknown; escalateAfterMi
   return { ok: true, atRiskMinutes: a, escalateAfterMinutes: e };
 }
 
-/** The window as the customer is told it: "Thu 5 Nov, 09:00 to 12:00" (Nairobi time). */
-export function windowWords(start: Date, end: Date, timeZone = 'Africa/Nairobi'): string {
+/** The window as the customer is told it: "Thu 5 Nov, 09:00 to 12:00" (in the business's time zone, given). */
+export function windowWords(start: Date, end: Date, timeZone: string): string {
   const day = start.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone });
   const time = (d: Date): string => d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone });
   return `${day}, ${time(start)} to ${time(end)}`;

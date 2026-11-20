@@ -1,3 +1,4 @@
+import { useBusinessTimeZone, useWhen } from '@/components/business-time';
 import type { ReactNode } from 'react';
 import { RescheduleForm } from './RescheduleForm';
 import { CUSTOMER_STATUS_WORDS, HEADLINE, collectionWords, customerTone, trackingSteps, type TrackedOrder } from '@/lib/tracking-view';
@@ -16,7 +17,6 @@ const stepClass = (s: { done: boolean; current: boolean }): string => {
   return 'border-line text-fg-muted';
 };
 
-const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' });
 const qty = (n: number): string => String(Math.round(n * 1000) / 1000);
 
 /**
@@ -24,6 +24,8 @@ const qty = (n: number): string => String(Math.round(n * 1000) / 1000);
  * still to come. Used by the tracking page and by "Track my order", so they always say the same. Presentational only.
  */
 export function TrackingView({ order, heading, token }: { order: TrackedOrder; heading?: ReactNode; token?: string }) {
+  const timeZone = useBusinessTimeZone();
+  const when = useWhen();
   const collected = order.kind === 'collection' ? order.collection : null;
   const words = collected === null ? null : collectionWords(collected);
   return (
@@ -81,7 +83,7 @@ export function TrackingView({ order, heading, token }: { order: TrackedOrder; h
             )}
             {d.window == null || d.status === 'delivered' ? null : (
               <p className="text-sm text-fg" role="note">
-                Promised: <strong>{windowWords(new Date(d.window.start), new Date(d.window.end))}</strong>
+                Promised: <strong>{windowWords(new Date(d.window.start), new Date(d.window.end), timeZone)}</strong>
               </p>
             )}
             {d.scheduledFor === null || d.status === 'delivered' ? null : (

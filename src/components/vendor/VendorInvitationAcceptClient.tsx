@@ -7,6 +7,7 @@ import { PASSWORD_MIN_LENGTH } from '@/lib/passwordPolicy';
 import { PasswordInput } from '@/components/auth/PasswordInput';
 import { logoutAction } from '@/server/domains/auth/actions';
 import { Field, buttonClass, fieldClass, primaryClass } from '@/components/ui/screen-kit';
+import { useDate } from '@/components/business-time';
 
 type View = 'loading' | 'ready' | 'accepted' | 'invalid';
 
@@ -14,6 +15,7 @@ const roleWord = (role: string): string => ({ owner: 'Vendor account owner', fin
 
 /** Accepts a secret-link invitation and creates vendor access only after the recipient proves control of the link. */
 export function VendorInvitationAcceptClient({ token }: { token: string }) {
+  const date = useDate();
   const [view, setView] = useState<View>('loading');
   const [invitation, setInvitation] = useState<InvitationPreview | null>(null);
   const [password, setPassword] = useState('');
@@ -113,7 +115,7 @@ export function VendorInvitationAcceptClient({ token }: { token: string }) {
     <section className="mx-auto w-full max-w-md space-y-4 rounded-2xl border border-line bg-surface-raised p-6">
       <div>
         <h1 className="text-xl font-bold text-fg-strong">Join {invitation.businessName}</h1>
-        <p className="mt-1 text-sm text-fg-muted">Hello {invitation.name}. You were invited as a {roleWord(invitation.role).toLowerCase()} using {invitation.email}. This link expires {new Date(invitation.expiresAt).toLocaleDateString()}.</p>
+        <p className="mt-1 text-sm text-fg-muted">Hello {invitation.name}. You were invited as a {roleWord(invitation.role).toLowerCase()} using {invitation.email}. This link expires {date(invitation.expiresAt)}.</p>
       </div>
       {error === null ? null : <p role="alert" className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-700">{error}</p>}
       {needsSignOut ? <form action={logoutAction}><input type="hidden" name="returnTo" value={`/vendor/invitations/accept?token=${token}`} /><button type="submit" className={buttonClass}>Sign out and return to invitation</button></form> : null}

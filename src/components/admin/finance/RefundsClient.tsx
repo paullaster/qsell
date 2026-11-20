@@ -8,6 +8,7 @@ import { REFUND_STATUS, statusInfo } from '@/lib/finance-statuses';
 import { listArgs } from '@/lib/finance-list-filters';
 import type { Choice } from '@/lib/payment-options';
 import { Chip, LoadFailed, Message, PageHeader, buttonClass, cardClass, fieldClass, money, primaryClass, type Notice, attempt } from './ui';
+import { useDate } from '@/components/business-time';
 
 type Page = Extract<Awaited<ReturnType<typeof listRefundsAction>>, { ok: true }>['data'];
 type Report = Extract<Awaited<ReturnType<typeof refundReportAction>>, { ok: true }>['data'];
@@ -21,6 +22,7 @@ export function RefundsClient({ initialPromise, reportPromise }: { initialPromis
 }
 
 function RefundsView({ initial, report }: { initial: Page; report: Report | null }) {
+  const date = useDate();
   const [rows, setRows] = useState(initial.rows);
   const [next, setNext] = useState(initial.nextBefore);
   const [status, setStatus] = useState<Choice | null>(null);
@@ -98,7 +100,7 @@ function RefundsView({ initial, report }: { initial: Page; report: Report | null
                   <p className="text-sm font-bold text-fg-strong">{r.number} <span className="font-normal text-fg-muted">· {r.customer}</span></p>
                   <span className="flex items-center gap-2"><Chip tone={statusInfo(REFUND_STATUS, r.status).tone}>{statusInfo(REFUND_STATUS, r.status).label}</Chip></span>
                 </div>
-                <p className="mt-1 text-xs text-fg-muted">{r.currency} {money(r.amount)} · {r.method} · {words(r.reason)} · {new Date(r.createdAt).toLocaleDateString()}{r.detailsChanged ? ' · paid to different details' : ''}</p>
+                <p className="mt-1 text-xs text-fg-muted">{r.currency} {money(r.amount)} · {r.method} · {words(r.reason)} · {date(r.createdAt)}{r.detailsChanged ? ' · paid to different details' : ''}</p>
               </Link>
             </li>
           ))}

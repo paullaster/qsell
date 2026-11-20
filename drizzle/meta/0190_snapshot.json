@@ -1,6 +1,6 @@
 {
-  "id": "b15322aa-c466-4793-becd-eb79937527b9",
-  "prevId": "fb9b6964-daeb-4be3-9979-f3eaa42eaae4",
+  "id": "6b9e1f19-d19d-4a4b-b89e-f5c3041ae92d",
+  "prevId": "88ae509b-19fa-4b0c-8801-2bd958f61088",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -6512,6 +6512,13 @@
           "notNull": true,
           "default": "'{}'::jsonb"
         },
+        "timezone": {
+          "name": "timezone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'Africa/Nairobi'"
+        },
         "is_active": {
           "name": "is_active",
           "type": "boolean",
@@ -6570,7 +6577,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "company_settings_timezone_chk": {
+          "name": "company_settings_timezone_chk",
+          "value": "\"company_settings\".\"timezone\" ~ '^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$' AND char_length(\"company_settings\".\"timezone\") <= 64"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.courier_accounts": {
@@ -10304,13 +10316,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "is_walk_in": {
-          "name": "is_walk_in",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
         "name": {
           "name": "name",
           "type": "text",
@@ -10471,22 +10476,6 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "customers_one_walk_in_uidx": {
-          "name": "customers_one_walk_in_uidx",
-          "columns": [
-            {
-              "expression": "company_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"customers\".\"is_walk_in\"",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -13078,6 +13067,27 @@
           "columns": [
             {
               "expression": "delivery_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "delivery_messages_order_idx": {
+          "name": "delivery_messages_order_idx",
+          "columns": [
+            {
+              "expression": "order_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -25797,30 +25807,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "method_kind": {
-          "name": "method_kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "handed_over": {
-          "name": "handed_over",
-          "type": "numeric(14, 2)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "change_due": {
-          "name": "change_due",
-          "type": "numeric(14, 2)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "external_reference": {
-          "name": "external_reference",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "actor": {
           "name": "actor",
           "type": "text",
@@ -25847,28 +25833,6 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "order_tenders_counter_method_uidx": {
-          "name": "order_tenders_counter_method_uidx",
-          "columns": [
-            {
-              "expression": "order_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "reference",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"order_tenders\".\"kind\" = 'payment_method'",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -27053,18 +27017,6 @@
           "notNull": true,
           "default": false
         },
-        "shift_id": {
-          "name": "shift_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "idempotency_key": {
-          "name": "idempotency_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "source_quote_id": {
           "name": "source_quote_id",
           "type": "uuid",
@@ -27178,38 +27130,6 @@
           ],
           "isUnique": false,
           "where": "\"orders\".\"source_quote_id\" IS NOT NULL",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "orders_shift_idx": {
-          "name": "orders_shift_idx",
-          "columns": [
-            {
-              "expression": "shift_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"orders\".\"shift_id\" IS NOT NULL",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "orders_idempotency_key_uidx": {
-          "name": "orders_idempotency_key_uidx",
-          "columns": [
-            {
-              "expression": "idempotency_key",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"orders\".\"idempotency_key\" IS NOT NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -27410,19 +27330,6 @@
             "id"
           ],
           "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "orders_shift_id_shifts_id_fk": {
-          "name": "orders_shift_id_shifts_id_fk",
-          "tableFrom": "orders",
-          "tableTo": "shifts",
-          "columnsFrom": [
-            "shift_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
           "onUpdate": "no action"
         },
         "orders_source_quote_id_sales_quotes_id_fk": {
@@ -46115,158 +46022,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.shift_close_requests": {
-      "name": "shift_close_requests",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "shift_id": {
-          "name": "shift_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "requested_by": {
-          "name": "requested_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "declared_cash": {
-          "name": "declared_cash",
-          "type": "numeric(14, 2)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "closing_counted": {
-          "name": "closing_counted",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'[]'::jsonb"
-        },
-        "expected_cash": {
-          "name": "expected_cash",
-          "type": "numeric(14, 2)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "variance": {
-          "name": "variance",
-          "type": "numeric(14, 2)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "variance_reason": {
-          "name": "variance_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "closing_figures": {
-          "name": "closing_figures",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'pending'"
-        },
-        "decision_note": {
-          "name": "decision_note",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "decided_at": {
-          "name": "decided_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "shift_close_requests_one_pending_uidx": {
-          "name": "shift_close_requests_one_pending_uidx",
-          "columns": [
-            {
-              "expression": "shift_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"shift_close_requests\".\"status\" = 'pending'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "shift_close_requests_shift_idx": {
-          "name": "shift_close_requests_shift_idx",
-          "columns": [
-            {
-              "expression": "shift_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "shift_close_requests_shift_id_shifts_id_fk": {
-          "name": "shift_close_requests_shift_id_shifts_id_fk",
-          "tableFrom": "shift_close_requests",
-          "tableTo": "shifts",
-          "columnsFrom": [
-            "shift_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "shift_close_requests_status_chk": {
-          "name": "shift_close_requests_status_chk",
-          "value": "\"shift_close_requests\".\"status\" IN ('pending', 'approved', 'rejected', 'canceled')"
-        }
-      },
-      "isRLSEnabled": false
-    },
     "public.shift_movements": {
       "name": "shift_movements",
       "schema": "",
@@ -46393,13 +46148,6 @@
           "notNull": true,
           "default": "'1'"
         },
-        "supervisor_close": {
-          "name": "supervisor_close",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'direct'"
-        },
         "version": {
           "name": "version",
           "type": "integer",
@@ -46440,12 +46188,7 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {
-        "shift_settings_supervisor_close_chk": {
-          "name": "shift_settings_supervisor_close_chk",
-          "value": "\"shift_settings\".\"supervisor_close\" IN ('direct', 'approval')"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.shifts": {
@@ -46585,7 +46328,7 @@
             }
           ],
           "isUnique": true,
-          "where": "\"shifts\".\"status\" IN ('open', 'closing')",
+          "where": "\"shifts\".\"status\" = 'open'",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -46601,7 +46344,7 @@
             }
           ],
           "isUnique": true,
-          "where": "\"shifts\".\"status\" IN ('open', 'closing')",
+          "where": "\"shifts\".\"status\" = 'open'",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -46609,12 +46352,6 @@
         "shifts_z_number_uidx": {
           "name": "shifts_z_number_uidx",
           "columns": [
-            {
-              "expression": "company_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
             {
               "expression": "z_number",
               "isExpression": false,
@@ -46697,11 +46434,11 @@
       "checkConstraints": {
         "shifts_status_chk": {
           "name": "shifts_status_chk",
-          "value": "\"shifts\".\"status\" IN ('open', 'closing', 'closed')"
+          "value": "\"shifts\".\"status\" IN ('open', 'closed')"
         },
         "shifts_closed_chk": {
           "name": "shifts_closed_chk",
-          "value": "(\"shifts\".\"status\" IN ('open', 'closing') AND \"shifts\".\"closed_at\" IS NULL) OR (\"shifts\".\"status\" = 'closed' AND \"shifts\".\"closed_at\" IS NOT NULL AND \"shifts\".\"declared_cash\" IS NOT NULL AND \"shifts\".\"z_number\" IS NOT NULL)"
+          "value": "(\"shifts\".\"status\" = 'open' AND \"shifts\".\"closed_at\" IS NULL) OR (\"shifts\".\"status\" = 'closed' AND \"shifts\".\"closed_at\" IS NOT NULL AND \"shifts\".\"declared_cash\" IS NOT NULL AND \"shifts\".\"z_number\" IS NOT NULL)"
         },
         "shifts_float_chk": {
           "name": "shifts_float_chk",

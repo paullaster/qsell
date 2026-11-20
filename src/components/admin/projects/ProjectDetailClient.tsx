@@ -210,7 +210,7 @@ function ProjectScreen({ initial }: { initial: View }) {
               choice={customer}
               onChoice={chooseCustomer}
               placeholder="Leave empty for work the company does for itself"
-              listHref="/admin/customers"
+              listHref="/admin/customers/list"
               listLabel="View all customers"
               createHref="/admin/customers/new"
               createLabel="+ Create a customer"
