@@ -91,6 +91,7 @@ graph TD
 - Physical business units:
   - Branch Code (e.g. `BR-NBI-01`), Branch Name (e.g. *"Nairobi Central Depot"*).
   - Physical Street Address, City, County, GPS Coordinates.
+  - **Map pin** (the button *Set the map pin for* the branch, needs the permission to manage branches): latitude, longitude and an optional name for the place, from *Use my current location*, typed numbers, or **Look up a place** (type at least three letters, for example *Westlands, Nairobi*, and press *Search* or Enter; the search runs only when you ask, because the free map services do not allow search as you type, and each person may search about 60 times in ten minutes) lists the places the map service knows with a point on the map; choosing one fills the latitude and longitude, which you check before saving. If nothing is found it says so and you can type the numbers. A branch with no pin is left out when the nearest branch is chosen for a delivery.
   - Linked Default Cash Drawer and linked Bank Account.
   - Public Base URL configuration for localized payment gateway webhooks.
 
