@@ -3204,6 +3204,10 @@ export const orders = pgTable(
     stockRelease: text('stock_release').$type<'on_issue' | 'on_payment' | 'on_delivery'>(),
     /** Its tax invoice is to be made automatically once an approval that held it releases it (decided when it was placed). */
     invoiceWhenApproved: boolean('invoice_when_approved').notNull().default(false),
+    /** The till shift a counter sale was rung up in (a cash sale only); the shift's takings are the tenders of the orders that name it. */
+    shiftId: uuid('shift_id').references((): AnyPgColumn => shifts.id, { onDelete: 'restrict' }),
+    /** The screen's key for one attempt at placing a sale: a retry of the same sale finds the order it made instead of making another. */
+    idempotencyKey: text('idempotency_key'),
     /** The quote this order was made from, when it was (the quote shows its order the other way, in `converted_order_id`). */
     sourceQuoteId: uuid('source_quote_id').references((): AnyPgColumn => salesQuotes.id, { onDelete: 'set null' }),
     /** 'none' until approvals apply; 'pending'/'rejected'/'draft' block the order from moving on. */
@@ -3225,6 +3229,8 @@ export const orders = pgTable(
     index('orders_customer_email_idx').on(t.customerEmail),
     index('orders_status_idx').on(t.status),
     index('orders_source_quote_idx').on(t.sourceQuoteId).where(sql`${t.sourceQuoteId} IS NOT NULL`),
+    index('orders_shift_idx').on(t.shiftId).where(sql`${t.shiftId} IS NOT NULL`),
+    uniqueIndex('orders_idempotency_key_uidx').on(t.idempotencyKey).where(sql`${t.idempotencyKey} IS NOT NULL`),
     check('orders_stock_release_chk', sql`${t.stockRelease} IS NULL OR ${t.stockRelease} IN ('on_issue', 'on_payment', 'on_delivery')`),
     index('orders_stock_release_due_idx').on(t.createdAt).where(sql`${t.stockRelease} IN ('on_issue', 'on_payment')`),
     // Orders still waiting for their timeline to be rebuilt (the worker's backfill reads only these).
@@ -3291,6 +3297,8 @@ export const customers = pgTable(
       onDelete: 'set null',
     }),
     number: text('number').notNull(),
+    /** The company's one walk-in customer: who a counter sale is to when the buyer gives no details. It can never be put on credit. */
+    isWalkIn: boolean('is_walk_in').notNull().default(false),
     name: text('name').notNull(),
     email: text('email'),
     phone: text('phone'),
@@ -3324,6 +3332,7 @@ export const customers = pgTable(
   },
   (t) => [
     uniqueIndex('customers_company_number_uidx').on(t.companyId, t.number),
+    uniqueIndex('customers_one_walk_in_uidx').on(t.companyId).where(sql`${t.isWalkIn}`),
     index('customers_company_idx').on(t.companyId),
     index('customers_company_email_idx').on(t.companyId, t.email),
     index('customers_profile_idx').on(t.profileId),
@@ -3885,6 +3894,8 @@ export const products = pgTable(
      * not found, not sold on its own. A package may sell it; nothing else may. Such a product is never shown in the web shop.
      */
     soldOnlyInPackages: boolean('sold_only_in_packages').notNull().default(false),
+    /** The selling documents this is offered in (quotes, sales orders, credit sales, cash sales, sales invoices); the web shop has its own switch. Everything by default. */
+    offeredIn: text('offered_in').array().notNull().default(sql`ARRAY['quote','sales_order','credit_sale','pos_cash_sale','sales_invoice']::text[]`),
     imageUrl: text('image_url').notNull().default(''),
     additionalImages: jsonb('additional_images').$type<string[]>().notNull().default([]),
     rating: numeric('rating', { precision: 3, scale: 2 }).notNull().default('0'),
@@ -4685,6 +4696,8 @@ export const registers = pgTable(
       .notNull()
       .references(() => branches.id, { onDelete: 'restrict' }),
     name: text('name').notNull(),
+    /** The cash account this till's money is kept in (the books): where a difference at the close is written against. */
+    cashAccountId: uuid('cash_account_id').references(() => bankAccounts.id, { onDelete: 'restrict' }),
     isActive: boolean('is_active').notNull().default(true),
     createdBy: text('created_by').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -4710,7 +4723,7 @@ export const shifts = pgTable(
     branchId: uuid('branch_id')
       .notNull()
       .references(() => branches.id, { onDelete: 'restrict' }),
-    status: text('status').$type<'open' | 'closed'>().notNull().default('open'),
+    status: text('status').$type<'open' | 'closing' | 'closed'>().notNull().default('open'),
     openedBy: text('opened_by').notNull(),
     openedAt: timestamp('opened_at', { withTimezone: true }).notNull().defaultNow(),
     openingFloat: numeric('opening_float', { precision: 14, scale: 2 }).notNull(),
@@ -4728,12 +4741,12 @@ export const shifts = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex('shifts_one_open_per_register_uidx').on(t.registerId).where(sql`${t.status} = 'open'`),
-    uniqueIndex('shifts_one_open_per_person_uidx').on(t.openedBy).where(sql`${t.status} = 'open'`),
-    uniqueIndex('shifts_z_number_uidx').on(t.zNumber).where(sql`${t.zNumber} IS NOT NULL`),
+    uniqueIndex('shifts_one_open_per_register_uidx').on(t.registerId).where(sql`${t.status} IN ('open', 'closing')`),
+    uniqueIndex('shifts_one_open_per_person_uidx').on(t.openedBy).where(sql`${t.status} IN ('open', 'closing')`),
+    uniqueIndex('shifts_z_number_uidx').on(t.companyId, t.zNumber).where(sql`${t.zNumber} IS NOT NULL`),
     index('shifts_company_opened_idx').on(t.companyId, t.openedAt),
-    check('shifts_status_chk', sql`${t.status} IN ('open', 'closed')`),
-    check('shifts_closed_chk', sql`(${t.status} = 'open' AND ${t.closedAt} IS NULL) OR (${t.status} = 'closed' AND ${t.closedAt} IS NOT NULL AND ${t.declaredCash} IS NOT NULL AND ${t.zNumber} IS NOT NULL)`),
+    check('shifts_status_chk', sql`${t.status} IN ('open', 'closing', 'closed')`),
+    check('shifts_closed_chk', sql`(${t.status} IN ('open', 'closing') AND ${t.closedAt} IS NULL) OR (${t.status} = 'closed' AND ${t.closedAt} IS NOT NULL AND ${t.declaredCash} IS NOT NULL AND ${t.zNumber} IS NOT NULL)`),
     check('shifts_float_chk', sql`${t.openingFloat} >= 0`),
   ],
 );
@@ -4760,16 +4773,235 @@ export const shiftMovements = pgTable(
 );
 
 /** How far a till may be out before only a supervisor can close its shift: an amount or a percent, either is enough. */
-export const shiftSettings = pgTable('shift_settings', {
-  companyId: uuid('company_id')
-    .primaryKey()
-    .references(() => companySettings.id, { onDelete: 'cascade' }),
-  toleranceAmount: numeric('tolerance_amount', { precision: 14, scale: 2 }).notNull().default('100'),
-  tolerancePercent: numeric('tolerance_percent', { precision: 7, scale: 3 }).notNull().default('1'),
+/**
+ * A close the approval queue is deciding: the count, the figures it was worked out from and the reason, kept while the shift waits in
+ * `closing` (no cash moves in that time). Approved, it closes the shift from exactly these figures; rejected or withdrawn, the shift is
+ * open again for a recount.
+ */
+export const shiftCloseRequests = pgTable(
+  'shift_close_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    shiftId: uuid('shift_id').notNull().references(() => shifts.id, { onDelete: 'restrict' }),
+    requestedBy: text('requested_by').notNull(),
+    declaredCash: numeric('declared_cash', { precision: 14, scale: 2 }).notNull(),
+    closingCounted: jsonb('closing_counted').$type<{ value: number; count: number }[]>().notNull().default(sql`'[]'::jsonb`),
+    expectedCash: numeric('expected_cash', { precision: 14, scale: 2 }).notNull(),
+    variance: numeric('variance', { precision: 14, scale: 2 }).notNull(),
+    varianceReason: text('variance_reason').notNull(),
+    closingFigures: jsonb('closing_figures').$type<{ paidIn: number; paidOut: number; cashSales: number; cashRefunds?: number }>().notNull(),
+    status: text('status').$type<'pending' | 'approved' | 'rejected' | 'canceled'>().notNull().default('pending'),
+    decisionNote: text('decision_note'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('shift_close_requests_one_pending_uidx').on(t.shiftId).where(sql`${t.status} = 'pending'`),
+    index('shift_close_requests_shift_idx').on(t.shiftId, t.createdAt),
+    check('shift_close_requests_status_chk', sql`${t.status} IN ('pending', 'approved', 'rejected', 'canceled')`),
+  ],
+);
+
+/**
+ * A return at the till: what was sent back from a counter sale, with the credit note that corrects the invoice, the refund of the money
+ * and (for cash handed back at the till) the shift it came out of. One key per return makes a repeat find it; the steps (credit note,
+ * goods back, refund asked, refund paid) are each safe to run again, so a return that stopped half way is finished from where it was.
+ */
+export const counterReturns = pgTable(
+  'counter_returns',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    orderId: text('order_id').notNull().references(() => orders.id, { onDelete: 'restrict' }),
+    idempotencyKey: text('idempotency_key').notNull(),
+    creditNoteId: uuid('credit_note_id').references(() => creditNotes.id, { onDelete: 'restrict' }),
+    refundId: uuid('refund_id').references(() => refundRequests.id, { onDelete: 'restrict' }),
+    /** The shift the cash came out of, when it was handed back at the till. */
+    shiftId: uuid('shift_id').references(() => shifts.id, { onDelete: 'restrict' }),
+    requestedBy: text('requested_by').notNull(),
+    reasonCode: text('reason_code').notNull(),
+    reasonText: text('reason_text'),
+    /** The goods came back in a state to be sold again and go back into stock. */
+    restock: boolean('restock').notNull(),
+    stockBack: boolean('stock_back').notNull().default(false),
+    refundMethodId: uuid('refund_method_id').references(() => paymentMethods.id, { onDelete: 'restrict' }),
+    /** The phone number or details the refund is paid to, for a method that is not cash. */
+    payoutDetails: jsonb('payout_details').$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    cashPaid: numeric('cash_paid', { precision: 14, scale: 2 }).notNull().default('0'),
+    lines: jsonb('lines').$type<{ productId: string; quantity: number }[]>().notNull(),
+    status: text('status').$type<'credited' | 'refund_pending' | 'refund_approved' | 'completed'>().notNull().default('credited'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('counter_returns_key_uidx').on(t.idempotencyKey),
+    index('counter_returns_order_idx').on(t.orderId),
+    index('counter_returns_shift_idx').on(t.shiftId).where(sql`${t.shiftId} IS NOT NULL`),
+    check('counter_returns_status_chk', sql`${t.status} IN ('credited', 'refund_pending', 'refund_approved', 'completed')`),
+    check('counter_returns_cash_chk', sql`${t.cashPaid} >= 0 AND ${t.cashPaid} <= ${t.amount} AND (${t.cashPaid} = 0 OR ${t.shiftId} IS NOT NULL)`),
+  ],
+);
+
+/**
+ * The closing difference of a shift on its way to the books: written at the close in the same transaction as the Z number, posted
+ * afterwards (and retried) so that a set-up gap in the accounts never stops a till from being closed. Kept apart from `shifts`, which
+ * never changes once closed. `amount` is counted less expected: negative is short.
+ */
+export const shiftVariancePostings = pgTable(
+  'shift_variance_postings',
+  {
+    shiftId: uuid('shift_id').primaryKey().references(() => shifts.id, { onDelete: 'restrict' }),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    status: text('status').$type<'pending' | 'posted'>().notNull().default('pending'),
+    /** Why it has not been posted yet, in words (an account not chosen, a period closed). */
+    note: text('note'),
+    attempts: integer('attempts').notNull().default(0),
+    registerId: text('register_id'),
+    bankEntryId: bigint('bank_entry_id', { mode: 'number' }),
+    postedAt: timestamp('posted_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('shift_variance_postings_due_idx').on(t.createdAt).where(sql`${t.status} = 'pending'`),
+    check('shift_variance_postings_status_chk', sql`${t.status} IN ('pending', 'posted')`),
+    check('shift_variance_postings_amount_chk', sql`${t.amount} <> 0`),
+  ],
+);
+
+/** Whether a company invoices part of an order (docs/architecture/partial-billing.md). Off by default; changed only with its own permission. */
+export const billingSettings = pgTable('billing_settings', {
+  companyId: uuid('company_id').primaryKey().references(() => companySettings.id, { onDelete: 'cascade' }),
+  partialBilling: boolean('partial_billing').notNull().default(false),
   version: integer('version').notNull().default(1),
   updatedBy: text('updated_by').notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * A part invoice: some lines of an order, by quantity, as a tax invoice of its own (its own number from the tax invoice series, its own
+ * signing). Numbered 1, 2, 3 for the order. A billing is a document: it is never changed (only its KRA status is written, by signing).
+ */
+export const orderBillings = pgTable(
+  'order_billings',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    orderId: text('order_id').notNull().references(() => orders.id, { onDelete: 'restrict' }),
+    sequence: integer('sequence').notNull(),
+    invoiceNumber: text('invoice_number').notNull(),
+    goodsAmount: numeric('goods_amount', { precision: 14, scale: 2 }).notNull(),
+    /** What this invoice takes beyond its goods: the delivery charge and any rounding, on the invoice that finishes the order. */
+    remainderAmount: numeric('remainder_amount', { precision: 14, scale: 2 }).notNull().default('0'),
+    taxAmount: numeric('tax_amount', { precision: 14, scale: 2 }).notNull(),
+    totalAmount: numeric('total_amount', { precision: 14, scale: 2 }).notNull(),
+    finishesOrder: boolean('finishes_order').notNull().default(false),
+    kraStatus: text('kra_status').notNull().default('not_applicable'),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('order_billings_order_sequence_uidx').on(t.orderId, t.sequence),
+    uniqueIndex('order_billings_invoice_number_uidx').on(t.invoiceNumber),
+    index('order_billings_company_created_idx').on(t.companyId, t.createdAt),
+    check('order_billings_amounts_chk', sql`${t.goodsAmount} > 0 AND ${t.remainderAmount} >= 0 AND ${t.totalAmount} = ${t.goodsAmount} + ${t.remainderAmount}`),
+  ],
+);
+
+export const orderBillingLines = pgTable(
+  'order_billing_lines',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    billingId: uuid('billing_id').notNull().references(() => orderBillings.id, { onDelete: 'restrict' }),
+    orderItemId: uuid('order_item_id').notNull().references(() => orderItems.id, { onDelete: 'restrict' }),
+    productId: text('product_id').notNull(),
+    description: text('description').notNull(),
+    quantity: quantity('quantity').notNull(),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+  },
+  (t) => [
+    index('order_billing_lines_billing_idx').on(t.billingId),
+    index('order_billing_lines_item_idx').on(t.orderItemId),
+    uniqueIndex('order_billing_lines_billing_item_uidx').on(t.billingId, t.orderItemId),
+    check('order_billing_lines_chk', sql`${t.quantity} > 0 AND ${t.amount} >= 0`),
+  ],
+);
+
+/** Whether tills may keep selling with no connection, and the limits that keep it honest (docs/architecture/offline-selling.md). Off by default; changed only with its own permission. */
+export const offlineSellingSettings = pgTable('offline_selling_settings', {
+  companyId: uuid('company_id').primaryKey().references(() => companySettings.id, { onDelete: 'cascade' }),
+  enabled: boolean('enabled').notNull().default(false),
+  /** The most (in KES) that may be sold offline in one shift. */
+  maxPerShift: numeric('max_per_shift', { precision: 14, scale: 2 }).notNull().default('50000'),
+  /** The longest (in hours) an offline sale may wait before it is sent. */
+  maxHours: integer('max_hours').notNull().default(24),
+  version: integer('version').notNull().default(1),
+  updatedBy: text('updated_by').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** The secret a till signs its offline sales with, made while the shift is online and kept with the shift: a sale changed after it was signed is refused. */
+export const offlineShiftKeys = pgTable('offline_shift_keys', {
+  shiftId: uuid('shift_id').primaryKey().references(() => shifts.id, { onDelete: 'restrict' }),
+  companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+  secret: text('secret').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * A sale rung up with no connection, as it arrived: kept whole (`payload`) whatever became of it. `accepted` made a normal cash sale,
+ * `needs_review` did too but something differs (the price, the product no longer offered), `parked` could not be made yet (the stock was
+ * not there: it is kept until the shortage is put right), `rejected` was refused (changed after it was signed, over a limit, into a shift
+ * that is closed), `discarded` was given up by a supervisor with a reason.
+ */
+export const offlineSales = pgTable(
+  'offline_sales',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    shiftId: uuid('shift_id').notNull().references(() => shifts.id, { onDelete: 'restrict' }),
+    saleKey: text('sale_key').notNull(),
+    deviceRef: text('device_ref').notNull(),
+    /** The time on the till's clock when it was sold: kept beside the server's, never used for order. */
+    deviceTime: timestamp('device_time', { withTimezone: true }).notNull(),
+    receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+    total: numeric('total', { precision: 14, scale: 2 }).notNull(),
+    status: text('status').$type<'accepted' | 'needs_review' | 'parked' | 'rejected' | 'discarded'>().notNull(),
+    flags: jsonb('flags').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    reason: text('reason'),
+    orderId: text('order_id').references(() => orders.id, { onDelete: 'restrict' }),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('offline_sales_key_uidx').on(t.saleKey),
+    index('offline_sales_shift_idx').on(t.shiftId, t.status),
+    index('offline_sales_review_idx').on(t.companyId, t.receivedAt).where(sql`${t.status} IN ('needs_review', 'parked', 'rejected')`),
+    check('offline_sales_status_chk', sql`${t.status} IN ('accepted', 'needs_review', 'parked', 'rejected', 'discarded')`),
+    check('offline_sales_total_chk', sql`${t.total} > 0`),
+  ],
+);
+
+export const shiftSettings = pgTable(
+  'shift_settings',
+  {
+    companyId: uuid('company_id')
+      .primaryKey()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    toleranceAmount: numeric('tolerance_amount', { precision: 14, scale: 2 }).notNull().default('100'),
+    tolerancePercent: numeric('tolerance_percent', { precision: 7, scale: 3 }).notNull().default('1'),
+    /** The account a till's difference at the close is written to (usually a cash over/short expense). */
+    varianceGlAccountId: uuid('variance_gl_account_id').references(() => glAccounts.id, { onDelete: 'restrict' }),
+    /** How a difference beyond the allowance is closed: by a supervisor on the spot, or through the approval queue. */
+    supervisorClose: text('supervisor_close').$type<'direct' | 'approval'>().notNull().default('direct'),
+    version: integer('version').notNull().default(1),
+    updatedBy: text('updated_by').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+},
+  (t) => [check('shift_settings_supervisor_close_chk', sql`${t.supervisorClose} IN ('direct', 'approval')`)],
+);
 
 /**
  * How each selling document type (sales order, sales invoice, credit sale, cash sale) behaves for this company: the credit check, credit
@@ -7424,18 +7656,24 @@ export const orderTenders = pgTable(
     orderId: text('order_id')
       .notNull()
       .references(() => orders.id, { onDelete: 'restrict' }),
-    kind: text('kind').$type<'gift_card' | 'loyalty_points' | 'wallet'>().notNull(),
+    kind: text('kind').$type<'gift_card' | 'loyalty_points' | 'wallet' | 'payment_method'>().notNull(),
     /** The card, or the customer whose points were spent. */
     reference: text('reference').notNull(),
     amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
     points: bigint('points', { mode: 'number' }),
     /** What the points were worth in the books' currency when they were spent (an order in another currency). */
     baseAmount: numeric('base_amount', { precision: 18, scale: 4 }),
+    /** A counter tender (`payment_method`): what kind of method it was when taken (cash, mobile money, card), the cash handed over and the change given back, and the M-Pesa code or card slip. `amount` is what the sale took, net of change. */
+    methodKind: text('method_kind'),
+    handedOver: numeric('handed_over', { precision: 14, scale: 2 }),
+    changeDue: numeric('change_due', { precision: 14, scale: 2 }),
+    externalReference: text('external_reference'),
     actor: text('actor').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index('order_tenders_order_idx').on(t.orderId),
+    uniqueIndex('order_tenders_counter_method_uidx').on(t.orderId, t.reference).where(sql`${t.kind} = 'payment_method'`),
     index('order_tenders_created_idx').on(t.createdAt),
   ],
 );

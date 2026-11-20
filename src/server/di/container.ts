@@ -25,6 +25,10 @@ import { PreparationService } from '@/server/domains/pricing/preparation-service
 import { PackageGroupService } from '@/server/domains/pricing/package-group-service';
 import { SalesInvoiceService } from '@/server/domains/selling/sales-invoice-service';
 import { OrderDocumentsService } from '@/server/domains/selling/order-documents-service';
+import { CounterReturnService } from '@/server/domains/selling/cash-sales/counter-return-service';
+import { OfflineSaleService } from '@/server/domains/selling/offline/offline-sale-service';
+import { PartialBillingService } from '@/server/domains/selling/partial-billing-service';
+import { CashSaleService } from '@/server/domains/selling/cash-sales/cash-sale-service';
 import { ShiftService } from '@/server/domains/selling/shifts/shift-service';
 import { SalesOrderService } from '@/server/domains/selling/sales-order-service';
 import { SellingSettingsService } from '@/server/domains/selling/selling-settings-service';
@@ -394,6 +398,10 @@ export interface AppContainer {
   businessTime: BusinessTimeService;
   salesOrders: SalesOrderService;
   shifts: ShiftService;
+  cashSales: CashSaleService;
+  partialBilling: PartialBillingService;
+  offlineSales: OfflineSaleService;
+  counterReturns: CounterReturnService;
   orderDocuments: OrderDocumentsService;
   salesInvoices: SalesInvoiceService;
   packageShop: PackageShopService;
@@ -624,9 +632,13 @@ export function getContainer(): AppContainer {
   const packageShop = new PackageShopService(drizzleDb, packageConfig, deliveryServices.stockSettings, deliveryServices.stockAvailability);
   const packageOrders = new PackageOrderService(drizzleDb, packageShop);
   const orderDocuments = new OrderDocumentsService(drizzleDb);
-  const shifts = new ShiftService(drizzleDb, decisionLog, reasonCodes, numbering);
+  const shifts = new ShiftService(drizzleDb, decisionLog, reasonCodes, numbering, approvals, async () => (await import('@/server/di/container')).getContainer().finance);
   const salesInvoices = new SalesInvoiceService(drizzleDb, invoices);
   const salesOrders = new SalesOrderService(drizzleDb, sellingSettings, packageOrders, customers, branches, customerCreditSettings, finance.customerLedger);
+  const counterReturns = new CounterReturnService(drizzleDb, shifts, async () => (await import('@/server/di/container')).getContainer());
+  const partialBilling = new PartialBillingService(drizzleDb, decisionLog, reasonCodes, numbering, async (billingId) => await (await import('@/server/di/container')).getContainer().kraSigning.processOrderBillingDocument({ billingId }));
+  const cashSales = new CashSaleService(drizzleDb, decisionLog, shifts, salesOrders, async () => (await import('@/server/di/container')).getContainer());
+  const offlineSales = new OfflineSaleService(drizzleDb, decisionLog, reasonCodes, shifts, cashSales);
   const preparation = new PreparationService(drizzleDb);
   const packageGroups = new PackageGroupService(drizzleDb, packageShop, packageOrders);
   const packageQuoteRequests = new PackageQuoteRequestService(drizzleDb, packageShop, packageOrders);
@@ -806,6 +818,10 @@ export function getContainer(): AppContainer {
     businessTime,
     salesOrders,
     shifts,
+    cashSales,
+    partialBilling,
+    offlineSales,
+    counterReturns,
     orderDocuments,
     salesInvoices,
     packageShop,

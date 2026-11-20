@@ -382,4 +382,68 @@ export class CashCountService {
       return { id, number, difference: fromCents(diff), gl: live };
     });
   }
+
+  /**
+   * Writes a till shift's closing difference to the books: what the drawer held against what it should have held. A short drawer
+   * is an expense (debit the over/short account, credit the cash), an over drawer is income (the other way round), and the cash
+   * account's own ledger moves by the difference so it agrees with what was counted. Written once for a shift (a repeat finds it).
+   */
+  async postShiftDifference(
+    ctx: FinanceContext,
+    p: { shiftId: string; zNumber: string; bankAccountId: string; differenceCents: number; varianceGlAccountId: string; date: string; permissions?: PostingPermissions },
+  ): Promise<{ registerId: string | null; bankEntryId: number; gl: boolean }> {
+    const permissions = p.permissions ?? NO_SPECIAL_PERMISSIONS;
+    if (p.differenceCents === 0) throw new FinanceError('NOTHING_TO_POST', 'The till was right: there is no difference to write to the books.');
+    return await this.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT 1 FROM bank_accounts WHERE id = ${p.bankAccountId}::uuid AND company_id = ${ctx.companyId}::uuid FOR UPDATE`);
+      const [done] = await tx
+        .select({ id: bankLedgerEntries.id, registerId: bankLedgerEntries.registerId })
+        .from(bankLedgerEntries)
+        .where(and(eq(bankLedgerEntries.companyId, ctx.companyId), eq(bankLedgerEntries.documentType, 'shift_difference'), eq(bankLedgerEntries.documentId, p.shiftId)));
+      if (done !== undefined) return { registerId: done.registerId, bankEntryId: done.id, gl: done.registerId !== null };
+      const account = await this.cashAccount(tx, ctx.companyId, p.bankAccountId);
+      const [gl] = await tx.select().from(glAccounts).where(and(eq(glAccounts.companyId, ctx.companyId), eq(glAccounts.id, p.varianceGlAccountId)));
+      if (gl?.type !== 'posting' || gl.blocked) throw new FinanceError('VARIANCE_ACCOUNT_INVALID', 'The account chosen for till differences is not an open posting account. Choose another in Settings, Registers.');
+      const choices = await this.statements.chargeGlChoices(ctx.companyId, account.id);
+      if (choices.length === 0) throw new FinanceError('NO_METHOD', `No payment method pays into ${account.code}, so there is no G/L account to write the difference against. Add one under Settings, Payments.`);
+      const cashGl = pickCashGl(choices, undefined);
+      if (cashGl === undefined) throw new FinanceError('GL_CHOICE_NEEDED', `Several G/L accounts are used for ${account.code}, so the one the till's cash is held in cannot be told. Give the account one cash G/L account.`);
+      const issues = await this.engine.dateIssues(tx, ctx.companyId, p.date, permissions);
+      if (issues.length > 0) throw new FinanceError(issues[0].code, issues.map((i) => i.message).join(' '));
+      const [s] = await tx.select().from(financeSettings).where(eq(financeSettings.companyId, ctx.companyId));
+      const live = s?.salesGlGoLive != null && p.date >= s.salesGlGoLive;
+      const abs = Math.abs(p.differenceCents);
+      const short = p.differenceCents < 0;
+      let registerId: string | null = null;
+      if (live) {
+        if (account.currency.toUpperCase() !== s.baseCurrency) throw new FinanceError('CURRENCY_MISMATCH', `${account.code} holds ${account.currency}: a till's cash difference is written in ${s.baseCurrency}. Use a ${s.baseCurrency} cash account for the till.`);
+        const req: PostingRequest = {
+          companyId: ctx.companyId,
+          idempotencyKey: `shift_difference:${p.shiftId}`,
+          postingDate: p.date,
+          documentType: 'shift_difference',
+          documentNo: p.zNumber,
+          description: `Till shift ${p.zNumber}: ${short ? 'short' : 'over'} ${fromCents(abs)}`.slice(0, 200),
+          currency: s.baseCurrency,
+          rate: '1',
+          rateSource: 'base',
+          lines: [
+            { accountId: short ? gl.id : cashGl.glId, debit: fromCents(abs), credit: '0', description: short ? `Till ${p.zNumber} short` : `Till ${p.zNumber} over`, ...(short ? {} : { sourceLedger: 'bank' as const, sourceEntryId: account.id }) },
+            { accountId: short ? cashGl.glId : gl.id, debit: '0', credit: fromCents(abs), description: short ? `Till ${p.zNumber} short` : `Till ${p.zNumber} over`, ...(short ? { sourceLedger: 'bank' as const, sourceEntryId: account.id } : {}) },
+          ],
+          chainKey: 'general',
+          origin: ctx.origin,
+          source: { type: 'shift', id: p.shiftId },
+          postedBy: 'engine',
+        };
+        registerId = (await this.engine.post(req, permissions, tx)).registerId;
+      }
+      const [entry] = await tx
+        .insert(bankLedgerEntries)
+        .values({ companyId: ctx.companyId, bankAccountId: account.id, glAccountId: cashGl.glId, postingDate: p.date, documentType: 'shift_difference', documentNo: p.zNumber, documentId: p.shiftId, description: `Till shift ${p.zNumber} ${short ? 'short' : 'over'}`.slice(0, 300), amount: fromCents(p.differenceCents), currency: account.currency, registerId, createdBy: ctx.actor.id })
+        .returning({ id: bankLedgerEntries.id });
+      await this.decisions.record({ companyId: ctx.companyId, subject: { type: 'shift', id: p.shiftId }, action: 'finance.shift_difference_posted', actor: ctx.actor, inputs: { origin: ctx.origin, account: account.code, date: p.date }, outcome: { zNumber: p.zNumber, difference: fromCents(p.differenceCents), gl: live } }, tx);
+      return { registerId, bankEntryId: required(entry).id, gl: live };
+    });
+  }
 }

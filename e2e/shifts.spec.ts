@@ -36,6 +36,21 @@ test.describe('till shifts', () => {
     await expect(tolerance.getByLabel('An amount (KES)')).toHaveValue('100');
     await noNativeSelect(page);
 
+    // The till's cash account and the account for differences, so a difference at the close has somewhere to be written.
+    await page.getByRole('button', { name: `Change ${tillName}` }).click();
+    const edit = page.getByRole('form', { name: `Change ${tillName}` });
+    await pickFirst(page, edit.getByRole('combobox', { name: /Cash account/ }));
+    await edit.getByRole('combobox', { name: /Reason/ }).click();
+    await page.getByRole('option').first().click();
+    await edit.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByText('Till saved.')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('register').filter({ hasText: tillName })).toContainText('cash kept in');
+    await pickFirst(page, tolerance.getByRole('combobox', { name: /Account for till differences/ }));
+    await tolerance.getByRole('combobox', { name: /Reason/ }).click();
+    await page.getByRole('option').first().click();
+    await tolerance.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByText('Saved. It applies to the next shift that is closed.')).toBeVisible({ timeout: 30_000 });
+
     // Open a shift on it with the float counted: 5 × 1000 and 4 × 500 = 7,000.
     await gotoAdmin(page, '/admin/shifts', 'Shifts');
     const open = page.getByRole('form', { name: 'Open a shift' });
@@ -87,6 +102,7 @@ test.describe('till shifts', () => {
     await expect(z).toContainText('Counted at the close');
     await expect(z).toContainText('gave a customer the wrong change');
     await expect(z).toContainText(tillName);
+    await expect(z.getByTestId('difference-posting')).toContainText(/books/);
 
     // It is in the history with its Z number and the difference.
     const row = page.getByTestId('shift-row').filter({ hasText: tillName }).first();
@@ -94,5 +110,71 @@ test.describe('till shifts', () => {
     await expect(row).toContainText('Difference');
     await noHorizontalScroll(page);
     await noNativeSelect(page);
+  });
+
+  test('the company chooses whether a till out by too much is closed by a supervisor or goes to approval, and both ways work', async ({ page }, testInfo) => {
+    test.slow();
+    const tag = `${String(Date.now()).slice(-6)}${testInfo.project.name === 'phone' ? 'p' : 'd'}`;
+    const tillName = `Approval till ${tag}`;
+    const chooseMode = async (label: 'A supervisor closes it' | 'It goes to approval', help: RegExp) => {
+      await gotoAdmin(page, '/admin/settings/registers', 'Registers');
+      const form = page.getByRole('form', { name: 'How far a till may be out' });
+      await expect(async () => {
+        await form.locator('label').filter({ hasText: new RegExp(`^${label}$`) }).click();
+        await expect(page.getByTestId('supervisor-close-help')).toContainText(help, { timeout: 3000 });
+      }).toPass({ timeout: 60_000 });
+      await form.getByRole('combobox', { name: /Reason/ }).click();
+      await page.getByRole('option').first().click();
+      await form.getByRole('button', { name: 'Save' }).click();
+      await expect(page.getByText('Saved. It applies to the next shift that is closed.')).toBeVisible({ timeout: 30_000 });
+      await noNativeSelect(page);
+      await noHorizontalScroll(page);
+    };
+
+    await gotoAdmin(page, '/admin/settings/registers', 'Registers');
+    await expect(async () => {
+      await page.getByRole('button', { name: 'Add a till' }).click();
+      await expect(page.getByRole('form', { name: 'Add a till' })).toBeVisible({ timeout: 3000 });
+    }).toPass({ timeout: 60_000 });
+    const add = page.getByRole('form', { name: 'Add a till' });
+    await add.getByLabel('Name of the till').fill(tillName);
+    await pickFirst(page, add.getByRole('combobox', { name: /Branch/ }));
+    await add.getByRole('combobox', { name: /Reason/ }).click();
+    await page.getByRole('option').first().click();
+    await add.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByText('Till added.')).toBeVisible({ timeout: 30_000 });
+
+    // Approval chosen, and no workflow set up for it: a close beyond the allowance is refused in words and the shift stays open.
+    await chooseMode('It goes to approval', /approval workflow/);
+    await gotoAdmin(page, '/admin/shifts', 'Shifts');
+    const open = page.getByRole('form', { name: 'Open a shift' });
+    await expect(open).toBeVisible({ timeout: 60_000 });
+    await expect(async () => {
+      const till = open.getByRole('combobox', { name: /Till/ });
+      await till.click();
+      await till.fill(tillName);
+      await page.getByRole('option', { name: new RegExp(tillName) }).first().click({ timeout: 4000 });
+    }).toPass({ timeout: 60_000 });
+    await open.getByLabel('How many 1000 shilling notes').fill('5');
+    await open.getByRole('button', { name: 'Open shift' }).click();
+    await expect(page.getByTestId('shift-notice')).toContainText('Shift opened.', { timeout: 30_000 });
+    const close = page.getByRole('form', { name: 'Close the shift' });
+    await expect(close).toContainText('goes to approval');
+    await close.getByLabel('How many 1000 shilling notes').fill('1');
+    await close.getByLabel('Reason for any difference').fill('counted in a hurry');
+    await close.getByRole('button', { name: 'Close shift' }).click();
+    await expect(close.getByTestId('shift-problem')).toContainText('no approval workflow covers it', { timeout: 30_000 });
+    await expect(page.getByTestId('x-report')).toBeVisible();
+
+    // A supervisor closing on the spot is the other choice: the same count now closes the shift.
+    await chooseMode('A supervisor closes it', /supervisor permission/);
+    await gotoAdmin(page, '/admin/shifts', 'Shifts');
+    const again = page.getByRole('form', { name: 'Close the shift' });
+    await expect(again).toBeVisible({ timeout: 60_000 });
+    await again.getByLabel('How many 1000 shilling notes').fill('1');
+    await again.getByLabel('Reason for any difference').fill('counted in a hurry');
+    await again.getByRole('button', { name: 'Close shift' }).click();
+    await expect(page.getByTestId('shift-notice')).toContainText('Shift closed. Z report', { timeout: 30_000 });
+    await expect(page.getByTestId('z-report')).toContainText('counted in a hurry');
   });
 });

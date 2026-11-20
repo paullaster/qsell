@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { partInvoicePdfAction } from '@/server/domains/selling/partial-billing-actions';
 import { salesInvoiceDetailAction, salesInvoicePdfAction, sendSalesInvoiceAction } from '@/server/domains/selling/sales-invoice-actions';
 import type { SalesInvoiceDetail as Detail } from '@/server/domains/selling/sales-invoice-service';
 import { INVOICE_KIND_WORDS, PAYMENT_WORDS, SIGNING_WORDS } from '@/server/domains/selling/domain/invoice-status';
@@ -44,7 +45,7 @@ export function SalesInvoiceDetail({ invoiceNumber, canSend, onSent }: { invoice
   const download = async () => {
     setBusy(true);
     setMessage(null);
-    const r = await salesInvoicePdfAction(detail.orderId, detail.kind);
+    const r = detail.kind === 'tax_invoice_part' ? await partInvoicePdfAction(detail.billingId) : await salesInvoicePdfAction(detail.orderId, detail.kind);
     setBusy(false);
     if (!r.ok) {
       setMessage({ kind: 'error', text: r.error });
@@ -86,7 +87,7 @@ export function SalesInvoiceDetail({ invoiceNumber, canSend, onSent }: { invoice
       {message === null ? null : <p role={message.kind === 'error' ? 'alert' : 'status'} className={message.kind === 'error' ? 'text-red-700' : 'text-emerald-700'}>{message.text}</p>}
       {canSend ? (
         <div className="flex flex-wrap gap-2">
-          <button type="button" className={buttonClass} disabled={busy || detail.customerEmail === ''} onClick={() => void send()}>{busy ? 'Working…' : 'Send again by email'}</button>
+          {detail.kind === 'tax_invoice_part' ? null : <button type="button" className={buttonClass} disabled={busy || detail.customerEmail === ''} onClick={() => void send()}>{busy ? 'Working…' : 'Send again by email'}</button>}
           <button type="button" className={buttonClass} disabled={busy} onClick={() => void download()}>Download PDF</button>
         </div>
       ) : null}

@@ -1,3 +1,4 @@
+import { isOfferedIn, notOfferedRefusal } from '@/lib/offered-in';
 import { packageOnlyRefusal } from '@/lib/package-only';
 import { and, asc, desc, eq, ilike, inArray, or, sql, type SQL } from 'drizzle-orm';
 import { getContainer } from '@/server/di/container';
@@ -164,6 +165,7 @@ export class SectionTemplateService {
         throw new Error(`Item ${String(index + 1)} is missing or is not sellable.`);
       }
       if (product.soldOnlyInPackages === true) throw new Error(packageOnlyRefusal(product.name));
+      if (!isOfferedIn(product.offeredIn, 'quote')) throw new Error(notOfferedRefusal(product.name, 'quote'));
       return {
         productId: product.id,
         lineNumber: (index + 1) * 10000,

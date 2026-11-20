@@ -9,6 +9,7 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentProvider, string> = {
   card_direct: 'Card',
   on_account: 'On account',
   pay_on_delivery: 'Pay on delivery',
+  counter: 'Paid at the counter',
 };
 
 /** The methods a quote can be paid by; "on account" only for a customer with a credit account. */

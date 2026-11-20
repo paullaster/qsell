@@ -1,3 +1,4 @@
+import { isOfferedIn, notOfferedRefusal, offerTypeOfModule } from '@/lib/offered-in';
 import { packageAsLineRefusal, packageOnlyRefusal } from '@/lib/package-only';
 import { creditDaysFor, stockReleaseFor, type SellingSettings } from '@/server/domains/selling/selling-documents';
 import type { RawPick } from '@/server/domains/pricing/domain/packages';
@@ -176,6 +177,15 @@ export const OrderWriteService = {
     selling?: SellingSettings;
     /** The quote this order is made from; kept on the order so it can show where it came from. */
     sourceQuoteId?: string;
+    /** The till shift a counter sale is rung up in, and the screen's key for this attempt (a retry finds the order made instead of making another). */
+    shiftId?: string;
+    idempotencyKey?: string;
+    /** Looks at the priced order before anything is held or saved: a message refuses it (a counter sale whose payment does not cover the total). */
+    checkTotal?: (totals: { subtotal: number; tax: number; totalAmount: number }) => string | null;
+    /** Prices the order and stops there: nothing is held, saved or sent. For a screen that shows the total as lines are added. */
+    previewOnly?: boolean;
+    /** The sale was rung up already (offline at the counter), so where a product is offered is not asked again: the sale is kept and flagged instead. */
+    skipOfferedCheck?: boolean;
     /** Hold this one document's stock until it is paid, where its kind allows it (the staff member switched it on). */
     holdUntilPaid?: boolean;
     /**
@@ -203,7 +213,7 @@ export const OrderWriteService = {
           global: Record<string, string>;
           shortcut: Record<string, string>;
         };
-  }): Promise<{ success: boolean; order?: Order; error?: string; /** Why it was refused, for the checkout attempt's record. */ code?: CheckoutRefusal }> {
+  }): Promise<{ success: boolean; order?: Order; error?: string; /** Why it was refused, for the checkout attempt's record. */ code?: CheckoutRefusal; /** What a `previewOnly` call priced. */ preview?: { subtotal: number; tax: number; totalAmount: number } }> {
     // A shopper may leave the email out; whatever is given is checked here, not trusted from the browser.
     const contact = readOptionalEmail(raw.customerEmail);
     if (!contact.ok) return { success: false, error: contact.error, code: 'invalid_input' };
@@ -356,6 +366,11 @@ export const OrderWriteService = {
       // A package-only product is sold by its package, never as a line of its own (also not from a quote or by staff).
       if (prod.soldOnlyInPackages === true) {
         return { success: false, error: packageOnlyRefusal(prod.name), code: 'not_for_sale' };
+      }
+      // Where it is offered: a staff document refuses a product that is not offered in it (an order made from a quote was checked when the quote was).
+      const offerType = offerTypeOfModule(params.salesModule, params.paymentMethod === 'on_account');
+      if (offerType !== null && params.sourceQuoteId === undefined && params.skipOfferedCheck !== true && !isOfferedIn(prod.offeredIn, offerType)) {
+        return { success: false, error: notOfferedRefusal(prod.name, offerType), code: 'not_for_sale' };
       }
       const quoted = quotedFor(item, index);
       if (!prod.isSellable && !quoted) {
@@ -717,6 +732,11 @@ export const OrderWriteService = {
       const refusal = await doorPayments.checkPayOnDelivery((await settingsForDoor.ensureSeeded()).id, { deliveryMethod: params.delivery?.method ?? null, currency: params.currency, total: totalAmount });
       if (refusal !== null) return { success: false, error: refusal, code: 'pay_on_delivery' };
     }
+    if (params.checkTotal !== undefined) {
+      const refusal = params.checkTotal({ subtotal, tax: orderTax, totalAmount });
+      if (refusal !== null) return { success: false, error: refusal, code: 'invalid_input' };
+    }
+    if (params.previewOnly === true) return { success: true, preview: { subtotal, tax: orderTax, totalAmount } };
     // The branch that processes a delivered order is the one chosen for it; stock is held from it first.
     const branchId = delivered?.branch.id ?? params.branchId;
     const orderId =
@@ -752,6 +772,8 @@ export const OrderWriteService = {
     const order: Order = {
       id: orderId,
       ...(params.sourceQuoteId === undefined ? {} : { sourceQuoteId: params.sourceQuoteId }),
+      ...(params.shiftId === undefined ? {} : { shiftId: params.shiftId }),
+      ...(params.idempotencyKey === undefined ? {} : { idempotencyKey: params.idempotencyKey }),
       orderNumber: explicitOrderNumber ?? '',
       userId: resolvedUserId,
       customerName: params.customerName,

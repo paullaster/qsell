@@ -302,19 +302,45 @@ export class SalesPostingService {
     let gift = 0;
     let points = 0;
     let wallet = 0;
+    // Counter tenders (cash, M-Pesa, card taken at the till): each went through its own payment method, so each lands in that method's account.
+    const counterRows = tenders.filter((t) => t.kind === 'payment_method');
+    let counter = counterRows.reduce((n, t) => n + toCents(t.amount), 0);
     for (const t of tenders) {
       if (t.kind === 'gift_card') gift += toCents(t.amount);
       else if (t.kind === 'wallet') wallet += toCents(t.amount);
-      else points += toCents(t.amount);
+      else if (t.kind === 'loyalty_points') points += toCents(t.amount);
     }
     // A payment can be smaller than the order (part was tendered earlier); tenders count first.
     gift = Math.min(gift, amountCents);
     points = Math.min(points, amountCents - gift);
     wallet = Math.min(wallet, amountCents - gift - points);
-    const bankCents = amountCents - gift - points - wallet;
+    counter = Math.min(counter, amountCents - gift - points - wallet);
+    const bankCents = amountCents - gift - points - wallet - counter;
     const isForeign = order.currency.toUpperCase() !== s.baseCurrency;
     const carried: TenderCarry[] = [];
     const settled: { accountId: string; cents: number; description: string }[] = [];
+    for (const t of counterRows) {
+      const [m] = await tx
+        .select({ bankId: bankAccounts.id, gl: paymentMethods.glAccountId, name: paymentMethods.name })
+        .from(paymentMethods)
+        .innerJoin(bankAccounts, eq(bankAccounts.id, paymentMethods.balancingBankAccountId))
+        .where(and(eq(paymentMethods.companyId, row.companyId), eq(paymentMethods.id, t.reference)))
+        .limit(1);
+      if (!m) throw new Error(`The payment method for the counter payment on order ${label} no longer exists. Restore it under Settings → Payments.`);
+      const cents = toCents(t.amount);
+      await tx.insert(bankLedgerEntries).values({
+        companyId: row.companyId,
+        bankAccountId: m.bankId,
+        glAccountId: m.gl,
+        postingDate: row.eventDate,
+        documentType,
+        documentNo: label,
+        description: `Sale ${label} — ${m.name}`,
+        amount: fromCents(cents),
+        currency: order.currency.toUpperCase(),
+      });
+      settled.push({ accountId: m.gl, cents, description: `Received for ${label} (${m.name})` });
+    }
     if (bankCents > 0) {
       const find = (branchOnly: boolean) =>
         tx

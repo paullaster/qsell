@@ -1,3 +1,4 @@
+import { readOfferedIn } from '@/lib/offered-in';
 import { packageOnlyProblem } from '@/lib/package-only';
 import { and, eq, isNull, or } from 'drizzle-orm';
 import { getContainer } from '@/server/di/container';
@@ -63,6 +64,13 @@ function classificationWriteProblem(error: unknown): SettingsError | null {
   if (info.code === '23505' && info.constraint_name === 'item_types_code_uidx') return new SettingsError('Another business classification already has that tax authority code.');
   if (typeof info.message === 'string' && info.message.startsWith('item_type_in_use_as_packaging')) return new SettingsError('Some products of this classification are offered as checkout packaging, which must be sold. Stop offering them as packaging first.');
   return null;
+}
+
+/** Where a product is offered, as the server accepts it: only known document types. */
+function offeredInOrThrow(raw: unknown): string[] {
+  const read = readOfferedIn(raw);
+  if (!read.ok) throw new SettingsError(read.error);
+  return read.value;
 }
 
 export class CatalogService {
@@ -240,6 +248,7 @@ export class CatalogService {
       // A package-only product is never in the web shop; the database refuses the other combination.
       showOnWebShop: soldOnlyInPackages ? false : (productData.showOnWebShop ?? true),
       soldOnlyInPackages,
+      ...(productData.offeredIn === undefined ? {} : { offeredIn: offeredInOrThrow(productData.offeredIn) }),
       inventoryKind,
       isCheckoutPackaging,
       baseUnitId: unit.id,
@@ -407,6 +416,7 @@ export class CatalogService {
     const nextPrice = updates.price ?? existing.price;
     const nextSellable = productSellability({ classificationSellable, kind: nextInventoryKind, price: nextPrice });
     if (nextSellable !== existing.isSellable) updates.isSellable = nextSellable;
+    if (updates.offeredIn !== undefined) updates.offeredIn = offeredInOrThrow(updates.offeredIn);
     const nextSoldOnly = updates.soldOnlyInPackages ?? existing.soldOnlyInPackages ?? false;
     const packageOnlyIssue = packageOnlyProblem({ soldOnlyInPackages: nextSoldOnly, isCheckoutPackaging: nextIsPackaging, isSellable: nextSellable });
     if (packageOnlyIssue !== null) throw new SettingsError(packageOnlyIssue);

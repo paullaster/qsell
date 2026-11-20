@@ -88,6 +88,19 @@ export const TRIGGERS: TriggerDefinition[] = [
     ],
   },
   {
+    code: 'shift.close_requested',
+    module: 'sales',
+    documentKind: 'shift_close',
+    label: 'Till shift closed with a difference beyond the allowance',
+    fields: [
+      ...common,
+      { path: 'variance', label: 'Difference (counted minus expected; negative is short)', type: 'number' },
+      { path: 'absoluteVariance', label: 'Size of the difference', type: 'number' },
+      { path: 'expectedCash', label: 'What the till should hold', type: 'number' },
+      { path: 'registerId', label: 'Till', type: 'text' },
+    ],
+  },
+  {
     code: 'refund.payout',
     module: 'finance',
     documentKind: 'refund',
@@ -281,6 +294,7 @@ export const TRIGGERS: TriggerDefinition[] = [
 export const DOCUMENT_KIND_LABELS: Record<string, string> = {
   sales_order: 'Sales orders',
   sales_quote: 'Quotes',
+  shift_close: 'Till shift closes',
   credit_note: 'Credit notes',
   refund: 'Refunds',
   stock_adjustment: 'Stock adjustments',

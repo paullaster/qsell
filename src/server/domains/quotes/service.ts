@@ -1,3 +1,4 @@
+import { isOfferedIn, notOfferedRefusal } from '@/lib/offered-in';
 import { packageOnlyRefusal } from '@/lib/package-only';
 import { addressing, readSources, type RouteSource } from '@/server/domains/email-routing/email-routes';
 import { has, required } from '@/lib/values';
@@ -493,6 +494,7 @@ export class SalesQuoteService {
       if (!product || !product.isSellable)
         throw new Error('A template item is missing or is not sellable.');
       if (product.soldOnlyInPackages === true) throw new Error(packageOnlyRefusal(product.name));
+      if (!isOfferedIn(product.offeredIn, 'quote')) throw new Error(notOfferedRefusal(product.name, 'quote'));
       if (!Number.isFinite(line.quantity) || line.quantity <= 0)
         throw new Error(`${product.name} needs a quantity greater than zero.`);
       this.assertPercent(line.discountPercent, `${product.name} discount`);
@@ -1181,6 +1183,7 @@ export class SalesQuoteService {
       if (!product || product.isSellable === false)
         throw new Error('A selected item is no longer sellable.');
       if (product.soldOnlyInPackages === true) throw new Error(packageOnlyRefusal(product.name));
+      if (!isOfferedIn(product.offeredIn, 'quote')) throw new Error(notOfferedRefusal(product.name, 'quote'));
       const result = engine.get(index);
       if (result && result.unitPrice == null) {
         throw new Error(

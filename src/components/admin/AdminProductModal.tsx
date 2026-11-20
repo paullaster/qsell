@@ -1,5 +1,6 @@
 'use client';
 
+import { OFFER_LABELS, OFFER_TYPES, OFFERED_EVERYWHERE } from '@/lib/offered-in';
 import { useAdminNavAccess } from '@/components/admin/nav/AdminNavAccessProvider';
 import { limitsProblem } from '@/lib/quantity-limits';
 import React, { useState, useEffect, useRef } from 'react';
@@ -209,6 +210,7 @@ function AdminProductModalForm({
   const [showOnWebShop, setShowOnWebShop] = useState(template?.showOnWebShop ?? true);
   const [isCheckoutPackaging, setIsCheckoutPackaging] = useState(template?.isCheckoutPackaging ?? false);
   const [soldOnlyInPackages, setSoldOnlyInPackages] = useState(template?.soldOnlyInPackages ?? false);
+  const [offeredIn, setOfferedIn] = useState<string[]>(template?.offeredIn ?? [...OFFERED_EVERYWHERE]);
   const [inventoryKindChoice, setInventoryKindChoice] = useState<Choice | null>(() => {
     const id = template?.inventoryKind ?? initialItemTypes?.find((type) => type.isDefault)?.defaultInventoryKind ?? 'inventory';
     const option = INVENTORY_KIND_OPTIONS.find((candidate) => candidate.id === id);
@@ -559,6 +561,7 @@ function AdminProductModalForm({
         showOnWebShop: soldOnlyInPackages ? false : showOnWebShop,
         isCheckoutPackaging,
         soldOnlyInPackages,
+        offeredIn,
         packagingFits: packagingFits.map(({ productId, capacity }) => ({ productId, capacity: Number(capacity) })),
       };
 
@@ -1253,6 +1256,16 @@ function AdminProductModalForm({
                       </span>
                     </label>
                   </div>
+                  <fieldset className="space-y-2 rounded-lg border border-line bg-surface-raised p-3" data-testid="offered-in">
+                    <legend className="px-1 text-sm font-medium text-fg-strong">Offered in</legend>
+                    <p className="text-[11px] text-fg-subtle">Where staff can sell this. A product that is not offered in a document is not found when that document is taken and is refused if it is sent anyway. The web shop has its own switch above.</p>
+                    {OFFER_TYPES.map((type) => (
+                      <label key={type} className="flex min-h-10 cursor-pointer items-center gap-2 text-sm">
+                        <input type="checkbox" className="size-4 accent-indigo-600" checked={offeredIn.includes(type)} onChange={(event) => setOfferedIn((current) => (event.target.checked ? [...current, type] : current.filter((t) => t !== type)))} />
+                        {OFFER_LABELS[type]}
+                      </label>
+                    ))}
+                  </fieldset>
                 </div>
               </div>
             ) : null}

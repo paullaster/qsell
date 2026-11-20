@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { canPermission, requirePermission } from '@/server/domains/access-control/guard';
 import { getContainer } from '@/server/di/container';
-import { isInvoiceKind } from './domain/invoice-status';
+import { isInvoiceKind, isListKind } from './domain/invoice-status';
 import type { SalesInvoiceDetail, SalesInvoiceRow } from './sales-invoice-service';
 
 const ORDER_ID = /^[A-Za-z0-9_-]{1,100}$/;
@@ -17,7 +17,7 @@ export async function salesInvoicesPageAction(raw: unknown): Promise<{ ok: true;
   try {
     const page = await getContainer().salesInvoices.page({
       ...(typeof input.query === 'string' ? { query: input.query } : {}),
-      ...(isInvoiceKind(input.kind) ? { kind: input.kind } : {}),
+      ...(isListKind(input.kind) ? { kind: input.kind } : {}),
       cursor: typeof input.cursor === 'string' ? input.cursor : null,
     });
     return { ok: true, data: { ...page, canCreate: await canPermission('sales_invoices:create'), canSend: await canPermission('sales_invoices:send') } };
