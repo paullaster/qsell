@@ -58,6 +58,7 @@ import { UnitRepository } from '@/server/domains/units/repository';
 import { UnitWriteService } from '@/server/domains/units/write-service';
 import { DimensionSetService } from '@/server/domains/dimensions/set-service';
 import { CustomerMasterService } from '@/server/domains/customers/master-service';
+import { CustomerCreditSettingsService } from '@/server/domains/customers/customer-credit-settings-service';
 import { VendorService } from '@/server/domains/vendors/service';
 import { VendorFileStore } from '@/server/domains/vendors/file-store';
 import { VendorProfileService } from '@/server/domains/vendors/profile-service';
@@ -389,6 +390,7 @@ export interface AppContainer {
   packageConfig: PackageConfigService;
   emailRoutes: EmailRouteService;
   sellingSettings: SellingSettingsService;
+  customerCreditSettings: CustomerCreditSettingsService;
   businessTime: BusinessTimeService;
   salesOrders: SalesOrderService;
   shifts: ShiftService;
@@ -617,13 +619,14 @@ export function getContainer(): AppContainer {
   const packageConfig = new PackageConfigService(drizzleDb, decisionLog, reasonCodes);
   const emailRoutes = new EmailRouteService(drizzleDb, decisionLog, reasonCodes, companySettings);
   const sellingSettings = new SellingSettingsService(drizzleDb, decisionLog, reasonCodes);
+  const customerCreditSettings = new CustomerCreditSettingsService(drizzleDb, decisionLog, reasonCodes);
   const businessTime = new BusinessTimeService(drizzleDb, decisionLog, reasonCodes);
   const packageShop = new PackageShopService(drizzleDb, packageConfig, deliveryServices.stockSettings, deliveryServices.stockAvailability);
   const packageOrders = new PackageOrderService(drizzleDb, packageShop);
   const orderDocuments = new OrderDocumentsService(drizzleDb);
   const shifts = new ShiftService(drizzleDb, decisionLog, reasonCodes, numbering);
   const salesInvoices = new SalesInvoiceService(drizzleDb, invoices);
-  const salesOrders = new SalesOrderService(drizzleDb, sellingSettings, packageOrders, customers, branches);
+  const salesOrders = new SalesOrderService(drizzleDb, sellingSettings, packageOrders, customers, branches, customerCreditSettings, finance.customerLedger);
   const preparation = new PreparationService(drizzleDb);
   const packageGroups = new PackageGroupService(drizzleDb, packageShop, packageOrders);
   const packageQuoteRequests = new PackageQuoteRequestService(drizzleDb, packageShop, packageOrders);
@@ -799,6 +802,7 @@ export function getContainer(): AppContainer {
     packageConfig,
     emailRoutes,
     sellingSettings,
+    customerCreditSettings,
     businessTime,
     salesOrders,
     shifts,

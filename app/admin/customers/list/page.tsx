@@ -13,6 +13,7 @@ export default function Page() {
         fieldsPromise={customerFieldsAction()}
         firstPage={customersPageAction({})}
         canEditPromise={canPermission('customers:update')}
+        canReceivePromise={canPermission('receipts:create')}
       />
     </SettingsFrame>
   );

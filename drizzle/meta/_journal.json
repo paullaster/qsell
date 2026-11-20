@@ -1373,6 +1373,13 @@
       "when": 1795055138010,
       "tag": "0195_checkout_attempts_order_channel_index",
       "breakpoints": true
+    },
+    {
+      "idx": 196,
+      "version": "7",
+      "when": 1795150508038,
+      "tag": "0196_customer_credit_settings",
+      "breakpoints": true
     }
   ]
 }

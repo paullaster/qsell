@@ -8,7 +8,12 @@ async function openCustomers(page: Page): Promise<void> {
     try {
       const title = page.getByRole('heading', { name: 'Customers', level: 2 }).first();
       await expect(title).toBeVisible({ timeout: 30_000 });
-      await expect.poll(() => title.evaluate((el) => Object.keys(el).some((k) => k.startsWith('__reactProps'))), { timeout: 30_000 }).toBe(true);
+      await expect
+        .poll(
+          () => title.evaluate((el) => Object.keys(el).some((k) => k.startsWith('__reactProps'))),
+          { timeout: 30_000 },
+        )
+        .toBe(true);
       return;
     } catch (error) {
       if (attempt === 3) throw error;
@@ -17,23 +22,108 @@ async function openCustomers(page: Page): Promise<void> {
 }
 
 test.describe('customers screen', () => {
-  test('Customers opens a hub with List and Customer groups before the customer list', async ({ page }) => {
+  test('Customers opens a hub with List and Customer groups before the customer list', async ({
+    page,
+  }) => {
     await page.goto('/admin/customers');
     await expect(page.getByRole('heading', { name: 'Customers', level: 2 })).toBeVisible();
-    await expect(page.getByRole('link', { name: /^List/ })).toHaveAttribute('href', '/admin/customers/list');
-    await expect(page.getByRole('link', { name: /^Customer groups/ })).toHaveAttribute('href', '/admin/pricing/groups');
+    await expect(page.getByRole('link', { name: /^List/ })).toHaveAttribute(
+      'href',
+      '/admin/customers/list',
+    );
+    await expect(page.getByRole('link', { name: /^Customer groups/ })).toHaveAttribute(
+      'href',
+      '/admin/pricing/groups',
+    );
     await page.getByRole('link', { name: /^List/ }).click();
     await expect(page).toHaveURL(/\/admin\/customers\/list$/);
     await expect(page.getByRole('heading', { name: 'Customers', level: 2 })).toBeVisible();
   });
 
-  test('the list is paged and searched on the server, a customer is made, found, changed and deleted after asking', async ({ page, isMobile }, testInfo) => {
+  test('the customer centre shows a customer statement and drills into each transaction', async ({
+    page,
+    isMobile,
+  }) => {
+    await openCustomers(page);
+    await page.getByLabel('Search customers').fill('E2E001');
+    await page.getByRole('link', { name: 'Open Alice Cash' }).click();
+    await expect(page).toHaveURL(/\/admin\/customers\/[^/]+$/);
+    await expect(page.getByRole('heading', { name: 'Customer statement' })).toBeVisible();
+    await expect(page.getByLabel('From')).not.toHaveValue('');
+    await expect(page.getByLabel('To')).not.toHaveValue('');
+    await expect(page.getByText('Total balance')).toBeVisible();
+    await expect(page.getByText('Opening balance')).toBeVisible();
+    await expect(page.getByText('Closing balance')).toBeVisible();
+    if (!isMobile) {
+      await expect(page.getByRole('columnheader', { name: 'Debit' })).toBeVisible();
+      await expect(page.getByRole('columnheader', { name: 'Credit' })).toBeVisible();
+      await expect(page.getByRole('columnheader', { name: 'Balance' })).toBeVisible();
+      await expect(page.getByRole('columnheader', { name: 'Drilldown' })).toHaveCount(0);
+    } else {
+      await expect(page.getByText('Debit', { exact: true })).toBeVisible();
+      await expect(page.getByText('Credit', { exact: true })).toBeVisible();
+      await expect(page.getByText('Balance', { exact: true })).toBeVisible();
+    }
+    await clickUntilVisible(
+      page.getByRole('button', { name: /View details for Payment/ }),
+      page.getByRole('dialog', { name: /Transaction detail/ }),
+    );
+    const dialog = page.getByRole('dialog', { name: /Transaction detail/ });
+    await expect(page.getByRole('link', { name: /Download receipt/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Print receipt/ })).toBeVisible();
+    await expect(dialog.getByText('Document amount', { exact: true })).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: 'Related documents' })).toBeVisible();
+    await expect(dialog.getByRole('link', { name: /^Open / })).not.toHaveCount(0);
+    if (!isMobile) {
+      await expect(dialog.getByRole('columnheader', { name: 'Document' })).toBeVisible();
+      await expect(dialog.getByRole('columnheader', { name: 'Amount applied' })).toBeVisible();
+      await expect(dialog.getByRole('columnheader', { name: 'Document amount' })).toBeVisible();
+      await expect(dialog.getByRole('columnheader', { name: 'Still open' })).toBeVisible();
+      await expect(dialog.getByRole('columnheader', { name: 'When' })).toBeVisible();
+      await expect(dialog.getByRole('columnheader', { name: 'What happened' })).toBeVisible();
+      await expect(dialog.getByRole('columnheader', { name: 'Why / by whom' })).toBeVisible();
+    } else {
+      await expect(dialog.getByText('Amount applied', { exact: true })).toBeVisible();
+      await expect(dialog.getByText('Why / by whom', { exact: true })).toBeVisible();
+    }
+    await expect(page.getByRole('heading', { name: 'History' })).toBeVisible();
+    await page.getByRole('button', { name: 'Close' }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+
+    await clickUntilVisible(
+      page.getByRole('button', { name: /View details for Invoice/ }).first(),
+      dialog,
+    );
+    await expect(dialog.getByRole('heading', { name: 'Items sold' })).toBeVisible();
+    await expect(dialog.getByText('Tax invoice:', { exact: false })).toBeVisible();
+    await expect(dialog.getByRole('link', { name: 'Open tax invoice PDF' })).toBeVisible();
+    await expect(dialog.getByRole('link', { name: /Open source sales order/ })).toBeVisible();
+    if (!isMobile) {
+      await expect(dialog.getByRole('columnheader', { name: 'Item' })).toBeVisible();
+      await expect(dialog.getByRole('columnheader', { name: 'Qty' })).toBeVisible();
+      await expect(dialog.getByRole('columnheader', { name: 'Unit price' })).toBeVisible();
+      await expect(dialog.getByRole('columnheader', { name: 'Discount' })).toBeVisible();
+      await expect(dialog.getByRole('columnheader', { name: 'Line total' })).toBeVisible();
+    } else {
+      await expect(dialog.getByText('Line total', { exact: true })).toBeVisible();
+    }
+    await page.getByRole('button', { name: 'Close' }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await noHorizontalScroll(page);
+  });
+
+  test('the list is paged and searched on the server, a customer is made, found, changed and deleted after asking', async ({
+    page,
+    isMobile,
+  }, testInfo) => {
     const stamp = `${testInfo.project.name}${String(Date.now()).slice(-6)}`;
     const name = `E2E Card ${stamp}`;
     await openCustomers(page);
     await noNativeSelect(page);
     // A phone shows the customers as cards, a wider screen as a table with a header row.
-    const table = isMobile ? page.getByRole('list', { name: 'Customers' }) : page.getByRole('table', { name: 'Customers' });
+    const table = isMobile
+      ? page.getByRole('list', { name: 'Customers' })
+      : page.getByRole('table', { name: 'Customers' });
     const rows = isMobile ? table.getByRole('listitem') : table.getByRole('row');
     const header = isMobile ? 0 : 1;
     await expect(rows).toHaveCount(25 + header, { timeout: 30_000 }); // one page of 25
@@ -49,7 +139,9 @@ test.describe('customers screen', () => {
     await page.getByLabel('Search customers').fill('E2E001');
     await expect(rows).toHaveCount(1 + header, { timeout: 30_000 });
     await page.getByLabel('Search customers').fill('no-such-customer-zzz');
-    await expect(page.getByText(/No customers match/).locator('visible=true')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(/No customers match/).locator('visible=true')).toBeVisible({
+      timeout: 30_000,
+    });
     await page.getByLabel('Search customers').fill('');
 
     // A new card: the type is a picker, credit terms matter only for credit.
@@ -59,18 +151,50 @@ test.describe('customers screen', () => {
     await noNativeSelect(page);
     await card.getByLabel('Name', { exact: true }).fill(name);
     await card.getByLabel('Email').fill(`card-${stamp.toLowerCase()}@example.test`);
-    await pick(page, card.getByRole('combobox', { name: 'Account type' }), 'Credit', /Credit \(pays later\)/);
+    await pick(
+      page,
+      card.getByRole('combobox', { name: 'Account type' }),
+      'Credit',
+      /Credit \(pays later\)/,
+    );
     await expect(card.getByLabel('Credit limit')).toBeEnabled();
     await card.getByLabel('Credit limit').fill('750');
     await card.getByLabel('Payment terms (days)').fill('14');
-    await pick(page, card.getByRole('combobox', { name: 'Blocked' }), 'Cannot be invoiced', /Cannot be invoiced/);
+    await pick(
+      page,
+      card.getByRole('combobox', { name: 'Blocked' }),
+      'Cannot be invoiced',
+      /Cannot be invoiced/,
+    );
     await card.getByRole('button', { name: 'Save customer' }).click();
-    await expect(page.getByRole('status').filter({ hasText: `${name} saved.` })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('status').filter({ hasText: `${name} saved.` })).toBeVisible({
+      timeout: 30_000,
+    });
 
     // Found. Open goes to the customer centre; Edit is a separate way into the card.
     await page.getByLabel('Search customers').fill(stamp);
     await expect(rows).toHaveCount(1 + header, { timeout: 30_000 });
-    await expect(table.getByRole('link', { name: `Edit ${name}` })).toHaveAttribute('href', /\/edit$/);
+    await expect(table.getByRole('link', { name: `Edit ${name}` })).toHaveAttribute(
+      'href',
+      /\/edit$/,
+    );
+    await expect(table.getByRole('link', { name: `Record a receipt for ${name}` })).toHaveAttribute(
+      'href',
+      /\/admin\/finance\/receipts\/new\?customer=/,
+    );
+    if (!isMobile) {
+      await expect(table.getByRole('link', { name: `Open ${name}` })).toHaveAttribute(
+        'title',
+        'Open customer',
+      );
+      await expect(table.getByRole('link', { name: `Edit ${name}` })).toHaveAttribute(
+        'title',
+        'Edit customer',
+      );
+      await expect(
+        table.getByRole('link', { name: `Record a receipt for ${name}` }),
+      ).toHaveAttribute('title', 'Record a receipt against this customer');
+    }
     await table.getByRole('link', { name: `Open ${name}` }).click();
     await expect(page).toHaveURL(/\/admin\/customers\/[^/]+$/);
     await expect(page.getByRole('heading', { name: 'Customer information' })).toBeVisible();
@@ -88,31 +212,56 @@ test.describe('customers screen', () => {
     await table.getByRole('button', { name: `Delete ${name}` }).click();
     await table.getByRole('button', { name: 'Keep it' }).click();
     await expect(rows).toHaveCount(1 + header);
-    await clickUntilVisible(table.getByRole('button', { name: `Delete ${name}` }), table.getByRole('button', { name: `Confirm: Delete ${name}` }));
+    await clickUntilVisible(
+      table.getByRole('button', { name: `Delete ${name}` }),
+      table.getByRole('button', { name: `Confirm: Delete ${name}` }),
+    );
     await table.getByRole('button', { name: `Confirm: Delete ${name}` }).click();
-    await expect(page.getByRole('status').filter({ hasText: `${name} deleted.` })).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText(/No customers match/).locator('visible=true')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('status').filter({ hasText: `${name} deleted.` })).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(page.getByText(/No customers match/).locator('visible=true')).toBeVisible({
+      timeout: 30_000,
+    });
     await noHorizontalScroll(page);
   });
 
-  test('profiles: one is made with a picker for its type, found and listed', async ({ page, isMobile }, testInfo) => {
+  test('profiles: one is made with a picker for its type, found and listed', async ({
+    page,
+    isMobile,
+  }, testInfo) => {
     const code = `EP${testInfo.project.name.slice(0, 1).toUpperCase()}${String(Date.now()).slice(-6)}`;
     await openCustomers(page);
-    await clickUntilVisible(page.getByRole('tab', { name: 'profiles' }), page.getByLabel('Search profiles'));
+    await clickUntilVisible(
+      page.getByRole('tab', { name: 'profiles' }),
+      page.getByLabel('Search profiles'),
+    );
     await page.getByRole('button', { name: 'New profile' }).click();
     const form = page.getByRole('form', { name: 'New profile' });
     await expect(form).toBeVisible();
     await noNativeSelect(page);
     await form.getByLabel('Code').fill(code);
     await form.getByLabel('Name', { exact: true }).fill(`Profile ${code}`);
-    await pick(page, form.getByRole('combobox', { name: 'Account type' }), 'Credit', /Credit \(pays later\)/);
+    await pick(
+      page,
+      form.getByRole('combobox', { name: 'Account type' }),
+      'Credit',
+      /Credit \(pays later\)/,
+    );
     await form.getByLabel('Credit limit').fill('900');
     await form.getByLabel('Payment terms (days)').fill('21');
     await form.getByRole('button', { name: 'Save profile' }).click();
-    await expect(page.getByRole('status').filter({ hasText: `Profile ${code} saved.` })).toBeVisible({ timeout: 30_000 });
+    await expect(
+      page.getByRole('status').filter({ hasText: `Profile ${code} saved.` }),
+    ).toBeVisible({ timeout: 30_000 });
     await page.getByLabel('Search profiles').fill(code);
-    const table = isMobile ? page.getByRole('list', { name: 'Customer profiles' }) : page.getByRole('table', { name: 'Customer profiles' });
-    await expect(isMobile ? table.getByRole('listitem') : table.getByRole('row')).toHaveCount(isMobile ? 1 : 2, { timeout: 30_000 });
+    const table = isMobile
+      ? page.getByRole('list', { name: 'Customer profiles' })
+      : page.getByRole('table', { name: 'Customer profiles' });
+    await expect(isMobile ? table.getByRole('listitem') : table.getByRole('row')).toHaveCount(
+      isMobile ? 1 : 2,
+      { timeout: 30_000 },
+    );
     await expect(table.getByText('21 days')).toBeVisible();
     await noHorizontalScroll(page);
   });

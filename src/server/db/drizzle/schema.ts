@@ -4793,6 +4793,19 @@ export const sellingDocumentSettings = pgTable(
   (t) => [uniqueIndex('selling_document_settings_company_type_uidx').on(t.companyId, t.docType)],
 );
 
+export const customerCreditSettings = pgTable(
+  'customer_credit_settings',
+  {
+    companyId: uuid('company_id')
+      .primaryKey()
+      .references(() => companySettings.id, { onDelete: 'cascade' }),
+    creditLimitDisplay: text('credit_limit_display').notNull().default('running'),
+    allowOverCreditLimit: boolean('allow_over_credit_limit').notNull().default(false),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check('customer_credit_settings_display_chk', sql`${t.creditLimitDisplay} IN ('running','static')`)],
+);
+
 /**
  * Who each business mail is written to, copied, blind-copied and answered by, and which business emails a quote shows, per point
  * (see docs/architecture/email-routing.md). The config is read through the pure `readRouteConfig`, never trusted as stored.

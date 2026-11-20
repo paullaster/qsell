@@ -158,7 +158,16 @@ graph TD
 
 - Debtor analysis dashboard: Buckets outstanding customer debt into _Current_, _1-30 Days_, _31-60 Days_, _61-90 Days_, and _90+ Days_. Drill down to individual overdue invoices to trigger dunning notices or pause credit accounts.
 
-#### 13. Foreign Exchange & Revaluation (`/admin/finance/exchange-rates`)
+#### 13. Customer Statement (`/admin/customers/{id}` and `/admin/finance/receivables/customer/{id}`)
+
+- The statement is a dated, running-balance account view for one customer: **Opening balance**, **Debits this period**, **Credits this period** and **Closing balance** appear above the transaction list.
+- The customer centre's **Balance** card is the net position: open invoices less credits that have not yet been used. A customer with KES 400 in unapplied credit who is invoiced KES 4,000 has a Balance of KES 3,600. A credit balance is shown in brackets. The statement keeps its own opening, period and closing balances and does not repeat the current Balance. **Credit limit** always shows the limit on the account; **Available credit** is the limit less the Balance and appears only when the company chose the running display. The static display hides the available figure but never changes the credit checks.
+- Entries are shown oldest first. Sales invoices are debits (money the customer owes); receipts, credit notes and refunds are credits (money received or given back). The **Balance** column starts at the opening balance and carries forward through every transaction, including payments applied to more than one invoice.
+- The **From** and **To** inputs always show the span of the entries currently loaded: on arrival they show the first and last loaded transaction dates; after a date search or **Show more transactions** they show the dates in the rows currently on screen. Changing the inputs and pressing **Show** recalculates the opening and closing figures and the transaction list together. **Show more transactions** loads the next page without losing the running balance or changing the customer's current owed amount.
+- Every **Debit** and **Credit** amount is a link to a guarded transaction view showing the document, amount, still-open amount, ageing date, invoice lines where relevant, the documents a payment was applied to, and the full posting/application history with reasons and the person who made each change.
+- The detail dialog carries clearly labelled **Download receipt / Print receipt** or **Download invoice / Print invoice** actions, shown only with the matching receipt or order read permission. The statement and drilldown require **View a customer ledger and statement**; company scoping is enforced on the server for every row and action.
+
+#### 14. Foreign Exchange & Revaluation (`/admin/finance/exchange-rates`)
 
 - Multi-currency rate table and month-end FX revaluation wizard: Automatically calculates and posts unrealized foreign exchange gains or losses on foreign currency receivables (USD, EUR, GBP) to the G/L.
 

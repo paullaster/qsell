@@ -5,49 +5,72 @@ import { runSetting } from '@/server/domains/settings/action-runner';
 import { SettingsError, isUniqueViolation } from '@/server/domains/settings/errors';
 import type { PageInput } from '@/server/domains/settings/paging';
 import { accountTypeOf, blockOf } from '@/lib/customer-forms';
-import type { CustomerLedgerEntryRow, CustomerRow, DimensionCodesProjection } from '@/server/db/drizzle/schema';
+import { fromCents, toCents } from '@/server/domains/finance/domain/receivables';
+import type {
+  CustomerLedgerEntryRow,
+  CustomerRow,
+  DimensionCodesProjection,
+} from '@/server/db/drizzle/schema';
 
 const PATHS = ['/admin/customers', '/admin/customers/list'];
 
 /** The customer rules speak in words meant for the person ("already exists", "credit limit", "not found"). */
 const friendly = (error: unknown): string | null => {
-  if (isUniqueViolation(error)) return 'A customer or profile with that code or email already exists.';
-  return error instanceof Error && /already exists|required|credit|not found|cannot|must/i.test(error.message) ? error.message : null;
+  if (isUniqueViolation(error))
+    return 'A customer or profile with that code or email already exists.';
+  return error instanceof Error &&
+    /already exists|required|credit|not found|cannot|must/i.test(error.message)
+    ? error.message
+    : null;
 };
 
 /** The dimensions a customer can carry as defaults: only what the form needs (no values; they are searched). */
 export async function customerFieldsAction() {
   return await runSetting('customers:read', async ({ companyId }) => {
     const contract = await getContainer().dimensionSets.listFieldContract(companyId);
-    return contract.map((f) => ({ fieldName: f.fieldName, dimensionId: f.dimensionId, dimensionCode: f.dimensionCode, kind: f.kind }));
+    return contract.map((f) => ({
+      fieldName: f.fieldName,
+      dimensionId: f.dimensionId,
+      dimensionCode: f.dimensionCode,
+      kind: f.kind,
+    }));
   });
 }
 
 /** One page of customers, 25 at a time, narrowed by text on the server. */
 export async function customersPageAction(input: PageInput) {
-  return await runSetting('customers:read', ({ companyId }) => getContainer().customers.pageCustomers(companyId, input));
+  return await runSetting('customers:read', ({ companyId }) =>
+    getContainer().customers.pageCustomers(companyId, input),
+  );
 }
 
 /** One page of profiles, 25 at a time, narrowed by text on the server. */
 export async function profilesPageAction(input: PageInput) {
-  return await runSetting('customers:read', ({ companyId }) => getContainer().customers.pageProfiles(companyId, input));
+  return await runSetting('customers:read', ({ companyId }) =>
+    getContainer().customers.pageProfiles(companyId, input),
+  );
 }
 
 export async function customerLedgerAction(id: string) {
-  return await runSetting('customers:read', async ({ companyId }): Promise<CustomerLedgerEntryRow[]> => {
-    const found = await getContainer().customers.getCustomer(companyId, id);
-    if (found === null) throw new SettingsError('That customer does not exist.', 'NOT_FOUND');
-    return found.ledger;
-  });
+  return await runSetting(
+    'customers:read',
+    async ({ companyId }): Promise<CustomerLedgerEntryRow[]> => {
+      const found = await getContainer().customers.getCustomer(companyId, id);
+      if (found === null) throw new SettingsError('That customer does not exist.', 'NOT_FOUND');
+      return found.ledger;
+    },
+  );
 }
 
 export interface CustomerCard {
   customer: CustomerRow;
   ledger: CustomerLedgerEntryRow[];
   profileLabel: string;
+  amountOwed: string;
+  openItems: number;
 }
 
-/** One customer card with the ledger open items and profile label needed by the centre and edit screens. */
+/** One customer card with the net position, open items and profile label needed by the centre and edit screens. */
 export async function customerCardAction(id: string) {
   return await runSetting('customers:read', async ({ companyId }): Promise<CustomerCard> => {
     const found = await getContainer().customers.getCustomer(companyId, id);
@@ -58,7 +81,15 @@ export async function customerCardAction(id: string) {
       const profile = await getContainer().customers.getProfile(companyId, profileId);
       profileLabel = profile === null ? '' : `${profile.code} — ${profile.name}`;
     }
-    return { customer: found.customer, ledger: found.ledger, profileLabel };
+    const openItems = found.ledger.filter((row) => toCents(row.remainingAmount) !== 0);
+    const amountOwedCents = openItems.reduce((sum, row) => sum + toCents(row.remainingAmount), 0);
+    return {
+      customer: found.customer,
+      ledger: found.ledger,
+      profileLabel,
+      amountOwed: fromCents(amountOwedCents),
+      openItems: openItems.length,
+    };
   });
 }
 
@@ -98,9 +129,21 @@ export async function saveCustomerAction(input: CustomerInput) {
     input.id === undefined ? 'customers:create' : 'customers:update',
     async ({ companyId }): Promise<CustomerRow> => {
       const { accountType, blocked, ...rest } = input;
-      return await getContainer().customers.saveCustomer(companyId, { ...rest, accountType: accountTypeOf(accountType), blocked: blockOf(blocked) });
+      return await getContainer().customers.saveCustomer(companyId, {
+        ...rest,
+        accountType: accountTypeOf(accountType),
+        blocked: blockOf(blocked),
+      });
     },
-    { paths: [...PATHS, ...(input.id !== undefined && input.id !== '' ? [`/admin/customers/${input.id}`, `/admin/customers/${input.id}/edit`] : [])], friendly },
+    {
+      paths: [
+        ...PATHS,
+        ...(input.id !== undefined && input.id !== ''
+          ? [`/admin/customers/${input.id}`, `/admin/customers/${input.id}/edit`]
+          : []),
+      ],
+      friendly,
+    },
   );
 }
 
@@ -118,7 +161,8 @@ export async function deleteCustomerAction(id: string) {
 export async function receivePaymentAction(customerId: string, amount: number, reference: string) {
   return await runSetting(
     'transactions:post',
-    ({ companyId }) => getContainer().customers.receivePayment(companyId, customerId, { amount, reference }),
+    ({ companyId }) =>
+      getContainer().customers.receivePayment(companyId, customerId, { amount, reference }),
     { paths: [...PATHS, `/admin/customers/${customerId}`, `/admin/transactions/ledger`], friendly },
   );
 }
@@ -139,7 +183,11 @@ export interface ProfileInput {
 export async function saveProfileAction(input: ProfileInput) {
   return await runSetting(
     'customers:update',
-    ({ companyId }) => getContainer().customers.saveProfile(companyId, { ...input, accountType: accountTypeOf(input.accountType) }),
+    ({ companyId }) =>
+      getContainer().customers.saveProfile(companyId, {
+        ...input,
+        accountType: accountTypeOf(input.accountType),
+      }),
     { paths: PATHS, friendly },
   );
 }

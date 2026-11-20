@@ -45,6 +45,17 @@ export function registerApprovalHandlers(engine: ApprovalEngine, gate: ParkedAct
 
   gate.attach('price_list_change', priceChangeExecutors());
 
+  gate.attach('customer_credit_settings', {
+    enable_over_limit: {
+      async execute(tx, row) {
+        const { getContainer } = await import('@/server/di/container');
+        const p = row.payload as { reason: { code: string; text?: string } };
+        const result = await getContainer().customerCreditSettings.setAllowOverCreditLimit(row.companyId, true, p.reason, { type: 'user', id: row.requestedBy }, tx);
+        return { ...result };
+      },
+    },
+  });
+
   gate.attach('credit_note', {
     order_credit_note: {
       async execute(tx, row) {

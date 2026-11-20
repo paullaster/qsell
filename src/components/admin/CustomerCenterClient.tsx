@@ -25,10 +25,14 @@ interface Props {
   canReceivePromise: Promise<boolean>;
   canReadReceiptsPromise: Promise<boolean>;
   canReadOrdersPromise: Promise<boolean>;
+  canReadRefundsPromise: Promise<boolean>;
 }
 
 const shown = (value: string | null | undefined): string =>
   value === null || value === undefined || value.trim() === '' ? '—' : value;
+
+const balanceMoney = (value: string): string =>
+  value.startsWith('-') ? `(${money(value.slice(1))})` : money(value);
 
 export function CustomerCenterClient({
   cardPromise,
@@ -38,15 +42,22 @@ export function CustomerCenterClient({
   canReceivePromise,
   canReadReceiptsPromise,
   canReadOrdersPromise,
+  canReadRefundsPromise,
 }: Props) {
   const card = use(cardPromise);
   const canEdit = use(canEditPromise);
   const canReceive = use(canReceivePromise);
   const canReadReceipts = use(canReadReceiptsPromise);
   const canReadOrders = use(canReadOrdersPromise);
+  const canReadRefunds = use(canReadRefundsPromise);
   if (!card.ok) return <LoadFailed error={card.error} />;
 
   const customer = card.data.customer;
+  const statusParts = [
+    customer.isActive ? null : 'Inactive',
+    customer.blocked !== 'none' ? `Blocked: ${labelOfBlock(customer.blocked)}` : null,
+  ].filter((part) => part !== null);
+  const status = statusParts.length === 0 ? 'Active' : statusParts.join(' · ');
   const actions = (
     <>
       {canEdit ? (
@@ -110,14 +121,15 @@ export function CustomerCenterClient({
         </dl>
       </section>
 
-      <section aria-label="Customer balance" className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Balance title="Balance" value={money(customer.balance)} />
-        <Balance title="Open items" value={String(card.data.ledger.length)} />
-        <Balance
-          title="Credit limit"
-          value={customer.accountType === 'credit' ? money(customer.creditLimit) : '—'}
-        />
-        <Balance title="Status" value={customer.isActive ? 'Active' : 'Inactive'} />
+      <section aria-label="Customer summary" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className={cardClass}>
+          <p className="text-xs font-semibold tracking-wide text-fg-muted uppercase">Balance</p>
+          <p className="mt-2 text-3xl font-extrabold tracking-tight text-fg-strong tabular-nums sm:text-4xl">
+            {balanceMoney(card.data.amountOwed)}
+          </p>
+        </div>
+        <Balance title="Open items" value={String(card.data.openItems)} />
+        <Balance title="Status" value={status} />
       </section>
 
       {statementPromise === null ? (
@@ -141,6 +153,7 @@ export function CustomerCenterClient({
               walletPromise={walletPromise}
               canReadReceipts={canReadReceipts}
               canReadOrders={canReadOrders}
+              canReadRefunds={canReadRefunds}
             />
           </Suspense>
         </section>
@@ -180,11 +193,13 @@ function StatementSection({
   walletPromise,
   canReadReceipts,
   canReadOrders,
+  canReadRefunds,
 }: {
   statementPromise: ReturnType<typeof customerStatementAction>;
   walletPromise: ReturnType<typeof customerWalletAction> | null;
   canReadReceipts: boolean;
   canReadOrders: boolean;
+  canReadRefunds: boolean;
 }) {
   const statement = use(statementPromise);
   if (!statement.ok) return <LoadFailed error={statement.error} />;
@@ -193,6 +208,7 @@ function StatementSection({
       initial={statement.data}
       canReadReceipts={canReadReceipts}
       canReadOrders={canReadOrders}
+      canReadRefunds={canReadRefunds}
       walletPromise={walletPromise}
     />
   );

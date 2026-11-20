@@ -6,7 +6,7 @@ import type { AdminNavItem } from './types';
 const walk = (
   items: AdminNavItem[],
   path: string[] = [],
-): Array<{ item: AdminNavItem; path: string[] }> =>
+): { item: AdminNavItem; path: string[] }[] =>
   items.flatMap((i) => [{ item: i, path }, ...walk(i.subLinks ?? [], [...path, i.id])]);
 
 const nav = getAdminNav();
@@ -25,6 +25,14 @@ describe('the admin sidebar', () => {
     expect(item?.path).toEqual(['sales']);
     expect(item?.item.title).toBe('Web Shop Orders');
     expect(item?.item.href).toBe('/admin/orders');
+  });
+
+  it('puts customer credit and selling documents under Settings > Sales', () => {
+    const parent = all.find((x) => x.item.id === 'settings-sales')?.item;
+    expect(where('settings-sales')).toBe('settings');
+    expect(parent?.href).toBe('/admin/settings/sales');
+    expect(parent?.subLinks?.map((x) => x.id)).toEqual(['settings-sales-customer', 'settings-selling-documents']);
+    expect(where('settings-selling-documents')).toBe('settings/settings-sales');
   });
 
   it('opens Customers on a hub with List and Customer groups', () => {
@@ -66,7 +74,7 @@ describe('the admin sidebar', () => {
     const ids = all.map((x) => x.item.id);
     expect(new Set(ids).size).toBe(ids.length);
     // A group may open on its first screen, so only the screens themselves must differ.
-    const hrefs = all.filter((x) => !x.item.subLinks?.length).map((x) => x.item.href);
+    const hrefs = all.filter((x) => (x.item.subLinks ?? []).length === 0).map((x) => x.item.href);
     expect(new Set(hrefs).size).toBe(hrefs.length);
   });
 
@@ -120,6 +128,6 @@ describe('who sees what in the admin sidebar', () => {
 
   it('is not disabled unless the config says so, and every screen names its permission', () => {
     expect(all.every((x) => x.item.disabled === false)).toBe(true);
-    expect(all.filter((x) => !x.item.subLinks?.length && !x.item.permission)).toEqual([]);
+    expect(all.filter((x) => (x.item.subLinks ?? []).length === 0 && x.item.permission === undefined)).toEqual([]);
   });
 });

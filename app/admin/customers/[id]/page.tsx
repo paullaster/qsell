@@ -25,6 +25,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
           canReceivePromise={canPermission('receipts:create')}
           canReadReceiptsPromise={canPermission('receipts:read')}
           canReadOrdersPromise={canPermission('orders:read')}
+          canReadRefundsPromise={canPermission('refunds:read')}
         />
       </MissingAs404>
     </SettingsFrame>
