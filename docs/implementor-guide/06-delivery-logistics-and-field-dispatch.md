@@ -103,6 +103,7 @@ graph TD
 
 ### 2. Delivery Zones (`/admin/delivery/zones`)
 - Geographic zone builder: Group counties, towns, and estates (e.g. *"Nairobi Central"*, *"Westlands & Parklands"*, *"Thika & Environs"*). Supports polygon geofencing on an interactive map.
+- **Coverage circle (optional)** on the zone form: a centre (latitude and longitude) and a radius in kilometres; a customer who drops a pin inside it is in the zone. **Look up a place** (type at least three letters of its name, for example *Westlands, Nairobi*, and press *Search* or Enter; the search runs only when you ask, because the free map services do not allow search as you type, and each person may search about 60 times in ten minutes) lists the places the map service knows with a point on the map; choosing one fills the latitude and longitude, which you check before saving. If nothing is found it says so and you can type the numbers. It needs the permission to manage deliveries.
 
 ### 3. Dispatch Board (`/admin/delivery/dispatch`)
 - Visual operations kanban:
@@ -197,6 +198,7 @@ graph TD
   - *Weight-Tier Matrix* (e.g. 0-5 kg: KES 300, KES 50 per additional kg).
   - *Distance Formula* (e.g. Base KES 200 + KES 35/km from branch pin).
   - *Free Shipping Thresholds* (e.g. Free delivery for orders over KES 10,000).
+- **The charge simulator** (to see what a policy charges a customer from a branch) can take a pin; **Look up a place** (type at least three letters of its name, for example *Westlands, Nairobi*, and press *Search* or Enter; the search runs only when you ask, because the free map services do not allow search as you type, and each person may search about 60 times in ten minutes) lists the places the map service knows with a point on the map; choosing one fills the latitude and longitude, which you check before saving. If nothing is found it says so and you can type the numbers.
 
 ### 16. Delivery Methods (`/admin/delivery/methods`)
 - Per-branch toggle enabling or disabling specific fulfillment modes (Own Fleet, Courier, In-Store Collection, Installation Visit).

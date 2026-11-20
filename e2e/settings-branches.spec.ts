@@ -74,9 +74,22 @@ test.describe('branches', () => {
     await expect(page.getByText('A latitude is between -90 and 90.')).toBeVisible({ timeout: 30_000 });
     await expect(row).toContainText('No pin yet');
 
+    // A place can be found by name instead of typing numbers. It is searched only when asked: a short name is refused in words, a name the map
+    // service does not know says so, and Enter searches rather than saving the pin form around it.
+    const find = pin.getByLabel('Look up a place');
+    await find.fill('ab');
+    await pin.getByRole('button', { name: 'Search', exact: true }).click();
+    await expect(pin.getByRole('alert')).toContainText('three letters', { timeout: 30_000 });
+    await find.fill('Kisumu');
+    await find.press('Enter');
+    await expect(pin.getByRole('status').filter({ hasText: 'No place was found' })).toBeVisible({ timeout: 30_000 });
+    await expect(pin).toBeVisible();
+    await expect(row).toContainText('No pin yet');
+    await noHorizontalScroll(page);
+
     // The device location fills the numbers; the person checks them and saves.
     await pin.getByRole('button', { name: 'Use my current location' }).click();
-    await expect(pin.getByRole('status')).toContainText('Found it', { timeout: 30_000 });
+    await expect(pin.getByRole('status').filter({ hasText: 'Found it' })).toBeVisible({ timeout: 30_000 });
     await expect(pin.getByLabel('Latitude')).toHaveValue('-0.091702');
     await expect(pin.getByLabel('Longitude')).toHaveValue('34.767956');
     await pin.getByLabel('What to call the place (optional)').fill('Kisumu shop front');
