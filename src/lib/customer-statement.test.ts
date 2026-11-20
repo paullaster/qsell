@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildCustomerStatementCsv,
+  customerStatementFileName,
   ledgerAppliedTotals,
   statementDocumentNumber,
+  statementDownloadDocument,
   statementRowBalances,
   statementSpan,
+  type StatementDownload,
 } from './customer-statement';
 
 describe('customer statement balances', () => {
@@ -46,6 +50,60 @@ describe('statementDocumentNumber', () => {
     expect(statementDocumentNumber('invoice', 'SO-42', 'INV-17')).toBe('INV-17');
     expect(statementDocumentNumber('invoice', 'SO-42', null)).toBe('');
     expect(statementDocumentNumber('payment', 'RCP-9', null)).toBe('RCP-9');
+  });
+});
+
+describe('statement downloads', () => {
+  const statement: StatementDownload = {
+    customerName: 'E2E, Customer',
+    customerNumber: 'CUS-001',
+    from: '2026-09-01',
+    to: '2026-09-30',
+    openingBalance: '100.00',
+    totalDebit: '250.00',
+    totalCredit: '50.00',
+    closingBalance: '300.00',
+    lines: [
+      {
+        date: '2026-09-02',
+        document: statementDownloadDocument('invoice', 'SO-42', 'INV-17'),
+        description: '=SUM(A1:A2)',
+        dueDate: '2026-10-02',
+        debit: '250.00',
+        credit: '—',
+        balance: '350.00',
+      },
+      {
+        date: '2026-09-03',
+        document: 'Receipt RCP-9',
+        description: 'Payment',
+        dueDate: null,
+        debit: '0.00',
+        credit: '100.00',
+        balance: '-50.00',
+      },
+    ],
+  };
+
+  it('names the file from the customer number and chosen range', () => {
+    expect(customerStatementFileName('CUS/001', 'pdf', '2026-09-01', '2026-09-30')).toBe(
+      'customer-statement-CUS-001-2026-09-01-2026-09-30.pdf',
+    );
+    expect(customerStatementFileName('CUS-001', 'csv', '', '')).toBe(
+      'customer-statement-CUS-001.csv',
+    );
+  });
+
+  it('writes a guarded CSV with the tax invoice number and period totals', () => {
+    const csv = buildCustomerStatementCsv(statement);
+    expect(csv.startsWith('\ufeff')).toBe(true);
+    expect(csv).toContain('Customer number,CUS-001\r\n');
+    expect(csv).toContain('Period,2026-09-01 to 2026-09-30\r\n');
+    expect(csv).toContain('Tax invoice INV-17');
+    expect(csv).toContain("'=SUM(A1:A2)");
+    expect(csv).toContain(',-50.00\r\n');
+    expect(csv).not.toContain(",'-50.00");
+    expect(csv).toContain('Date,Document,Description,Due,Debit,Credit,Balance');
   });
 });
 

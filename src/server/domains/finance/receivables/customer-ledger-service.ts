@@ -679,6 +679,20 @@ export class CustomerLedgerService {
     return row !== undefined;
   }
 
+  async entriesByIds(companyId: string, customerId: string, ids: string[]) {
+    if (ids.length === 0) return [];
+    return await this.db
+      .select()
+      .from(customerLedgerEntries)
+      .where(
+        and(
+          eq(customerLedgerEntries.companyId, companyId),
+          eq(customerLedgerEntries.customerId, customerId),
+          inArray(customerLedgerEntries.id, ids),
+        ),
+      );
+  }
+
   /** Detailed history of one ledger entry (what happened to it, in order). */
   async history(companyId: string, ledgerEntryId: string) {
     return await this.db

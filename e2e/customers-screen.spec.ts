@@ -54,6 +54,15 @@ test.describe('customers screen', () => {
     await expect(page.getByText('Total balance')).toBeVisible();
     await expect(page.getByText('Opening balance')).toBeVisible();
     await expect(page.getByText('Closing balance')).toBeVisible();
+
+    const pdfDownload = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Download PDF' }).click();
+    expect((await pdfDownload).suggestedFilename()).toMatch(/^customer-statement-.*\.pdf$/);
+    await expect(page.getByRole('button', { name: 'Download CSV' })).toBeEnabled();
+    const csvDownload = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Download CSV' }).click();
+    expect((await csvDownload).suggestedFilename()).toMatch(/^customer-statement-.*\.csv$/);
+
     if (!isMobile) {
       await expect(page.getByRole('columnheader', { name: 'Debit' })).toBeVisible();
       await expect(page.getByRole('columnheader', { name: 'Credit' })).toBeVisible();
@@ -197,6 +206,11 @@ test.describe('customers screen', () => {
     }
     await table.getByRole('link', { name: `Open ${name}` }).click();
     await expect(page).toHaveURL(/\/admin\/customers\/[^/]+$/);
+    await expect(page.getByRole('button', { name: 'Back', exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Customer list' })).toHaveAttribute(
+      'href',
+      '/admin/customers/list',
+    );
     await expect(page.getByRole('heading', { name: 'Customer information' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Statement and transactions' })).toBeVisible();
     await page.getByRole('link', { name: 'Edit customer' }).click();

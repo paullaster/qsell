@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Suspense, use } from 'react';
 import type { customerCardAction } from '@/server/domains/customers/manage-actions';
 import type { customerStatementAction } from '@/server/domains/finance/receivables/actions';
@@ -44,6 +45,7 @@ export function CustomerCenterClient({
   canReadOrdersPromise,
   canReadRefundsPromise,
 }: Props) {
+  const router = useRouter();
   const card = use(cardPromise);
   const canEdit = use(canEditPromise);
   const canReceive = use(canReceivePromise);
@@ -60,6 +62,12 @@ export function CustomerCenterClient({
   const status = statusParts.length === 0 ? 'Active' : statusParts.join(' · ');
   const actions = (
     <>
+      <button type="button" className={buttonClass} onClick={() => router.back()}>
+        Back
+      </button>
+      <Link className={buttonClass} href="/admin/customers/list">
+        Customer list
+      </Link>
       {canEdit ? (
         <Link className={buttonClass} href={`/admin/customers/${customer.id}/edit`}>
           Edit customer

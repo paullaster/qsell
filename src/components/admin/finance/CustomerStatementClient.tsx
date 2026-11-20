@@ -4,9 +4,11 @@ import Link from 'next/link';
 import { Suspense, use, useId, useRef, useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { statementDocumentNumber, statementSpan } from '@/lib/customer-statement';
+import { downloadCsv, downloadPdfBase64 } from '@/lib/downloadPdf';
 import {
   customerLedgerEntryDetailAction,
   customerStatementAction,
+  customerStatementDownloadAction,
 } from '@/server/domains/finance/receivables/actions';
 import type { customerWalletAction } from '@/server/domains/finance/wallet-actions';
 import { InvoicePdfActions } from './InvoicePdfActions';
@@ -250,6 +252,7 @@ export function CustomerStatementPanel({
   const [cursor, setCursor] = useState<string | null>(initial.nextCursor);
   const [range, setRange] = useState(() => statementSpan(initial.lines, { from: '', to: '' }));
   const [busy, setBusy] = useState(false);
+  const [downloadBusy, setDownloadBusy] = useState<'pdf' | 'csv' | null>(null);
   const [moreBusy, setMoreBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
   const [selected, setSelected] = useState<{ id: string; label: string } | null>(null);
@@ -303,6 +306,27 @@ export function CustomerStatementPanel({
       ),
     );
     setCursor(res.data.nextCursor);
+  };
+
+  const downloadStatement = async (format: 'pdf' | 'csv') => {
+    if (downloadBusy !== null) return;
+    setDownloadBusy(format);
+    const res = await attempt(
+      customerStatementDownloadAction(
+        format,
+        c.id,
+        lines.map((line) => line.id),
+        ranged?.from === '' || ranged?.from === undefined ? undefined : ranged.from,
+        ranged?.to === '' || ranged?.to === undefined ? undefined : ranged.to,
+      ),
+    );
+    setDownloadBusy(null);
+    if (!res.ok) {
+      setNotice({ kind: 'error', text: res.error });
+      return;
+    }
+    if (res.data.format === 'csv') downloadCsv(res.data.content, res.data.fileName);
+    else downloadPdfBase64(res.data.contentBase64, res.data.fileName);
   };
 
   const openDetail = async (line: StatementLine) => {
@@ -410,6 +434,26 @@ export function CustomerStatementPanel({
           </button>
         </div>
       </form>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          className={buttonClass}
+          onClick={() => void downloadStatement('pdf')}
+          disabled={downloadBusy !== null}
+        >
+          {downloadBusy === 'pdf' ? 'Preparing PDF…' : 'Download PDF'}
+        </button>
+        <button
+          type="button"
+          className={buttonClass}
+          onClick={() => void downloadStatement('csv')}
+          disabled={downloadBusy !== null}
+        >
+          {downloadBusy === 'csv' ? 'Preparing CSV…' : 'Download CSV'}
+        </button>
+        <p className="text-xs text-fg-muted">Downloads use the rows and date range shown above.</p>
+      </div>
 
       <section aria-labelledby={`${uid}-statement`} className="space-y-3">
         <h3 id={`${uid}-statement`} className="text-sm font-bold text-fg-strong">

@@ -11,7 +11,15 @@ import type { PaymentMethodInput } from './payment-method-service';
 import type { AllocateMode, ReceiptInput, ReceiptListFilter } from './receipt-service';
 import { fromCents, toCents } from '../domain/receivables';
 import { decodeStatementCursor, isStatementId, statementFilterDate } from './statement-cursor';
-import { ledgerAppliedTotals } from '@/lib/customer-statement';
+import {
+  buildCustomerStatementCsv,
+  customerStatementFileName,
+  ledgerAppliedTotals,
+  statementDownloadDocument,
+  statementRowBalances,
+  type StatementDownload,
+} from '@/lib/customer-statement';
+import { renderCustomerStatementPdf } from '@/server/adapters/pdf/pdfkit-customer-statement.adapter';
 
 import { isChequeCountsMode } from '@/lib/order-payment';
 import { parseAllocationRequest, type AllocationRequest } from '@/lib/allocation-request';
@@ -701,6 +709,112 @@ export async function customerStatementAction(
           documentId: l.documentId,
           orderId: l.orderId,
         })),
+      };
+    },
+  );
+}
+
+export async function customerStatementDownloadAction(
+  format: 'pdf' | 'csv',
+  customerId: string,
+  entryIds: string[],
+  from?: string,
+  to?: string,
+) {
+  return run(
+    'customer_ledger:read',
+    { surface: 'finance/customer-ledger', action: 'download_statement' },
+    async (ctx) => {
+      const fromDate = statementFilterDate(from);
+      const toDate = statementFilterDate(to);
+      if (entryIds.length > 1000)
+        throw new FinanceError('INVALID', 'That statement is too large to download.');
+      if (!entryIds.every(isStatementId))
+        throw new FinanceError('INVALID', 'That statement contains an invalid transaction.');
+      const found = await getContainer().customers.getCustomer(ctx.companyId, customerId);
+      if (!found) throw new FinanceError('NOT_FOUND', 'That customer does not exist.');
+
+      const summary = await fin().customerLedger.statement(
+        ctx.companyId,
+        customerId,
+        fromDate,
+        toDate,
+        null,
+        1,
+      );
+      const fetched = await fin().customerLedger.entriesByIds(ctx.companyId, customerId, entryIds);
+      const byId = new Map(fetched.map((row) => [row.id, row]));
+      const selected = entryIds.map((id) => byId.get(id));
+      if (selected.some((row) => row === undefined))
+        throw new FinanceError('INVALID', 'The statement has changed. Refresh and try again.');
+      const rows = selected.filter((row): row is NonNullable<typeof row> => row !== undefined);
+      for (const row of rows) {
+        const postingDate = row.postingDate;
+        if (postingDate === null) {
+          if (fromDate !== null || toDate !== null)
+            throw new FinanceError('INVALID', 'The statement has changed. Refresh and try again.');
+          continue;
+        }
+        if (fromDate !== null && postingDate < fromDate)
+          throw new FinanceError('INVALID', 'The statement has changed. Refresh and try again.');
+        if (toDate !== null && postingDate > toDate)
+          throw new FinanceError('INVALID', 'The statement has changed. Refresh and try again.');
+      }
+      const balances = statementRowBalances(
+        rows.map((row) => toCents(row.amount)),
+        summary.openingBalanceCents,
+      );
+      const refs = await loadInvoiceReferences(
+        getContainer().db,
+        ctx.companyId,
+        rows.filter((row) => row.documentType === 'invoice').map((row) => row.id),
+      );
+      const statement: StatementDownload = {
+        customerName: found.customer.name,
+        customerNumber: found.customer.number,
+        from: fromDate ?? '',
+        to: toDate ?? '',
+        openingBalance: fromCents(summary.openingBalanceCents),
+        totalDebit: fromCents(summary.debitCents),
+        totalCredit: fromCents(summary.creditCents),
+        closingBalance: fromCents(summary.closingBalanceCents),
+        lines: rows.map((row, index) => ({
+          date: row.postingDate,
+          document: statementDownloadDocument(
+            row.documentType,
+            row.documentNo,
+            refs.get(row.id)?.invoiceNo ?? null,
+          ),
+          description: row.description ?? '',
+          dueDate: row.dueDate ? row.dueDate.toISOString().slice(0, 10) : null,
+          debit: fromCents(balances[index]?.debitCents ?? 0),
+          credit: fromCents(balances[index]?.creditCents ?? 0),
+          balance: fromCents(balances[index]?.runningCents ?? 0),
+        })),
+      };
+      const fileName = customerStatementFileName(
+        found.customer.number,
+        format,
+        statement.from,
+        statement.to,
+      );
+      if (format === 'csv') {
+        return {
+          format,
+          fileName,
+          mimeType: 'text/csv; charset=utf-8',
+          content: buildCustomerStatementCsv(statement),
+          contentBase64: '',
+        };
+      }
+      const company = await getContainer().companySettings.getProfile();
+      const pdf = await renderCustomerStatementPdf(statement, company, new Date().toISOString());
+      return {
+        format,
+        fileName,
+        mimeType: 'application/pdf',
+        content: '',
+        contentBase64: pdf.toString('base64'),
       };
     },
   );
