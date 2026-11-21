@@ -1,5 +1,5 @@
 {
-  "id": "6f2195e6-e036-4be4-b64d-c3ebcabdae2d",
+  "id": "75521be2-4856-451d-95c3-dbfd57c94cb7",
   "prevId": "1f9c1c3a-54d7-4891-bda3-0d4c46d9d41a",
   "version": "7",
   "dialect": "postgresql",
@@ -8154,7 +8154,7 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
@@ -8190,7 +8190,7 @@
         },
         "entered_quantity": {
           "name": "entered_quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": false
         }
@@ -11765,13 +11765,13 @@
         },
         "carried": {
           "name": "carried",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
         "accepted": {
           "name": "accepted",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
@@ -13307,26 +13307,26 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
         "picked": {
           "name": "picked",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": false
         },
         "delivered": {
           "name": "delivered",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": "'0'"
         },
         "issued": {
           "name": "issued",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": "'0'"
@@ -14333,7 +14333,7 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
@@ -18685,7 +18685,7 @@
         },
         "stock_quantity": {
           "name": "stock_quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": 0
@@ -19155,7 +19155,7 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
@@ -21618,19 +21618,19 @@
         },
         "change_amount": {
           "name": "change_amount",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
         "previous_stock": {
           "name": "previous_stock",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
         "new_stock": {
           "name": "new_stock",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
@@ -22763,7 +22763,7 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
@@ -25448,7 +25448,7 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
@@ -25863,6 +25863,28 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "order_collections_waiting_idx": {
+          "name": "order_collections_waiting_idx",
+          "columns": [
+            {
+              "expression": "ready_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"order_collections\".\"status\" IN ('ready','locked')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -26164,7 +26186,7 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
@@ -26220,7 +26242,7 @@
         },
         "entered_quantity": {
           "name": "entered_quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": false
         },
@@ -27597,7 +27619,7 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
@@ -29303,7 +29325,7 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
@@ -29579,7 +29601,7 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": 1
@@ -29785,7 +29807,7 @@
         },
         "category_quantity": {
           "name": "category_quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": 1
@@ -34433,7 +34455,7 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": 1
@@ -35570,13 +35592,13 @@
         },
         "min_order_qty": {
           "name": "min_order_qty",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": false
         },
         "max_order_qty": {
           "name": "max_order_qty",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": false
         },
@@ -35639,21 +35661,21 @@
         },
         "stock_quantity": {
           "name": "stock_quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": 0
         },
         "reserved_quantity": {
           "name": "reserved_quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": 0
         },
         "low_stock_threshold": {
           "name": "low_stock_threshold",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": 0
@@ -38137,7 +38159,7 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
@@ -38195,21 +38217,21 @@
         },
         "received_quantity": {
           "name": "received_quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": "'0'"
         },
         "invoiced_quantity": {
           "name": "invoiced_quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": "'0'"
         },
         "cancelled_quantity": {
           "name": "cancelled_quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": "'0'"
@@ -39002,7 +39024,7 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
@@ -39499,7 +39521,7 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
@@ -42523,7 +42545,7 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
@@ -42661,13 +42683,13 @@
         },
         "expected_qty": {
           "name": "expected_qty",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
         "received_qty": {
           "name": "received_qty",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": 0
@@ -43190,7 +43212,7 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
@@ -43620,7 +43642,7 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
@@ -43864,7 +43886,7 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": false
         },
@@ -44533,19 +44555,19 @@
         },
         "delivered": {
           "name": "delivered",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
         "accepted": {
           "name": "accepted",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
         "rejected": {
           "name": "rejected",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": "'0'"
@@ -44564,14 +44586,14 @@
         },
         "invoiced_quantity": {
           "name": "invoiced_quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": "'0'"
         },
         "returned_quantity": {
           "name": "returned_quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": "'0'"
@@ -45442,7 +45464,7 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
@@ -45551,7 +45573,7 @@
         },
         "entered_quantity": {
           "name": "entered_quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": false
         },
@@ -45983,7 +46005,7 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": "'1'"
@@ -47075,7 +47097,7 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": "'1'"
@@ -48601,14 +48623,14 @@
         },
         "on_hand": {
           "name": "on_hand",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": 0
         },
         "reserved": {
           "name": "reserved",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": 0
@@ -48734,35 +48756,35 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": 0
         },
         "shipped_quantity": {
           "name": "shipped_quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": 0
         },
         "received_quantity": {
           "name": "received_quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": 0
         },
         "written_off_quantity": {
           "name": "written_off_quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": 0
         },
         "returned_quantity": {
           "name": "returned_quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": 0
@@ -48776,13 +48798,13 @@
         },
         "expected_quantity": {
           "name": "expected_quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": false
         },
         "counted_quantity": {
           "name": "counted_quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": false
         },
@@ -48800,7 +48822,7 @@
         },
         "variance_quantity": {
           "name": "variance_quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": false
         },
@@ -49663,7 +49685,7 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
@@ -49993,20 +50015,20 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
         "consumed": {
           "name": "consumed",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": 0
         },
         "released": {
           "name": "released",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": 0
@@ -50573,7 +50595,7 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         }
@@ -50698,7 +50720,7 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
@@ -50856,7 +50878,7 @@
         },
         "quantity_difference": {
           "name": "quantity_difference",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true,
           "default": "'0'"
@@ -53361,7 +53383,7 @@
         },
         "max_quantity": {
           "name": "max_quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": false
         }
@@ -53868,7 +53890,7 @@
         },
         "quantity": {
           "name": "quantity",
-          "type": "numeric(16, 3)",
+          "type": "numeric(14, 3)",
           "primaryKey": false,
           "notNull": true
         },
