@@ -142,14 +142,19 @@ export function DeliverySection({ delivery, recipient, onRecipient, notes, onNot
 
       {delivery.named === null ? null : (
         <div className="rounded-lg border border-line bg-surface-raised p-3 text-sm" role="status">
-          <p className="text-fg-muted">The pin is near</p>
+          <p className="text-fg-muted">Address found for your pin</p>
           <p className="font-medium text-fg-strong">{delivery.named.label}</p>
           <button type="button" className={`${buttonClass} mt-2`} onClick={onUseNamed}>
-            Fill in my address from this
+            Use this address
           </button>
         </div>
       )}
-      {delivery.nameNotice === null ? null : <p className="text-xs text-fg-muted">{delivery.nameNotice}</p>}
+      {delivery.pin !== null && delivery.named === null && !options.canReverse ? (
+        <p role="status" className="text-xs text-fg-muted">
+          Your pin is saved and sets the delivery price. This shop&apos;s map cannot look up street names, so please type your street and town below.
+        </p>
+      ) : null}
+      {delivery.nameNotice === null ? null : <p role="status" className="text-xs text-fg-muted">{delivery.nameNotice}</p>}
 
       <div className="space-y-3">
         <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-fg">

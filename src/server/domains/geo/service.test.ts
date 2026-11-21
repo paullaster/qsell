@@ -27,7 +27,8 @@ function acme(behaviour: 'works' | 'fails' | 'hangs', road: Record<string, numbe
     distancesFrom: (_from, to) => answer(() => to.map((p): RouteEstimate => ({ km: road[key(p)] ?? 10, minutes: 5, basis: 'road' }))),
   };
 }
-const serviceWith = (port: GeoPort, timeoutMs = 50) => new GeoService(new GeoPortRegistry({ GEO_DRIVER: 'acme' }, { builtin: () => new BuiltinGeoAdapter(), acme: () => port }), timeoutMs);
+const chooseAcme: GeoSelection = () => Promise.resolve({ driver: 'acme', config: {} });
+const serviceWith = (port: GeoPort, timeoutMs = 50) => new GeoService(new GeoPortRegistry({}, { builtin: () => new BuiltinGeoAdapter(), acme: () => port }, chooseAcme), timeoutMs);
 
 describe('the geo service', () => {
   it('uses the chosen provider when it answers', async () => {
@@ -59,10 +60,10 @@ describe('the geo service', () => {
 
   describe('what it records and which provider it uses', () => {
     const events: GeoCallEvent[] = [];
-    const recording = (port: GeoPort, selection: GeoSelection | null = null) => {
+    const recording = (port: GeoPort, selection: GeoSelection = chooseAcme) => {
       events.length = 0;
       let t = 0;
-      return new GeoService(new GeoPortRegistry({ GEO_DRIVER: 'acme' }, { builtin: () => new BuiltinGeoAdapter(), acme: () => port }, selection), 50, (e) => events.push(e), () => (t += 40));
+      return new GeoService(new GeoPortRegistry({}, { builtin: () => new BuiltinGeoAdapter(), acme: () => port }, selection), 50, (e) => events.push(e), () => (t += 40));
     };
     it('notes each call with its provider, kind, time and whether it worked', async () => {
       const service = recording(acme('works'));
@@ -82,13 +83,74 @@ describe('the geo service', () => {
         { provider: 'acme', op: 'distance', ms: 40, ok: false, fellBack: true },
       ]);
     });
-    it('uses the provider the administrator chose over the environment, and the built-in one when the choice cannot be built', async () => {
-      const chosen = new GeoService(new GeoPortRegistry({ GEO_DRIVER: 'builtin' }, { builtin: () => new BuiltinGeoAdapter(), acme: () => acme('works') }, () => Promise.resolve({ driver: 'acme', config: {} })));
+    it('uses the provider the administrator chose, and the built-in one when the choice cannot be built', async () => {
+      const chosen = new GeoService(new GeoPortRegistry({}, { builtin: () => new BuiltinGeoAdapter(), acme: () => acme('works') }, () => Promise.resolve({ driver: 'acme', config: {} })));
       expect((await chosen.searchPlaces('Westlands')).provider).toBe('acme');
       const broken = new GeoService(new GeoPortRegistry({}, { builtin: () => new BuiltinGeoAdapter(), acme: () => { throw new Error('bad setting'); } }, () => Promise.resolve({ driver: 'acme', config: {} })));
       expect((await broken.reverse(nairobi)).provider).toBe('builtin');
       const failing = new GeoService(new GeoPortRegistry({}, { builtin: () => new BuiltinGeoAdapter() }, () => Promise.reject(new Error('db down'))));
       expect((await failing.reverse(nairobi)).provider).toBe('builtin');
+    });
+  });
+
+  describe('a measured road distance is the same when asked again', () => {
+    /** A provider that is up for the first `upFor` distance calls and down after, like a slow public routing server. */
+    const flaky = (upFor: number): GeoPort & { calls: () => number } => {
+      let calls = 0;
+      const up = acme('works', { [`${String(nakuru.latitude)},${String(nakuru.longitude)}`]: 160 });
+      return {
+        ...up,
+        calls: () => calls,
+        distancesFrom: (from, to) => {
+          calls += 1;
+          return calls <= upFor ? up.distancesFrom(from, to) : Promise.reject(new GeoUnavailableError('acme'));
+        },
+      };
+    };
+    const at = (port: GeoPort, clock: () => number) => new GeoService(new GeoPortRegistry({}, { builtin: () => new BuiltinGeoAdapter(), acme: () => port }, chooseAcme), 50, () => undefined, clock);
+
+    it('gives the shopper and the order the same road distance even when the provider fails in between', async () => {
+      const port = flaky(1);
+      const geo = at(port, () => 0);
+      const shown = await geo.distancesFrom(nairobi, [nakuru]);
+      const paid = await geo.distancesFrom(nairobi, [nakuru]);
+      expect(shown.value[0]?.km).toBe(160);
+      expect(shown.value[0]?.basis).toBe('road');
+      expect(paid.value[0]).toEqual(shown.value[0]);
+      expect(paid.degraded).toBe(false);
+      expect(port.calls()).toBe(1);
+    });
+    it('never remembers an estimate made because the provider failed: the next question asks the provider again', async () => {
+      const port = flaky(0);
+      const geo = at(port, () => 0);
+      const first = await geo.distancesFrom(nairobi, [nakuru]);
+      expect(first.degraded).toBe(true);
+      expect(first.provider).toBe('builtin');
+      await geo.distancesFrom(nairobi, [nakuru]);
+      expect(port.calls()).toBe(2);
+    });
+    it('asks only for the places it does not know, and keeps the answers in the order asked', async () => {
+      const port = flaky(2);
+      const geo = at(port, () => 0);
+      await geo.distancesFrom(nairobi, [nakuru]);
+      const both = await geo.distancesFrom(nairobi, [kisumu, nakuru]);
+      expect(both.value).toHaveLength(2);
+      expect(both.value[1]?.km).toBe(160);
+      expect(port.calls()).toBe(2);
+    });
+    it('forgets a distance after fifteen minutes, and keys it by where from as well as where to', async () => {
+      let now = 0;
+      const port = flaky(9);
+      const geo = at(port, () => now);
+      await geo.distancesFrom(nairobi, [nakuru]);
+      await geo.distancesFrom(mombasa, [nakuru]);
+      expect(port.calls()).toBe(2);
+      now = 14 * 60_000;
+      await geo.distancesFrom(nairobi, [nakuru]);
+      expect(port.calls()).toBe(2);
+      now = 16 * 60_000;
+      await geo.distancesFrom(nairobi, [nakuru]);
+      expect(port.calls()).toBe(3);
     });
   });
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { straightLineKm } from '@/lib/geo';
 import { BuiltinGeoAdapter } from './builtin.adapter';
-import { GeoPortRegistry, configuredGeoDriver, roadFactorFrom } from './registry';
+import { GeoPortRegistry, roadFactorFrom } from './registry';
 import { runGeoPortContract } from './contract';
 import type { GeoPort } from '@/server/ports/geo';
 
@@ -22,20 +22,20 @@ describe('choosing a map provider', () => {
   const fake = (name: string): GeoPort => ({ provider: name, capabilities: new BuiltinGeoAdapter().capabilities, searchPlaces: () => Promise.resolve([]), resolvePlace: () => Promise.resolve(null), reverse: () => Promise.resolve(null), distancesFrom: () => Promise.resolve([]) });
   const adapters = { builtin: () => new BuiltinGeoAdapter(), acme: () => fake('acme') };
 
-  it('uses the built-in one when nothing is set', () => {
-    expect(configuredGeoDriver({}, adapters)).toBe('builtin');
-    expect(configuredGeoDriver({ GEO_DRIVER: '  ' }, adapters)).toBe('builtin');
+  it('uses the built-in one when the administrator has chosen nothing, whatever the environment says', async () => {
+    const registry = new GeoPortRegistry({ GEO_DRIVER: 'acme' }, adapters, () => Promise.resolve(null));
+    expect((await registry.current()).provider).toBe('builtin');
+    expect((await new GeoPortRegistry({}, adapters).current()).provider).toBe('builtin');
   });
-  it('uses the one named, in any case, and refuses a name nobody registered, saying the choices', () => {
-    expect(configuredGeoDriver({ GEO_DRIVER: 'ACME' }, adapters)).toBe('acme');
-    expect(() => configuredGeoDriver({ GEO_DRIVER: 'nope' }, adapters)).toThrow(/Use one of: builtin, acme/);
-    expect(() => configuredGeoDriver({ GEO_DRIVER: 'constructor' }, adapters)).toThrow(/Unknown GEO_DRIVER/);
+  it('uses the one the administrator chose, and the built-in one when that choice names nobody registered', async () => {
+    expect((await new GeoPortRegistry({}, adapters, () => Promise.resolve({ driver: 'acme', config: {} })).current()).provider).toBe('acme');
+    expect((await new GeoPortRegistry({}, adapters, () => Promise.resolve({ driver: 'nope', config: {} })).current()).provider).toBe('builtin');
   });
   it('adds a provider with one registration and nothing else, builds each once, and always keeps the built-in one to fall back on', () => {
     let built = 0;
-    const registry = new GeoPortRegistry({ GEO_DRIVER: 'acme' }, { ...adapters, acme: () => { built += 1; return fake('acme'); } });
-    expect(registry.active().provider).toBe('acme');
-    expect(registry.active()).toBe(registry.active());
+    const registry = new GeoPortRegistry({}, { ...adapters, acme: () => { built += 1; return fake('acme'); } });
+    expect(registry.named('acme').provider).toBe('acme');
+    expect(registry.named('acme')).toBe(registry.named('acme'));
     expect(built).toBe(1);
     expect(registry.fallback().provider).toBe('builtin');
     expect(() => registry.named('missing')).toThrow(/Unknown map provider/);
