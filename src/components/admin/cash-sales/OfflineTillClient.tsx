@@ -13,6 +13,7 @@ import { afterSend, deviceRefOf, mayStillSell, pendingTotal, type OutboxEntry } 
 import { signInBrowser } from '@/lib/offline-till/sign';
 import { deviceId, getMeta, nextCounter, outboxAll, outboxDelete, outboxPut } from '@/lib/offline-till/store';
 import { prepareOfflineTill } from '@/lib/offline-till/ready';
+import { PrintButton } from '@/components/ui/PrintButton';
 
 const money = (amount: number): string => `KES ${amount.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const KIND_WORDS: Record<string, string> = { cash: 'Cash', card: 'Card', mobile_money: 'M-Pesa or mobile money' };
@@ -274,14 +275,14 @@ function PlanLine({ plan }: { plan: ReturnType<typeof planTenders> | null }) {
 
 function Slip({ entry, onClose }: { entry: OutboxEntry; onClose: () => void }) {
   return (
-    <section className={`${cardClass} space-y-2 text-sm`} aria-label="Slip" data-testid="till-slip">
+    <section id="offline-slip" className={`${cardClass} space-y-2 text-sm`} aria-label="Slip" data-testid="till-slip">
       <h2 className="text-base font-bold text-fg-strong">Slip {entry.sale.deviceRef}</h2>
       <p className="text-fg-muted">Kept on this till. The tax receipt follows when the connection returns: keep this slip until then.</p>
       <ul className="space-y-0.5">{entry.words.lines.map((l) => <li key={l.name} className="flex justify-between gap-3"><span>{l.quantity} × {l.name}</span><span className="font-mono">{money(l.quantity * l.unitPrice)}</span></li>)}</ul>
       <p className="flex justify-between gap-3 font-semibold text-fg-strong"><span>Total</span><span className="font-mono">{money(entry.sale.total)}</span></p>
       <p className="flex justify-between gap-3 text-lg font-bold text-fg-strong"><span>Change given</span><span className="font-mono" data-testid="slip-change">{money(entry.words.change)}</span></p>
       <div className="flex gap-2 print:hidden">
-        <button type="button" className={buttonClass} onClick={() => window.print()}>Print slip</button>
+        <PrintButton targetId="offline-slip" title={`Slip ${entry.sale.deviceRef}`} paper="slip" label="Print slip" testId="slip-print" />
         <button type="button" className={primaryClass} onClick={onClose}>New sale</button>
       </div>
     </section>
