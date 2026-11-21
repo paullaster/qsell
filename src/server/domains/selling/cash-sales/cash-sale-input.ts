@@ -20,7 +20,19 @@ export function parseCashSaleLines(raw: unknown): { ok: true; customerId: string
   // The lines are read by the same rules as every selling document; the customer is checked here, so a placeholder stands in for it.
   const lines = parseSalesOrderInput({ lines: raw.lines, customerId: '00000000-0000-4000-8000-000000000000' });
   if (!lines.ok) return lines;
-  return { ok: true, customerId: customerId === '' ? null : customerId, lines: lines.input.lines };
+  // A price typed at the till is read here and nowhere else; the lines come back in the order they were sent, so each is matched by its place.
+  const sent = Array.isArray(raw.lines) ? (raw.lines as unknown[]) : [];
+  const priced: SalesOrderLineInput[] = [];
+  for (const [n, line] of lines.input.lines.entries()) {
+    const typed = isRecord(sent[n]) ? sent[n].unitPrice : undefined;
+    if (typed === undefined || typed === null) {
+      priced.push(line);
+      continue;
+    }
+    if (typeof typed !== 'number' || !Number.isFinite(typed) || typed <= 0 || typed > 100_000_000) return { ok: false, error: `Line ${String(n + 1)}: the price must be more than nothing.` };
+    priced.push(line.package === undefined ? { ...line, unitPrice: Math.round(typed * 100) / 100 } : line);
+  }
+  return { ok: true, customerId: customerId === '' ? null : customerId, lines: priced };
 }
 
 /** Reads what the till screen sent for a sale (untrusted): the lines, how it was paid, the customer if one was chosen, and the key of this attempt. */
