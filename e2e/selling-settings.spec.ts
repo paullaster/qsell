@@ -59,7 +59,7 @@ test.describe('selling document settings', () => {
     await expect(page.getByRole('listitem').filter({ hasText: 'Sales invoices' }).first()).toContainText('When payment is received');
 
     // A cash sale offers no credit at all.
-    const cash = page.getByRole('listitem').filter({ hasText: 'Cash sales' }).first();
+    const cash = page.getByRole('listitem').filter({ hasText: 'Cash sales' }).filter({ has: page.getByRole('button', { name: /^Change Cash sales/ }) }).first();
     await cash.getByRole('button', { name: /^Change Cash sales/ }).click();
     const cashForm = page.getByRole('form', { name: /^Change Cash sales/ });
     await expect(cashForm.getByRole('combobox', { name: 'Credit check' })).toBeVisible();

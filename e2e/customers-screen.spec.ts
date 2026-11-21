@@ -27,15 +27,16 @@ test.describe('customers screen', () => {
   }) => {
     await page.goto('/admin/customers');
     await expect(page.getByRole('heading', { name: 'Customers', level: 2 })).toBeVisible();
-    await expect(page.getByRole('link', { name: /^List/ })).toHaveAttribute(
+    // The sidebar has the same links; the hub's own are the last on the page.
+    await expect(page.getByRole('link', { name: /^List/ }).last()).toHaveAttribute(
       'href',
       '/admin/customers/list',
     );
-    await expect(page.getByRole('link', { name: /^Customer groups/ })).toHaveAttribute(
+    await expect(page.getByRole('link', { name: /^Customer groups/ }).last()).toHaveAttribute(
       'href',
       '/admin/pricing/groups',
     );
-    await page.getByRole('link', { name: /^List/ }).click();
+    await page.getByRole('link', { name: /^List/ }).last().click();
     await expect(page).toHaveURL(/\/admin\/customers\/list$/);
     await expect(page.getByRole('heading', { name: 'Customers', level: 2 })).toBeVisible();
   });
@@ -49,11 +50,11 @@ test.describe('customers screen', () => {
     await page.getByRole('link', { name: 'Open Alice Cash' }).click();
     await expect(page).toHaveURL(/\/admin\/customers\/[^/]+$/);
     await expect(page.getByRole('heading', { name: 'Customer statement' })).toBeVisible();
-    await expect(page.getByLabel('From')).not.toHaveValue('');
-    await expect(page.getByLabel('To')).not.toHaveValue('');
-    await expect(page.getByText('Total balance')).toBeVisible();
-    await expect(page.getByText('Opening balance')).toBeVisible();
-    await expect(page.getByText('Closing balance')).toBeVisible();
+    await expect(page.getByLabel('From', { exact: true })).not.toHaveValue('');
+    await expect(page.getByLabel('To', { exact: true })).not.toHaveValue('');
+    await expect(page.getByText('Total balance').locator('visible=true').first()).toBeVisible();
+    await expect(page.getByText('Opening balance').locator('visible=true').first()).toBeVisible();
+    await expect(page.getByText('Closing balance').locator('visible=true').first()).toBeVisible();
 
     const pdfDownload = page.waitForEvent('download');
     await page.getByRole('button', { name: 'Download PDF' }).click();
@@ -69,12 +70,12 @@ test.describe('customers screen', () => {
       await expect(page.getByRole('columnheader', { name: 'Balance' })).toBeVisible();
       await expect(page.getByRole('columnheader', { name: 'Drilldown' })).toHaveCount(0);
     } else {
-      await expect(page.getByText('Debit', { exact: true })).toBeVisible();
-      await expect(page.getByText('Credit', { exact: true })).toBeVisible();
-      await expect(page.getByText('Balance', { exact: true })).toBeVisible();
+      await expect(page.getByText('Debit', { exact: true }).locator('visible=true').first()).toBeVisible();
+      await expect(page.getByText('Credit', { exact: true }).locator('visible=true').first()).toBeVisible();
+      await expect(page.getByText('Balance', { exact: true }).locator('visible=true').first()).toBeVisible();
     }
     await clickUntilVisible(
-      page.getByRole('button', { name: /View details for Payment/ }),
+      page.getByRole('button', { name: /View details for Payment/ }).first(),
       page.getByRole('dialog', { name: /Transaction detail/ }),
     );
     const dialog = page.getByRole('dialog', { name: /Transaction detail/ });

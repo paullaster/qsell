@@ -57,7 +57,7 @@ test.describe('how long an order may wait in each stage', () => {
     await open(page, '/admin/orders', /Web Shop Orders/);
     const flow = page.getByLabel('Web shop order flow');
     await expect(flow).toBeVisible({ timeout: 60_000 });
-    await flow.getByText(/Order flow, last 7 days/).click();
+    await flow.getByText(/order flow, last 7 days/i).click();
     const late = flow.getByRole('region', { name: 'Late orders' });
     await expect(late).toBeVisible({ timeout: 30_000 });
     const item = late.getByRole('listitem').filter({ hasText: orderNumber });
