@@ -130,7 +130,9 @@ describe.skipIf(!has(url))('riders (database)', () => {
     const writer = (await import('@/server/domains/orders/write-service')).OrderWriteService;
     createOrder = (input) => writer.createOrder(input);
     c = mod.getContainer();
-    const ours = await c.companySettings.ensureSeeded();
+    // A company of its own: staff left riding by other delivery test files in the shared one would stop staff being switched off here.
+    const [ours] = await db.insert(schema.companySettings).values({ legalName: 'Riders Co', tradingName: 'Riders Co', email: `riders-${randomUUID().slice(0, 8)}@riders.test`, phone: '0', streetAddress: '1', city: 'N', countyOrState: 'N', postalCode: '0', kraPin: `P${randomUUID().slice(0, 8)}` }).returning();
+    if (ours === undefined) throw new Error('the test company was not made');
     companyId = ours.id;
     spy = vi.spyOn(c.companySettings, 'ensureSeeded').mockResolvedValue(ours);
     await db.insert(schema.currencies).values({ code: 'KES', name: 'Kenyan Shilling', symbol: 'KSh', isBaseCurrency: true }).onConflictDoNothing();

@@ -624,6 +624,8 @@ function Customers({
       {tab === 'customers' ? (
         <div className="space-y-4">
           {cardForm}
+          {/* The card carries its own notice; once it has closed (saved), the result is told here. */}
+          {cardForm === null ? <Message notice={notice} /> : null}
 
           <Field id="customer-search" label="Search customers">
             <input

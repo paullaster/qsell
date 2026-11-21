@@ -208,12 +208,8 @@ export class OrderPaymentSync {
       if (order === undefined || settledState(t.payableCents, t.paidCents) !== 'paid') return [];
       if (order.paymentStatus !== 'paid' || planPaymentMove(order.paymentStatus, 'paid') !== null)
         return [];
-      if (
-        order.paymentMethodId !== null &&
-        has(order.transactionReference) &&
-        order.paymentMethod !== 'on_account'
-      )
-        return [];
+      // An order that already says how it was paid keeps it: a later receipt (another way, another day) never rewrites those details.
+      if (order.paymentMethodId !== null && order.paymentMethod !== 'on_account') return [];
       return [{ order }];
     });
     const fieldOrderIds = [
