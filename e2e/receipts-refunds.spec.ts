@@ -194,9 +194,13 @@ test.describe('invoices on the customer account', () => {
     const label = testInfo.project.name === 'phone' ? 'Phone' : 'Desktop';
     await open(page, '/admin/finance/receivables/ageing', 'Receivables ageing');
     await page.getByRole('link', { name: `Invoiced buyer ${label}` }).first().click();
-    const download = page.getByRole('link', { name: `Download invoice E2E-CR-${label.toUpperCase()} as PDF` });
+    // The customer account's statement opens a document with its own actions: open the invoice (its debit) first.
+    await page.getByRole('button', { name: /^View details for .* debit$/ }).first().click();
+    // The statement names the document by its tax invoice number.
+    const invoiceNo = `E2E-TI-${label.toUpperCase()}`;
+    const download = page.getByRole('link', { name: `Download tax invoice ${invoiceNo} as PDF` });
     await expect(download).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByRole('button', { name: `Print invoice E2E-CR-${label.toUpperCase()}` })).toBeVisible();
+    await expect(page.getByRole('button', { name: `Print tax invoice ${invoiceNo}` })).toBeVisible();
     await noHorizontalScroll(page);
     const file = await page.request.get((await download.getAttribute('href')) ?? '');
     expect(file.status()).toBe(200);

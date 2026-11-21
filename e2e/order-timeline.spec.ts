@@ -52,7 +52,7 @@ test.describe('every stage of an order is timestamped, failures included', () =>
     await open(page, '/admin/orders', /Web Shop Orders/);
     const flow = page.getByLabel('Web shop order flow');
     await expect(flow).toBeVisible({ timeout: 60_000 });
-    await flow.getByText(/Order flow, last 7 days/).click();
+    await flow.getByText(/order flow, last 7 days/i).click();
     await expect(flow.getByText(/Not enough stock/).first()).toBeVisible();
     await noHorizontalScroll(page);
   });

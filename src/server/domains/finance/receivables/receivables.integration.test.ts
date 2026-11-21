@@ -229,6 +229,12 @@ describe.skipIf(!has(url))('receivables (database)', () => {
         },
       ]);
 
+      // Older rows carry their history like any other (the books check that every remaining amount is the sum of it).
+      await db.insert(schema.customerDetailedEntries).values([
+        { companyId, customerId: c.id, ledgerEntryId: legacyIds[0] ?? '', entryType: 'initial', amount: '10.00', postingDate: null },
+        { companyId, customerId: c.id, ledgerEntryId: legacyIds[1] ?? '', entryType: 'initial', amount: '20.00', postingDate: null },
+      ]);
+
       const first = await fin.customerLedger.statement(companyId, c.id, null, null, null, 1);
       expect(first.lines.map((l) => l.documentNo)).toEqual(['ST-LEGACY-1']);
       expect(decodeStatementCursor(first.nextCursor)).toEqual({ date: null, id: legacyIds[0] });
