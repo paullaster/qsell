@@ -428,6 +428,43 @@ describe.skipIf(!has(url))('collecting an order from a branch (database)', () =>
         expect(other.ok && other.data.rows.some((r) => r.leftAtCounterDays !== undefined)).toBe(false);
       });
 
+      it('lists the orders left at the counter with the longest wait first, in pages that lose and repeat none', async () => {
+        const day = 86_400_000;
+        const mark = async (w: Awaited<ReturnType<typeof waiting>>, daysAgo: number) => {
+          await c.orderCollections.markReady(staff(), w.order.id);
+          await db.update(schema.orderCollections).set({ readyAt: new Date(Date.now() - daysAgo * day - 60_000) }).where(eq(schema.orderCollections.orderId, w.order.id));
+        };
+        const three = await waiting();
+        const seven = await waiting();
+        const five = await waiting();
+        const fresh = await waiting();
+        const collected = await waiting();
+        await mark(three, 3);
+        await mark(seven, 7);
+        await mark(five, 5);
+        await mark(fresh, 0);
+        await mark(collected, 9);
+        await c.orderCollections.collectWithCode(staff(), collected.order.id, collected.code);
+        const mine = new Set([three, seven, five, fresh, collected].map((w) => w.order.id));
+        // Walk every page, two at a time: no order twice, and the waits only ever grow down the list.
+        const seen: string[] = [];
+        let cursor: string | null = null;
+        for (let n = 0; n < 50; n += 1) {
+          const page: { rows: { id: string }[]; nextCursor: string | null } = await c.orders.page({ leftAtCounterDays: 1, limit: 2, cursor });
+          seen.push(...page.rows.map((r) => r.id));
+          cursor = page.nextCursor;
+          if (cursor === null) break;
+        }
+        expect(new Set(seen).size).toBe(seen.length);
+        // The longest wait is first: seven, five, three; not the fresh one (under a day) and not the one handed over.
+        expect(seen.filter((id) => mine.has(id))).toEqual([seven.order.id, five.order.id, three.order.id]);
+        // Other filters keep their own order (newest first) and the text narrows it.
+        const narrowed = await c.orders.page({ leftAtCounterDays: 1, query: five.order.orderNumber });
+        expect(narrowed.rows.map((r) => r.id)).toEqual([five.order.id]);
+        const newest = await c.orders.page({ query: seven.order.orderNumber });
+        expect(newest.rows.map((r) => r.id)).toEqual([seven.order.id]);
+      });
+
       it('lets staff remind the customer now: only for an order left a day or more, once a day, as a message of its own that leaves the automatic stages alone, and logs who', async () => {
         const day = 86_400_000;
         const w = await waiting();
