@@ -172,6 +172,11 @@ export function useShopDelivery(input: Input): ShopDelivery {
     told.current = input.onPin;
   });
   const naming = useRef(0);
+  // Whether the shop's map service can name a place, read when a place is chosen (the options may arrive after the first render).
+  const canName = useRef(false);
+  useEffect(() => {
+    canName.current = options?.canReverse === true;
+  });
   const setPin = useCallback((p: GeoPoint | null, options?: { restored?: boolean; accuracyM?: number | null }) => {
     naming.current += 1;
     // Only the device's own place is as rough as the device says; any other pin was put there by a person.
@@ -182,13 +187,16 @@ export function useShopDelivery(input: Input): ShopDelivery {
     setNameNotice(null);
     if (p === null || options?.restored === true) return;
     told.current?.({ phase: 'chosen', point: p });
+    // A map service that cannot name places is not asked: the shopper is told to write the street instead.
+    if (!canName.current) return;
     void shopNamePinAction(p).then((r) => {
       // An answer for a place the shopper has since moved away from is of no use.
       if (turn !== naming.current) return;
       if (r.ok && r.data !== null) {
         setNamed(r.data);
         told.current?.({ phase: 'named', point: p, place: r.data });
-      } else if (!r.ok) setNameNotice(r.error);
+      } else if (r.ok) setNameNotice('We could not find a street name for this spot. Please type your street and town below; your pin is kept.');
+      else setNameNotice(r.error);
     });
   }, []);
 

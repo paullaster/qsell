@@ -49,6 +49,18 @@ export const roundQty = (value: number): number => {
   return Math.sign(value) * (Math.round(scaled) / 1000);
 };
 
+/**
+ * The most a quantity may be on one line or in stock: one trillion. This is a business ceiling set well inside the database columns
+ * (numeric(16,3): 13 whole digits and 3 decimals), so a number past it is a typing slip, never a real quantity.
+ */
+export const MAX_QUANTITY = 1_000_000_000_000;
+
+/** The most a money amount can hold: the database columns keep 12 whole digits and 2 decimals (numeric(14,2)). */
+export const MAX_MONEY = 999_999_999_999.99;
+
+/** The most a unit cost can hold: the database column keeps 10 whole digits and 4 decimals (numeric(14,4)). */
+export const MAX_UNIT_COST = 9_999_999_999.9999;
+
 /** True when a quantity has no more fractional digits than a unit allows (0 to 3). */
 export const quantityFits = (value: number, decimals: number): boolean => {
   if (!Number.isFinite(value)) return false;

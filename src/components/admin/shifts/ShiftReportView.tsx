@@ -3,12 +3,14 @@
 import type { ShiftReport } from '@/server/domains/selling/shifts/shift-service';
 import { Chip, buttonClass } from '@/components/ui/screen-kit';
 import { useWhen } from '@/components/business-time';
+import { useShiftReportPdf } from './useShiftReportPdf';
 
 const money = (amount: number): string => `KES ${amount.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 /** A shift's report: the X report while it is open (figures so far), the Z report once it is closed (kept as it closed, with its number). */
 export function ShiftReportView({ report }: { report: ShiftReport }) {
   const when = useWhen();
+  const pdf = useShiftReportPdf(report.id);
   const open = report.status === 'open';
   const row = (label: string, value: string, strong = false) => (
     <div key={label} className={`flex justify-between gap-3 ${strong ? 'font-semibold text-fg-strong' : ''}`}><dt>{label}</dt><dd className="font-mono">{value}</dd></div>
@@ -19,9 +21,11 @@ export function ShiftReportView({ report }: { report: ShiftReport }) {
         <h3 className="text-base font-bold text-fg-strong">{open ? 'X report (shift so far)' : `Z report ${report.zNumber ?? ''}`}</h3>
         <div className="flex items-center gap-2 print:hidden">
           <Chip tone={open ? 'amber' : 'green'}>{open ? 'Open' : 'Closed'}</Chip>
-          <button type="button" className={buttonClass} onClick={() => window.print()}>Print</button>
+          <button type="button" className={buttonClass} disabled={pdf.busy} onClick={pdf.download} data-testid="report-download">{pdf.busy ? 'Making the PDF…' : 'Download PDF'}</button>
+          <button type="button" className={buttonClass} disabled={pdf.busy} onClick={pdf.print} data-testid="report-print">Print</button>
         </div>
       </div>
+      {pdf.problem === null ? null : <p role="alert" className="text-sm text-red-700" data-testid="report-pdf-problem">{pdf.problem}</p>}
       <p className="text-fg-muted">{report.registerName}, {report.branchName}. Opened by {report.openedBy} on {when(report.openedAt)}{report.closedAt === null ? '' : `; closed by ${report.closedBy ?? ''} on ${when(report.closedAt)}`}.</p>
       <dl className="space-y-1">
         {row('Opening float', money(report.openingFloat))}

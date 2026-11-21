@@ -1443,6 +1443,13 @@
       "when": 1795234116354,
       "tag": "0205_collection_waiting_index",
       "breakpoints": true
+    },
+    {
+      "idx": 206,
+      "version": "7",
+      "when": 1795237542449,
+      "tag": "0206_quantity_columns_to_trillion",
+      "breakpoints": true
     }
   ]
 }

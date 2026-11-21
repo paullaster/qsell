@@ -5,6 +5,16 @@ import type { GeoPortRegistry } from '@/server/adapters/geo/registry';
 /** How long a map provider gets before the built-in estimate is used instead. A shopper is waiting. */
 const PROVIDER_TIMEOUT_MS = 2500;
 
+/**
+ * How long a road distance the provider really measured is remembered. The price a shopper is shown and the price checked when they
+ * pay are worked out separately; without this, a slow answer in between sends the second one to the shorter straight-line estimate and
+ * the order is refused for a price that "changed". An estimate made because the provider failed is never remembered.
+ */
+const ROUTE_MEMORY_MS = 15 * 60_000;
+const ROUTE_MEMORY_MAX = 2000;
+
+const routeKey = (provider: string, from: GeoPoint, to: GeoPoint): string => `${provider}|${from.latitude.toFixed(6)},${from.longitude.toFixed(6)}|${to.latitude.toFixed(6)},${to.longitude.toFixed(6)}`;
+
 export interface Answer<T> {
   value: T;
   /** True when the chosen provider could not answer in time and the built-in estimate was used. Say so on the trace. */
@@ -40,6 +50,8 @@ export interface NearestResult<T> {
  * the provider is down or slow it answers from the built-in estimate and says so. A map outage must never stop a sale.
  */
 export class GeoService {
+  private readonly routes = new Map<string, { at: number; route: RouteEstimate }>();
+
   constructor(
     private readonly registry: GeoPortRegistry,
     private readonly timeoutMs = PROVIDER_TIMEOUT_MS,
@@ -67,8 +79,40 @@ export class GeoService {
   }
 
   async distancesFrom(from: GeoPoint, to: readonly GeoPoint[]): Promise<Answer<RouteEstimate[]>> {
-    if (to.length === 0) return { value: [], degraded: false, provider: (await this.registry.current()).provider };
-    return await this.askWithEstimate((port) => port.distancesFrom(from, to), (port) => port.distancesFrom(from, to));
+    const port = await this.registry.current();
+    if (to.length === 0) return { value: [], degraded: false, provider: port.provider };
+    const now = this.clock();
+    const keys = to.map((point) => routeKey(port.provider, from, point));
+    const known = keys.map((key) => this.remembered(key, now));
+    const missing = to.filter((_, i) => known[i] === undefined);
+    if (missing.length === 0) return { value: known.filter((r): r is RouteEstimate => r !== undefined), degraded: false, provider: port.provider };
+    const answer = await this.askWithEstimate((p) => p.distancesFrom(from, missing), (p) => p.distancesFrom(from, missing));
+    const fresh = answer.value;
+    if (!answer.degraded) fresh.forEach((route, i) => this.remember(routeKey(answer.provider, from, missing[i] ?? from), route, now));
+    let next = 0;
+    const value = known.map((r) => r ?? fresh[next++]).filter((r): r is RouteEstimate => r !== undefined);
+    return { value, degraded: answer.degraded, provider: answer.provider };
+  }
+
+  private remembered(key: string, now: number): RouteEstimate | undefined {
+    const hit = this.routes.get(key);
+    if (hit === undefined) return undefined;
+    if (now - hit.at > ROUTE_MEMORY_MS) {
+      this.routes.delete(key);
+      return undefined;
+    }
+    return hit.route;
+  }
+
+  private remember(key: string, route: RouteEstimate, now: number): void {
+    this.routes.delete(key);
+    this.routes.set(key, { at: now, route });
+    // The oldest go first, so the memory stays small however many places are asked about.
+    while (this.routes.size > ROUTE_MEMORY_MAX) {
+      const oldest = this.routes.keys().next();
+      if (oldest.done === true) break;
+      this.routes.delete(oldest.value);
+    }
   }
 
   /** The candidates nearest first by the distance the provider gives (road when it can), one call however many there are. */

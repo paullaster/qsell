@@ -84,6 +84,13 @@ test.describe('till shifts', () => {
     await cash.getByLabel('Why').fill('bought tea for the shop');
     await cash.getByRole('button', { name: 'Record' }).click();
     await expect(page.getByTestId('x-report')).toContainText('KES 7,300.00', { timeout: 30_000 });
+    // The report can be saved as a PDF: a clean document, not the page.
+    const [saved] = await Promise.all([page.waitForEvent('download'), page.getByTestId('report-download').first().click()]);
+    expect(saved.suggestedFilename()).toMatch(/^x-report-.*\.pdf$/);
+    const stream = await saved.createReadStream();
+    const head: Buffer[] = [];
+    for await (const part of stream) head.push(part as Buffer);
+    expect(Buffer.concat(head).subarray(0, 5).toString()).toBe('%PDF-');
     await expect(page.getByTestId('shift-movements')).toContainText('bought tea for the shop');
 
     // Close it counting 7,250 (50 short, within the limit): it needs a reason, then it is numbered.

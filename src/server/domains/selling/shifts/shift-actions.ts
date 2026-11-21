@@ -5,6 +5,9 @@ import { getContainer } from '@/server/di/container';
 import { runSetting } from '@/server/domains/settings/action-runner';
 import { ReasonError } from '@/server/kernel/reason-codes/service';
 import { isSupervisorClose, parseAmount, parseCount, toleranceProblem, type SupervisorClose, type Tolerance } from './shift-rules';
+import { renderShiftReportPdf } from '@/server/adapters/pdf/pdfkit-shift-report.adapter';
+import { businessTimeZone } from '@/server/kernel/numbering/business-date';
+import { buildShiftReportDocument } from './shift-report-document';
 import { ShiftError, type RegisterRow, type ShiftReport, type ShiftRow } from './shift-service';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -207,4 +210,21 @@ export async function saveShiftSettingsAction(raw: unknown, reason: unknown) {
     },
     { paths: PATHS, friendly },
   );
+}
+
+/** Staff: a shift's report as a PDF (the same figures as the screen, on a clean page), to download or print. Seen by the same people who may see the report. */
+export async function shiftReportPdfAction(shiftId: unknown): Promise<{ ok: true; data: { base64: string; filename: string } } | { ok: false; error: string }> {
+  const shown = await shiftReportAction(shiftId);
+  if (!shown.ok) return shown;
+  if (shown.data === null) return { ok: false, error: 'That shift could not be found.' };
+  try {
+    const c = getContainer();
+    const company = await c.companySettings.getProfile();
+    const pdf = await renderShiftReportPdf(buildShiftReportDocument(shown.data, company, businessTimeZone(), new Date()));
+    const name = shown.data.status === 'closed' ? `z-report-${shown.data.zNumber ?? shown.data.id.slice(0, 8)}` : `x-report-${shown.data.id.slice(0, 8)}`;
+    return { ok: true, data: { base64: pdf.toString('base64'), filename: `${name.replace(/[^A-Za-z0-9._-]/g, '-')}.pdf` } };
+  } catch (error) {
+    console.error('[shifts] report pdf', error);
+    return { ok: false, error: 'The report could not be made into a PDF just now. Please try again.' };
+  }
 }

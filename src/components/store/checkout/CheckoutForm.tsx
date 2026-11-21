@@ -127,10 +127,12 @@ export function CheckoutForm({ lines, packages = [], defaultCountry, submitting,
   /** True once the shopper has typed or changed the written address themselves: their words are then never replaced by what the map calls a place. */
   const [typedByHand, setTypedByHand] = useState(false);
   const fillFrom = (place: ShopPinPlace) => {
-    setStreet(place.road ?? place.label.split(',')[0]?.trim() ?? '');
-    setCity(place.town ?? '');
-    setCountyOrState(place.county ?? '');
-    setArea(place.area ?? '');
+    // Only what the map found is written: a part it could not name keeps what the shopper already has.
+    const road = place.road ?? place.label.split(',')[0]?.trim() ?? '';
+    if (road !== '') setStreet(road);
+    if (place.town !== null) setCity(place.town);
+    if (place.county !== null) setCountyOrState(place.county);
+    if (place.area !== null) setArea(place.area);
   };
   // The charge is worked out for the place on the map, so the order must be addressed there too: choosing a new place leaves the saved
   // address that was picked (it describes somewhere else) and writes the address of the place, which the shopper can still correct.

@@ -30,6 +30,16 @@ test.describe('the preparation sheet', () => {
     await expect(sheet).not.toContainText(`PREP-${tag.toUpperCase()}-3`);
 
     await expect(page.getByRole('button', { name: 'Print' })).toBeVisible();
+    // Print prints the sheet alone, from a hidden frame: no menu, no day picker, no buttons, and the paper has no browser header or footer.
+    await page.getByTestId('prep-print').click();
+    const frame = page.locator('iframe[data-print-frame="preparation-print"]');
+    await expect(frame).toHaveCount(1);
+    const printed = page.frameLocator('iframe[data-print-frame="preparation-print"]').locator('body');
+    await expect(printed).toContainText('12 servings in 2 orders');
+    await expect(printed).not.toContainText('Days with orders');
+    await expect(printed).not.toContainText('Orders with no date');
+    await expect(printed.locator('input')).toHaveCount(0);
+    expect(await frame.getAttribute('srcdoc')).toContain('@page{size:A4;margin:0}');
     await noNativeSelect(page);
     await noHorizontalScroll(page);
     await noInnerHorizontalScroll(page);

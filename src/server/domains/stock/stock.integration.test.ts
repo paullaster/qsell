@@ -136,6 +136,17 @@ describe.skipIf(!has(url))('stock per location (database)', () => {
       expect(m?.id).toBeGreaterThan(0);
     });
 
+    it('keeps a full trillion in the movement and the balance, and its cost, exactly', async () => {
+      const p = await newProduct();
+      const r = await ledgerPost(p, 1_000_000_000_000, { type: 'receipt', unitCost: 0.0005, documentType: 'grn', documentId: 'G-BIG' });
+      expect(r).toMatchObject({ posted: true, onHand: 1_000_000_000_000 });
+      expect(await balance(p)).toMatchObject({ onHand: 1_000_000_000_000, reserved: 0 });
+      const [m] = await movements(p);
+      expect(m).toMatchObject({ quantity: 1_000_000_000_000, unitCost: '0.0005' });
+      await ledgerPost(p, -400_000_000_000, { type: 'adjustment' });
+      expect(await balance(p)).toMatchObject({ onHand: 600_000_000_000 });
+    });
+
     it('does a line of a document once: a retry changes nothing', async () => {
       const p = await newProduct();
       const line = { documentType: 'grn', documentId: 'G2', documentLineId: 'L1', type: 'receipt' as const };
