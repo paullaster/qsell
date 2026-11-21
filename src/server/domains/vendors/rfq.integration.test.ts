@@ -390,9 +390,9 @@ describe.skipIf(!has(url))('requests for quotation (database)', () => {
       await evaluation.decide(staff('buyer'), r.id, a.vendorId, 'reject', { reasonCode: 'RFQ_PRICE' });
       expect((await portal.load(a, r.id)).decision).toMatchObject({ value: 'rejected', reason: 'The price is higher than we can accept' });
       expect(outbox.sent.some((m) => m.subject.includes('was not accepted'))).toBe(true);
-      expect(await codeOf(evaluation.decide(staff('buyer'), r.id, d.vendorId, 'revise', { text: '', due: local(inHours(24)) }))).toBe('NOTE_REQUIRED');
-      expect(await codeOf(evaluation.decide(staff('buyer'), r.id, d.vendorId, 'revise', { text: 'Quote the cable too', due: local(inHours(0.1)) }))).toBe('INVALID');
-      await evaluation.decide(staff('buyer'), r.id, d.vendorId, 'revise', { text: 'Quote the cable too', due: local(inHours(24)) });
+      expect(await codeOf(evaluation.decide(staff('buyer'), r.id, d.vendorId, 'revise', { text: '', due: inHours(24).toISOString() }))).toBe('NOTE_REQUIRED');
+      expect(await codeOf(evaluation.decide(staff('buyer'), r.id, d.vendorId, 'revise', { text: 'Quote the cable too', due: inHours(0.1).toISOString() }))).toBe('INVALID');
+      await evaluation.decide(staff('buyer'), r.id, d.vendorId, 'revise', { text: 'Quote the cable too', due: inHours(24).toISOString() });
       const asked = await portal.load(d, r.id);
       expect(asked.stage).toBe('revision_requested');
       expect(asked.window.open).toBe(true);

@@ -4,6 +4,7 @@ import { deliveries, deliveryCosts, deliveryPaySettings, deliveryRiders, deliver
 import { COST_WORDS, courierChargeProblem, fuelFiguresProblem, runningCostProblem, dayPayKey, deliveryPayKey, isCostKind, money, readPayRules, reversalKey, type CostKind } from '@/lib/delivery-cost';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { decodeCursor, encodeCursor } from '@/server/domains/lookups/request';
+import { businessTimeZone } from '@/server/kernel/numbering/business-date';
 import type { DocActor, DocRefusal, DocResult } from './documents';
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
@@ -222,6 +223,8 @@ export class DeliveryCosts {
     const riderId = typeof input.riderId === 'string' && input.riderId !== '' ? input.riderId : null;
     const from = typeof input.from === 'string' && DATE.test(input.from) ? input.from : null;
     const to = typeof input.to === 'string' && DATE.test(input.to) ? input.to : null;
+    // The days are the business's own days, not the database session's.
+    const zone = businessTimeZone();
     const after = typeof input.cursor === 'string' && input.cursor !== '' ? decodeCursor(input.cursor) : null;
     const rows = await this.db
       .select({ c: deliveryCosts, cursorKey: sql<string>`${deliveryCosts.createdAt}::text`, number: deliveries.number, rider: deliveryRiders.name, run: deliveryRuns.number, vehicle: deliveryVehicles.name })
@@ -235,8 +238,8 @@ export class DeliveryCosts {
           eq(deliveryCosts.companyId, companyId),
           kind === null ? undefined : eq(deliveryCosts.kind, kind),
           riderId === null ? undefined : eq(deliveryCosts.riderId, riderId),
-          from === null ? undefined : gte(deliveryCosts.createdAt, sql`(${from}::date)::timestamptz`),
-          to === null ? undefined : lt(deliveryCosts.createdAt, sql`((${to}::date) + 1)::timestamptz`),
+          from === null ? undefined : gte(deliveryCosts.createdAt, sql`(${from}::date)::timestamp AT TIME ZONE ${zone}`),
+          to === null ? undefined : lt(deliveryCosts.createdAt, sql`((${to}::date) + 1)::timestamp AT TIME ZONE ${zone}`),
           after === null ? undefined : sql`(${deliveryCosts.createdAt}, ${deliveryCosts.id}) < (${after.k}::timestamptz, ${after.id}::uuid)`,
         ),
       )
