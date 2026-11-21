@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 
+import { toBusinessInput } from '@/lib/visit';
+import { businessTimeZone } from '@/server/kernel/numbering/business-date';
 import { has, isRecord, readText, required } from '@/lib/values';
 import { emptyBusiness, emptyFinancial, emptyProfile, type ProfileData } from '@/lib/vendor-profile';
 import { emptyCategory } from '@/lib/prequalification';
@@ -23,11 +25,8 @@ const url = process.env.TEST_DATABASE_URL;
 const PDF = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n');
 const TODAY = new Date().toISOString().slice(0, 10);
 const inHours = (h: number) => new Date(Date.now() + h * 3_600_000);
-/** The buyer's own clock, as a form would give it: the server reads these in its own time zone. */
-const local = (d: Date) => {
-  const two = (n: number) => String(n).padStart(2, '0');
-  return `${String(d.getFullYear())}-${two(d.getMonth() + 1)}-${two(d.getDate())}T${two(d.getHours())}:${two(d.getMinutes())}`;
-};
+/** The buyer's own clock, as a form would give it: the server reads these in the business time zone. */
+const local = (d: Date) => toBusinessInput(d.toISOString(), businessTimeZone());
 
 class Outbox implements EmailPort {
   readonly name = 'recorder';
@@ -391,9 +390,9 @@ describe.skipIf(!has(url))('requests for quotation (database)', () => {
       await evaluation.decide(staff('buyer'), r.id, a.vendorId, 'reject', { reasonCode: 'RFQ_PRICE' });
       expect((await portal.load(a, r.id)).decision).toMatchObject({ value: 'rejected', reason: 'The price is higher than we can accept' });
       expect(outbox.sent.some((m) => m.subject.includes('was not accepted'))).toBe(true);
-      expect(await codeOf(evaluation.decide(staff('buyer'), r.id, d.vendorId, 'revise', { text: '', due: local(inHours(24)) }))).toBe('NOTE_REQUIRED');
-      expect(await codeOf(evaluation.decide(staff('buyer'), r.id, d.vendorId, 'revise', { text: 'Quote the cable too', due: local(inHours(0.1)) }))).toBe('INVALID');
-      await evaluation.decide(staff('buyer'), r.id, d.vendorId, 'revise', { text: 'Quote the cable too', due: local(inHours(24)) });
+      expect(await codeOf(evaluation.decide(staff('buyer'), r.id, d.vendorId, 'revise', { text: '', due: inHours(24).toISOString() }))).toBe('NOTE_REQUIRED');
+      expect(await codeOf(evaluation.decide(staff('buyer'), r.id, d.vendorId, 'revise', { text: 'Quote the cable too', due: inHours(0.1).toISOString() }))).toBe('INVALID');
+      await evaluation.decide(staff('buyer'), r.id, d.vendorId, 'revise', { text: 'Quote the cable too', due: inHours(24).toISOString() });
       const asked = await portal.load(d, r.id);
       expect(asked.stage).toBe('revision_requested');
       expect(asked.window.open).toBe(true);

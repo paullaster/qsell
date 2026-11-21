@@ -23,6 +23,8 @@ describe.skipIf(url === '')('finance lookup sources (database)', () => {
   let companyId: string;
   let otherCompanyId: string;
   const tag = randomUUID().slice(0, 8);
+  /** Digits of this run's own, so a phone search is not crowded out by other files' customers. */
+  const digits = String(Math.floor(Math.random() * 9e7) + 1e7);
 
   const search = async (key: string, over: { query?: string; filters?: Record<string, string> } = {}) => {
     const parsed = request.parseLookupRequest({ source: key, query: over.query, filters: over.filters });
@@ -48,7 +50,7 @@ describe.skipIf(url === '')('finance lookup sources (database)', () => {
     )[0].id;
 
     const customer = (company: string, n: string, over: Record<string, unknown> = {}) =>
-      db.insert(schema.customers).values({ companyId: company, number: `${tag}-${n}`, name: `${tag} Cust ${n}`, accountType: 'cash', phone: `0700${n}`, ...over });
+      db.insert(schema.customers).values({ companyId: company, number: `${tag}-${n}`, name: `${tag} Cust ${n}`, accountType: 'cash', phone: `0700${n}${digits}`, ...over });
     await customer(companyId, '1', { accountType: 'credit', balance: '250.00' });
     await customer(companyId, '2', { isActive: false });
     await customer(otherCompanyId, '3');
@@ -81,9 +83,9 @@ describe.skipIf(url === '')('finance lookup sources (database)', () => {
   it('offers active customers of this company with their standing', async () => {
     const found = await search('receipt-customers', { query: tag });
     expect(found.options.map((o) => o.label)).toEqual([`${tag} Cust 1`]);
-    expect(found.options[0]).toMatchObject({ badge: 'Credit', meta: { accountType: 'credit', balance: '250.00', phone: '07001' } });
+    expect(found.options[0]).toMatchObject({ badge: 'Credit', meta: { accountType: 'credit', balance: '250.00', phone: `07001${digits}` } });
     expect((await search('refund-customers', { query: `${tag}-1` })).options).toHaveLength(1);
-    expect((await search('receipt-customers', { query: '0700' + '1' })).options.map((o) => o.label)).toContain(`${tag} Cust 1`);
+    expect((await search('receipt-customers', { query: `07001${digits}` })).options.map((o) => o.label)).toContain(`${tag} Cust 1`);
   });
 
   it('offers only methods usable for receipts, on open banks, with the facts the form needs', async () => {
