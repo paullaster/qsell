@@ -1,5 +1,5 @@
 {
-  "id": "3db08f15-188c-4d1a-bc93-611be7cb71ed",
+  "id": "1f9c1c3a-54d7-4891-bda3-0d4c46d9d41a",
   "prevId": "765006ef-e274-4b42-95f8-c010cd0f85eb",
   "version": "7",
   "dialect": "postgresql",
@@ -5195,6 +5195,65 @@
         "cash_hand_ins_decided_chk": {
           "name": "cash_hand_ins_decided_chk",
           "value": "(\"cash_hand_ins\".\"status\" = 'pending_approval') = (\"cash_hand_ins\".\"decided_at\" IS NULL)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.cash_sale_settings": {
+      "name": "cash_sale_settings",
+      "schema": "",
+      "columns": {
+        "company_id": {
+          "name": "company_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "till_mode": {
+          "name": "till_mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'admin'"
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "cash_sale_settings_company_id_company_settings_id_fk": {
+          "name": "cash_sale_settings_company_id_company_settings_id_fk",
+          "tableFrom": "cash_sale_settings",
+          "tableTo": "company_settings",
+          "columnsFrom": [
+            "company_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "cash_sale_settings_mode_chk": {
+          "name": "cash_sale_settings_mode_chk",
+          "value": "\"cash_sale_settings\".\"till_mode\" IN ('admin','fullscreen')"
         }
       },
       "isRLSEnabled": false
@@ -21116,6 +21175,155 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.held_sales": {
+      "name": "held_sales",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "company_id": {
+          "name": "company_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "shift_id": {
+          "name": "shift_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "label": {
+          "name": "label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "line_count": {
+          "name": "line_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'held'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "resolved_at": {
+          "name": "resolved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "held_sales_shift_idx": {
+          "name": "held_sales_shift_idx",
+          "columns": [
+            {
+              "expression": "shift_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "held_sales_company_id_company_settings_id_fk": {
+          "name": "held_sales_company_id_company_settings_id_fk",
+          "tableFrom": "held_sales",
+          "tableTo": "company_settings",
+          "columnsFrom": [
+            "company_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "held_sales_shift_id_shifts_id_fk": {
+          "name": "held_sales_shift_id_shifts_id_fk",
+          "tableFrom": "held_sales",
+          "tableTo": "shifts",
+          "columnsFrom": [
+            "shift_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "held_sales_status_chk": {
+          "name": "held_sales_status_chk",
+          "value": "\"held_sales\".\"status\" IN ('held','recalled','discarded')"
+        },
+        "held_sales_lines_chk": {
+          "name": "held_sales_lines_chk",
+          "value": "\"held_sales\".\"line_count\" BETWEEN 1 AND 200"
+        },
+        "held_sales_label_chk": {
+          "name": "held_sales_label_chk",
+          "value": "char_length(\"held_sales\".\"label\") <= 60"
+        },
+        "held_sales_resolved_chk": {
+          "name": "held_sales_resolved_chk",
+          "value": "(\"held_sales\".\"status\" = 'held') = (\"held_sales\".\"resolved_at\" IS NULL)"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.integration_audit_log": {
       "name": "integration_audit_log",
       "schema": "",
@@ -25652,28 +25860,6 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "order_collections_waiting_idx": {
-          "name": "order_collections_waiting_idx",
-          "columns": [
-            {
-              "expression": "ready_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "order_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"order_collections\".\"status\" IN ('ready','locked')",
           "concurrently": false,
           "method": "btree",
           "with": {}

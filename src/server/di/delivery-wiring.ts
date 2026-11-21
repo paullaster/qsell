@@ -35,6 +35,7 @@ import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { StockAvailability } from '@/server/domains/stock/availability';
 import { StockSettingsService } from '@/server/domains/stock/settings';
 import type { StockReservations } from '@/server/domains/stock/reservations';
+import { routePlanner } from '@/server/adapters/route/registry';
 
 /** Composes delivery collaborators outside the main container to keep initialization dependencies in one ordered scope. */
 export function createDeliveryServices(input: {
@@ -74,7 +75,7 @@ export function createDeliveryServices(input: {
   const riderRuns = new RiderRuns(input.db);
   const deliveryCosts = new DeliveryCosts(input.db, input.decisionLog);
   const deliveryVehicles = new DeliveryVehicles(input.db, input.decisionLog);
-  const deliveryRuns = new DeliveryRuns(input.db, input.decisionLog, input.numbering, deliveryDocuments, deliveryRiders, deliveryCosts, deliveryVehicles);
+  const deliveryRuns = new DeliveryRuns(input.db, input.decisionLog, input.numbering, deliveryDocuments, deliveryRiders, deliveryCosts, deliveryVehicles, routePlanner);
   const doorPayments = new DoorPayments(input.db, input.decisionLog, deliveryDocuments, input.customers);
   const doorWork = new DoorWork(input.db, deliveryDocuments, deliveryRuns, input.decisionLog, doorPayments, deliveryCosts);
   const courierShipments = new CourierShipments(input.db, deliveryDocuments);

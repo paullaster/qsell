@@ -6,6 +6,7 @@ import type { ShiftReport } from '../shifts/shift-service';
 import { parseCashSale, parseCashSaleLines, parseCounterReturn } from './cash-sale-input';
 import type { ReturnSummary } from './counter-return-service';
 import type { SaleSummary } from './cash-sale-service';
+import type { TillMode } from './till-rules';
 
 export interface SaleRow {
   orderId: string;
@@ -26,6 +27,12 @@ export interface CashSalesScreen {
   returns: { returnId: string; orderNumber: string; amount: number; status: string }[];
   /** Whether tills may keep selling with no connection (the company's setting). */
   offlineEnabled: boolean;
+  /** How the counter looks: inside the admin page, or as a full-screen till. */
+  tillMode: TillMode;
+  /** May change an item's price while selling. */
+  canPrice: boolean;
+  /** The shop's trading name, for the top of the printed receipt. */
+  shopName: string;
 }
 
 const cursorOf = (raw: unknown): { k: string; id: string } | null => {
@@ -34,6 +41,12 @@ const cursorOf = (raw: unknown): { k: string; id: string } | null => {
   return at > 0 && at < raw.length - 1 ? { k: raw.slice(0, at), id: raw.slice(at + 1) } : null;
 };
 const encode = (next: { k: string; id: string } | null): string | null => (next === null ? null : `${next.k}|${next.id}`);
+
+/** Prices typed at the till count only from someone who may change them; for anyone else they are dropped, so the price lists decide. */
+async function mayPrice<T extends { unitPrice?: number }>(lines: T[]): Promise<T[]> {
+  if (!lines.some((l) => l.unitPrice !== undefined) || (await canPermission('cash_sales:price'))) return lines;
+  return lines.map(({ unitPrice: _dropped, ...rest }) => rest as T);
+}
 
 async function access(): Promise<{ userId: string; create: boolean; readAll: boolean } | null> {
   const [create, readAll] = await Promise.all([canPermission('cash_sales:create'), canPermission('cash_sales:read')]);
@@ -53,7 +66,7 @@ export async function cashSalesScreenAction(): Promise<{ ok: true; data: CashSal
     const shift = mine === null ? null : await c.shifts.report(companyId, mine);
     const listed = await c.cashSales.list(companyId, who.readAll ? {} : { userId: who.userId });
     const canReturn = await canPermission('cash_sales:return');
-    return { ok: true, data: { shift, sales: { rows: listed.rows, next: encode(listed.next) }, can: { create: who.create, readAll: who.readAll, return: canReturn }, returns: canReturn ? await c.counterReturns.unfinished(companyId, who.readAll ? {} : { userId: who.userId }) : [], offlineEnabled: (await c.offlineSales.settings(companyId)).enabled } };
+    return { ok: true, data: { shift, sales: { rows: listed.rows, next: encode(listed.next) }, can: { create: who.create, readAll: who.readAll, return: canReturn }, returns: canReturn ? await c.counterReturns.unfinished(companyId, who.readAll ? {} : { userId: who.userId }) : [], offlineEnabled: (await c.offlineSales.settings(companyId)).enabled, tillMode: (await c.tillSettings.get(companyId)).tillMode, canPrice: await canPermission('cash_sales:price'), shopName: (await c.companySettings.getProfile()).tradingName } };
   } catch (error) {
     console.error('[cash sales] screen', error);
     return { ok: false, error: 'The counter could not be loaded. Please try again.' };
@@ -75,14 +88,14 @@ export async function cashSalesMoreAction(raw: unknown): Promise<{ ok: true; dat
 }
 
 /** Staff: what the lines would total, priced as the sale will be (nothing is held or saved). */
-export async function priceCashSaleAction(raw: unknown): Promise<{ ok: true; data: { subtotal: number; tax: number; total: number } } | { ok: false; error: string }> {
+export async function priceCashSaleAction(raw: unknown): Promise<{ ok: true; data: { subtotal: number; tax: number; total: number; lines: { productId: string; quantity: number; unitPrice: number; lineTotal: number }[] } } | { ok: false; error: string }> {
   const userId = await requirePermission('cash_sales:create');
   const read = parseCashSaleLines(raw);
   if (!read.ok) return { ok: false, error: read.error };
   try {
     const c = getContainer();
-    const priced = await c.cashSales.price((await c.companySettings.ensureSeeded()).id, { userId, branchId: await c.salesOrders.branchOf(userId) }, { customerId: read.customerId, lines: read.lines });
-    return priced.ok ? { ok: true, data: { subtotal: priced.subtotal, tax: priced.tax, total: priced.total } } : { ok: false, error: priced.error };
+    const priced = await c.cashSales.price((await c.companySettings.ensureSeeded()).id, { userId, branchId: await c.salesOrders.branchOf(userId) }, { customerId: read.customerId, lines: await mayPrice(read.lines) });
+    return priced.ok ? { ok: true, data: { subtotal: priced.subtotal, tax: priced.tax, total: priced.total, lines: priced.lines } } : { ok: false, error: priced.error };
   } catch (error) {
     console.error('[cash sales] price', error);
     return { ok: false, error: 'The total could not be worked out just now. Please try again.' };
@@ -97,7 +110,7 @@ export async function completeCashSaleAction(raw: unknown): Promise<{ ok: true; 
   try {
     const c = getContainer();
     const companyId = (await c.companySettings.ensureSeeded()).id;
-    const done = await c.cashSales.complete(companyId, { userId, branchId: await c.salesOrders.branchOf(userId) }, read.sale);
+    const done = await c.cashSales.complete(companyId, { userId, branchId: await c.salesOrders.branchOf(userId) }, { ...read.sale, lines: await mayPrice(read.sale.lines) });
     return done.ok ? { ok: true, data: done.sale } : { ok: false, error: done.error, ...(done.unfinished === undefined ? {} : { unfinished: done.unfinished }) };
   } catch (error) {
     console.error('[cash sales] complete', error);

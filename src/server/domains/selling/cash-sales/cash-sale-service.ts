@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { customers, invoiceDocuments, orders, orderTenders, paymentMethods, shifts } from '@/server/db/drizzle/schema';
+import { customers, invoiceDocuments, orderItems, orders, orderTenders, paymentMethods, shifts } from '@/server/db/drizzle/schema';
 import { OrderStages } from '@/server/domains/orders/stages';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { PlaceExtra, SalesOrderService } from '../sales-order-service';
@@ -29,6 +29,9 @@ export interface SaleSummary {
   total: number;
   changeDue: number;
   customerName: string;
+  /** When the sale was made (ISO), and what was sold: the lines of the printed receipt. */
+  at: string;
+  lines: { name: string; quantity: number; unitPrice: number; total: number }[];
   tenders: { label: string; kind: TenderKind; applied: number; handedOver: number | null; reference: string | null }[];
   /** Set when the sale is paid but something after that could not be finished (the books are posted again by the next attempt). */
   warning?: string;
@@ -95,7 +98,7 @@ export class CashSaleService {
   }
 
   /** What these lines would total, priced as the sale will be. */
-  async price(companyId: string, who: { userId: string; branchId: string | null }, input: { customerId: string | null; lines: SalesOrderLineInput[] }): Promise<{ ok: true; subtotal: number; tax: number; total: number } | { ok: false; error: string }> {
+  async price(companyId: string, who: { userId: string; branchId: string | null }, input: { customerId: string | null; lines: SalesOrderLineInput[] }): Promise<{ ok: true; subtotal: number; tax: number; total: number; lines: { productId: string; quantity: number; unitPrice: number; lineTotal: number }[] } | { ok: false; error: string }> {
     if (input.lines.length === 0) return { ok: false, error: 'Add something to sell.' };
     const customerId = input.customerId ?? (await this.walkIn(companyId));
     return await this.salesOrders.price(companyId, who, { customerId, lines: input.lines, paymentMethod: 'counter', neededOn: '', holdUntilPaid: false }, 'pos_cash_sale');
@@ -210,6 +213,7 @@ export class CashSaleService {
     const tenders = await this.db.select().from(orderTenders).where(and(eq(orderTenders.orderId, orderId), eq(orderTenders.kind, 'payment_method'))).orderBy(orderTenders.createdAt);
     const names = label === undefined && tenders.length > 0 ? await this.db.select({ id: paymentMethods.id, name: paymentMethods.name }).from(paymentMethods).where(inArray(paymentMethods.id, tenders.map((t) => t.reference))) : [];
     const nameOf = (id: string) => label?.(id) ?? names.find((n) => n.id === id)?.name ?? 'Payment';
+    const items = await this.db.select({ name: orderItems.productName, quantity: orderItems.quantity, unitPrice: orderItems.unitPrice, total: orderItems.totalPrice }).from(orderItems).where(eq(orderItems.orderId, orderId)).orderBy(orderItems.id);
     const [receipt] = await this.db.select({ number: invoiceDocuments.invoiceNumber }).from(invoiceDocuments).where(and(eq(invoiceDocuments.orderId, orderId), eq(invoiceDocuments.documentType, 'tax_invoice'))).limit(1);
     return {
       orderId,
@@ -218,6 +222,8 @@ export class CashSaleService {
       total: Number(order.totalAmount),
       changeDue: tenders.reduce((n, t) => n + Number(t.changeDue ?? 0), 0),
       customerName: order.customerName,
+      at: order.createdAt.toISOString(),
+      lines: items.map((i) => ({ name: i.name, quantity: i.quantity, unitPrice: Number(i.unitPrice), total: Number(i.total) })),
       // The exact ways first, the cash (which covers the rest and gives change) last: the order they are read out at the till.
       tenders: [...tenders].sort((x, y) => TENDER_ORDER.indexOf((x.methodKind ?? 'cash') as TenderKind) - TENDER_ORDER.indexOf((y.methodKind ?? 'cash') as TenderKind)).map((t) => ({ label: nameOf(t.reference), kind: t.methodKind as TenderKind, applied: Number(t.amount), handedOver: t.handedOver === null ? null : Number(t.handedOver), reference: t.externalReference })),
     };

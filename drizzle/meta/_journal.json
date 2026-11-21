@@ -1433,8 +1433,15 @@
     {
       "idx": 204,
       "version": "7",
-      "when": 1795199028777,
-      "tag": "0204_collection_waiting_index",
+      "when": 1795201804092,
+      "tag": "0204_cash_sale_till",
+      "breakpoints": true
+    },
+    {
+      "idx": 205,
+      "version": "7",
+      "when": 1795234116354,
+      "tag": "0205_collection_waiting_index",
       "breakpoints": true
     }
   ]
