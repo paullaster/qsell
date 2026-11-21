@@ -3,8 +3,9 @@ import { asDarajaCredentials } from '../types';
 import { extractPaymentReference } from '../payment-reference';
 import { DarajaClient, standaloneContext } from '../daraja/client';
 import { parseStkCallback } from '../daraja/parsers';
-import { statusAgrees, readStatusAnswer, verifyStk } from '../daraja/verify';
-import type { InboundClaim, PlatformContext, VerificationOutcome, VerifyAttemptInput } from '../engine/types';
+import { judgeClaim, statusAgrees, readStatusAnswer, verifyStk } from '../daraja/verify';
+import type { InboundClaim, PlatformContext, VerificationOutcome, VerifyAttemptInput, VerifyClaimInput } from '../engine/types';
+import { payerMatches } from '@/lib/payment-claim';
 
 import { emptyToNull, has } from '@/lib/values';
 
@@ -51,6 +52,23 @@ export class MpesaDarajaAdapter implements PaymentPort {
     const agreed = statusAgrees(answer, { receipt, amountCents: input.amountCents, shortcode: emptyToNull(asDarajaCredentials(ctx.credentials).shortcode) });
     if (!agreed.ok) return { status: 'mismatch', by: 'transaction_status', code: agreed.code, reason: agreed.reason, evidence: { ...stk.evidence, transactionStatus: ev.result } };
     return { ...stk, by: 'stk_query+transaction_status', platformReference: receipt, evidence: { ...stk.evidence, transactionStatus: ev.result } };
+  }
+
+  /**
+   * A code the shopper says they paid with. Safaricom's Transaction Status answer for that code is the only thing believed: it must be a
+   * completed payment of this code, for this order's amount, to our shortcode, made after the order was placed. A payment from a phone
+   * the order does not know is held for a person; every other disagreement refuses the claim, so a corrected code can be tried.
+   */
+  verifyClaim(input: VerifyClaimInput, ctx: PlatformContext): Promise<VerificationOutcome> {
+    const found = input.evidence.find((e) => e.by === 'transaction_status');
+    if (found === undefined) return Promise.resolve({ status: 'pending', by: 'transaction_status', reason: "Waiting for Safaricom's answer about this code.", evidence: { receipt: input.receipt } });
+    const answer = readStatusAnswer((found.result ?? {}) as Record<string, unknown>);
+    if (answer === null) return Promise.resolve({ status: 'error', by: 'transaction_status', reason: 'The transaction status answer could not be read.', retryable: false });
+    const judged = judgeClaim(answer, { receipt: input.receipt, amountCents: input.amountCents, shortcode: emptyToNull(asDarajaCredentials(ctx.credentials).shortcode), orderCreatedAt: input.orderCreatedAt, payerMatches: payerMatches(answer.debitParty, input.payerPhones) });
+    if (judged.ok) return Promise.resolve({ status: 'confirmed', by: 'transaction_status', platformReference: answer.receipt, amountCents: answer.amountCents, evidence: { transactionStatus: found.result } });
+    const evidence = { transactionStatus: found.result };
+    if (judged.code === 'PAYER_DIFFERS') return Promise.resolve({ status: 'mismatch', by: 'transaction_status', code: judged.code, reason: judged.reason, evidence });
+    return Promise.resolve({ status: 'failed', by: 'transaction_status', code: judged.code, reason: judged.reason, evidence });
   }
 
   /** Kept for the manual classification screen: what the body says, without any confirmation. */

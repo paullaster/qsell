@@ -22,7 +22,7 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
         }
       >
         <MissingAs404 result={result}>
-          <OrderDetailClient result={result} tracking={tracking} visits={visits} />
+          <OrderDetailClient result={result} tracking={tracking} visits={visits} payPrompt />
         </MissingAs404>
       </Suspense>
     </AccountSubpage>

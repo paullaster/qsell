@@ -1396,5 +1396,224 @@ describe.skipIf(!has(url))('payment engine (database)', () => {
       expect(await dbError(db.update(schema.providerOperations).set({ status: 'queued' }).where(eq(schema.providerOperations.id, fin2.op.id)))).toMatch(/finished/);
     });
   });
-});
 
+  describe('a customer who paid but whose payment never reached us gives the code from their message', () => {
+    type Claims = import('../payment-claims').PaymentClaims;
+    let claims: Claims;
+    let orders: { getById(id: string): Promise<import('@/types/index').Order | null | undefined> };
+    const used = new Map<string, number>();
+    let limit = 1000;
+    const rateLimits = { hit: (rule: string, subject: string) => { const key = `${rule}:${subject}`; used.set(key, (used.get(key) ?? 0) + 1); return Promise.resolve({ allowed: (used.get(key) ?? 0) <= limit, retryAfterSeconds: 60 }); } };
+
+    beforeAll(async () => {
+      const { PaymentClaims } = await import('../payment-claims');
+      const { getContainer } = await import('@/server/di/container');
+      orders = getContainer().orders;
+      claims = new PaymentClaims({ db, payments, engine: () => engine, orders, rateLimits: rateLimits as never, branch: () => Promise.resolve(branch) });
+    });
+
+    /** Safaricom's time: yyyyMMddHHmmss in East Africa Time. */
+    const eat = (d: Date) => new Date(d.getTime() + 3 * 3600_000).toISOString().replace(/\D/g, '').slice(0, 14);
+    const orderOf = async (id: string) => required(await orders.getById(id));
+    const asOrder = async (id: string) => await claims.options(await orderOf(id));
+    const claim = async (orderId: string, code: string, method: unknown = 'mpesa_daraja') => await claims.start({ order: await orderOf(orderId), method, code, address: `10.0.0.${String(seq % 200)}` });
+    const ackStatusQuery = () => fake.on('/mpesa/transactionstatus/v1/query', () => ({ json: { OriginatorConversationID: 'x', ConversationID: `AG_${String(++seq)}`, ResponseCode: '0', ResponseDescription: 'Accept the service request successfully.' } }));
+    const claimOp = async (attemptId: string) => required((await engine.ops.bySubject('payment_attempt', attemptId, 'transaction_status'))[0]);
+    /** Safaricom's answer arriving on the provider's address, with its secret, as the real one does. */
+    const answerArrives = async (providerId: string, attemptId: string, receipt: string, o: { code?: number; desc?: string; amount?: number; credit?: string; debit?: string; status?: string; at?: Date } = {}) => {
+      const op = await claimOp(attemptId);
+      const at = o.at ?? new Date();
+      const parameters = (o.code ?? 0) === 0 ? [{ Key: 'ReceiptNo', Value: receipt }, { Key: 'Amount', Value: o.amount ?? 100 }, { Key: 'TransactionStatus', Value: o.status ?? 'Completed' }, { Key: 'CreditPartyName', Value: o.credit ?? '174379 - Engine' }, { Key: 'DebitPartyName', Value: o.debit ?? '254712345678 - JANE DOE' }, { Key: 'InitiatedTime', Value: eat(at) }, { Key: 'FinalisedTime', Value: eat(new Date(at.getTime() + 5000)) }] : [];
+      const body = { Result: { ResultType: 0, ResultCode: o.code ?? 0, ResultDesc: o.desc ?? 'The service request is processed successfully.', OriginatorConversationID: op.originatorId, ConversationID: op.conversationId ?? 'AG_X', TransactionID: 'OPSNEW0001', ResultParameters: { ResultParameter: parameters } } };
+      const secret = await engine.contexts.callbackSecret(providerId);
+      return await engine.ingestHook({ providerId, kind: 'result', secret, rawText: JSON.stringify(body), headers: {}, sourceIp: '196.201.214.200', https: true, method: 'POST' });
+    };
+    /** An order whose M-Pesa prompt went out and whose answer never came back. */
+    const stranded = async (initiator = true) => {
+      const p = await provider({ initiator });
+      const a = await startPayment(p);
+      return { p, ...a };
+    };
+    const claimAttempts = async (orderId: string) => await db.select().from(schema.paymentAttempts).where(and(eq(schema.paymentAttempts.orderId, orderId), eq(schema.paymentAttempts.source, 'customer_claim')));
+
+    it('is asked about with Safaricom’s own transaction status, and when it is a completed payment of this order the order is paid, once, with a receipt', async () => {
+      const { p, orderId } = await stranded();
+      ackStatusQuery();
+      const code = rc();
+      // The way a shopper copies it: lower case, with spaces and a dash.
+      const start = await claim(orderId, ` ${code.slice(0, 4).toLowerCase()} ${code.slice(4, 8).toLowerCase()}-${code.slice(8).toLowerCase()} `);
+      expect(start).toMatchObject({ stage: 'checking', done: false });
+      const sent = required(fake.calls.filter((c) => c.path === '/mpesa/transactionstatus/v1/query').at(-1)).body;
+      expect(sent).toMatchObject({ TransactionID: code, CommandID: 'TransactionStatusQuery', Initiator: 'apiuser', IdentifierType: '4' });
+      const [attempt] = await claimAttempts(orderId);
+      expect(attempt).toMatchObject({ source: 'customer_claim', claimedReceipt: code, status: 'pending', amount: '100.00' });
+      // The order is not paid on the shopper's word.
+      expect((await order(orderId)).paymentStatus).not.toBe('paid');
+      const hook = await answerArrives(p.providerId, required(attempt).id, code);
+      expect(hook.httpStatus).toBe(200);
+      const done = await claims.status({ orderId, attemptId: required(attempt).id });
+      expect(done).toMatchObject({ stage: 'confirmed', done: true });
+      const paid = await order(orderId);
+      expect(paid).toMatchObject({ paymentStatus: 'paid', status: 'processing' });
+      expect(paid.mpesaReceiptNumber).toBe(code);
+      const tx = required((await db.select().from(schema.providerTransactions).where(eq(schema.providerTransactions.consumedId, required(attempt).id)))[0]);
+      expect(tx).toMatchObject({ platformReference: code, verifiedBy: 'transaction_status' });
+      // Asking again changes nothing and says the same.
+      expect(await claims.status({ orderId, attemptId: required(attempt).id })).toMatchObject({ stage: 'confirmed' });
+      expect((await claimAttempts(orderId))).toHaveLength(1);
+      const stages = await stagesOf(orderId);
+      expect(stages).toEqual(expect.arrayContaining(['payment_pending_verification:succeeded', 'payment_confirmed:succeeded']));
+    });
+
+    it('is told "not found" when Safaricom has no such payment, and the order and its stock are left exactly as they were', async () => {
+      const { p, orderId } = await stranded();
+      ackStatusQuery();
+      const code = rc();
+      await claim(orderId, code);
+      const [attempt] = await claimAttempts(orderId);
+      await answerArrives(p.providerId, required(attempt).id, code, { code: 2001, desc: 'The transaction does not exist.' });
+      expect(await claims.status({ orderId, attemptId: required(attempt).id })).toMatchObject({ stage: 'not_found', done: true });
+      const after = await order(orderId);
+      expect(after.status).not.toBe('failed');
+      expect(after.paymentStatus).not.toBe('failed');
+      expect((await reload(required(attempt).id)).status).toBe('failed');
+      const stages = await stagesOf(orderId);
+      expect(stages).toContain('payment_pending_verification:failed');
+      expect(stages).not.toContain('payment_failed:failed');
+      const refusal = required((await timelineOf(orderId)).filter((e) => e.stage === 'payment_pending_verification' && e.outcome === 'failed').at(-1));
+      expect(refusal.reasonCode).toBe('NOT_FOUND');
+      expect(has(refusal.message)).toBe(true);
+      // A corrected code can be tried at once.
+      ackStatusQuery();
+      expect(await claim(orderId, rc())).toMatchObject({ stage: 'checking' });
+      expect(await claimAttempts(orderId)).toHaveLength(2);
+    });
+
+    it('refuses a payment of a different amount, a different receiver, or from before the order, each with its own words', async () => {
+      const cases: { why: string; answer: Parameters<typeof answerArrives>[3]; stage: string }[] = [
+        { why: 'amount', answer: { amount: 99 }, stage: 'amount_differs' },
+        { why: 'receiver', answer: { credit: '999999 - Someone Else' }, stage: 'not_found' },
+        { why: 'before the order', answer: { at: new Date(Date.now() - 2 * 86_400_000) }, stage: 'too_early' },
+        { why: 'not completed', answer: { status: 'Failed' }, stage: 'not_found' },
+      ];
+      for (const c of cases) {
+        const { p, orderId } = await stranded();
+        ackStatusQuery();
+        const code = rc();
+        await claim(orderId, code);
+        const [attempt] = await claimAttempts(orderId);
+        await answerArrives(p.providerId, required(attempt).id, code, c.answer);
+        expect(await claims.status({ orderId, attemptId: required(attempt).id }), c.why).toMatchObject({ stage: c.stage, done: true });
+        expect((await order(orderId)).paymentStatus, c.why).not.toBe('paid');
+      }
+    });
+
+    it('holds a payment made from a phone the order does not know for a person, and never counts it by itself', async () => {
+      const { p, orderId } = await stranded();
+      ackStatusQuery();
+      const code = rc();
+      await claim(orderId, code);
+      const [attempt] = await claimAttempts(orderId);
+      await answerArrives(p.providerId, required(attempt).id, code, { debit: '254799000111 - OTHER PERSON' });
+      expect(await claims.status({ orderId, attemptId: required(attempt).id })).toMatchObject({ stage: 'held', done: true });
+      expect((await order(orderId)).paymentStatus).not.toBe('paid');
+      const held = await reload(required(attempt).id);
+      expect(held.status).toBe('pending');
+      expect(held.errorMessage).toContain('person');
+      // Still held when asked again, and the same code cannot be put on another order meanwhile.
+      expect(await claims.status({ orderId, attemptId: required(attempt).id })).toMatchObject({ stage: 'held' });
+      const other = await stranded();
+      expect(await claim(other.orderId, code)).toMatchObject({ stage: 'used' });
+      const timeline = await timelineOf(orderId);
+      expect(timeline.some((e) => e.stage === 'payment_pending_verification' && e.outcome === 'failed' && e.reasonCode === 'PAYER_DIFFERS')).toBe(true);
+    });
+
+    it('settles one payment with one code: a second order cannot use it, and the same order giving it again is the same claim', async () => {
+      const first = await stranded();
+      ackStatusQuery();
+      const code = rc();
+      await claim(first.orderId, code);
+      const [attempt] = await claimAttempts(first.orderId);
+      await answerArrives(first.p.providerId, required(attempt).id, code);
+      expect(await claims.status({ orderId: first.orderId, attemptId: required(attempt).id })).toMatchObject({ stage: 'confirmed' });
+      expect(await claim(first.orderId, code)).toMatchObject({ stage: 'refused' });
+      const second = await stranded();
+      expect(await claim(second.orderId, code)).toMatchObject({ stage: 'used', done: true });
+      expect(await claimAttempts(second.orderId)).toHaveLength(0);
+      expect((await order(second.orderId)).paymentStatus).not.toBe('paid');
+    });
+
+    it('is not asked of Safaricom when the operator sign-in is not saved: the code is kept for a person and the shopper is told so', async () => {
+      const { orderId } = await stranded(false);
+      // The order's own prompt is read again meanwhile; here Safaricom says it is still being processed.
+      stkQuery(null);
+      const before = fake.count('/mpesa/transactionstatus/v1/query');
+      const code = rc();
+      const answer = await claim(orderId, code);
+      expect(answer).toMatchObject({ stage: 'unavailable', done: true });
+      expect(fake.count('/mpesa/transactionstatus/v1/query')).toBe(before);
+      const [attempt] = await claimAttempts(orderId);
+      expect(attempt).toMatchObject({ status: 'pending', claimedReceipt: code });
+      expect((await order(orderId)).paymentStatus).not.toBe('paid');
+      expect(await stagesOf(orderId)).toEqual(expect.arrayContaining(['payment_pending_verification:succeeded', 'payment_pending_verification:failed']));
+    });
+
+    it('is kept for a person, with the order’s own payments read again, for a provider that cannot look a payment up by its code', async () => {
+      const m = await provider({ code: 'pesapal_v3' });
+      const a = await startPayment(m, { code: 'pesapal_v3' });
+      const code = rc();
+      const answer = await claim(a.orderId, `${code.slice(0, 5)}-${code.slice(5)}`, 'pesapal_v3');
+      expect(answer).toMatchObject({ stage: 'saved', done: true });
+      const [attempt] = await claimAttempts(a.orderId);
+      expect(attempt).toMatchObject({ providerCode: 'pesapal_v3', claimedReceipt: code, status: 'pending' });
+      expect((await order(a.orderId)).paymentStatus).not.toBe('paid');
+    });
+
+    it('says in words what is wrong with a code before anything is asked, and refuses an order that cannot be paid', async () => {
+      const { orderId } = await stranded();
+      const code = rc();
+      expect(await claim(orderId, '')).toMatchObject({ stage: 'refused', message: 'Enter the transaction code from your payment message.' });
+      expect(await claim(orderId, 'SHORT')).toMatchObject({ stage: 'refused', message: expect.stringContaining('10 letters and numbers') });
+      expect(await claim(orderId, code, 'bitcoin')).toMatchObject({ stage: 'refused', message: 'Please choose how you paid.' });
+      expect(await claimAttempts(orderId)).toHaveLength(0);
+      await db.update(schema.orders).set({ status: 'cancelled' }).where(eq(schema.orders.id, orderId));
+      expect(await claim(orderId, code)).toMatchObject({ stage: 'refused', message: expect.stringContaining('cancelled') });
+      await db.update(schema.orders).set({ status: 'processing', paymentStatus: 'paid' }).where(eq(schema.orders.id, orderId));
+      expect(await claim(orderId, code)).toMatchObject({ stage: 'refused', message: 'This order is already paid.' });
+      expect((await asOrder(orderId)).payable).toMatchObject({ ok: false });
+    });
+
+    it('is limited per order so a code cannot be guessed at', async () => {
+      const { orderId } = await stranded();
+      limit = 2;
+      try {
+        ackStatusQuery();
+        expect((await claim(orderId, rc())).stage).not.toBe('busy');
+        expect((await claim(orderId, rc())).stage).not.toBe('busy');
+        expect(await claim(orderId, rc())).toMatchObject({ stage: 'busy', done: true });
+        expect((await claimAttempts(orderId)).length).toBeLessThanOrEqual(2);
+      } finally {
+        limit = 1000;
+      }
+    });
+
+    it('lists the ways to pay that the shop has switched on, and which can be looked up by code', async () => {
+      const { orderId } = await stranded();
+      const opts = await asOrder(orderId);
+      expect(opts.payable).toEqual({ ok: true });
+      expect(opts.amountDue).toBe(100);
+      expect(opts.methods.find((m) => m.code === 'mpesa_daraja')).toMatchObject({ usesPhone: true, canLookUpByCode: true });
+    });
+
+    it('re-reads the payments the shop started itself first, which often settles a missed callback without any code', async () => {
+      const { orderId, attempt } = await stranded();
+      stkQuery(0);
+      const before = await order(orderId);
+      expect(before.paymentStatus).not.toBe('paid');
+      const out = await claims.refresh(orderId);
+      expect(out.paid).toBe(true);
+      expect((await order(orderId)).paymentStatus).toBe('paid');
+      expect((await reload(attempt.id)).status).toBe('successful');
+    });
+  });
+});

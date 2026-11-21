@@ -1,6 +1,6 @@
 import type { InboundClaim, PlatformContext, VerificationOutcome, VerifyAttemptInput } from '../engine/types';
 import { DarajaClient, darajaFailure } from './client';
-import { parseAsyncResult } from './parsers';
+import { parseAsyncResult, parseDarajaTime } from './parsers';
 import { phoneFingerprint } from '../engine/redact';
 import { darajaTimestamp, looksLikeReceipt, stkPassword } from './security';
 
@@ -80,6 +80,11 @@ export interface StatusAnswer {
   amountCents: number | null;
   status: string;
   creditParty: string | null;
+  /** Who paid, as Safaricom writes it (the number, often with its middle hidden, and the name). */
+  debitParty: string | null;
+  /** When the payment was started and finished, as Safaricom gave them. */
+  initiatedAt: Date | null;
+  finalisedAt: Date | null;
   resultCode: string;
   resultDesc: string | null;
 }
@@ -96,6 +101,9 @@ export function readStatusAnswer(result: Record<string, unknown>): StatusAnswer 
     amountCents: amount !== null && Number.isFinite(amount) ? amount : null,
     status: p.TransactionStatus ?? '',
     creditParty: p.CreditPartyName ?? null,
+    debitParty: p.DebitPartyName ?? null,
+    initiatedAt: parseDarajaTime(p.InitiatedTime),
+    finalisedAt: parseDarajaTime(p.FinalisedTime),
     resultCode: parsed.resultCode,
     resultDesc: parsed.resultDesc,
   };
@@ -115,3 +123,34 @@ export function statusAgrees(answer: StatusAnswer, expect: { receipt: string | n
 }
 
 export type { InboundClaim };
+
+/** What the engine needs to judge a code a shopper says they paid with. */
+export interface ClaimJudgement {
+  receipt: string;
+  amountCents: number;
+  shortcode: string | null;
+  orderCreatedAt: Date;
+  /** The phones the order knows, to compare with the one that paid. */
+  payerMatches: boolean | null;
+}
+
+/**
+ * Whether Safaricom's own answer about a code is a completed payment for this order. Nothing the shopper typed is believed: the code
+ * only chooses what to ask. The answer must be a completed payment of this very code, for the amount of the order, to our shortcode,
+ * made after the order was placed. A payment from a phone the order does not know is held for a person, never counted by itself.
+ */
+export function judgeClaim(answer: StatusAnswer, expect: ClaimJudgement): { ok: true } | { ok: false; code: string; reason: string } {
+  if (!answer.ok) return { ok: false, code: 'NOT_FOUND', reason: `Safaricom has no completed payment with ${expect.receipt} (${orElse(answer.resultDesc, orElse(answer.status, 'no answer'))}).` };
+  const agreed = statusAgrees(answer, { receipt: expect.receipt, amountCents: expect.amountCents, shortcode: expect.shortcode });
+  if (!agreed.ok) return agreed;
+  // The answer has to name the code (a receipt-less "completed" proves nothing about this code).
+  if (!has(answer.receipt)) return { ok: false, code: 'STATUS_RECEIPT_MISMATCH', reason: 'The answer did not name the transaction, so it cannot be matched to this code.' };
+  if (answer.amountCents === null) return { ok: false, code: 'STATUS_AMOUNT_MISMATCH', reason: 'The answer did not say how much was paid.' };
+  const when = answer.initiatedAt ?? answer.finalisedAt;
+  if (when !== null && when.getTime() < expect.orderCreatedAt.getTime() - 60_000) {
+    return { ok: false, code: 'BEFORE_ORDER', reason: 'The payment was made before this order was placed.' };
+  }
+  if (expect.payerMatches === false) return { ok: false, code: 'PAYER_DIFFERS', reason: 'The payment was made from a phone number the order does not know. A person has to confirm it.' };
+  return { ok: true };
+}
+

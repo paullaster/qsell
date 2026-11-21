@@ -2815,12 +2815,23 @@ export const paymentAttempts = pgTable(
     requestPayload: jsonb('request_payload').$type<Record<string, unknown>>().default({}),
     responsePayload: jsonb('response_payload').$type<Record<string, unknown>>().default({}),
     errorMessage: text('error_message'),
+    /** `customer_claim`: the shopper says they already paid and gave the provider's code; there was no prompt from us. */
+    source: text('source').$type<'checkout' | 'customer_claim'>().notNull().default('checkout'),
+    /** The provider's own transaction code the shopper gave, written as the provider writes it. Only on a claim. */
+    claimedReceipt: text('claimed_receipt'),
     paidAt: timestamp('paid_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index('payment_attempts_order_idx').on(t.orderId),
+    check('payment_attempts_source_chk', sql`${t.source} IN ('checkout', 'customer_claim')`),
+    check('payment_attempts_claim_chk', sql`(${t.source} = 'customer_claim') = (${t.claimedReceipt} IS NOT NULL)`),
+    // A provider's transaction code is unique across that provider, so it is claimed once while the claim is alive; a refused or failed
+    // claim can be tried again with a corrected code.
+    uniqueIndex('payment_attempts_claim_once_idx')
+      .on(t.providerCode, t.claimedReceipt)
+      .where(sql`${t.source} = 'customer_claim' AND ${t.status} NOT IN ('failed', 'cancelled')`),
     index('payment_attempts_callback_token_idx').on(t.callbackToken),
     index('payment_attempts_branch_idx').on(t.branchId),
     index('payment_attempts_settled_idx')

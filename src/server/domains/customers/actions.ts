@@ -3,6 +3,7 @@
 import { requirePermission } from '@/server/domains/access-control/guard';
 
 import { auth } from '@/auth';
+import { recoveryClaim, recoveryOptions, recoveryPayAgain, recoveryRefresh, recoveryStatus, type Recovery } from '@/server/domains/orders/payment-recovery';
 import { getContainer } from '@/server/di/container';
 import { StorefrontCustomerService } from '@/server/domains/customers/storefront-service';
 import type { CustomerAddressRow } from '@/server/db/drizzle/schema';
@@ -492,3 +493,55 @@ export async function makeMyAddressDefaultAction(id: string): Promise<AccountRes
     await master().setDefaultAddress(tradeCustomerId, id);
   });
 }
+
+/**
+ * The signed-in shopper's own order, for finishing its payment. Someone else's order, and one that does not exist, are both "not
+ * found". What follows never changes the order itself: only how it is paid.
+ */
+async function ownOrderToPay(id: unknown): Promise<{ ok: true; order: Order } | { ok: false; error: string; code?: string }> {
+  const mine = await ownerOf();
+  if (!mine) return NEEDS_SIGN_IN;
+  const order = typeof id === 'string' && id !== '' && id.length <= 100 ? await getContainer().orders.getById(id) : null;
+  if (!order || !ownsOrder(order, mine.owner)) return { ok: false, error: 'This order was not found.', code: 'ORDER_NOT_FOUND' };
+  return { ok: true, order };
+}
+
+async function withOwnOrder<T>(id: unknown, run: (order: Order) => Promise<Recovery<T>>): Promise<AccountResult<T>> {
+  try {
+    const found = await ownOrderToPay(id);
+    if (!found.ok) return found;
+    return await run(found.order);
+  } catch (error) {
+    console.error('[storefront] finishing a payment', error);
+    return { ok: false, error: 'This could not be done just now. Please try again.' };
+  }
+}
+
+/** What can be done about an order that is waiting for its payment, and the ways to pay that the shop offers. */
+export async function myOrderPayOptionsAction(id: string) {
+  return await withOwnOrder(id, recoveryOptions);
+}
+
+/** Reads again the payments that were started for this order and never heard back from. */
+export async function myOrderRefreshPaymentAction(id: string) {
+  return await withOwnOrder(id, recoveryRefresh);
+}
+
+/** "I have already paid": the way they paid and the provider's transaction code; the provider is asked about it. */
+export async function myOrderClaimPaymentAction(input: { orderId: string; method: string; code: string }) {
+  const i = typeof input === 'object' ? input : { orderId: '', method: '', code: '' };
+  return await withOwnOrder(i.orderId, (order) => recoveryClaim(order, i.method, i.code));
+}
+
+/** Where a claim the shopper made has got to. */
+export async function myOrderClaimStatusAction(input: { orderId: string; attemptId: string }) {
+  const i = typeof input === 'object' ? input : { orderId: '', attemptId: '' };
+  return await withOwnOrder(i.orderId, (order) => recoveryStatus(order, i.attemptId));
+}
+
+/** "Pay again": a new payment for what is still due, by any way of paying the shop offers. */
+export async function myOrderPayAgainAction(input: { orderId: string; method: string; paymentPhone?: string }) {
+  const i = typeof input === 'object' ? input : { orderId: '', method: '', paymentPhone: '' };
+  return await withOwnOrder(i.orderId, (order) => recoveryPayAgain(order, i.method, i.paymentPhone));
+}
+
