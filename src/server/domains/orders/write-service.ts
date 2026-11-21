@@ -119,7 +119,7 @@ export const OrderWriteService = {
       postalCode?: string;
       country: string;
     };
-    items: { productId: string; quantity: number; /** A configurable package: the choices made (ids and counts only), and `quantity` is the servings. */ package?: { picks: RawPick[]; note?: string; groupId?: string } }[];
+    items: { productId: string; quantity: number; /** A price typed at the counter for one unit, by someone who may change prices (the caller checks that): it replaces the price list's, within the floors and that person's limit. */ priceOverride?: number; /** A configurable package: the choices made (ids and counts only), and `quantity` is the servings. */ package?: { picks: RawPick[]; note?: string; groupId?: string } }[];
     quotedItems?: {
       productId: string;
       quantity: number;
@@ -213,7 +213,7 @@ export const OrderWriteService = {
           global: Record<string, string>;
           shortcut: Record<string, string>;
         };
-  }): Promise<{ success: boolean; order?: Order; error?: string; /** Why it was refused, for the checkout attempt's record. */ code?: CheckoutRefusal; /** What a `previewOnly` call priced. */ preview?: { subtotal: number; tax: number; totalAmount: number } }> {
+  }): Promise<{ success: boolean; order?: Order; error?: string; /** Why it was refused, for the checkout attempt's record. */ code?: CheckoutRefusal; /** What a `previewOnly` call priced. */ preview?: { subtotal: number; tax: number; totalAmount: number; lines: { productId: string; quantity: number; unitPrice: number; lineTotal: number }[] } }> {
     // A shopper may leave the email out; whatever is given is checked here, not trusted from the browser.
     const contact = readOptionalEmail(raw.customerEmail);
     if (!contact.ok) return { success: false, error: contact.error, code: 'invalid_input' };
@@ -336,6 +336,9 @@ export const OrderWriteService = {
       }
     }
 
+    /** Lines whose price was typed at the counter: no promotion is added to them, and they are held to the floors and the person's limit. */
+    const changedPrices: { itemIndex: number; productId: string; label: string; quantity: number; taxRate: number; inclusive: boolean; listUnit: number; typed: number; floor: number | null }[] = [];
+
     /** Lines the price lists priced: discounts apply to them, then they are checked against floors. */
     const guarded: {
       itemIndex: number;
@@ -403,10 +406,16 @@ export const OrderWriteService = {
       );
       // A package serving costs the base price plus what the choices add (or the choices' own prices, added up).
       const chosen = quoted === undefined ? preparedPackages.get(index) : undefined;
-      const unitPrice = chosen === undefined ? base.unitPrice : Math.round(((chosen.summedPerServing ?? base.unitPrice + (chosen.addedPerServing ?? 0)) + Number.EPSILON) * 100) / 100;
-      const itemTotal = chosen === undefined ? base.total : Math.round((unitPrice * item.quantity + Number.EPSILON) * 100) / 100;
+      const listUnit = chosen === undefined ? base.unitPrice : Math.round(((chosen.summedPerServing ?? base.unitPrice + (chosen.addedPerServing ?? 0)) + Number.EPSILON) * 100) / 100;
+      // A price typed at the counter by someone who may change prices stands in for the price list's; it is then held to the floors and to that person's limit below.
+      const typed = chosen === undefined && quoted === undefined && priced !== undefined ? item.priceOverride : undefined;
+      const unitPrice = typed ?? listUnit;
+      const itemTotal = chosen === undefined && typed === undefined ? base.total : Math.round((unitPrice * item.quantity + Number.EPSILON) * 100) / 100;
+      if (typed !== undefined && priced) {
+        changedPrices.push({ itemIndex: orderItems.length, productId: prod.id, label: prod.name, quantity: item.quantity, taxRate: Math.max(0, prod.taxRate ?? 0), inclusive: prod.isTaxInclusive !== false, listUnit, typed, floor: priced.trace.floorPrice ?? null });
+      }
       // Promotions and coupons apply to every channel's price-list lines, the shop's included (price floors stay with the staff channels).
-      if (priced && !quoted) {
+      if (priced && !quoted && typed === undefined) {
         guarded.push({
           itemIndex: orderItems.length,
           productId: prod.id,
@@ -549,6 +558,21 @@ export const OrderWriteService = {
           };
         floorBreach = { text, shortfallPercent: verdict.largestShortfallPercent };
       }
+    }
+
+    // A price typed at the counter: never under a floor, never further below list than this person is allowed (a till cannot wait for approval).
+    if (changedPrices.length > 0) {
+      const { companySettings: cs, priceGuard } = getContainer();
+      const toNet = (c: (typeof changedPrices)[number], v: number) => (c.inclusive && c.taxRate > 0 ? v / (1 + c.taxRate / 100) : v);
+      const verdict = await priceGuard.assess((await cs.ensureSeeded()).id, params.requestedBy ?? null, changedPrices.map((c) => ({ productId: c.productId, label: c.label, quantity: c.quantity, netUnit: toNet(c, c.typed), listNetUnit: toNet(c, c.listUnit), explicitFloorNet: c.floor != null ? toNet(c, c.floor) : null })));
+      const names = changedPrices.map((c) => c.label);
+      const lowest = (flags: boolean[]) => names.filter((_, n) => flags[n] === true).join(', ');
+      if (verdict.belowFloor) return { success: false, error: `The price of ${lowest(verdict.lines.map((l) => l.belowFloor))} is below its floor. Charge at least the floor price.`, code: 'approval_needed' };
+      if (verdict.overOverrideLimit) return { success: false, error: `The price of ${lowest(verdict.lines.map((l) => l.overOverrideLimit))} is lower than you may sell it for (at most ${String(verdict.overrideLimitPercent)}% below the list price).`, code: 'approval_needed' };
+      changedPrices.forEach((c, n) => {
+        const line = nth(orderItems, c.itemIndex);
+        line.priceTrace = line.priceTrace === null || line.priceTrace === undefined ? line.priceTrace : { ...line.priceTrace, steps: [...line.priceTrace.steps, `Price changed at the counter from ${c.listUnit.toFixed(2)} to ${c.typed.toFixed(2)}.`], guard: nth(verdict.lines, n) };
+      });
     }
 
     // Free gifts a promotion has earned join the order at no charge (stock is held for them too).
@@ -736,7 +760,7 @@ export const OrderWriteService = {
       const refusal = params.checkTotal({ subtotal, tax: orderTax, totalAmount });
       if (refusal !== null) return { success: false, error: refusal, code: 'invalid_input' };
     }
-    if (params.previewOnly === true) return { success: true, preview: { subtotal, tax: orderTax, totalAmount } };
+    if (params.previewOnly === true) return { success: true, preview: { subtotal, tax: orderTax, totalAmount, lines: orderItems.map((i) => ({ productId: i.productId, quantity: i.quantity, unitPrice: i.unitPrice, lineTotal: i.totalPrice })) } };
     // The branch that processes a delivered order is the one chosen for it; stock is held from it first.
     const branchId = delivered?.branch.id ?? params.branchId;
     const orderId =

@@ -633,6 +633,12 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'Take goods back from a counter sale: a credit note, the goods back into stock and the money handed back',
   },
+  'cash_sales:price': {
+    resource: 'cash_sales',
+    action: 'price',
+    category: 'Orders & Sales',
+    description: 'Change the price of an item while ringing up a counter sale, within the price floors and the person\'s own limit below list price',
+  },
   'shifts:open': {
     resource: 'shifts',
     action: 'open',

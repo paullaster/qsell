@@ -332,6 +332,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'Payment methods and gateways',
       'Automatic invoice and order numbering',
       'Customer credit display and controlled sales beyond the available limit',
+      'Choose whether the counter shows inside the admin or as a full-screen till',
       'Time limits for each order stage, with late-order alerts',
       'Your own SMS provider, connected with your own keys',
     ],
