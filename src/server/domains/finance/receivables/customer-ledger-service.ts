@@ -542,7 +542,8 @@ export class CustomerLedgerService {
 
   private statementAfter(cursor: StatementCursor): SQL {
     if (cursor.date === null)
-      return sql`(${customerLedgerEntries.postingDate} IS NULL AND ${customerLedgerEntries.id}::text > ${cursor.id}) OR ${customerLedgerEntries.postingDate} IS NOT NULL`;
+      // In brackets as a whole: it is joined to the company and customer conditions with AND, and a bare OR would let other customers' rows in.
+      return sql`((${customerLedgerEntries.postingDate} IS NULL AND ${customerLedgerEntries.id}::text > ${cursor.id}) OR ${customerLedgerEntries.postingDate} IS NOT NULL)`;
     return sql`(${customerLedgerEntries.postingDate} > ${cursor.date} OR (${customerLedgerEntries.postingDate} = ${cursor.date} AND ${customerLedgerEntries.id}::text > ${cursor.id}))`;
   }
 
@@ -622,7 +623,8 @@ export class CustomerLedgerService {
     const pageRows = rows.slice(0, limit);
     const balances = statementRowBalances(
       pageRows.map((r) => toCents(r.amount)),
-      totals.beforeCursorCents,
+      // A page starts from what stood before the period (the opening balance) plus what the earlier pages of the period came to.
+      totals.openingCents + totals.beforeCursorCents,
     );
     const lines = pageRows.map((row, index) => ({
       ...row,
