@@ -187,6 +187,12 @@ test.describe('collecting an order from a branch', () => {
       await expect(panel.getByRole('list', { name: 'Messages to the customer' })).toContainText('Still waiting to be collected (email)', { timeout: 30_000 });
       // At three days the automatic reminder may be listed too, so what is checked is that the refused press adds nothing.
       const listed = panel.getByRole('list', { name: 'Messages to the customer' }).getByText(/Still waiting to be collected \(email\)/);
+      // The automatic reminder can land a moment after the manual one, so the count is taken once it has stopped changing.
+      await expect.poll(async () => {
+        const first = await listed.count();
+        await page.waitForTimeout(2_000);
+        return first === (await listed.count());
+      }, { timeout: 30_000 }).toBe(true);
       const before = await listed.count();
       await panel.getByRole('button', { name: 'Remind the customer now' }).click();
       await expect(panel.getByRole('alert')).toContainText('already reminded', { timeout: 30_000 });

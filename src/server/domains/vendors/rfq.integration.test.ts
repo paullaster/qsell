@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 
+import { toBusinessInput } from '@/lib/visit';
+import { businessTimeZone } from '@/server/kernel/numbering/business-date';
 import { has, isRecord, readText, required } from '@/lib/values';
 import { emptyBusiness, emptyFinancial, emptyProfile, type ProfileData } from '@/lib/vendor-profile';
 import { emptyCategory } from '@/lib/prequalification';
@@ -23,11 +25,8 @@ const url = process.env.TEST_DATABASE_URL;
 const PDF = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n');
 const TODAY = new Date().toISOString().slice(0, 10);
 const inHours = (h: number) => new Date(Date.now() + h * 3_600_000);
-/** The buyer's own clock, as a form would give it: the server reads these in its own time zone. */
-const local = (d: Date) => {
-  const two = (n: number) => String(n).padStart(2, '0');
-  return `${String(d.getFullYear())}-${two(d.getMonth() + 1)}-${two(d.getDate())}T${two(d.getHours())}:${two(d.getMinutes())}`;
-};
+/** The buyer's own clock, as a form would give it: the server reads these in the business time zone. */
+const local = (d: Date) => toBusinessInput(d.toISOString(), businessTimeZone());
 
 class Outbox implements EmailPort {
   readonly name = 'recorder';

@@ -295,7 +295,7 @@ describe.skipIf(!has(url))('delivery slots (database)', () => {
   });
 
   it('keeps a slot from starting before the goods can be ready: an item, a zone and the branch\'s own handling time', async () => {
-    const s = await slot({ name: `Soon ${code()}`, startsAt: '00:30', endsAt: '23:00', cutoffMinutes: 0 });
+    const s = await slot({ name: `Soon ${code()}`, startsAt: '04:00', endsAt: '23:00', cutoffMinutes: 0 });
     // An item that needs three days.
     const a = await delivery();
     const item = await must(c.deliverySlots.setLead(actor(), { kind: 'item', refId: lastProduct, minutes: 4320, note: 'Fresh fish' }));
@@ -1060,7 +1060,7 @@ describe.skipIf(!has(url))('delivery slots (database)', () => {
   });
 
   it('offers slots for a basket before any order exists, with the earliest free time and the goods\' lead time respected', async () => {
-    const s = await slot({ name: `Basket ${code()}`, capacity: 1, startsAt: '00:30', endsAt: '23:00', cutoffMinutes: 0 });
+    const s = await slot({ name: `Basket ${code()}`, capacity: 1, startsAt: '04:00', endsAt: '23:00', cutoffMinutes: 0 });
     const full = await delivery();
     await must(c.deliverySlots.book(actor(), full, { slotId: s.id, day: ahead(2) }));
     const product = lastProduct;
