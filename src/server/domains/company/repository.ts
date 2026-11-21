@@ -118,11 +118,17 @@ export class CompanySettingsRepository {
       const existing = await this.getActive();
       if (existing) return existing;
 
-      const [created] = await this.db.insert(companySettings).values(DEFAULT_COMPANY).returning();
-      if (!created) {
-        throw new Error('Failed to seed company settings');
-      }
-      return created;
+      // Two processes starting together on an empty database must not each make a company (each would number its orders from 1): one at a time, looking again once it is their turn.
+      return await this.db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('company_settings_seed'))`);
+        const [again] = await tx.select().from(companySettings).where(eq(companySettings.isActive, true)).limit(1);
+        if (again) return again;
+        const [created] = await tx.insert(companySettings).values(DEFAULT_COMPANY).returning();
+        if (!created) {
+          throw new Error('Failed to seed company settings');
+        }
+        return created;
+      });
     } catch (err) {
       throw new Error(
         `Company settings unavailable. If you recently changed the schema, run \`npm run db:push\`. ${dbErrorMessage(err)}`,
