@@ -156,7 +156,8 @@ describe.skipIf(!has(url))('the orders list (database)', () => {
 
     const webShop = await repo.page({ query: `OP-${tag}-5`, origin: 'web_shop', limit: 50 });
 
-    expect(mine(webShop.rows)).toEqual([`OP-${tag}-53`, `OP-${tag}-51`]);
+    // Newest first: order n is made n minutes ago, so 51 is newer than 53.
+    expect(mine(webShop.rows)).toEqual([`OP-${tag}-51`, `OP-${tag}-53`]);
   });
 
   it('searches the number, the customer, the phone, the email and the tracking code, without case', async () => {
