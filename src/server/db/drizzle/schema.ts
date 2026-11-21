@@ -75,7 +75,7 @@ import type {
  * A quantity of goods: up to three decimals (a unit of measure allows 0 to 3), read back as a JS number.
  * Sums and differences are done by the database in exact decimals; code that adds in JS rounds with `roundQty`.
  */
-const quantity = (name: string) => numeric(name, { precision: 14, scale: 3, mode: 'number' });
+const quantity = (name: string) => numeric(name, { precision: 16, scale: 3, mode: 'number' });
 
 /** Top-level tenant. */
 /** Raw bytes (files kept in the database). */
@@ -1422,7 +1422,7 @@ export const orderVisitMaterials = pgTable(
       .notNull()
       .references(() => stockLocations.id, { onDelete: 'restrict' }),
     /** Positive: used. Negative: given back (and then `reversesId` is the line it undoes). */
-    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    quantity: numeric('quantity', { precision: 16, scale: 3 }).notNull(),
     unitCost: numeric('unit_cost', { precision: 14, scale: 4 }).notNull().default('0'),
     reversesId: uuid('reverses_id'),
     note: text('note'),
@@ -1818,12 +1818,12 @@ export const deliveryLines = pgTable(
     productId: text('product_id')
       .notNull()
       .references(() => products.id, { onDelete: 'restrict' }),
-    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    quantity: numeric('quantity', { precision: 16, scale: 3 }).notNull(),
     /** Null until it is counted. A short pick leaves the difference open on the order. */
-    picked: numeric('picked', { precision: 14, scale: 3 }),
-    delivered: numeric('delivered', { precision: 14, scale: 3 }).notNull().default('0'),
+    picked: numeric('picked', { precision: 16, scale: 3 }),
+    delivered: numeric('delivered', { precision: 16, scale: 3 }).notNull().default('0'),
     /** How much of this line has left the shelf, when the shop issues stock as deliveries go out or arrive. Never more than was picked. */
-    issued: numeric('issued', { precision: 14, scale: 3 }).notNull().default('0'),
+    issued: numeric('issued', { precision: 16, scale: 3 }).notNull().default('0'),
   },
   (t) => [
     check('delivery_lines_issued_chk', sql`${t.issued} >= 0 AND ${t.issued} <= COALESCE(${t.picked}, ${t.quantity})`),
@@ -1887,7 +1887,7 @@ export const deliveryReturns = pgTable(
     productId: text('product_id')
       .notNull()
       .references(() => products.id, { onDelete: 'restrict' }),
-    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    quantity: numeric('quantity', { precision: 16, scale: 3 }).notNull(),
     /** The same words the finance returns use: return_to_stock, quarantine, scrap; and keep, for goods that stay with the order. */
     disposition: text('disposition').notNull(),
     /** Where it was counted back, or written off from; null when nothing moved. */
@@ -5191,7 +5191,7 @@ export const salesQuoteTemplateLines = pgTable(
     lineNumber: integer('line_number').notNull(),
     sku: text('sku').notNull().default(''),
     description: text('description').notNull(),
-    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull().default('1'),
+    quantity: numeric('quantity', { precision: 16, scale: 3 }).notNull().default('1'),
     priceMode: text('price_mode').notNull().default('catalog'),
     unitPrice: numeric('unit_price', { precision: 14, scale: 4 }),
     discountPercent: numeric('discount_percent', { precision: 7, scale: 3 }).notNull().default('0'),
@@ -5256,7 +5256,7 @@ export const salesSectionTemplateLines = pgTable(
     lineNumber: integer('line_number').notNull(),
     sku: text('sku').notNull().default(''),
     description: text('description').notNull(),
-    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull().default('1'),
+    quantity: numeric('quantity', { precision: 16, scale: 3 }).notNull().default('1'),
     priceMode: text('price_mode').notNull().default('catalog'),
     unitPrice: numeric('unit_price', { precision: 14, scale: 4 }),
     discountPercent: numeric('discount_percent', { precision: 7, scale: 3 }).notNull().default('0'),
@@ -5406,7 +5406,7 @@ export const salesQuoteLines = pgTable(
     lineNumber: integer('line_number').notNull(),
     sku: text('sku').notNull().default(''),
     description: text('description').notNull(),
-    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    quantity: numeric('quantity', { precision: 16, scale: 3 }).notNull(),
     unitPrice: numeric('unit_price', { precision: 14, scale: 4 }).notNull(),
     unitCost: numeric('unit_cost', { precision: 14, scale: 4 }).notNull(),
     taxRate: numeric('tax_rate', { precision: 7, scale: 3 }).notNull().default('0'),
@@ -9818,7 +9818,7 @@ export const rfqLines = pgTable(
     productId: text('product_id').references(() => products.id, { onDelete: 'set null' }),
     description: text('description').notNull(),
     specification: text('specification'),
-    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    quantity: numeric('quantity', { precision: 16, scale: 3 }).notNull(),
     unit: text('unit').notNull().default('each'),
     requiredDate: date('required_date', { mode: 'string' }),
   },
@@ -9952,7 +9952,7 @@ export const rfqQuoteLines = pgTable(
     noBid: boolean('no_bid').notNull().default(false),
     isAlternative: boolean('is_alternative').notNull().default(false),
     unitPrice: numeric('unit_price', { precision: 14, scale: 2 }),
-    quantity: numeric('quantity', { precision: 14, scale: 3 }),
+    quantity: numeric('quantity', { precision: 16, scale: 3 }),
     taxRate: numeric('tax_rate', { precision: 5, scale: 2 }).notNull().default('0'),
     leadTimeDays: integer('lead_time_days'),
     brand: text('brand'),
@@ -9986,7 +9986,7 @@ export const rfqAwards = pgTable(
     quoteLineId: uuid('quote_line_id')
       .notNull()
       .references(() => rfqQuoteLines.id, { onDelete: 'restrict' }),
-    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    quantity: numeric('quantity', { precision: 16, scale: 3 }).notNull(),
     unitPrice: numeric('unit_price', { precision: 14, scale: 2 }).notNull(),
     justification: text('justification'),
     awardedBy: text('awarded_by'),
@@ -10212,7 +10212,7 @@ export const purchaseOrderLines = pgTable(
     productId: text('product_id').references(() => products.id, { onDelete: 'set null' }),
     description: text('description').notNull(),
     specification: text('specification'),
-    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    quantity: numeric('quantity', { precision: 16, scale: 3 }).notNull(),
     unit: text('unit').notNull().default('each'),
     unitPrice: numeric('unit_price', { precision: 14, scale: 2 }).notNull(),
     discountPercent: numeric('discount_percent', { precision: 5, scale: 2 }).notNull().default('0'),
@@ -10225,13 +10225,13 @@ export const purchaseOrderLines = pgTable(
       onDelete: 'restrict',
     }),
     // Kept by receiving and invoicing (later slices), never edited by hand.
-    receivedQuantity: numeric('received_quantity', { precision: 14, scale: 3 })
+    receivedQuantity: numeric('received_quantity', { precision: 16, scale: 3 })
       .notNull()
       .default('0'),
-    invoicedQuantity: numeric('invoiced_quantity', { precision: 14, scale: 3 })
+    invoicedQuantity: numeric('invoiced_quantity', { precision: 16, scale: 3 })
       .notNull()
       .default('0'),
-    cancelledQuantity: numeric('cancelled_quantity', { precision: 14, scale: 3 })
+    cancelledQuantity: numeric('cancelled_quantity', { precision: 16, scale: 3 })
       .notNull()
       .default('0'),
   },
@@ -10427,18 +10427,18 @@ export const rgnLines = pgTable(
     poLineId: uuid('po_line_id')
       .notNull()
       .references(() => purchaseOrderLines.id, { onDelete: 'restrict' }),
-    delivered: numeric('delivered', { precision: 14, scale: 3 }).notNull(),
-    accepted: numeric('accepted', { precision: 14, scale: 3 }).notNull(),
-    rejected: numeric('rejected', { precision: 14, scale: 3 }).notNull().default('0'),
+    delivered: numeric('delivered', { precision: 16, scale: 3 }).notNull(),
+    accepted: numeric('accepted', { precision: 16, scale: 3 }).notNull(),
+    rejected: numeric('rejected', { precision: 16, scale: 3 }).notNull().default('0'),
     rejectReason: text('reject_reason'),
     /** What the accepted goods cost per unit, fixed when the note is posted. */
     unitCost: numeric('unit_cost', { precision: 14, scale: 4 }),
     // Kept by supplier invoices (V-6): how much of the accepted quantity has been invoiced.
-    invoicedQuantity: numeric('invoiced_quantity', { precision: 14, scale: 3 })
+    invoicedQuantity: numeric('invoiced_quantity', { precision: 16, scale: 3 })
       .notNull()
       .default('0'),
     // Kept by purchase returns: how much of the accepted quantity has gone back to the vendor.
-    returnedQuantity: numeric('returned_quantity', { precision: 14, scale: 3 })
+    returnedQuantity: numeric('returned_quantity', { precision: 16, scale: 3 })
       .notNull()
       .default('0'),
   },
@@ -10583,7 +10583,7 @@ export const supplierInvoiceLines = pgTable(
       .references(() => purchaseOrderLines.id, { onDelete: 'restrict' }),
     description: text('description').notNull(),
     unit: text('unit').notNull(),
-    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    quantity: numeric('quantity', { precision: 16, scale: 3 }).notNull(),
     unitPrice: numeric('unit_price', { precision: 14, scale: 2 }).notNull(),
     taxRate: numeric('tax_rate', { precision: 5, scale: 2 }).notNull().default('0'),
     netAmount: numeric('net_amount', { precision: 14, scale: 2 }).notNull(),
@@ -10612,7 +10612,7 @@ export const supplierInvoiceLineRgn = pgTable(
     rgnLineId: uuid('rgn_line_id')
       .notNull()
       .references(() => rgnLines.id, { onDelete: 'restrict' }),
-    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    quantity: numeric('quantity', { precision: 16, scale: 3 }).notNull(),
   },
   (t) => [
     uniqueIndex('supplier_invoice_line_rgn_uidx').on(t.invoiceLineId, t.rgnLineId),
@@ -10651,7 +10651,7 @@ export const supplierInvoiceMatches = pgTable(
     priceDifference: numeric('price_difference', { precision: 14, scale: 2 })
       .notNull()
       .default('0'),
-    quantityDifference: numeric('quantity_difference', { precision: 14, scale: 3 })
+    quantityDifference: numeric('quantity_difference', { precision: 16, scale: 3 })
       .notNull()
       .default('0'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -11181,7 +11181,7 @@ export const vendorCreditMemoLines = pgTable(
     unit: text('unit').notNull(),
     /** quantity: some of what was billed is credited, at the price billed. price: all of it was billed too dear, by this much a unit. */
     mode: text('mode').$type<'quantity' | 'price'>().notNull(),
-    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    quantity: numeric('quantity', { precision: 16, scale: 3 }).notNull(),
     unitPrice: numeric('unit_price', { precision: 14, scale: 2 }).notNull(),
     taxRate: numeric('tax_rate', { precision: 5, scale: 2 }).notNull().default('0'),
     netAmount: numeric('net_amount', { precision: 14, scale: 2 }).notNull(),
@@ -11598,7 +11598,7 @@ export const purchaseReturnLines = pgTable(
     poLineId: uuid('po_line_id')
       .notNull()
       .references(() => purchaseOrderLines.id, { onDelete: 'restrict' }),
-    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    quantity: numeric('quantity', { precision: 16, scale: 3 }).notNull(),
     /** What the goods cost per unit, taken from the note when the return is posted. */
     unitCost: numeric('unit_cost', { precision: 14, scale: 4 }),
   },
@@ -11698,7 +11698,7 @@ export const purchaseRequisitionLines = pgTable(
     productId: text('product_id').references(() => products.id, { onDelete: 'set null' }),
     description: text('description').notNull(),
     specification: text('specification'),
-    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    quantity: numeric('quantity', { precision: 16, scale: 3 }).notNull(),
     unit: text('unit').notNull().default('each'),
     estimatedUnitPrice: numeric('estimated_unit_price', { precision: 14, scale: 2 })
       .notNull()
@@ -11811,7 +11811,7 @@ export const vendorContractLines = pgTable(
     discountPercent: numeric('discount_percent', { precision: 5, scale: 2 }).notNull().default('0'),
     taxRate: numeric('tax_rate', { precision: 5, scale: 2 }).notNull().default('0'),
     /** The most that may be ordered on this line over the whole contract. Empty means no limit on the line. */
-    maxQuantity: numeric('max_quantity', { precision: 14, scale: 3 }),
+    maxQuantity: numeric('max_quantity', { precision: 16, scale: 3 }),
   },
   (t) => [
     index('vendor_contract_lines_idx').on(t.contractId, t.position),
@@ -11916,7 +11916,7 @@ export const landedCostLines = pgTable(
       .notNull()
       .references(() => rgnLines.id, { onDelete: 'restrict' }),
     productId: text('product_id').notNull(),
-    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    quantity: numeric('quantity', { precision: 16, scale: 3 }).notNull(),
     share: numeric('share', { precision: 14, scale: 2 }).notNull(),
     costBefore: numeric('cost_before', { precision: 14, scale: 2 }),
     costAfter: numeric('cost_after', { precision: 14, scale: 2 }),
