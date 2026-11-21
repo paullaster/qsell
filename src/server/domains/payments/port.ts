@@ -1,5 +1,5 @@
 import type { PaymentProviderCode } from './types';
-import type { InboundClaim, PlatformContext, VerificationOutcome, VerifyAttemptInput } from './engine/types';
+import type { InboundClaim, PlatformContext, VerificationOutcome, VerifyAttemptInput, VerifyClaimInput } from './engine/types';
 import type { StatementPullRequest, StatementPullResult } from './statement-pull';
 
 export interface InitiatePaymentInput {
@@ -107,6 +107,12 @@ export interface PaymentPort {
    * leaves this out, and its payments are never consumed automatically.
    */
   verifyAttempt?(input: VerifyAttemptInput, ctx: PlatformContext): Promise<VerificationOutcome>;
+  /**
+   * Asks the platform itself about a transaction code a shopper holds, and whether it is a completed payment for this order. Only a
+   * platform whose own interface can look a payment up by its code has this; the others leave it out and the claim is kept for a person.
+   * Only a `confirmed` outcome may be counted.
+   */
+  verifyClaim?(input: VerifyClaimInput, ctx: PlatformContext): Promise<VerificationOutcome>;
   /**
    * Reads an account's statement from the bank for a range of days. Only a driver that declares the `statement` capability has it;
    * what it returns is plain lines, which finance keeps like any imported file.

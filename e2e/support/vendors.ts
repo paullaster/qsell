@@ -114,11 +114,15 @@ export interface ShopperFixture {
   numbers: string[];
   otherNumber: string;
   otherId: string;
+  /** The link in the shopper's own message for their first order, when it was made `unpaid`; empty otherwise. */
+  trackToken: string;
+  /** The ids of the shopper's own orders, in the order of `numbers`. */
+  orderIds: string[];
 }
 
-/** A shopper made for this test alone, with `orders` orders of their own and one order of somebody else (see shopper-fixture.ts). */
-export function makeShopper(tag: string, orders: number, saved = false): ShopperFixture {
-  const output = execFileSync('pnpm', ['exec', 'tsx', 'e2e/support/shopper-fixture.ts', tag, String(orders), ...(saved ? ['saved'] : [])], { env: { ...process.env, ...e2eEnvironment() }, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+/** A shopper made for this test alone, with `orders` orders of their own and one order of somebody else (see shopper-fixture.ts). With `unpaid`, the first order is still waiting for its payment. */
+export function makeShopper(tag: string, orders: number, saved = false, unpaid = false): ShopperFixture {
+  const output = execFileSync('pnpm', ['exec', 'tsx', 'e2e/support/shopper-fixture.ts', tag, String(orders), ...(saved ? ['saved'] : []), ...(unpaid ? ['unpaid'] : [])], { env: { ...process.env, ...e2eEnvironment() }, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
   const line = output.split('\n').find((l) => l.startsWith('FIXTURE '));
   if (line === undefined) throw new Error(`the shopper fixture printed nothing usable: ${output.slice(-500)}`);
   return JSON.parse(line.slice('FIXTURE '.length)) as ShopperFixture;

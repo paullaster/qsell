@@ -190,6 +190,8 @@ import { NumberSeriesService } from '@/server/kernel/numbering/service';
 import { createFinanceServices, type FinanceServices } from '@/server/domains/finance';
 import { ProjectService } from '@/server/domains/projects/service';
 import { createPaymentEngine, type PaymentEngine } from '@/server/domains/payments/engine';
+import { orElse } from '@/lib/values';
+import { PaymentClaims } from '@/server/domains/payments/payment-claims';
 import { FinanceC2bConsumer } from '@/server/domains/finance/receivables/c2b-consumer';
 import { CreditNoteService } from '@/server/domains/credit-notes/service';
 import { DocumentSigningService } from '@/server/domains/kra/signing/service';
@@ -381,6 +383,7 @@ export interface AppContainer {
   projects: ProjectService;
   /** The doors payment platforms knock on, and the checks that decide whether a payment is real. */
   paymentEngine: PaymentEngine;
+  paymentClaims: PaymentClaims;
   approvals: ApprovalEngine;
   approvalConfig: ApprovalConfigService;
   /** Parks actions that need approval and carries them out when approved. */
@@ -612,6 +615,17 @@ export function getContainer(): AppContainer {
   vendorPaymentService.useDestinationOpener((blob) => vendorProfileService.openBankNumber(blob));
   vendorPaymentService.useStatementMatcher(async (tx, ctx, lineId, entryId) => await finance.bankStatements.matchEntriesIn(tx, ctx, lineId, [entryId], 'vendor_payment'));
   const paymentEngine = createPaymentEngine({ db: drizzleDb, registry: paymentRegistry, payments, consumer: new FinanceC2bConsumer(drizzleDb, finance.receipts) });
+  const paymentClaims = new PaymentClaims({
+    db: drizzleDb,
+    payments,
+    engine: () => paymentEngine,
+    orders,
+    rateLimits,
+    branch: async () => {
+      const company = await companySettings.ensureSeeded();
+      return (await organizations.ensureDefaultOrgAndBranch(company.id, orElse(company.tradingName, company.legalName))).branch;
+    },
+  });
   // The finance side asks banks for statements through the payment engine.
   finance.statementPulls.source = paymentEngine;
   paymentEngine.payoutConsumer = {
@@ -810,6 +824,7 @@ export function getContainer(): AppContainer {
     finance,
     projects: new ProjectService(drizzleDb, decisionLog, numbering),
     paymentEngine,
+    paymentClaims,
     approvals,
     approvalConfig: new ApprovalConfigService(drizzleDb, decisionLog, reasonCodes),
     approvalGate,

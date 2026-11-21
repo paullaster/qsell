@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { headers } from 'next/headers';
 import { Suspense } from 'react';
 import { TrackingLoader } from '@/components/store/TrackingLoader';
+import { PayPrompt } from '@/components/store/payment/PayPrompt';
 import { getContainer } from '@/server/di/container';
 import { clientAddress, waitMessage } from '@/lib/rate-limit';
 import { isWellFormedTrackingToken } from '@/lib/tracking-token';
@@ -49,6 +50,9 @@ export default async function TrackPage({ params }: { params: Promise<{ token: s
       >
         <TrackingLoader order={order} token={token} />
       </Suspense>
+      <div className="mt-4">
+        <PayPrompt mode={{ kind: 'track', token }} href={`/track/${token}/pay`} />
+      </div>
     </main>
   );
 }

@@ -99,6 +99,14 @@ graph LR
 - Customer self-service portal: Displays real-time progress bar through the order stage timeline (*Order Confirmed $\rightarrow$ Preparing in Warehouse $\rightarrow$ Out with Rider $\rightarrow$ Delivered*).
 - Displays the **delivery code** (6 digits) to give to the rider upon arrival, the promised delivery window until it is delivered, and a link to the courier's own page when a courier handles the parcel.
 
+
+#### 5. Completing an Unpaid Order (`/profile/orders/[id]/pay` and `/track/[link]/pay`)
+- **When it appears.** On the order page (signed-in customers) and on the tracking page (customers using the link in their message), an order that is still waiting for its payment shows an amber **Payment not received** card with a **Complete this order** button. It is not shown when the order is paid, cancelled, refunded, already moving through fulfilment, or paid some other way (on account, to the rider at the door, at the counter).
+- **What the button opens.** The order exactly as it is: its status, items, amounts, tax, delivery and address. **Nothing on it can be changed** here, whichever choice the customer makes. Above it, a **Complete your payment** card says how much is still due and offers two choices.
+- **Choice 1: I have already paid and have the transaction code.** The customer picks how they paid (only the ways of paying the shop has switched on are listed), types the code from the message they received, and presses **Check my payment**. The shop's server asks the provider itself about that code; what the customer typed only chooses what to ask.
+- **Choice 2: Pay again.** The customer picks how they will pay (and, for M-Pesa, may give the phone to pay from; empty means the number on the order) and presses **Pay KES …**. A new payment is started for what is still due. For M-Pesa a prompt goes to the phone; for a hosted provider the customer is sent to the provider's page. The screen keeps asking the shop whether the payment has arrived and shows the success message as soon as it has.
+- **A first, silent check.** When the screen opens, the payments the shop itself started for this order and never heard the end of (for example an M-Pesa prompt whose answer never arrived) are read again with the provider. Often this alone settles the order and the customer sees "Thank you. We have your payment" without giving any code.
+
 ---
 
 ### Part B: Rider Mobile Web App (`/rider`)
@@ -170,6 +178,15 @@ graph LR
 | **Payment Method** | Ingress payment choice. | Radio Selector | **Required** | `M-Pesa STK Push`, `Credit Card`, `Cash on Delivery`. |
 | **Customer Order Notes**| Special delivery instructions. | Text (Max 300 chars) | Optional | e.g. *"Call upon arrival at the security gate"*. |
 
+### Complete Your Payment Fields (`/profile/orders/[id]/pay`, `/track/[link]/pay`)
+
+| Field | Type & Format | Default | Required | Rules |
+|---|---|---|---|---|
+| How did you pay? | One choice from the ways of paying the shop has switched on | The first way that can be looked up by code (M-Pesa), else the first listed | Yes | Only M-Pesa, Pesapal, Jenga and KCB can be claimed; on-account, pay-on-delivery and counter orders never show this screen |
+| Transaction code | Text, up to 40 characters; spaces, dashes and case are ignored | Empty | Yes | M-Pesa: exactly 10 capital letters and numbers (for example `QGH7RT61SV`). Other providers: 6 to 40 letters and numbers. Refused in words before anything is asked if it cannot be a code |
+| How will you pay? (Pay again) | One choice from the same list | As above | Yes | The amount is never typed: it is what is still due on the order, worked out by the server |
+| Mobile number to pay from (Pay again, phone-based providers) | Kenyan mobile number | Empty (the number on the order is used) | No | A number that is not a Kenyan mobile is refused in words; prompts to one phone are limited so nobody's phone can be flooded |
+
 ### Rider Proof of Delivery Fields (on a stop of a run)
 
 | Field Label | Purpose | Type & Format | Required? | Validation Rules & Hints |
@@ -193,6 +210,23 @@ graph LR
 7. Within 3 seconds, the customer's phone vibrates with the Safaricom STK prompt: *"Do you want to pay KES 4,750.00 to [Company Trading Name]?"*
 8. The customer enters their PIN.
 9. The checkout screen automatically detects payment confirmation, displays a green success checkmark, and redirects to `/track/[orderId]` displaying the 6-digit delivery code.
+
+### Action 1A: A Customer Paid, but the Shop Never Heard Back
+1. The customer paid with M-Pesa and received the Safaricom message with a code such as `QGH7RT61SV`, but the order still shows **Awaiting payment** (the provider's answer never reached the shop).
+2. They open the order (My orders, or the link in their message) and see the amber **Payment not received** card. They press **Complete this order**.
+3. The screen first checks, with the provider, the payments the shop already started for this order. If one of them was in fact paid, it turns green: *"Thank you. We have your payment for order …"* and the order moves on exactly as for any paid order. The steps below are only needed if it does not.
+4. They read the order (nothing on it can be edited) and press **I have already paid and have the transaction code**.
+5. They choose **M-Pesa**, type the code (any case, with or without spaces) and press **Check my payment**.
+6. A code that cannot be an M-Pesa code is refused at once: *"An M-Pesa code is 10 letters and numbers, for example QGH7RT61SV. Copy it from your M-Pesa message."*
+7. Otherwise the screen says *"We are checking your payment with the provider. This can take a minute"* and asks again every few seconds. Safaricom's own record of that code is requested (its Transaction Status service) and its answer arrives on the shop's secure result address.
+8. If Safaricom says it is a completed payment of this code, for the amount of this order, to the shop's shortcode, made after the order was placed, and from a phone the order knows, the order is paid, a receipt is recorded and the books follow, exactly as for any confirmed payment. The customer sees the green confirmation.
+9. If it is not found, or does not match, they are told in plain words which (not found; different amount; made before the order; already used) and can try another code or pay again. **The order and the stock held for it are left exactly as they were.**
+
+### Action 1B: A Customer Pays Again
+1. On the same screen the customer presses **Pay again**, chooses how to pay, optionally gives the phone to pay from, and presses **Pay KES …**.
+2. Before a new prompt is sent, the order's earlier payments are read again (the money may have arrived after all). If so, the customer is told it is paid and **no second prompt is sent**.
+3. A prompt that was sent only a moment ago is waited for: the customer is told to finish it or wait a minute, so they are never charged twice.
+4. Otherwise the stock for the order is held again (a failed payment gives it back) and the new payment is started; the screen then waits for the provider's confirmation.
 
 ### Action 2: Rider Executing a Delivery Stop on Mobile
 1. The delivery rider opens `/rider` on their mobile phone and signs in with their phone number and 6-digit PIN (on the first time after the office gives a PIN, they choose their own).
@@ -224,6 +258,16 @@ graph LR
   - Vendors cannot see other vendors, competing bid prices, internal buyer notes, or uninvited RFQs.
   - Passing an arbitrary `vendorId` in the URL or payload is rejected with an instant security exception.
 
+### Completing an Unpaid Order: What the System Checks, and What It Never Does
+- **The order is never changed.** There is no control on this screen that edits its items, amounts, address or delivery. Only how it is paid can change. The amount asked of any provider is the order's own amount still due, set by the server; nothing the browser sends about money is used.
+- **Only the customer's own order.** Signed-in customers can reach only orders that belong to their account (someone else's order, and one that does not exist, both answer "not found"). Customers without an account reach their order only through the link in their own message, which is looked up and rate-limited exactly like the tracking page.
+- **The provider decides, not the customer.** A typed code is believed only when the provider's own record of it agrees on **all** of: it is a completed payment of that code; the amount equals what is due; it went to the shop's shortcode; it was made after the order was placed; and it was not already used for another payment. One provider code can settle one payment, ever; a second order giving the same code is told the code "has already been used".
+- **A payment from another phone is held for a person.** If the phone that paid is not one of the phones the order knows (the contact number or the number it was paid from), the payment is **not** counted automatically. The customer is told a person at the shop must confirm it; the claim stays open with the reason, and the order's timeline shows it with its time. This stops one customer from using another person's code on their own order. It then appears under Payments, then Activity as a payment still pending after 30 minutes, where a staff member can confirm it by entering the provider's code and a reason (kept with their name).
+- **Providers that cannot be asked by code.** Only M-Pesa (Daraja) has a documented way to look a payment up by its code. For Pesapal, Jenga and KCB the code is kept with the order, the order's own payments are read again with the provider, and the customer is told a person will confirm it. M-Pesa also falls back to this, in words, when the shop's M-Pesa operator sign-in (Initiator name, password and Safaricom certificate under Settings, then Payments) is not saved or Transaction Status is switched off.
+- **A wrong code never fails the order.** A code that is not found or does not match is recorded on the order's timeline (as *Payment waiting to be confirmed*, with the reason and time) and marks only the claim as failed. The order's status, its payment state and the stock held for it are untouched, so the customer can try again or pay again.
+- **Limits against guessing.** Codes tried per order (6 in 10 minutes) and per address (20 in 10 minutes) are limited; past the limit the customer is asked to wait. Re-reading an order's own payments is limited too.
+- **Every step is timestamped.** Submitting a code, a refusal, a payment held for a person and the final confirmation each appear on the order's timeline with their time and reason (Customer Orders, the order's timeline).
+
 ### Rider Cash Custody Block
 - If a delivery rider has unremitted cash custody exceeding their maximum allowed cash ceiling (configured per rider under `/admin/delivery/riders`), the system blocks the dispatcher from assigning the rider to new delivery runs until previous cash is reconciled at the cashier desk.
 
@@ -237,4 +281,9 @@ graph LR
 | 2 | Open `/track/[id]` on a mobile browser. | Order stage timeline renders with live milestone indicator and verification PIN. | [ ] |
 | 3 | Log into `/rider` on a mobile device using a test rider PIN. | Assigned delivery run sheet renders cleanly with stop sequence. | [ ] |
 | 4 | Complete a test delivery stop using verification PIN. | Delivery confirmed; status updates to Delivered across admin and customer tracking. | [ ] |
+| 4A | Make an order unpaid (place it and let the M-Pesa prompt go unanswered), open it as the customer. | The amber **Payment not received** card and **Complete this order** show; the order opens read-only with the two choices. | [ ] |
+| 4B | On a test order, press **I have already paid**, choose M-Pesa and type `ABC`. | Refused in words before anything is asked ("10 letters and numbers"). | [ ] |
+| 4C | With the M-Pesa operator sign-in saved, claim the real code of a test payment of the exact amount made from the order's phone. | Confirmed within a minute; order paid; receipt recorded. Claim it again from a second order: told it has already been used. | [ ] |
+| 4D | Claim a real code of a payment made from a different phone. | Held for a person; order not paid; shown on the order's timeline; after 30 minutes listed under Payments, then Activity, where it can be confirmed with the code and a reason. | [ ] |
+| 4E | Press **Pay again** twice within a minute. | The second is told to wait; the customer is never prompted twice. | [ ] |
 | 5 | Invite a test supplier to the Vendor Portal. | Supplier registers, accesses open PO, and submits an invoice successfully. | [ ] |

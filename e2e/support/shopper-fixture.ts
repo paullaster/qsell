@@ -8,9 +8,12 @@ import { sql } from 'drizzle-orm';
 import { E2E_SHOPPER_PASSWORD } from './constants';
 
 async function main(): Promise<void> {
-  const [tag, count, saved] = process.argv.slice(2);
+  const [tag, count, ...flags] = process.argv.slice(2);
+  const saved = flags.includes('saved') ? 'saved' : undefined;
+  // `unpaid`: the shopper's first order is waiting for its payment (a prompt went out and nothing came back).
+  const unpaid = flags.includes('unpaid');
   if (tag === undefined || count === undefined)
-    throw new Error('usage: shopper-fixture <tag> <orders> [saved]');
+    throw new Error('usage: shopper-fixture <tag> <orders> [saved] [unpaid]');
   const { getContainer } = await import('@/server/di/container');
   const { UserRepository } = await import('@/server/domains/auth/user-repository');
   const { StorefrontCustomerService } =
@@ -48,14 +51,16 @@ async function main(): Promise<void> {
     if (userId === customer.id) numbers.push(number);
     const created = new Date(Date.now() - n * 3_600_000).toISOString();
     await db.execute(sql`INSERT INTO orders (id, order_number, user_id, branch_id, customer_name, customer_email, customer_phone, shipping_address, subtotal, tax, shipping_fee, total_amount, payment_method, status, payment_status, internal_notes, created_at)
-      VALUES (${id}, ${number}, ${userId}, ${branch.id}::uuid, ${name}, ${email}, '0711000111', '{"street":"1 Moi Avenue","city":"Nairobi","countyOrState":"Nairobi","country":"Kenya"}'::jsonb, 1000, 160, 0, 1160, 'mpesa_daraja', ${n % 2 === 0 ? 'shipped' : 'pending'}, 'paid', ${`INTERNAL-${label}`}, ${created}::timestamptz)`);
+      VALUES (${id}, ${number}, ${userId}, ${branch.id}::uuid, ${name}, ${email}, '0711000111', '{"street":"1 Moi Avenue","city":"Nairobi","countyOrState":"Nairobi","country":"Kenya"}'::jsonb, 1000, 160, 0, 1160, 'mpesa_daraja', ${n % 2 === 0 ? 'shipped' : 'pending'}, ${unpaid && n === 1 ? 'unpaid' : 'paid'}, ${`INTERNAL-${label}`}, ${created}::timestamptz)`);
     await db.execute(sql`INSERT INTO order_items (order_id, product_id, product_name, sku, quantity, unit_price, total_price, image_url)
       VALUES (${id}, 'p1', ${`Solar lamp ${tag}`}, 'SL-1', 2, 500, 1000, '')`);
   };
   for (let n = 1; n <= Number(count); n += 1) await insert(n, customer.id, 'mine');
   await insert(99, `someone-else-${tag}`, 'theirs');
+  // The link in the shopper's own message for the waiting order, for the test of a shopper without an account.
+  const trackToken = unpaid ? ((await container.trackingLinks.tokenFor(company.id, `sh_${tag}_1`)) ?? '') : '';
   process.stdout.write(
-    `FIXTURE ${JSON.stringify({ email, password: E2E_SHOPPER_PASSWORD, numbers, otherNumber: `SH-${tag}-99`, otherId: `sh_${tag}_99` })}\n`,
+    `FIXTURE ${JSON.stringify({ email, password: E2E_SHOPPER_PASSWORD, numbers, otherNumber: `SH-${tag}-99`, otherId: `sh_${tag}_99`, trackToken, orderIds: Array.from({ length: Number(count) }, (_, i) => `sh_${tag}_${String(i + 1)}`) })}\n`,
   );
 }
 

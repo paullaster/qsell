@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { paymentAttempts, providerOperations, type PaymentAttemptRow, type ProviderEventRow } from '@/server/db/drizzle/schema';
+import { orders, paymentAttempts, providerOperations, type PaymentAttemptRow, type ProviderEventRow } from '@/server/db/drizzle/schema';
 import type { PaymentRegistry } from '../registry';
 import type { PlatformContexts } from './context';
 import type { ProviderEventService } from './event-service';
@@ -8,7 +8,8 @@ import type { PaymentJobs } from './jobs';
 import type { ProviderOperationService } from './operation-service';
 import { delayForAge, engineSettings } from './settings';
 import type { ProviderTransactionStore } from './transaction-store';
-import type { InboundClaim, VerificationOutcome, VerifyAttemptInput } from './types';
+import type { InboundClaim, VerificationOutcome, VerifyAttemptInput, VerifyClaimInput } from './types';
+import type { PaymentPort } from '../port';
 
 import { has } from '@/lib/values';
 
@@ -18,6 +19,8 @@ export interface AttemptSettler {
   isSettled(attemptId: string): Promise<boolean>;
   succeed(attemptId: string, input: { reference: string | null; verifiedBy: string; transactionId: string }): Promise<{ settled: boolean }>;
   fail(attemptId: string, input: { reason: string; code: string | null }): Promise<{ settled: boolean }>;
+  /** A claimed code that was found but needs a person (it was paid from another phone): kept on the claim, the order left as it is. */
+  holdClaim?(attemptId: string, input: { reason: string; code: string | null }): Promise<void>;
 }
 
 /** Starts the transaction-level check when a strict verification needs it. */
@@ -28,6 +31,8 @@ export interface StatusCheckStarter {
 export interface VerifyResult {
   outcome: VerificationOutcome['status'] | 'already_final' | 'no_attempt';
   reason?: string;
+  /** The platform's reason as a code, when there is one (a refused or held claim says which). */
+  code?: string;
 }
 
 const FINAL_ATTEMPT = new Set(['successful', 'failed', 'cancelled']);
@@ -85,6 +90,9 @@ export class PaymentVerificationService {
     const adapter = this.registry.resolve(attempt.providerCode);
     const { event, claim } = await this.latestClaim(attempt.id);
 
+    // A code the shopper says they paid with has no prompt of ours behind it: it is asked about by the code, never by a checkout id.
+    if (attempt.source === 'customer_claim') return await this.verifyClaim(attempt, ctx.provider.id, ctx, adapter, settings);
+
     if (!adapter.verifyAttempt) {
       const reason = `${attempt.providerCode} has no way for us to check a payment with the platform, so it is not counted automatically. A person must confirm it (Payments → activity).`;
       if (event) await this.events.setState(event.id, 'unverified', { failureCode: 'NO_VERIFICATION', failureReason: reason });
@@ -111,6 +119,30 @@ export class PaymentVerificationService {
       outcome = { status: 'error', by: 'verification', reason: error instanceof Error ? error.message.slice(0, 300) : 'The check failed.', retryable: true };
     }
     return await this.act(attempt, ctx.provider.id, event, claim, outcome, settings);
+  }
+
+  private async verifyClaim(attempt: PaymentAttemptRow, providerId: string, ctx: Awaited<ReturnType<PlatformContexts['forProvider']>>, adapter: PaymentPort, settings: ReturnType<typeof engineSettings>): Promise<VerifyResult> {
+    if (!adapter.verifyClaim || !has(attempt.claimedReceipt)) {
+      return await this.act(attempt, providerId, null, null, { status: 'unavailable', reason: `${attempt.providerCode} has no way for us to look a payment up by its code, so it is kept for a person to confirm.` }, settings);
+    }
+    const [order] = await this.db.select({ createdAt: orders.createdAt, customerPhone: orders.customerPhone, paymentPhone: orders.paymentPhone }).from(orders).where(eq(orders.id, attempt.orderId)).limit(1);
+    if (order === undefined) return { outcome: 'no_attempt' };
+    const input: VerifyClaimInput = {
+      attemptId: attempt.id,
+      receipt: attempt.claimedReceipt,
+      amountCents: Math.round(Number(attempt.amount) * 100),
+      currency: attempt.currency,
+      orderCreatedAt: order.createdAt,
+      payerPhones: [order.paymentPhone, order.customerPhone, attempt.customerPhone],
+      evidence: await this.gatheredEvidence(attempt.id),
+    };
+    let outcome: VerificationOutcome;
+    try {
+      outcome = await adapter.verifyClaim(input, ctx);
+    } catch (error) {
+      outcome = { status: 'error', by: 'claim', reason: error instanceof Error ? error.message.slice(0, 300) : 'The check failed.', retryable: true };
+    }
+    return await this.act(attempt, providerId, null, null, outcome, settings);
   }
 
   private minutesSince(d: Date) {
@@ -153,11 +185,12 @@ export class PaymentVerificationService {
       case 'failed': {
         await stateOf('verified', { failureCode: outcome.code, failureReason: outcome.reason });
         await this.settler.fail(attempt.id, { reason: outcome.reason, code: outcome.code });
-        return { outcome: 'failed', reason: outcome.reason };
+        return { outcome: 'failed', reason: outcome.reason, code: outcome.code };
       }
       case 'mismatch': {
+        if (attempt.source === 'customer_claim') await this.settler.holdClaim?.(attempt.id, { reason: outcome.reason, code: outcome.code });
         await stateOf('mismatch', { failureCode: outcome.code, failureReason: outcome.reason });
-        return { outcome: 'mismatch', reason: outcome.reason };
+        return { outcome: 'mismatch', reason: outcome.reason, code: outcome.code };
       }
       case 'pending': {
         if ((outcome.evidence as { needs?: string }).needs === 'transaction_status' && this.checks) {
