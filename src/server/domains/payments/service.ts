@@ -380,10 +380,34 @@ export class PaymentService implements AttemptSettler {
   }
 
   /** The platform itself says it did not go through. */
+  /** A claimed code that was found but needs a person: the claim keeps the reason and stays open; the order is not touched. */
+  async holdClaim(attemptId: string, input: { reason: string; code: string | null }): Promise<void> {
+    const [attempt] = await this.db.select().from(paymentAttempts).where(eq(paymentAttempts.id, attemptId));
+    if (!attempt || attempt.status === 'successful') return;
+    await this.db.update(paymentAttempts).set({ errorMessage: input.reason.slice(0, 500), responsePayload: { claim: { code: input.code, reason: input.reason.slice(0, 500), held: true } }, updatedAt: new Date() }).where(eq(paymentAttempts.id, attemptId));
+    await OrderStages.move(this.db, attempt.orderId, 'payment_pending_verification', 'failed', {
+      ref: { type: 'payment_attempt', id: attemptId },
+      reasonCode: input.code ?? 'claim_held',
+      message: input.reason,
+      detail: { provider: attempt.providerCode, kind: 'customer_claim', code: attempt.claimedReceipt, heldForPerson: true },
+    });
+  }
+
   async fail(attemptId: string, input: { reason: string; code: string | null }): Promise<{ settled: boolean }> {
     const [attempt] = await this.db.select().from(paymentAttempts).where(eq(paymentAttempts.id, attemptId));
     if (!attempt || attempt.status === 'successful') return { settled: false };
-    await this.db.update(paymentAttempts).set({ status: 'failed', errorMessage: input.reason.slice(0, 500), updatedAt: new Date() }).where(eq(paymentAttempts.id, attemptId));
+    await this.db.update(paymentAttempts).set({ status: 'failed', errorMessage: input.reason.slice(0, 500), ...(attempt.source === 'customer_claim' ? { responsePayload: { claim: { code: input.code, reason: input.reason.slice(0, 500) } } } : {}), updatedAt: new Date() }).where(eq(paymentAttempts.id, attemptId));
+    // A code the shopper gave that was not a payment for this order says nothing about the order: it is on the timeline with its time and
+    // reason, and the order and the stock held for it stay as they are, so the shopper can try another code or pay again.
+    if (attempt.source === 'customer_claim') {
+      await OrderStages.move(this.db, attempt.orderId, 'payment_pending_verification', 'failed', {
+        ref: { type: 'payment_attempt', id: attemptId },
+        reasonCode: input.code ?? 'claim_refused',
+        message: input.reason,
+        detail: { provider: attempt.providerCode, kind: 'customer_claim', code: attempt.claimedReceipt },
+      });
+      return { settled: true };
+    }
     await OrderStages.move(this.db, attempt.orderId, 'payment_failed', 'failed', {
       ref: { type: 'payment_attempt', id: attemptId },
       reasonCode: input.code ?? 'payment_failed',

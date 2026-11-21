@@ -8,7 +8,7 @@ import { acceptance } from './operations';
 import { parseAccountBalance, parseAsyncResult, parseB2bExpress, parseBillPayment, parseC2b, parseDarajaTime, parseStkCallback } from './parsers';
 import { darajaTimestamp, looksLikeReceipt, securityCredential, stkPassword, toCentsLoose, toMsisdn } from './security';
 import { pullRecords } from './c2b';
-import { crossCheckClaim, readStatusAnswer, statusAgrees } from './verify';
+import { crossCheckClaim, judgeClaim, readStatusAnswer, statusAgrees } from './verify';
 import type { VerifyAttemptInput } from '../engine/types';
 import { required } from '@/lib/values';
 
@@ -226,3 +226,40 @@ describe('settings fall back to safe defaults', () => {
     expect(delayForAge(v, 100000)).toBe(120);
   });
 });
+
+describe('a code the shopper says they paid with', () => {
+  const placed = new Date('2026-11-21T09:00:00Z');
+  const base = { ReceiptNo: 'QGH7RT61SV', Amount: '2500', TransactionStatus: 'Completed', CreditPartyName: '600638 - Acme Ltd', DebitPartyName: '2547*****456 - JANE DOE', InitiatedTime: '20261121130000', FinalisedTime: '20261121130005' };
+  const answerOf = (over: Record<string, string> = {}, result: Record<string, unknown> = {}) => required(readStatusAnswer({ resultCode: '0', resultDesc: 'ok', params: { ...base, ...over }, ...result }));
+  const expectOf = (over: Partial<Parameters<typeof judgeClaim>[1]> = {}) => ({ receipt: 'QGH7RT61SV', amountCents: 250000, shortcode: '600638', orderCreatedAt: placed, payerMatches: true as boolean | null, ...over });
+
+  it('reads who paid and when from the answer', () => {
+    expect(answerOf()).toMatchObject({ debitParty: '2547*****456 - JANE DOE', initiatedAt: new Date('2026-11-21T10:00:00Z'), finalisedAt: new Date('2026-11-21T10:00:05Z') });
+  });
+  it('accepts a completed payment of this code, for the amount, to our shortcode, after the order, from a known phone', () => {
+    expect(judgeClaim(answerOf(), expectOf())).toEqual({ ok: true });
+    // Nothing known about the payer is not a reason to hold it back.
+    expect(judgeClaim(answerOf(), expectOf({ payerMatches: null }))).toEqual({ ok: true });
+  });
+  it('refuses, saying why, when any one thing is wrong', () => {
+    expect(judgeClaim(answerOf({ TransactionStatus: 'Failed' }), expectOf())).toMatchObject({ ok: false, code: 'NOT_FOUND' });
+    expect(judgeClaim(answerOf({}, { resultCode: '2001', resultDesc: 'The initiator information is invalid.' }), expectOf())).toMatchObject({ ok: false, code: 'NOT_FOUND' });
+    expect(judgeClaim(answerOf({ ReceiptNo: 'ZZZ9RT61SV' }), expectOf())).toMatchObject({ ok: false, code: 'STATUS_RECEIPT_MISMATCH' });
+    expect(judgeClaim(answerOf({ Amount: '2400' }), expectOf())).toMatchObject({ ok: false, code: 'STATUS_AMOUNT_MISMATCH' });
+    expect(judgeClaim(answerOf({ CreditPartyName: '111111 - Someone Else' }), expectOf())).toMatchObject({ ok: false, code: 'STATUS_RECEIVER_MISMATCH' });
+    expect(judgeClaim(answerOf({ InitiatedTime: '20261120130000', FinalisedTime: '20261120130005' }), expectOf())).toMatchObject({ ok: false, code: 'BEFORE_ORDER' });
+  });
+  it('holds a payment from an unknown phone for a person, and never counts it by itself', () => {
+    expect(judgeClaim(answerOf(), expectOf({ payerMatches: false }))).toMatchObject({ ok: false, code: 'PAYER_DIFFERS' });
+  });
+  it('does not believe an answer that does not name the transaction or the amount', () => {
+    const noReceipt = { ...answerOf(), receipt: null };
+    expect(judgeClaim(noReceipt, expectOf())).toMatchObject({ ok: false, code: 'STATUS_RECEIPT_MISMATCH' });
+    const noAmount = { ...answerOf(), amountCents: null };
+    expect(judgeClaim(noAmount, expectOf())).toMatchObject({ ok: false, code: 'STATUS_AMOUNT_MISMATCH' });
+  });
+  it('allows a payment made a moment before the order row was written, but not one from earlier', () => {
+    expect(judgeClaim(answerOf({ InitiatedTime: '20261121115930', FinalisedTime: '20261121115935' }), expectOf())).toEqual({ ok: true });
+  });
+});
+

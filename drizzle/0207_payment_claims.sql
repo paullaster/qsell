@@ -1,0 +1,5 @@
+ALTER TABLE "payment_attempts" ADD COLUMN "source" text DEFAULT 'checkout' NOT NULL;--> statement-breakpoint
+ALTER TABLE "payment_attempts" ADD COLUMN "claimed_receipt" text;--> statement-breakpoint
+CREATE UNIQUE INDEX "payment_attempts_claim_once_idx" ON "payment_attempts" USING btree ("provider_code","claimed_receipt") WHERE "payment_attempts"."source" = 'customer_claim' AND "payment_attempts"."status" NOT IN ('failed', 'cancelled');--> statement-breakpoint
+ALTER TABLE "payment_attempts" ADD CONSTRAINT "payment_attempts_source_chk" CHECK ("payment_attempts"."source" IN ('checkout', 'customer_claim'));--> statement-breakpoint
+ALTER TABLE "payment_attempts" ADD CONSTRAINT "payment_attempts_claim_chk" CHECK (("payment_attempts"."source" = 'customer_claim') = ("payment_attempts"."claimed_receipt" IS NOT NULL));

@@ -14,6 +14,7 @@ import {
 } from '@/lib/storefront-account';
 import { has } from '@/lib/values';
 import { SignInPrompt } from './SignInPrompt';
+import { PayPrompt } from '@/components/store/payment/PayPrompt';
 
 /** Where the delivery stands, in words, with the page that follows it; nothing is drawn for an order with no delivery to follow. */
 function DeliveryProgress({ tracking }: { tracking: Promise<AccountResult<MyOrderTracking | null>> }) {
@@ -130,7 +131,7 @@ function AskForAnotherTime({ orderId, visit, onAnswered }: { orderId: string; vi
   );
 }
 
-export function OrderDetailClient({ result, tracking, visits }: { result: Promise<AccountResult<CustomerOrder>>; tracking?: Promise<AccountResult<MyOrderTracking | null>>; visits?: Promise<AccountResult<MyVisit[]>> }) {
+export function OrderDetailClient({ result, tracking, visits, payPrompt = false }: { result: Promise<AccountResult<CustomerOrder>>; tracking?: Promise<AccountResult<MyOrderTracking | null>>; visits?: Promise<AccountResult<MyVisit[]>> ; payPrompt?: boolean}) {
   const timeZone = useBusinessTimeZone();
   const answer = use(result);
   if (!answer.ok) {
@@ -186,6 +187,8 @@ export function OrderDetailClient({ result, tracking, visits }: { result: Promis
           )}
         </dl>
       </section>
+
+      {payPrompt ? <PayPrompt mode={{ kind: 'account', orderId: order.id }} href={`/profile/orders/${order.id}/pay`} /> : null}
 
       {tracking === undefined ? null : (
         <Suspense fallback={null}>

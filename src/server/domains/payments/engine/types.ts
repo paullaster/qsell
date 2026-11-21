@@ -68,3 +68,19 @@ export interface VerifyAttemptInput {
   /** Evidence already gathered (for example a transaction-status answer that arrived later). */
   evidence: Record<string, unknown>[];
 }
+
+/** What a platform is asked when a shopper says they paid with this code: the code only chooses what to ask, nothing in it is believed. */
+export interface VerifyClaimInput {
+  attemptId: string;
+  /** The platform's own transaction code the shopper gave, as the platform writes it. */
+  receipt: string;
+  amountCents: number;
+  currency: string;
+  /** When the order was placed: a payment from before it cannot be for it. */
+  orderCreatedAt: Date;
+  /** The phones the order knows, to compare with the one that paid. */
+  payerPhones: (string | null)[];
+  /** The platform's answers already gathered for this attempt. */
+  evidence: Record<string, unknown>[];
+}
+
