@@ -6,7 +6,8 @@ import { roundQty } from '@/lib/decimal';
 import { getContainer } from '@/server/di/container';
 import { drizzleDb } from '@/server/db/drizzle/client';
 import { inventoryMovements, products, unitsOfMeasure } from '@/server/db/drizzle/schema';
-import { quantityProblem } from '@/lib/unit-rules';
+import { quantityProblem, quantityRangeProblem, stockValueProblem, unitCostProblem } from '@/lib/unit-rules';
+import { isNumericOverflow } from '@/server/domains/settings/errors';
 import { isInventoryManaged } from '@/lib/inventory-kind';
 import { broadcastRealtime } from '@/server/realtime';
 import { businessDate } from '@/server/kernel/numbering/business-date';
@@ -93,6 +94,14 @@ export async function applyStockDelta(tx: Tx, params: StockDelta): Promise<numbe
   const nextStock =
     params.setTo ??
     roundQty(params.clampAtZero === true ? Math.max(0, previousStock + params.delta) : previousStock + params.delta);
+
+  // Whatever the product's unit (or none), a number the column cannot hold is refused in words here, never left to the database.
+  const range = quantityRangeProblem(nextStock, `Stock of "${locked.name}"`) ?? quantityRangeProblem(params.delta, `The change in stock of "${locked.name}"`);
+  if (range !== null) throw new Error(range);
+  // Stock is valued at its cost in the books: a quantity that is fine on its own can still be worth more than they can hold.
+  const valuedAt = params.costPrice !== undefined && params.costPrice > 0 ? params.costPrice : Number(locked.costPrice);
+  const worth = stockValueProblem(Math.max(Math.abs(nextStock), Math.abs(previousStock)), valuedAt, `Stock of "${locked.name}"`);
+  if (worth !== null) throw new Error(worth);
 
   // Stock is counted in the product's unit: 2.5 pieces cannot be on a shelf, 2.5 kg can.
   const unit = (await tx.select({ name: unitsOfMeasure.name, decimals: unitsOfMeasure.decimals }).from(unitsOfMeasure).where(eq(unitsOfMeasure.id, locked.baseUnitId)).limit(1)).at(0);
@@ -292,9 +301,26 @@ export class InventoryDomainService {
     notes?: string,
     actor = 'admin',
   ): Promise<Product> {
-    if (quantity <= 0) throw new Error('Received quantity must be greater than 0');
+    if (!Number.isFinite(quantity) || quantity <= 0) throw new Error('Received quantity must be greater than 0');
+    const tooMany = quantityRangeProblem(quantity, 'The received quantity');
+    if (tooMany !== null) throw new Error(tooMany);
+    const badCost = unitCost === undefined ? null : unitCostProblem(unitCost);
+    if (badCost !== null) throw new Error(badCost);
     const companyId = await stockCompanyId();
 
+    try {
+      await InventoryDomainService.receiveIn(companyId, productId, quantity, supplier, poNumber, unitCost, notes, actor);
+    } catch (error) {
+      // The last line of defence: a number the database still cannot hold is said in words, never as a failed query.
+      if (isNumericOverflow(error)) throw new Error('That quantity or cost is too large to record. Check for an extra zero.', { cause: error });
+      throw error;
+    }
+
+    void broadcastRealtime('inventory_update', { type: 'stock_received', productId });
+    return this.requireProduct(productId);
+  }
+
+  private static async receiveIn(companyId: string, productId: string, quantity: number, supplier: string, poNumber: string, unitCost: number | undefined, notes: string | undefined, actor: string): Promise<void> {
     await drizzleDb.transaction(async (tx) => {
       await applyStockDelta(tx, {
         productId,
@@ -307,9 +333,6 @@ export class InventoryDomainService {
         note: `Received ${quantity} units from supplier "${supplier || 'Standard Supplier'}". ${notes || ''}`.trim(),
       });
     });
-
-    void broadcastRealtime('inventory_update', { type: 'stock_received', productId });
-    return this.requireProduct(productId);
   }
 
   /** Damage / loss / shrinkage. Rejects over-writing off. */

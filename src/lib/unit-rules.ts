@@ -3,6 +3,9 @@ import {
   divideRounded,
   formatDecimal,
   parseDecimal,
+  MAX_MONEY,
+  MAX_QUANTITY,
+  MAX_UNIT_COST,
   quantityFits,
 } from '@/lib/decimal';
 import { has, trimToNull } from '@/lib/values';
@@ -321,6 +324,37 @@ export function checkPackagings(
   return { ok: true, value: rows };
 }
 
+const grouped = (n: number): string => n.toLocaleString('en-KE', { maximumFractionDigits: 4 });
+
+/**
+ * Why a quantity is too large to record at all, whatever the unit, in words for the person; null when it fits. A typing slip (an
+ * extra zero) is far likelier than a real number this big, so the words say what to check.
+ */
+export function quantityRangeProblem(value: number, what: string): string | null {
+  if (!Number.isFinite(value)) return `${what} must be a number.`;
+  if (Math.abs(value) <= MAX_QUANTITY) return null;
+  return `${what} is too large to record: the most is ${grouped(MAX_QUANTITY)}. Check for an extra zero.`;
+}
+
+/**
+ * Why stock of this size at this cost cannot be put in the books, in words for the person; null when it can. Stock is valued as
+ * quantity times cost and the books hold money to 12 whole digits, so a huge quantity at any real cost has to be refused here, not
+ * by the database halfway through a receipt.
+ */
+export function stockValueProblem(quantity: number, unitCost: number, what: string): string | null {
+  if (!Number.isFinite(quantity) || !Number.isFinite(unitCost)) return `${what} must be a number.`;
+  if (Math.abs(quantity) * Math.abs(unitCost) <= MAX_MONEY) return null;
+  return `${what} would be worth more than the books can hold (${grouped(MAX_MONEY)}). Check the quantity and the unit cost for an extra zero.`;
+}
+
+/** Why a unit cost cannot be recorded, in words for the person; null when it can. */
+export function unitCostProblem(value: number, what = 'The unit cost'): string | null {
+  if (!Number.isFinite(value)) return `${what} must be a number.`;
+  if (value < 0) return `${what} cannot be below zero.`;
+  if (value <= MAX_UNIT_COST) return null;
+  return `${what} is too large to record: the most is ${grouped(MAX_UNIT_COST)}. Check for an extra zero.`;
+}
+
 /** Why a quantity cannot be counted in a unit, in words for the person; null when it can. `what` names the thing counted. */
 export function quantityProblem(
   value: number,
@@ -328,7 +362,8 @@ export function quantityProblem(
   unitName: string,
   what: string,
 ): string | null {
-  if (!Number.isFinite(value)) return `${what} must be a number.`;
+  const range = quantityRangeProblem(value, what);
+  if (range !== null) return range;
   if (quantityFits(value, decimals)) return null;
   return decimals === 0
     ? `${what} must be a whole number: it is counted in ${unitName}.`

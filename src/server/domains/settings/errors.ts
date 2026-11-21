@@ -29,3 +29,9 @@ export function isForeignKeyViolation(error: unknown): boolean {
   const e = error as { code?: string; cause?: { code?: string } } | null;
   return e?.code === '23503' || e?.cause?.code === '23503';
 }
+
+/** True when the database refused a number because it does not fit the column (a quantity or an amount far too large). */
+export function isNumericOverflow(error: unknown): boolean {
+  const e = error as { code?: string; cause?: { code?: string } } | null;
+  return e?.code === '22003' || e?.cause?.code === '22003';
+}

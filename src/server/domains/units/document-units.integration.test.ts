@@ -162,6 +162,58 @@ describe.skipIf(url === '')('decimal stock and document line units (database)', 
       expect((await stockOf(phoneId))?.stockQuantity).toBe(10);
     });
 
+    it('refuses a quantity or cost too large to record in words, and changes nothing', async () => {
+      const { InventoryDomainService: Inventory } =
+        await import('@/server/domains/inventory/service');
+      const before = (await stockOf(phoneId))?.stockQuantity;
+      // The receipt that once reached the database as ten trillion units and came back as a failed query.
+      await expect(Inventory.receive(phoneId, 10_000_000_000_000, 'Supplier', 'PO-2026-114', 15)).rejects.toThrow(
+        /The received quantity is too large to record.*1,000,000,000,000.*extra zero/,
+      );
+      // One more than the ceiling; and a quantity under it whose value the books cannot hold.
+      await expect(Inventory.receive(phoneId, 1_000_000_000_001, 'Supplier', 'PO-2')).rejects.toThrow(/too large to record/);
+      // A full trillion into an empty product at a real cost: the quantity is allowed, but not what the books are asked to hold.
+      const empty = await Catalog.createProduct(product({ baseUnitId: pcs, stockQuantity: 0, costPrice: 0 }));
+      await expect(Inventory.receive(empty.id, 1_000_000_000_000, 'Supplier', 'PO-2B', 15)).rejects.toThrow(/worth more than the books can hold/);
+      expect((await stockOf(empty.id))?.stockQuantity).toBe(0);
+      await expect(Inventory.receive(phoneId, 1, 'Supplier', 'PO-3', 1e11)).rejects.toThrow(/unit cost is too large/);
+      await expect(Inventory.receive(phoneId, Number.NaN, 'Supplier', 'PO-4')).rejects.toThrow(/greater than 0/);
+      await expect(Inventory.adjust(phoneId, 1e13)).rejects.toThrow(/too large to record/);
+      for (const message of [
+        await Inventory.receive(phoneId, 10_000_000_000_000, 'Supplier', 'PO-5').then(() => '', (e: unknown) => (e as Error).message),
+        await Inventory.adjust(phoneId, 1e13).then(() => '', (e: unknown) => (e as Error).message),
+        await Inventory.receive(empty.id, 1_000_000_000_000, 'Supplier', 'PO-6', 15).then(() => '', (e: unknown) => (e as Error).message),
+      ]) {
+        expect(message).not.toBe('');
+        expect(message).not.toMatch(/Failed query|insert into|stock_movements/);
+      }
+      expect((await stockOf(phoneId))?.stockQuantity).toBe(before);
+    });
+
+    it('keeps a full trillion exactly, in the product and the journal, and moves it on', async () => {
+      const { InventoryDomainService: Inventory } =
+        await import('@/server/domains/inventory/service');
+      const big = await Catalog.createProduct(product({ baseUnitId: pcs, stockQuantity: 0, costPrice: 0 }));
+      // A cost small enough that a trillion units are worth what the books can hold.
+      await Inventory.receive(big.id, 1_000_000_000_000, 'Supplier', 'PO-BIG', 0.0005);
+      expect((await stockOf(big.id))?.stockQuantity).toBe(1_000_000_000_000);
+      const journal = await db.select().from(schema.inventoryMovements).where(eq(schema.inventoryMovements.productId, big.id));
+      expect(journal.map((m) => m.changeAmount)).toContain(1_000_000_000_000);
+      await Inventory.writeOff(big.id, 400_000_000_000, 'damage_transit');
+      expect((await stockOf(big.id))?.stockQuantity).toBe(600_000_000_000);
+      await expect(Inventory.receive(big.id, 400_000_000_001, 'Supplier', 'PO-OVER')).rejects.toThrow(/too large to record/);
+      await Inventory.receive(big.id, 400_000_000_000, 'Supplier', 'PO-TOP');
+      expect((await stockOf(big.id))?.stockQuantity).toBe(1_000_000_000_000);
+    });
+
+    it('still receives an ordinary quantity', async () => {
+      const { InventoryDomainService: Inventory } =
+        await import('@/server/domains/inventory/service');
+      const before = (await stockOf(phoneId))?.stockQuantity ?? 0;
+      await Inventory.receive(phoneId, 1_000, 'Supplier', 'PO-OK', 15);
+      expect((await stockOf(phoneId))?.stockQuantity).toBe(before + 1_000);
+    });
+
     it('reserves, fulfils and releases fractions, and refuses a fraction of a piece', async () => {
       const { OrderWriteService } = await import('@/server/domains/orders/write-service');
       const { InventoryReservationService: Reservation } =

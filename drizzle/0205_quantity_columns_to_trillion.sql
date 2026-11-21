@@ -1,10 +1,5 @@
--- Hand-edited: two triggers name the columns being widened (UPDATE OF ...), and Postgres will not change the type of a column a
--- trigger definition uses, so they are dropped here and recreated unchanged below. Three trigger functions declare their working
--- variables as numeric(14,3); they are replaced with numeric(16,3) so a quantity up to 1,000,000,000,000 passes through them.
-DROP TRIGGER "products_reserved_to_stock" ON "products";
---> statement-breakpoint
-DROP TRIGGER "stock_balances_to_product" ON "stock_balances";
---> statement-breakpoint
+-- Quantities widen from numeric(14,3) to numeric(16,3) so a quantity up to 1,000,000,000,000 fits. Hand-edited below the column
+-- changes: three trigger functions declare their working variables as numeric(14,3); they are replaced with numeric(16,3).
 ALTER TABLE "credit_note_lines" ALTER COLUMN "quantity" SET DATA TYPE numeric(16, 3);--> statement-breakpoint
 ALTER TABLE "credit_note_lines" ALTER COLUMN "entered_quantity" SET DATA TYPE numeric(16, 3);--> statement-breakpoint
 ALTER TABLE "delivery_attempt_lines" ALTER COLUMN "carried" SET DATA TYPE numeric(16, 3);--> statement-breakpoint
@@ -91,10 +86,6 @@ ALTER TABLE "supplier_invoice_matches" ALTER COLUMN "quantity_difference" SET DA
 ALTER TABLE "supplier_invoice_matches" ALTER COLUMN "quantity_difference" SET DEFAULT '0';--> statement-breakpoint
 ALTER TABLE "vendor_contract_lines" ALTER COLUMN "max_quantity" SET DATA TYPE numeric(16, 3);--> statement-breakpoint
 ALTER TABLE "vendor_credit_memo_lines" ALTER COLUMN "quantity" SET DATA TYPE numeric(16, 3);
---> statement-breakpoint
-CREATE TRIGGER products_reserved_to_stock AFTER UPDATE OF reserved_quantity ON public.products FOR EACH ROW WHEN ((old.reserved_quantity IS DISTINCT FROM new.reserved_quantity)) EXECUTE FUNCTION stock_mirror_reserved();
---> statement-breakpoint
-CREATE TRIGGER stock_balances_to_product AFTER INSERT OR UPDATE OF on_hand, reserved ON public.stock_balances FOR EACH ROW EXECUTE FUNCTION stock_project_to_product();
 --> statement-breakpoint
 CREATE OR REPLACE FUNCTION public.finance_capture_stock_movement()
  RETURNS trigger

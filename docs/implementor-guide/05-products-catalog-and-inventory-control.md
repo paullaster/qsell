@@ -291,6 +291,9 @@ $$\text{Available Stock} = \text{On-Hand Stock} - \text{Active Unfulfilled Reser
 - **Reserved**: Goods promised to orders currently being packed or awaiting dispatch.
 - **Available**: What the storefront and sales reps can sell. An order for 10 units will be refused if only 8 units are *Available*, even if 15 units are physically *On-Hand*.
 
+### How Large a Quantity or Cost May Be
+A quantity on one line, and the stock of one product, may be up to **1,000,000,000,000** (one trillion). A unit cost may be up to **9,999,999,999.9999**, and cannot be negative. Stock is also valued at its cost in the books, which hold money up to **999,999,999,999.99**, so a quantity that is fine on its own can still be refused when quantity times cost is more than that (for example, one trillion units at KES 15). Anything above these limits is refused with a plain message before anything is saved, and no stock changes: receiving 10,000,000,000,000 units says "The received quantity is too large to record: the most is 1,000,000,000,000. Check for an extra zero." The limits apply to receiving stock from a supplier, adjusting stock, writing off, counting and every document line, whether or not the product has a unit of measure set. In practice a figure this large is nearly always a typing slip, which is why the message asks the person to check for an extra zero. These are fixed limits of the system, not settings.
+
 ### Deactivating a Stock Location
 - A location cannot be deleted or deactivated if:
   1. It holds physical `On-Hand` stock $> 0$.
