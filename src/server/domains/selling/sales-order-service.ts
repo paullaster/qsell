@@ -118,7 +118,7 @@ export class SalesOrderService {
         items: input.lines.map((line, index) => {
           const at = packageLines.findIndex((p) => p.index === index);
           const picks = at < 0 ? undefined : resolved.picks[at];
-          return { productId: line.productId, quantity: line.quantity, ...(picks === undefined ? {} : { package: { picks, ...(line.package?.note === undefined || line.package.note === '' ? {} : { note: line.package.note }) } }) };
+          return { productId: line.productId, quantity: line.quantity, ...(kind === 'pos_cash_sale' && line.unitPrice !== undefined && picks === undefined ? { priceOverride: line.unitPrice } : {}), ...(picks === undefined ? {} : { package: { picks, ...(line.package?.note === undefined || line.package.note === '' ? {} : { note: line.package.note }) } }) };
         }),
         currency: 'KES',
         // How they are expected to pay is a label: money is received by receipt, and a customer's credit comes from their account, not from this.
@@ -143,12 +143,12 @@ export class SalesOrderService {
   }
 
   /** What this order would total, worked out by the same pricing as placing it, without placing anything. For the till as lines are added. */
-  async price(companyId: string, who: { userId: string; branchId: string | null }, input: SalesOrderInput, kind: PlacedKind): Promise<{ ok: true; subtotal: number; tax: number; total: number } | { ok: false; error: string }> {
+  async price(companyId: string, who: { userId: string; branchId: string | null }, input: SalesOrderInput, kind: PlacedKind): Promise<{ ok: true; subtotal: number; tax: number; total: number; lines: { productId: string; quantity: number; unitPrice: number; lineTotal: number }[] } | { ok: false; error: string }> {
     const prepared = await this.prepare(companyId, who, input, kind);
     if (!prepared.ok) return prepared;
     const result = await OrderWriteService.createOrder({ ...prepared.params, previewOnly: true });
     if (!result.success || result.preview === undefined) return { ok: false, error: result.error ?? 'The total could not be worked out.' };
-    return { ok: true, subtotal: result.preview.subtotal, tax: result.preview.tax, total: result.preview.totalAmount };
+    return { ok: true, subtotal: result.preview.subtotal, tax: result.preview.tax, total: result.preview.totalAmount, lines: result.preview.lines };
   }
 
   /** The sales orders staff took, newest first (the next page begins at `cursor`), narrowed by words or by status. */

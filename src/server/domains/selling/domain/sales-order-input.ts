@@ -6,6 +6,8 @@ export interface SalesOrderLineInput {
   productId: string;
   /** Units of the product, or servings of a package. */
   quantity: number;
+  /** A price typed at the till for one unit (tax included, as shown). Only a counter sale honours it, and only from someone who may change prices. */
+  unitPrice?: number;
   /** A package line: what was chosen, by the slot's name and the part (as a quote keeps it), and the note on each serving. */
   package?: { picks: StoredPick[]; note: string };
 }
@@ -60,7 +62,10 @@ export function parseSalesOrderInput(raw: unknown): ParsedSalesOrder {
     if (productId === '') return { ok: false, error: `Line ${String(n + 1)}: choose a product.` };
     if (typeof quantity !== 'number' || !Number.isFinite(quantity) || quantity <= 0 || quantity > SALES_ORDER_LIMITS.quantity) return { ok: false, error: `Line ${String(n + 1)}: the quantity must be more than nothing.` };
     if (entry.package === undefined || entry.package === null) {
-      lines.push({ productId, quantity });
+      const typed = entry.unitPrice;
+      const asked = typeof typed === 'number' && Number.isFinite(typed) ? Math.round(typed * 100) / 100 : null;
+      if (typed !== undefined && typed !== null && (asked === null || asked <= 0 || asked > 100_000_000)) return { ok: false, error: `Line ${String(n + 1)}: the price must be more than nothing.` };
+      lines.push(asked === null ? { productId, quantity } : { productId, quantity, unitPrice: asked });
       continue;
     }
     if (!isRecord(entry.package)) return { ok: false, error: `Line ${String(n + 1)}: the package choices could not be read.` };

@@ -27,11 +27,11 @@ describe('the admin sidebar', () => {
     expect(item?.item.href).toBe('/admin/orders');
   });
 
-  it('puts customer credit and selling documents under Settings > Sales', () => {
+  it('puts customer credit, cash sales and selling documents under Settings > Sales', () => {
     const parent = all.find((x) => x.item.id === 'settings-sales')?.item;
     expect(where('settings-sales')).toBe('settings');
     expect(parent?.href).toBe('/admin/settings/sales');
-    expect(parent?.subLinks?.map((x) => x.id)).toEqual(['settings-sales-customer', 'settings-selling-documents']);
+    expect(parent?.subLinks?.map((x) => x.id)).toEqual(['settings-sales-customer', 'settings-sales-cash-sales', 'settings-selling-documents']);
     expect(where('settings-selling-documents')).toBe('settings/settings-sales');
   });
 

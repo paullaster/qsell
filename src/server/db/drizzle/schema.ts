@@ -4942,6 +4942,43 @@ export const offlineSellingSettings = pgTable('offline_selling_settings', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** How the counter looks: inside the admin page (default) or as a full-screen till. A preference of the company, not a control. */
+export const cashSaleSettings = pgTable(
+  'cash_sale_settings',
+  {
+    companyId: uuid('company_id').primaryKey().references(() => companySettings.id, { onDelete: 'cascade' }),
+    tillMode: text('till_mode').notNull().default('admin'),
+    updatedBy: text('updated_by').notNull().default(''),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check('cash_sale_settings_mode_chk', sql`${t.tillMode} IN ('admin','fullscreen')`)],
+);
+
+/** A sale set aside at the counter while the next customer is served, kept with the shift and the person: held, then recalled (once) or given up. Never a sale: nothing is priced, held or paid until it is completed. */
+export const heldSales = pgTable(
+  'held_sales',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    shiftId: uuid('shift_id').notNull().references(() => shifts.id, { onDelete: 'restrict' }),
+    userId: text('user_id').notNull(),
+    label: text('label').notNull().default(''),
+    /** The lines, the customer and the way of paying as the till had them: a draft the server reads again when it is recalled. */
+    payload: jsonb('payload').notNull(),
+    lineCount: integer('line_count').notNull(),
+    status: text('status').notNull().default('held'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('held_sales_shift_idx').on(t.shiftId, t.status, t.createdAt),
+    check('held_sales_status_chk', sql`${t.status} IN ('held','recalled','discarded')`),
+    check('held_sales_lines_chk', sql`${t.lineCount} BETWEEN 1 AND 200`),
+    check('held_sales_label_chk', sql`char_length(${t.label}) <= 60`),
+    check('held_sales_resolved_chk', sql`(${t.status} = 'held') = (${t.resolvedAt} IS NULL)`),
+  ],
+);
+
 /** The secret a till signs its offline sales with, made while the shift is online and kept with the shift: a sale changed after it was signed is refused. */
 export const offlineShiftKeys = pgTable('offline_shift_keys', {
   shiftId: uuid('shift_id').primaryKey().references(() => shifts.id, { onDelete: 'restrict' }),

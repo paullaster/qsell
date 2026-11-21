@@ -26,6 +26,16 @@ describe('reading a counter sale', () => {
     expect(r.ok ? r.sale.tenders[0]?.reference.length : 0).toBe(60);
     expect(parseCashSaleLines({ lines: base.lines })).toMatchObject({ ok: true, customerId: null });
   });
+  it('reads a price typed at the till to the cent, and refuses one that is not a price', () => {
+    const line = base.lines[0];
+    const read = parseCashSaleLines({ lines: [{ ...line, unitPrice: 12.345 }] });
+    expect(read.ok ? read.lines[0]?.unitPrice : null).toBe(12.35);
+    expect(parseCashSaleLines({ lines: [{ ...line, unitPrice: 0 }] }).ok).toBe(false);
+    expect(parseCashSaleLines({ lines: [{ ...line, unitPrice: -5 }] }).ok).toBe(false);
+    expect(parseCashSaleLines({ lines: [{ ...line, unitPrice: 'free' }] }).ok).toBe(false);
+    const plain = parseCashSaleLines({ lines: [line] });
+    expect(plain.ok && 'unitPrice' in (plain.lines[0] ?? {})).toBe(false);
+  });
 });
 
 describe('reading a return at the till', () => {

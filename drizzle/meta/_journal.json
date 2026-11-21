@@ -1429,6 +1429,13 @@
       "when": 1795150928038,
       "tag": "0203_offline_selling",
       "breakpoints": true
+    },
+    {
+      "idx": 204,
+      "version": "7",
+      "when": 1795201804092,
+      "tag": "0204_cash_sale_till",
+      "breakpoints": true
     }
   ]
 }

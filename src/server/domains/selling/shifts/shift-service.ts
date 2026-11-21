@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { bankAccounts, branches, counterReturns, offlineSales, orders, glAccounts, orderTenders, registers, shiftCloseRequests, shiftMovements, shiftSettings, shiftVariancePostings, shifts, users } from '@/server/db/drizzle/schema';
+import { bankAccounts, branches, counterReturns, heldSales, offlineSales, orders, glAccounts, orderTenders, registers, shiftCloseRequests, shiftMovements, shiftSettings, shiftVariancePostings, shifts, users } from '@/server/db/drizzle/schema';
 import type { Actor } from '@/server/kernel/context';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { ReasonCodes, ReasonInput } from '@/server/kernel/reason-codes/service';
@@ -341,6 +341,8 @@ export class ShiftService {
   private async finalize(tx: Tx, c: { shift: typeof shifts.$inferSelect; closedBy: string; declared: number; counted: Counted[]; expected: number; variance: number; reason: string | null; figures: { paidIn: number; paidOut: number; cashSales: number }; kind: string; how: 'on_the_spot' | 'approval'; request?: string }): Promise<string> {
     const { number } = await this.numbering.assign('z_report', { companyId: c.shift.companyId, branchId: c.shift.branchId, date: businessDate(), document: { kind: 'z_report', id: c.shift.id }, actor: { type: 'user', id: c.closedBy } }, tx);
     await tx.update(shifts).set({ status: 'closed', closedBy: c.closedBy, closedAt: new Date(), declaredCash: String(c.declared), closingCounted: c.counted, expectedCash: String(c.expected), variance: String(c.variance), varianceReason: c.reason, closingFigures: c.figures, zNumber: number }).where(eq(shifts.id, c.shift.id));
+    // Sales still set aside at this till belong to a shift that is over: they are given up with it.
+    await tx.update(heldSales).set({ status: 'discarded', resolvedAt: new Date() }).where(and(eq(heldSales.shiftId, c.shift.id), eq(heldSales.status, 'held')));
     // A difference is queued for the books in this same transaction; posting it follows (and is retried), so the till is closed whatever the accounts' state.
     if (c.variance !== 0) await tx.insert(shiftVariancePostings).values({ shiftId: c.shift.id, companyId: c.shift.companyId, amount: String(c.variance) }).onConflictDoNothing();
     if (c.request !== undefined) await tx.update(shiftCloseRequests).set({ status: 'approved', decidedAt: new Date() }).where(eq(shiftCloseRequests.id, c.request));

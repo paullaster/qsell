@@ -1451,6 +1451,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
             permission: 'selling_settings:manage',
           },
           {
+            id: 'settings-sales-cash-sales',
+            title: 'Cash Sales',
+            name: 'settings-sales-cash-sales',
+            href: '/admin/settings/sales/cash-sales',
+            description: 'How the counter looks: inside the admin page, or as a full-screen till',
+            icon: 'LayoutGrid',
+            permission: 'selling_settings:manage',
+          },
+          {
             id: 'settings-selling-documents',
             title: 'Selling Documents',
             name: 'settings-selling-documents',
