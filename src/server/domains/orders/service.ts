@@ -64,7 +64,8 @@ export class OrdersService {
     const result = await OrderWriteService.createOrder({
       userId: params.userId ?? session?.user.customerStoreId ?? session?.user.id ?? null,
       customerId: session?.user.customerStoreId ?? null,
-      ...(requestedBy === undefined ? {} : { requestedBy }),
+      // Only an order on the customer's account is placed on someone's behalf (it follows the approval rules); any other web shop order is the shop's, even when the shopper is signed in.
+      ...(requestedBy === undefined || params.paymentMethod !== 'on_account' ? {} : { requestedBy }),
       ...(params.paymentMethod === 'on_account' ? { selling: await sellingSettings.get(company.id, 'credit_sale') } : {}),
       checkoutStartedAt: params.checkoutStartedAt ?? null,
       identityVerified,
