@@ -1,6 +1,7 @@
+import { dayInZone, instantInZone } from './business-timezone';
 /**
  * Delivery slots: a window on certain weekdays at a branch, with room for so many deliveries and a time after which it can no longer be
- * booked. These are the rules only (dates are calendar days in Nairobi, UTC+3 with no daylight saving); the database and screens follow them.
+ * booked. These are the rules only (dates are calendar days and times are the business's wall-clock hours, in the business's time zone); the database and screens follow them.
  */
 
 export const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const; // ISO: Monday is 1, Sunday is 7
@@ -30,11 +31,8 @@ export function addDays(day: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** The instant a Nairobi clock time on a calendar day is. */
-export const instantOf = (day: string, time: string): Date => new Date(`${day}T${time}:00+03:00`);
-
-/** Today's calendar day in Nairobi, from an instant. */
-export const nairobiDay = (now: Date): string => new Date(now.getTime() + 3 * 3_600_000).toISOString().slice(0, 10);
+/** The instant a clock time on a calendar day is, in the business's time zone (a slot's hours are the business's wall-clock hours). */
+export const instantOf = (day: string, time: string, timeZone: string): Date => instantInZone(day, time, timeZone);
 
 export interface SlotRule {
   weekdays: number[];
@@ -90,17 +88,17 @@ export const UNAVAILABLE_WORDS: Record<Unavailable, string> = {
 };
 
 /** Why a slot cannot be booked on a day right now, or null when it can. `taken` is how many deliveries already hold it that day. */
-export function unavailable(rule: SlotRule, day: string, now: Date, taken: number, closedReason: string | null, extra: SlotExtra = {}): Unavailable | null {
+export function unavailable(rule: SlotRule, day: string, now: Date, taken: number, closedReason: string | null, timeZone: string, extra: SlotExtra = {}): Unavailable | null {
   if (!rule.isActive) return 'stopped';
   if (!isDay(day) || !rule.weekdays.includes(weekdayOf(day))) return 'wrong_day';
-  const today = nairobiDay(now);
+  const today = dayInZone(now, timeZone);
   if (day < today) return 'past';
   if (day > addDays(today, MAX_DAYS_AHEAD)) return 'too_far';
   if (closedReason !== null) return 'closed';
-  if (now.getTime() > instantOf(day, rule.startsAt).getTime() - rule.cutoffMinutes * 60_000) return 'cut_off';
+  if (now.getTime() > instantOf(day, rule.startsAt, timeZone).getTime() - rule.cutoffMinutes * 60_000) return 'cut_off';
   if (taken >= rule.capacity) return 'full';
   // The goods must be ready before the slot starts: its start is not before the earliest the delivery could be ready.
-  if (extra.earliest !== undefined && extra.earliest !== null && instantOf(day, rule.startsAt).getTime() < extra.earliest.getTime()) return 'too_soon';
+  if (extra.earliest !== undefined && extra.earliest !== null && instantOf(day, rule.startsAt, timeZone).getTime() < extra.earliest.getTime()) return 'too_soon';
   if (rule.maxWeightKg !== null && extra.weight !== undefined && extra.weight.takenKg + extra.weight.kg > rule.maxWeightKg + 1e-9) return 'too_heavy';
   return null;
 }
@@ -145,8 +143,8 @@ export function checkLead(minutes: unknown, note: unknown): LeadInput {
 }
 
 /** The window a booked slot promises, as instants. Kept on the delivery so changing the slot later does not change what was promised. */
-export function windowOf(day: string, rule: Pick<SlotRule, 'startsAt' | 'endsAt'>): { start: Date; end: Date } {
-  return { start: instantOf(day, rule.startsAt), end: instantOf(day, rule.endsAt) };
+export function windowOf(day: string, rule: Pick<SlotRule, 'startsAt' | 'endsAt'>, timeZone: string): { start: Date; end: Date } {
+  return { start: instantOf(day, rule.startsAt, timeZone), end: instantOf(day, rule.endsAt, timeZone) };
 }
 
 /** The days to offer from a day on: some days, in order. */
@@ -165,7 +163,8 @@ export function weekdaysWords(weekdays: readonly number[]): string {
 
 /** A day as a shopper reads it: "Fri 6 Nov". */
 export function dayWords(day: string): string {
-  return new Date(`${day}T12:00:00+03:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Africa/Nairobi' });
+  // A plain day has no zone: noon UTC read in UTC is that same day wherever the business is.
+  return new Date(`${day}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
 }
 
 export interface OfferedSlotLike {

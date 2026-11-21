@@ -128,27 +128,27 @@ const ROUTE_RULES: readonly RouteDocRule[] = [
   {
     prefix: '/admin/sales',
     slug: '03-sales-quotes-and-customer-orders',
-    chapterTitle: 'Sales Quotes & Customer Orders',
+    chapterTitle: 'Sales Quotes & Web Shop Orders',
   },
   {
     prefix: '/admin/orders',
     slug: '03-sales-quotes-and-customer-orders',
-    chapterTitle: 'Sales Quotes & Customer Orders',
+    chapterTitle: 'Sales Quotes & Web Shop Orders',
   },
   {
     prefix: '/admin/quotes',
     slug: '03-sales-quotes-and-customer-orders',
-    chapterTitle: 'Sales Quotes & Customer Orders',
+    chapterTitle: 'Sales Quotes & Web Shop Orders',
   },
   {
     prefix: '/admin/customers',
     slug: '03-sales-quotes-and-customer-orders',
-    chapterTitle: 'Sales Quotes & Customer Orders',
+    chapterTitle: 'Sales Quotes & Web Shop Orders',
   },
   {
     prefix: '/admin/customer-profiles',
     slug: '03-sales-quotes-and-customer-orders',
-    chapterTitle: 'Sales Quotes & Customer Orders',
+    chapterTitle: 'Sales Quotes & Web Shop Orders',
   },
   {
     prefix: '/admin/analytics',

@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { decodeCursor, encodeCursor } from '@/server/domains/lookups/request';
 import { matching } from '@/server/domains/settings/paging';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
@@ -6,6 +6,7 @@ import { orders, orderItems, orderCollections, type OrderRow } from '@/server/db
 import type { Order, OrderItem, OrderStatus, PaymentStatus, PaymentProvider } from '@/types/index';
 import { OrderStages, type StageActor } from './stages';
 import type { StageSource } from '@/lib/order-stages';
+import { WEB_SHOP_ORDER } from './order-origin';
 
 function num(v: string | number): number {
   return typeof v === 'number' ? v : Number(v);
@@ -46,6 +47,9 @@ export function mapOrderRow(row: OrderRow, items: OrderItem[]): Order {
     salesModule: row.salesModule,
     stockRelease: row.stockRelease,
     sourceQuoteId: row.sourceQuoteId,
+    shiftId: row.shiftId,
+    idempotencyKey: row.idempotencyKey,
+    invoiceWhenApproved: row.invoiceWhenApproved,
     approvalStatus: row.approvalStatus,
     discounts: row.discounts ?? null,
     tenderedAmount: num(row.tenderedAmount),
@@ -124,6 +128,9 @@ export class OrderRepository {
         salesModule: order.salesModule ?? 'ecommerce',
         stockRelease: order.stockRelease ?? null,
         sourceQuoteId: order.sourceQuoteId ?? null,
+        shiftId: order.shiftId ?? null,
+        idempotencyKey: order.idempotencyKey ?? null,
+        invoiceWhenApproved: order.invoiceWhenApproved ?? false,
         kraTransmissionStatus: order.kraTransmissionStatus || 'not_applicable',
         approvalStatus: order.approvalStatus ?? 'none',
         discounts: order.discounts ?? null,
@@ -189,16 +196,20 @@ export class OrderRepository {
   /**
    * One page of orders, newest first, narrowed by text (order number, customer, phone, email, tracking) and by status. The place to
    * start the next page is the database's own text for the time of the last order, so no microsecond is lost; their items are read in one query.
+   * Narrowed to the orders left at the counter, the list is in the order to chase them: the longest wait first (the time each was marked
+   * ready, oldest first), its place in the list kept by that time and the order's id.
    */
-  async page(input: { query?: string; status?: OrderStatus | null; leftAtCounterDays?: number | null; cursor?: string | null; limit?: number }): Promise<{ rows: Order[]; nextCursor: string | null }> {
+  async page(input: { origin?: 'web_shop'; query?: string; status?: OrderStatus | null; leftAtCounterDays?: number | null; cursor?: string | null; limit?: number }): Promise<{ rows: Order[]; nextCursor: string | null }> {
     const limit = Math.min(Math.max(input.limit ?? 25, 1), 100);
     const after = typeof input.cursor === 'string' && input.cursor !== '' ? decodeCursor(input.cursor) : null;
     const text = (input.query ?? '').trim().slice(0, 100);
+    if (input.leftAtCounterDays != null) return await this.pageLeftAtCounter({ status: input.status ?? null, days: input.leftAtCounterDays, text, after, limit });
     const found = await this.db
       .select({ row: orders, cursor: sql<string>`${orders.createdAt}::text` })
       .from(orders)
       .where(
         and(
+          input.origin === 'web_shop' ? WEB_SHOP_ORDER : undefined,
           input.status == null ? undefined : eq(orders.status, input.status),
           input.leftAtCounterDays == null ? undefined : leftAtCounterFor(input.leftAtCounterDays),
           matching(text, [orders.orderNumber, orders.customerName, orders.customerPhone, orders.paymentPhone, orders.customerEmail, orders.trackingNumber]),
@@ -212,6 +223,32 @@ export class OrderRepository {
     return {
       rows: await this.withItems(page.map((f) => f.row)),
       nextCursor: found.length > limit && last !== undefined ? encodeCursor({ k: last.cursor, id: last.row.id }) : null,
+    };
+  }
+
+  /** The orders left at the counter, the longest wait first. The wait is the time the collection was marked ready, so an order marked ready earlier is always above one marked ready later. */
+  private async pageLeftAtCounter(input: { status: OrderStatus | null; days: number; text: string; after: { k: string; id: string } | null; limit: number }): Promise<{ rows: Order[]; nextCursor: string | null }> {
+    const whole = Math.max(1, Math.floor(input.days));
+    const found = await this.db
+      .select({ row: orders, cursor: sql<string>`${orderCollections.readyAt}::text` })
+      .from(orders)
+      .innerJoin(orderCollections, eq(orderCollections.orderId, orders.id))
+      .where(
+        and(
+          sql`${orderCollections.status} in ('ready','locked')`,
+          sql`${orderCollections.readyAt} <= now() - make_interval(days => ${whole})`,
+          input.status === null ? undefined : eq(orders.status, input.status),
+          matching(input.text, [orders.orderNumber, orders.customerName, orders.customerPhone, orders.paymentPhone, orders.customerEmail, orders.trackingNumber]),
+          input.after === null ? undefined : sql`(${orderCollections.readyAt}, ${orders.id}) > (${input.after.k}::timestamptz, ${input.after.id})`,
+        ),
+      )
+      .orderBy(asc(orderCollections.readyAt), asc(orders.id))
+      .limit(input.limit + 1);
+    const page = found.slice(0, input.limit);
+    const last = page.at(-1);
+    return {
+      rows: await this.withItems(page.map((f) => f.row)),
+      nextCursor: found.length > input.limit && last !== undefined ? encodeCursor({ k: last.cursor, id: last.row.id }) : null,
     };
   }
 

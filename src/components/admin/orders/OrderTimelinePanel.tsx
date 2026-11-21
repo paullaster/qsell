@@ -1,5 +1,6 @@
 'use client';
 
+import { useBusinessTimeZone } from '@/components/business-time';
 import { useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Circle, Clock, XCircle } from 'lucide-react';
 import { orderTimelineAction } from '@/server/domains/orders/timeline-actions';
@@ -14,6 +15,7 @@ const toneIcon = { good: CheckCircle2, bad: XCircle, neutral: Circle } as const;
  * did it, from where and why. Failures show their reason. A history rebuilt from an older order says it is approximate.
  */
 export function OrderTimelinePanel({ orderId }: { orderId: string }) {
+  const timeZone = useBusinessTimeZone();
   const [view, setView] = useState<OrderTimelineView | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -60,7 +62,7 @@ export function OrderTimelinePanel({ orderId }: { orderId: string }) {
                     ) : null}
                   </p>
                   <p className="text-xs text-fg-muted">
-                    <time dateTime={event.at} className="font-mono">{stageTime(event.at)}</time>
+                    <time dateTime={event.at} className="font-mono">{stageTime(event.at, timeZone)}</time>
                     {gap === '' ? '' : ` · ${gap} after the stage before`}
                   </p>
                   {why === '' ? null : <p className={`text-xs ${tone === 'bad' ? 'text-red-700' : 'text-fg-muted'}`}>{why}</p>}

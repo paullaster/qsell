@@ -52,17 +52,20 @@ export class OrdersService {
     // customer's credit account nor change a registered customer's card; only the signed-in person with that email may.
     const typedEmail = params.customerEmail.trim().toLowerCase();
     const identityVerified = typedEmail !== '' && session?.user.email.trim().toLowerCase() === typedEmail;
-    const { organizations, companySettings, branches } = getContainer();
+    const { organizations, companySettings, branches, sellingSettings } = getContainer();
     const company = await companySettings.ensureSeeded();
     const { branch } = await organizations.ensureDefaultOrgAndBranch(
       company.id,
-      company.tradingName || company.legalName,
+      company.tradingName === '' ? company.legalName : company.tradingName,
     );
-    const sellingBranch = (await branches.getDefault(company.id)) || branch;
+    const sellingBranch = (await branches.getDefault(company.id)) ?? branch;
 
+    const requestedBy = session?.user.id;
     const result = await OrderWriteService.createOrder({
-      userId: params.userId || session?.user?.customerStoreId || session?.user?.id || null,
+      userId: params.userId ?? session?.user.customerStoreId ?? session?.user.id ?? null,
       customerId: session?.user.customerStoreId ?? null,
+      ...(requestedBy === undefined ? {} : { requestedBy }),
+      ...(params.paymentMethod === 'on_account' ? { selling: await sellingSettings.get(company.id, 'credit_sale') } : {}),
       checkoutStartedAt: params.checkoutStartedAt ?? null,
       identityVerified,
       branchId: sellingBranch.id,
@@ -73,7 +76,7 @@ export class OrdersService {
       buyerKraPin: params.buyerKraPin,
       shippingAddress: params.shippingAddress,
       items: params.items,
-      currency: params.currency || 'KES',
+      currency: params.currency ?? 'KES',
       paymentMethod: params.paymentMethod,
       ...(params.couponCodes === undefined ? {} : { couponCodes: params.couponCodes }),
       ...(params.delivery === undefined ? {} : { delivery: { method: params.delivery.method, ...(params.delivery.pickupBranchId === null ? {} : { pickupBranchId: params.delivery.pickupBranchId }), pin: params.delivery.pin, ...(params.delivery.address === null ? {} : { address: params.delivery.address }), recipient: params.delivery.recipient, notes: params.delivery.notes, expectedCharge: params.delivery.expectedCharge, slot: params.delivery.slot } }),
@@ -89,9 +92,9 @@ export class OrdersService {
   /** @deprecated legacy cookie session path — prefer createCheckout */
   static async createCheckoutLegacy(params: Parameters<typeof OrdersService.createCheckout>[0]) {
     const session = await AuthService.getSessionFromCookies();
-    return this.createCheckout({
+    return await this.createCheckout({
       ...params,
-      userId: params.userId || session?.userId,
+      userId: params.userId ?? session?.userId,
     });
   }
 }

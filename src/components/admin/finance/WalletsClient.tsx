@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { use } from 'react';
 import type { walletReportAction } from '@/server/domains/finance/wallet-actions';
 import { Chip, LoadFailed, PageHeader, buttonClass, cardClass, money } from './ui';
+import { useDate } from '@/components/business-time';
 
 type View = Extract<Awaited<ReturnType<typeof walletReportAction>>, { ok: true }>['data'];
 
@@ -13,6 +14,7 @@ export function WalletsClient({ viewPromise }: { viewPromise: ReturnType<typeof 
 }
 
 function WalletsView({ view }: { view: View }) {
+  const date = useDate();
   const lc = view.label.toLowerCase();
   return (
     <div className="max-w-5xl space-y-5">
@@ -35,7 +37,7 @@ function WalletsView({ view }: { view: View }) {
           <ul className="space-y-2">
             {view.expiring.map((e) => (
               <li key={`${e.customerId}-${e.currency}`} className={`${cardClass} flex flex-wrap items-center justify-between gap-2`}>
-                <p className="min-w-0 text-sm"><Link className="font-semibold text-indigo-600 hover:underline" href={`/admin/finance/receivables/customer/${e.customerId}`}>{e.name}</Link> <span className="text-fg-muted">{e.number} · last used {new Date(e.lastTouched).toLocaleDateString()} · lapses after {e.expiryDays} days</span></p>
+                <p className="min-w-0 text-sm"><Link className="font-semibold text-indigo-600 hover:underline" href={`/admin/finance/receivables/customer/${e.customerId}`}>{e.name}</Link> <span className="text-fg-muted">{e.number} · last used {date(e.lastTouched)} · lapses after {e.expiryDays} days</span></p>
                 <span className="flex items-center gap-2"><span className="font-semibold tabular-nums">{e.currency} {money(e.balance)}</span>{e.state === 'lapsed' ? <Chip tone="red">Lapses tonight</Chip> : <Chip tone="amber">Soon</Chip>}</span>
               </li>
             ))}

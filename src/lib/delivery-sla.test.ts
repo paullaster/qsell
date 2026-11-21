@@ -54,7 +54,10 @@ describe('words and settings', () => {
     expect(lateWords(125)).toBe('2 hours 5 min');
     expect(lateWords(1500)).toBe('1 day 1 hour');
     expect(lateWords(-4)).toBe('0 minutes');
-    expect(windowWords(start, end)).toBe('Fri 6 Nov, 09:00 to 12:00');
+    expect(windowWords(start, end, 'Africa/Nairobi')).toBe('Fri 6 Nov, 09:00 to 12:00');
+    // Written in the timezone it is given (the business's), not the server's or the viewer's.
+    expect(windowWords(start, end, 'UTC')).not.toBe(windowWords(start, end, 'Africa/Nairobi'));
+    expect(windowWords(start, end, 'Africa/Nairobi')).toBe('Fri 6 Nov, 09:00 to 12:00');
   });
 
   it('checks the settings as typed', () => {
@@ -104,19 +107,19 @@ describe('phone numbers for lateness texts', () => {
 describe('the lateness text', () => {
   const window = { windowStart: new Date('2026-11-12T07:00:00Z'), windowEnd: new Date('2026-11-12T09:00:00Z') };
   it('says the delivery, the time promised and how late, with the shop, in one message', () => {
-    const late = lateText({ level: 'late', number: 'DLV-12', ...window, minutesLate: 25, shop: 'Wanjiku Traders' });
+    const late = lateText({ level: 'late', number: 'DLV-12', ...window, minutesLate: 25, shop: 'Wanjiku Traders', timeZone: 'Africa/Nairobi' });
     expect(late).toContain('Delivery DLV-12 is late by 25 minutes.');
     expect(late).toContain('Promised');
     expect(late.endsWith('Wanjiku Traders')).toBe(true);
     expect(late.length).toBeLessThanOrEqual(160);
-    expect(lateText({ level: 'at_risk', number: 'DLV-12', ...window, minutesLate: 0, shop: 'Shop' })).toContain('at risk of being late');
+    expect(lateText({ level: 'at_risk', number: 'DLV-12', ...window, minutesLate: 0, shop: 'Shop', timeZone: 'Africa/Nairobi' })).toContain('at risk of being late');
   });
   it('keeps the facts and drops the shop name when the message would be too long', () => {
-    const text = lateText({ level: 'escalated', number: 'DLV-12', ...window, minutesLate: 9000, shop: 'S'.repeat(200) });
+    const text = lateText({ level: 'escalated', number: 'DLV-12', ...window, minutesLate: 9000, shop: 'S'.repeat(200), timeZone: 'Africa/Nairobi' });
     expect(text.length).toBeLessThanOrEqual(160);
     expect(text).toContain('Delivery DLV-12');
   });
   it('copes with no window', () => {
-    expect(lateText({ level: 'late', number: 'DLV-1', windowStart: null, windowEnd: null, minutesLate: 5, shop: 'Shop' })).toBe('Delivery DLV-1 is late by 5 minutes. Shop');
+    expect(lateText({ level: 'late', number: 'DLV-1', windowStart: null, windowEnd: null, minutesLate: 5, shop: 'Shop', timeZone: 'Africa/Nairobi' })).toBe('Delivery DLV-1 is late by 5 minutes. Shop');
   });
 });

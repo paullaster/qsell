@@ -8,6 +8,8 @@ export const PACKAGE_DOCUMENT_TYPES = [
   { type: 'order', label: 'Web shop and staff orders' },
   { type: 'quote', label: 'Quotes' },
   { type: 'sales_order', label: 'Sales orders (taken by staff)' },
+  { type: 'sales_invoice', label: 'Sales invoices (issued directly)' },
+  { type: 'credit_sale', label: 'Credit sales (to a customer\'s account)' },
 ] as const;
 
 export type PackageDocumentType = (typeof PACKAGE_DOCUMENT_TYPES)[number]['type'];

@@ -1,5 +1,6 @@
 'use client';
 
+import { useBusinessTimeZone } from '@/components/business-time';
 import { useEffect, useState } from 'react';
 import { Activity } from 'lucide-react';
 import { orderFlowAction } from '@/server/domains/orders/timeline-actions';
@@ -16,6 +17,7 @@ import { reasonWords, stageTime } from '@/lib/order-timeline-view';
  * else it shows nothing. It reads the same events as each order's timeline, so the numbers and the timelines agree.
  */
 export function OrderFlowPanel() {
+  const timeZone = useBusinessTimeZone();
   const [flow, setFlow] = useState<OrderFlow | null>(null);
   const [allowed, setAllowed] = useState(true);
 
@@ -34,10 +36,10 @@ export function OrderFlowPanel() {
   if (!allowed || flow === null) return null;
   const { checkouts } = flow;
   return (
-    <details className="rounded-xl border border-line bg-surface p-4 text-sm" aria-label="Order flow">
+      <details className="rounded-xl border border-line bg-surface p-4 text-sm" aria-label="Web shop order flow">
       <summary className="flex min-h-10 cursor-pointer items-center gap-2 font-semibold text-fg-strong">
         <Activity className="h-4 w-4 text-indigo-400" aria-hidden="true" />
-        Order flow, last {flow.days} days
+        Web shop order flow, last {flow.days} days
         {flow.stuck.length > 0 ? <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-700">{flow.stuck.length} stuck</span> : null}
         {flow.unrecorded > 0 ? <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-xs font-medium text-red-700">{flow.unrecorded} unrecorded</span> : null}
       </summary>
@@ -86,7 +88,7 @@ export function OrderFlowPanel() {
             <ul className="text-xs text-fg-muted">
               {flow.stuck.map((s) => (
                 <li key={s.orderId}>
-                  <span className="font-mono text-fg">{s.orderNumber}</span>: {s.label.toLowerCase()} since {stageTime(s.since)}
+                  <span className="font-mono text-fg">{s.orderNumber}</span>: {s.label.toLowerCase()} since {stageTime(s.since, timeZone)}
                 </li>
               ))}
             </ul>

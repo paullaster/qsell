@@ -1,3 +1,4 @@
+import { instantInZone, zoneOffsetMs } from './business-timezone';
 /**
  * A booked visit: a crew goes to a customer's address at an agreed time for an order, for example to install or set up what was bought.
  * These are the rules only: the states and what may follow what, the window, the crew, the checklist and the sign-off. The database,
@@ -107,21 +108,28 @@ export function signOffProblem(name: unknown): string | null {
   return typeof name === 'string' && name.trim().length >= 2 ? null : 'Say who signed the work off for the customer.';
 }
 
-export const reasonProblem = (reason: unknown, what: string): string | null => (typeof reason === 'string' && reason.trim().length >= 5 ? null : `Say why ${what}, in a few words.`);
-
-/** The shop works in Nairobi (UTC+3, no daylight saving). A time typed in a date-time box is Nairobi time; the server keeps it as an instant. */
-const NAIROBI_HOURS = 3;
-
-/** "2026-11-07T08:00" typed in the box, to the instant it means. Null when it is not a time. */
-export function fromNairobiInput(value: string): string | null {
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return null;
-  const d = new Date(`${value}:00+0${String(NAIROBI_HOURS)}:00`);
-  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+/** What a customer writes when they ask for another time: a few words to a short paragraph, not a link or a page of text. Returns the note cleaned up, or what is wrong with it. */
+export function checkTimeRequest(raw: unknown): { ok: true; note: string } | { ok: false; error: string } {
+  const note = typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim() : '';
+  if (note.length < 3) return { ok: false, error: 'Tell us in a few words when would suit you better.' };
+  if (note.length > 300) return { ok: false, error: 'Please keep it to 300 characters.' };
+  if (/https?:\/\/|www\./i.test(note)) return { ok: false, error: 'Please write it in words, without a link.' };
+  return { ok: true, note };
 }
 
-/** An instant, to the text a date-time box shows for it in Nairobi. */
-export function toNairobiInput(iso: string): string {
-  return new Date(new Date(iso).getTime() + NAIROBI_HOURS * 3_600_000).toISOString().slice(0, 16);
+export const reasonProblem = (reason: unknown, what: string): string | null => (typeof reason === 'string' && reason.trim().length >= 5 ? null : `Say why ${what}, in a few words.`);
+
+/** "2026-11-07T08:00" typed in a date-time box is a time on the business's own clock, in the business's time zone; this is the instant it means. Null when it is not a time. */
+export function fromBusinessInput(value: string, timeZone: string): string | null {
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/.exec(value);
+  if (m === null || Number.isNaN(new Date(`${value}:00Z`).getTime())) return null;
+  return instantInZone(m[1] ?? '', m[2] ?? '', timeZone).toISOString();
+}
+
+/** An instant, to the text a date-time box shows for it on the business's clock. */
+export function toBusinessInput(iso: string, timeZone: string): string {
+  const at = new Date(iso);
+  return new Date(at.getTime() + zoneOffsetMs(at, timeZone)).toISOString().slice(0, 16);
 }
 
 /** The checklist as typed, one item to a line: blank lines are dropped. */

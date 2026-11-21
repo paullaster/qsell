@@ -3,7 +3,7 @@ import { noHorizontalScroll, noNativeSelect, open } from './support/page';
 
 test.describe('admin orders list', () => {
   test('is paged, searchable, filtered by a picker and fits the screen', async ({ page }) => {
-    await open(page, '/admin/orders', /Customer Orders/);
+    await open(page, '/admin/orders', /Web Shop Orders/);
     await noNativeSelect(page);
     await noHorizontalScroll(page);
     await page.getByLabel('Search orders').fill('no-such-order-zzz');

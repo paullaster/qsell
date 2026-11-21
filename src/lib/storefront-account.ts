@@ -229,13 +229,11 @@ export function formatAmount(value: number, currency: string): string {
   return `${value < 0 ? '-' : ''}${currency} ${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${cents}`;
 }
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-/** "24 Oct 2026" in the shop's own time (Nairobi, UTC+3), so a late-evening order is not dated the next day elsewhere. */
-export function formatOrderDate(iso: string): string {
-  const at = new Date(new Date(iso).getTime() + 3 * 3_600_000);
+/** "24 Oct 2026" in the business's time zone, so a late-evening order is not dated the next day somewhere else. */
+export function formatOrderDate(iso: string, timeZone: string): string {
+  const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return '';
-  return `${String(at.getUTCDate())} ${MONTHS[at.getUTCMonth()] ?? ''} ${String(at.getUTCFullYear())}`;
+  return at.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone });
 }
 
 /** "3 items" / "1 item": the number of units across the order's lines. */

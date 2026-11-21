@@ -1,0 +1,3 @@
+ALTER TABLE "order_visits" ADD COLUMN "time_request_note" text;--> statement-breakpoint
+ALTER TABLE "order_visits" ADD COLUMN "time_request_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "order_visits" ADD CONSTRAINT "order_visits_time_request_chk" CHECK (("order_visits"."time_request_note" IS NULL) = ("order_visits"."time_request_at" IS NULL) AND ("order_visits"."time_request_note" IS NULL OR char_length("order_visits"."time_request_note") BETWEEN 3 AND 300));

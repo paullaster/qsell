@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { billRequestLabel, countTone, rowDetail, rowState, rowTitle, shortReason, when, words } from './payment-activity-format';
+import { billRequestLabel, countTone, rowDetail, rowState, rowTitle, shortReason, words } from './payment-activity-format';
 
 describe('payment activity format', () => {
   it('prints only the facts a row has, in order', () => {
@@ -16,9 +16,6 @@ describe('payment activity format', () => {
   });
 
   it('writes times and words', () => {
-    expect(when(null)).toBe('');
-    expect(when('')).toBe('');
-    expect(when('2026-10-14T10:00:00Z')).not.toBe('');
     expect(words('in_doubt')).toBe('in doubt');
   });
 

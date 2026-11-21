@@ -1,5 +1,6 @@
 'use client';
 
+import { useBusinessTimeZone } from '@/components/business-time';
 import { use } from 'react';
 import Link from 'next/link';
 import type { myPayAction } from '@/server/domains/delivery/rider-app-actions';
@@ -7,10 +8,11 @@ import { Chip } from '@/components/ui/screen-kit';
 
 type Loaded = Awaited<ReturnType<typeof myPayAction>>;
 
-const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Africa/Nairobi' });
 
 /** A rider's own pay: what they are owed, what they earned this month, the latest entries and what was paid to them. */
 export function RiderPayScreen({ payPromise }: { payPromise: ReturnType<typeof myPayAction> }) {
+  const timeZone = useBusinessTimeZone();
+  const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone });
   const res: Loaded = use(payPromise);
   if (!res.ok) {
     return (

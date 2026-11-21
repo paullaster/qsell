@@ -31,3 +31,6 @@ deploy/instances/*.env
 
 # TypeScript incremental build cache (rewritten by every type check)
 *.tsbuildinfo
+
+# Written by next dev and next build, and different on every machine
+next-env.d.ts

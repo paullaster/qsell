@@ -9,6 +9,7 @@ import { shownPaymentReference } from '@/lib/paymentReference';
 import type { PublicCompany } from '@/lib/company-view';
 import type { Order } from '@/types/index';
 import { has } from '@/lib/values';
+import { useDate } from '@/components/business-time';
 
 interface Props {
   order: Order;
@@ -22,6 +23,7 @@ interface Props {
 
 /** The tax invoice as it will print, from the company's and the order's own data. */
 export function OrderInvoicePreview({ order, canEditProducts = false, company, busy, onClose, onEmail, onDownload }: Props) {
+  const date = useDate();
   const companyAddress = [
     company.streetAddress,
     company.city,
@@ -73,7 +75,7 @@ export function OrderInvoicePreview({ order, canEditProducts = false, company, b
             </span>
             <span className="mt-1 block font-mono text-sm font-bold">#{order.orderNumber}</span>
             <span className="text-xs text-fg-subtle">
-              {new Date(order.createdAt).toLocaleDateString('en-KE')}
+              {date(order.createdAt)}
             </span>
             <span className="mt-1 block text-[11px] text-fg-subtle capitalize">
               {order.paymentStatus.replace(/_/g, ' ')}

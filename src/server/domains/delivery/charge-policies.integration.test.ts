@@ -401,7 +401,7 @@ describe.skipIf(!has(url))('delivery charge policies (database)', () => {
         reverse: () => Promise.resolve(null),
         distancesFrom: (from, to) => (mode === 'works' ? builtin.distancesFrom(from, to) : Promise.reject(new Error('down'))),
       });
-      const withGeo = (mode: 'works' | 'down') => new DeliveryQuotes(db, c.chargePolicies, c.deliveryZones, new GeoService(new GeoPortRegistry({ GEO_DRIVER: 'acme' }, { builtin: () => builtin, acme: () => fakeProvider(mode) }), 200));
+      const withGeo = (mode: 'works' | 'down') => new DeliveryQuotes(db, c.chargePolicies, c.deliveryZones, new GeoService(new GeoPortRegistry({}, { builtin: () => builtin, acme: () => fakeProvider(mode) }, () => Promise.resolve({ driver: 'acme', config: {} })), 200));
       const input = { branchId: b, at: wednesday, currency: 'KES', address: { county: 'Nairobi', town: 'Karen', area: null }, weightKg: 1, orderValue: 100 };
       const placed = await withGeo('works').quote(companyId, input);
       const km = estimatedRoadKm(branchPin, customerPin, 1.3);

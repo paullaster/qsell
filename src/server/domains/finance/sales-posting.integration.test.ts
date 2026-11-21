@@ -376,4 +376,29 @@ describe.skipIf(!has(url))('sales posting (database)', () => {
     expect((await fin.maintenance.checkIntegrity(companyId)).balanceDrift).toBe(0);
     expect(await fin.customerLedger.drift(companyId)).toEqual([]);
   });
+
+  it('posts each counter tender to its own method\'s account, so a sale paid part by M-Pesa and part by cash puts money in two accounts', async () => {
+    const [anyMethod] = await db.select({ providerId: schema.paymentMethods.providerId }).from(schema.paymentMethods).where(eq(schema.paymentMethods.companyId, companyId)).limit(1);
+    const made = async (kind: 'cash' | 'mobile_money', tag: string) => {
+      const [bank] = await db.insert(schema.bankAccounts).values({ companyId, code: `CT${tag}${run}`, name: `Counter ${tag} ${run}`, kind: kind === 'cash' ? 'cash' : 'bank', currency: 'KES', createdBy: 'test' }).returning();
+      const [gl] = await db.insert(schema.glAccounts).values({ companyId, no: `18${tag}${run}`, name: `Counter ${tag} ${run}`, type: 'posting', category: 'assets', normalBalance: 'debit' }).returning();
+      const [method] = await db.insert(schema.paymentMethods).values({ companyId, providerId: required(anyMethod).providerId, code: `CT${tag}${run}`, name: `Counter ${tag} ${run}`, kind, balancingBankAccountId: required(bank).id, glAccountId: required(gl).id, usableFor: ['customer_receipt'], createdBy: 'test' }).returning();
+      return { method: required(method), bank: required(bank) };
+    };
+    const cash = await made('cash', 'C');
+    const mpesa = await made('mobile_money', 'M');
+    const c = await customer('cash');
+    const o = await order(c, { total: 1000 });
+    await invoice(c, o, 1000);
+    await db.insert(schema.orderTenders).values([
+      { orderId: o.id, kind: 'payment_method', reference: mpesa.method.id, amount: '800.00', methodKind: 'mobile_money', externalReference: 'QX9', actor: 'test' },
+      { orderId: o.id, kind: 'payment_method', reference: cash.method.id, amount: '200.00', methodKind: 'cash', handedOver: '300.00', changeDue: '100.00', actor: 'test' },
+    ]);
+    await db.execute(sql`UPDATE orders SET transaction_reference = 'COUNTER-1', payment_status = 'paid' WHERE id = ${o.id}`);
+    await master.applyOrderPayment(o.id);
+    expect(await rows('cash_sale')).toBeDefined();
+    await fin.salesPosting.processDue();
+    const bank = await db.select().from(schema.bankLedgerEntries).where(and(eq(schema.bankLedgerEntries.companyId, companyId), eq(schema.bankLedgerEntries.documentNo, o.number)));
+    expect(bank.map((b) => [b.bankAccountId === cash.bank.id ? 'cash' : 'mpesa', Number(b.amount)]).sort()).toEqual([['cash', 200], ['mpesa', 800]]);
+  });
 });

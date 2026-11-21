@@ -7,6 +7,7 @@ import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { LIMIT_MODES, checkLimitsForm, describeLimits, startingLimitsForm, type LimitsForm } from '@/lib/refund-limits-form';
 import { choiceOf } from '@/lib/wallet-policy';
 import { Chip, Field, LoadFailed, Message, PageHeader, buttonClass, cardClass, fieldClass, primaryClass, type Notice, attempt } from './ui';
+import { useWhen } from '@/components/business-time';
 
 type View = Extract<Awaited<ReturnType<typeof refundLimitsAction>>, { ok: true }>['data'];
 
@@ -16,6 +17,7 @@ export function RefundLimitsClient({ viewPromise }: { viewPromise: ReturnType<ty
 }
 
 function RefundLimitsView({ view }: { view: View }) {
+  const when = useWhen();
   const uid = useId();
   const router = useRouter();
   const [form, setForm] = useState<LimitsForm | null>(null);
@@ -63,7 +65,7 @@ function RefundLimitsView({ view }: { view: View }) {
           {view.values.enabled ? <Chip tone="green">On</Chip> : <Chip tone="gray">Off</Chip>}
         </div>
         <p className="text-sm text-fg">{describeLimits(view.values)}</p>
-        {view.updatedAt === null ? null : <p className="text-xs text-fg-muted">Last changed {new Date(view.updatedAt).toLocaleString()}{view.updatedBy === null ? '' : ` by ${view.updatedBy}`}.</p>}
+        {view.updatedAt === null ? null : <p className="text-xs text-fg-muted">Last changed {when(view.updatedAt)}{view.updatedBy === null ? '' : ` by ${view.updatedBy}`}.</p>}
         {view.canManage && form === null ? (
           <button type="button" className={buttonClass} onClick={() => { setForm(startingLimitsForm(view.values)); setNotice(null); }}>Change</button>
         ) : null}

@@ -1,3 +1,4 @@
+import { businessDate } from '@/server/kernel/numbering/business-date';
 import { randomUUID } from 'node:crypto';
 import { beforeAll } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
@@ -79,7 +80,7 @@ export function refundKit(label: string): RefundKit {
     k.ctx = { companyId: k.companyId, actor: { type: 'user', id: 'tester' }, origin };
     k.reqCtx = { ...k.ctx, actor: { type: 'user', id: k.requester } };
     k.bossCtx = { ...k.ctx, actor: { type: 'user', id: k.boss } };
-    k.today = new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' });
+    k.today = businessDate();
     await fin.setup.applyTemplate(k.ctx, 'kenya', { fiscalYearStart: '2026-01-01' });
     await fin.paymentMethods.seedStandard(k.ctx);
     k.acct = {};

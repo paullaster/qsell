@@ -23,7 +23,7 @@ async function readyToPay(page: Page, productName: string): Promise<void> {
 
 /** Finds an order in the admin list and opens it for work. */
 async function openOrder(page: Page, orderNumber: string): Promise<void> {
-  await open(page, '/admin/orders', /Customer Orders/);
+  await open(page, '/admin/orders', /Web Shop Orders/);
   await page.getByLabel('Search orders').fill(orderNumber);
   const manage = page.getByRole('button', { name: /Manage/ }).first();
   await expect(manage).toBeVisible({ timeout: 60_000 });
@@ -49,8 +49,8 @@ test.describe('every stage of an order is timestamped, failures included', () =>
     expect(attempt.message).toMatch(/Insufficient inventory/);
 
     // The people who watch orders see it in the order flow.
-    await open(page, '/admin/orders', /Customer Orders/);
-    const flow = page.getByLabel('Order flow');
+    await open(page, '/admin/orders', /Web Shop Orders/);
+    const flow = page.getByLabel('Web shop order flow');
     await expect(flow).toBeVisible({ timeout: 60_000 });
     await flow.getByText(/Order flow, last 7 days/).click();
     await expect(flow.getByText(/Not enough stock/).first()).toBeVisible();

@@ -1,5 +1,6 @@
 'use client';
 
+import { useWhen } from '@/components/business-time';
 import Link from 'next/link';
 import { use, useId, useState } from 'react';
 import { stockTransfersPageAction, type TransferRowView } from '@/server/domains/stock/transfer-actions';
@@ -11,7 +12,6 @@ import type { Choice } from '@/lib/payment-options';
 
 type FirstPage = Extract<Awaited<ReturnType<typeof stockTransfersPageAction>>, { ok: true }>;
 
-const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' });
 
 export function TransfersClient({ firstPage, canRequest }: { firstPage: ReturnType<typeof stockTransfersPageAction>; canRequest: Promise<boolean> }) {
   const first = use(firstPage);
@@ -20,6 +20,7 @@ export function TransfersClient({ firstPage, canRequest }: { firstPage: ReturnTy
 }
 
 function TransfersView({ first, may }: { first: FirstPage; may: boolean }) {
+  const when = useWhen();
   const uid = useId();
   const [query, setQuery] = useState('');
   const [state, setState] = useState<Choice | null>(null);

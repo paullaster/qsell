@@ -1,5 +1,6 @@
 'use client';
 
+import { useWhen } from '@/components/business-time';
 import Link from 'next/link';
 import { use, useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -18,7 +19,6 @@ import { Field, LoadFailed, Message, PageHeader, Chip, attempt, buttonClass, car
 import { COUNT_STATE_WORDS, isCountState } from '@/lib/stock-documents';
 import type { Choice } from '@/lib/payment-options';
 
-const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' });
 const signed = (n: number): string => (n > 0 ? `+${String(n)}` : String(n));
 
 export function CountDetailClient({ viewPromise }: { viewPromise: ReturnType<typeof stockCountAction> }) {
@@ -27,6 +27,7 @@ export function CountDetailClient({ viewPromise }: { viewPromise: ReturnType<typ
 }
 
 function Detail({ c }: { c: CountDetail }) {
+  const when = useWhen();
   const uid = useId();
   const router = useRouter();
   const [busy, setBusy] = useState(false);

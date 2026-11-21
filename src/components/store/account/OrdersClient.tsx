@@ -1,5 +1,6 @@
 'use client';
 
+import { useBusinessTimeZone } from '@/components/business-time';
 import { use } from 'react';
 import Link from 'next/link';
 import { ChevronRight, Package } from 'lucide-react';
@@ -31,6 +32,7 @@ export function OrdersClient({ firstPage }: { firstPage: Promise<AccountResult<P
 }
 
 function OrderList({ first }: { first: AccountResult<Page> }) {
+  const timeZone = useBusinessTimeZone();
   const list = usePagedList<CustomerOrder, object>({
     load: loadPage,
     filters: {},
@@ -91,7 +93,7 @@ function OrderList({ first }: { first: AccountResult<Page> }) {
                     Order {order.orderNumber}
                   </span>
                   <span className="block text-sm text-fg-muted">
-                    {formatOrderDate(order.createdAt)} · {itemCountLabel(order)}
+                    {formatOrderDate(order.createdAt, timeZone)} · {itemCountLabel(order)}
                   </span>
                   <span className="flex flex-wrap gap-2">
                     <Chip tone={state.tone}>{state.label}</Chip>

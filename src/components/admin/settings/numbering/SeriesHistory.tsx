@@ -1,6 +1,7 @@
 import type { SeriesDetailView } from '@/server/kernel/numbering/actions';
 import { cardClass } from '@/components/ui/screen-kit';
 import { has } from '@/lib/values';
+import { useWhen } from '@/components/business-time';
 
 const ACTION_LABEL: Record<string, string> = {
   'numbering.series_created': 'Series created',
@@ -17,6 +18,7 @@ const ACTION_LABEL: Record<string, string> = {
 
 /** What was issued lately. Only displays what it is given. */
 export function SeriesRecent({ recent }: { recent: SeriesDetailView['recent'] }) {
+  const when = useWhen();
   return (
     <section className={`${cardClass} space-y-4`} aria-label="Recent numbers">
       <h3 className="text-base font-bold text-fg-strong">Recently issued</h3>
@@ -41,7 +43,7 @@ export function SeriesRecent({ recent }: { recent: SeriesDetailView['recent'] })
                   <td className="px-2 py-2 font-mono font-semibold text-fg-strong">{r.number}</td>
                   <td className="px-2 py-2 text-fg">{has(r.documentKind) ? `${r.documentKind} ${r.documentId ?? ''}` : '—'}</td>
                   <td className="px-2 py-2 text-fg">{r.documentDate}</td>
-                  <td className="px-2 py-2 text-fg-muted">{new Date(r.allocatedAt).toLocaleString()}</td>
+                  <td className="px-2 py-2 text-fg-muted">{when(r.allocatedAt)}</td>
                   <td className="px-2 py-2 text-fg-muted">{r.source === 'manual' ? 'Typed in' : 'Automatic'}</td>
                 </tr>
               ))}
@@ -55,6 +57,7 @@ export function SeriesRecent({ recent }: { recent: SeriesDetailView['recent'] })
 
 /** Every change to the series, who made it and why. Only displays what it is given. */
 export function SeriesHistory({ history }: { history: SeriesDetailView['history'] }) {
+  const when = useWhen();
   return (
     <section className={`${cardClass} space-y-4`} aria-label="History">
       <h3 className="text-base font-bold text-fg-strong">History</h3>
@@ -68,7 +71,7 @@ export function SeriesHistory({ history }: { history: SeriesDetailView['history'
               <p className="font-semibold text-fg-strong">
                 {ACTION_LABEL[h.action] ?? h.action}{' '}
                 <span className="font-normal text-fg-muted">
-                  · {new Date(h.at).toLocaleString()} · {h.actor ?? 'system'}
+                  · {when(h.at)} · {h.actor ?? 'system'}
                 </span>
               </p>
               {has(h.reasonCode) ? (

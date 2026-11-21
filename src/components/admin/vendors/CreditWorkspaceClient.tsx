@@ -10,6 +10,7 @@ import { CREDIT_STAFF_RETURNABLE, CREDIT_STATE } from '@/lib/vendor-credit-memo'
 import { reasonLabel } from '@/lib/supplier-invoice';
 import type { Choice } from '@/lib/payment-options';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
+import { useDate, useWhen } from '@/components/business-time';
 
 type View = Extract<Awaited<ReturnType<typeof creditMemoAction>>, { ok: true }>['data'];
 type Result = { ok: true; data?: unknown } | { ok: false; error: string };
@@ -22,6 +23,8 @@ export function CreditWorkspaceClient({ viewPromise }: { viewPromise: ReturnType
 }
 
 function Workspace({ view }: { view: View }) {
+  const when = useWhen();
+  const date = useDate();
   const uid = useId();
   const router = useRouter();
   const m = view.memo;
@@ -117,12 +120,12 @@ function Workspace({ view }: { view: View }) {
       )}
       {m.state === 'returned' ? <p className="text-sm text-fg">Returned to the vendor: {reasonLabel(m.returnReasonCode ?? 'other')}. {m.returnNote}</p> : null}
       {m.state === 'rejected' ? <p className="text-sm text-fg">Refused: {reasonLabel(m.rejectReasonCode ?? 'other')}. {m.rejectNote}</p> : null}
-      {m.state === 'posted' ? <p className="text-sm text-fg">Booked{m.postedAt === null ? '' : ` on ${new Date(m.postedAt).toLocaleDateString()}`}. It can no longer be changed.</p> : null}
+      {m.state === 'posted' ? <p className="text-sm text-fg">Booked{m.postedAt === null ? '' : ` on ${date(m.postedAt)}`}. It can no longer be changed.</p> : null}
 
       <section className={cardClass} aria-label="History">
         <h2 className="text-sm font-bold text-fg-strong">History</h2>
         <ol className="mt-1 space-y-1 text-sm text-fg">
-          {view.events.map((e) => <li key={e.id}>{EVENT_WORDS[e.event] ?? e.event} <span className="text-xs text-fg-muted">· {e.who ?? 'System'} · {new Date(e.at).toLocaleString()}</span>{e.reason === null || e.reason === '' ? null : <span className="block text-xs text-fg-muted">{e.reason}</span>}</li>)}
+          {view.events.map((e) => <li key={e.id}>{EVENT_WORDS[e.event] ?? e.event} <span className="text-xs text-fg-muted">· {e.who ?? 'System'} · {when(e.at)}</span>{e.reason === null || e.reason === '' ? null : <span className="block text-xs text-fg-muted">{e.reason}</span>}</li>)}
         </ol>
       </section>
     </div>

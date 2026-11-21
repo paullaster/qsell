@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { approveBankChangeAction, recordBankCallbackAction, rejectBankChangeAction, type bankChangesAction } from '@/server/domains/vendors/admin-actions';
 import { maskAccount } from '@/lib/vendor-profile';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, dangerClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
+import { useWhen } from '@/components/business-time';
 
 type Page = Extract<Awaited<ReturnType<typeof bankChangesAction>>, { ok: true }>['data'];
 type Row = Page['rows'][number];
@@ -36,6 +37,7 @@ function BankChangesView({ page }: { page: Page }) {
 }
 
 function ChangeCard({ row, page }: { row: Row; page: Page }) {
+  const when = useWhen();
   const uid = useId();
   const router = useRouter();
   const [mode, setMode] = useState<null | 'callback' | 'reject'>(null);
@@ -69,7 +71,7 @@ function ChangeCard({ row, page }: { row: Row; page: Page }) {
       <dl className="grid grid-cols-1 gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
         <div><dt className="text-xs text-fg-muted">New account</dt><dd className="font-medium text-fg-strong">{row.bankName}, {row.branch} · {row.accountName} {maskAccount(row.last4)}</dd></div>
         <div><dt className="text-xs text-fg-muted">Replaces</dt><dd className="font-medium text-fg-strong">{row.replaces === null ? 'Nothing: an additional account' : `${row.replaces.bankName} ${maskAccount(row.replaces.last4)}`}</dd></div>
-        <div><dt className="text-xs text-fg-muted">Asked</dt><dd>{new Date(row.proposedAt).toLocaleString()}</dd></div>
+        <div><dt className="text-xs text-fg-muted">Asked</dt><dd>{when(row.proposedAt)}</dd></div>
         {row.effectiveFrom === null ? null : <div><dt className="text-xs text-fg-muted">In use from</dt><dd>{new Date(row.effectiveFrom).toLocaleDateString()}</dd></div>}
         {row.callbackNote === null ? null : <div className="sm:col-span-2"><dt className="text-xs text-fg-muted">Call-back</dt><dd>{row.callbackNote}</dd></div>}
       </dl>

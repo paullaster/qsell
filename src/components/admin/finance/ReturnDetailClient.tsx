@@ -10,6 +10,7 @@ import { RETURN_STATUS, blankEntries, blankEntry, conditionLabel, confirmItems, 
 import { statusInfo } from '@/lib/finance-statuses';
 import { needsComment } from '@/lib/receipt-detail';
 import { has } from '@/lib/finance-history';
+import { useWhen } from '@/components/business-time';
 import type { Choice } from '@/lib/payment-options';
 import { Chip, Field, LoadFailed, Message, PageHeader, buttonClass, cardClass, dangerClass, fieldClass, primaryClass, type Notice, attempt } from './ui';
 
@@ -21,6 +22,7 @@ export function ReturnDetailClient({ viewPromise }: { viewPromise: ReturnType<ty
 }
 
 function ReturnDetailView({ view }: { view: View }) {
+  const when = useWhen();
   const uid = useId();
   const router = useRouter();
   const open = !view.closed;
@@ -133,7 +135,7 @@ function ReturnDetailView({ view }: { view: View }) {
               <tbody>
                 {view.confirmations.map((c) => (
                   <tr key={c.id} className="border-t border-line">
-                    <td className="py-1.5 pr-3 whitespace-nowrap">{new Date(c.at).toLocaleString()}</td>
+                    <td className="py-1.5 pr-3 whitespace-nowrap">{when(c.at)}</td>
                     <td className="pr-3">{c.line}</td>
                     <td className="pr-3 text-right tabular-nums">{c.words}</td>
                     <td className="pr-3">{conditionLabel(c.condition)}</td>

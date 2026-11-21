@@ -80,7 +80,7 @@ function NewRefundView({ start }: { start: Start }) {
       <PageHeader title="New refund" intro="Pay a customer back from something they are owed. The amount can never be more than what is left." />
       <Message notice={notice} />
       <form className={`${cardClass} space-y-4`} aria-label="New refund" onSubmit={(e) => { e.preventDefault(); void save(true); }}>
-        <ChoicePicker label="Customer" source="refund-customers" choice={customer} onChoice={chooseCustomer} clearable={false} required placeholder="Name, number or phone" listHref="/admin/customers" listLabel="View all customers" createHref="/admin/customers/new" createLabel="+ Create a customer" />
+        <ChoicePicker label="Customer" source="refund-customers" choice={customer} onChoice={chooseCustomer} clearable={false} required placeholder="Name, number or phone" listHref="/admin/customers/list" listLabel="View all customers" createHref="/admin/customers/new" createLabel="+ Create a customer" />
         {customer !== null ? (
           <>
             <ChoicePicker label="Refund from" source="refund-sources" filters={{ customer: customer.id }} choice={source} onChoice={chooseSource} clearable={false} required placeholder="What is the customer owed?" emptyMessage="This customer is owed nothing that can be refunded." />

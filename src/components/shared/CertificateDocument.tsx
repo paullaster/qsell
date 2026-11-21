@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { use } from 'react';
 import { LoadFailed, PageHeader, buttonClass, cardClass } from '@/components/ui/screen-kit';
+import { useDate } from '@/components/business-time';
+import { PrintButton } from '@/components/ui/PrintButton';
 
 interface Certificate {
   id: string;
@@ -24,13 +26,16 @@ type Result = { ok: true; data: Certificate } | { ok: false; error: string };
 
 /** The certificate as it is shown and printed: who withheld, from whom, on what, how much. The same page for staff and for the vendor. */
 export function CertificateDocument({ viewPromise, backHref }: { viewPromise: Promise<Result>; backHref: string }) {
+  const date = useDate();
   const res = use(viewPromise);
   if (!res.ok) return <LoadFailed error={res.error} />;
   const c = res.data;
   return (
     <div className="max-w-2xl space-y-4">
-      <PageHeader title={`Withholding tax certificate ${c.number}`} intro={c.status === 'cancelled' ? `Cancelled: ${c.cancelReason ?? ''}` : `Issued ${new Date(c.issuedAt).toLocaleDateString()}`} actions={<><Link href={backHref} className={buttonClass}>Back</Link><button type="button" className={buttonClass} onClick={() => window.print()}>Print</button></>} />
-      <section className={`${cardClass} space-y-3 print:border-0`} aria-label="Certificate">
+      <PageHeader title={`Withholding tax certificate ${c.number}`} intro={c.status === 'cancelled' ? `Cancelled: ${c.cancelReason ?? ''}` : `Issued ${date(c.issuedAt)}`} actions={<><Link href={backHref} className={buttonClass}>Back</Link><PrintButton targetId="certificate-print" title={`Withholding tax certificate ${c.number}`} testId="certificate-print-button" /></>} />
+      <section id="certificate-print" className={`${cardClass} space-y-3 print:border-0`} aria-label="Certificate">
+        <h2 className="hidden text-lg font-bold text-fg-strong print:block">Withholding tax certificate {c.number}</h2>
+        <p className="hidden text-sm text-fg-muted print:block">{c.status === 'cancelled' ? `Cancelled: ${c.cancelReason ?? ''}` : `Issued ${date(c.issuedAt)}`}</p>
         <p className="text-sm text-fg">This certifies that tax was withheld from a payment to the vendor named below.</p>
         <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
           <div><dt className="text-xs text-fg-muted">Withheld by</dt><dd className="font-medium text-fg-strong">{c.withholdingAgent.name}{c.withholdingAgent.pin === '' ? '' : ` (PIN ${c.withholdingAgent.pin})`}</dd></div>

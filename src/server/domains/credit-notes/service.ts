@@ -10,6 +10,8 @@ import {
   branches,
   inventoryMovements,
   invoiceDocuments,
+  orderBillingLines,
+  orderBillings,
   orderDeliveries,
   orderItems,
   orders,
@@ -219,7 +221,7 @@ export class CreditNoteService {
    * offered only if stock was actually taken for the order (it was fulfilled): otherwise the
    * units are still reserved, and adding them back would count them twice.
    */
-  async creditableForOrder(orderId: string): Promise<{
+  async creditableForOrder(orderId: string, billingId?: string): Promise<{
     hasTaxInvoice: boolean;
     currency: string;
     invoiceTotal: number;
@@ -252,8 +254,9 @@ export class CreditNoteService {
         ),
       )
       .limit(1);
-    const target = await this.deliveryTarget(order.id);
-    const sold = await this.soldLinesOf(order.id, target);
+    const basis = await this.basisOf(order.id, billingId);
+    const target = basis.target;
+    const sold = basis.sold;
     const credited = await this.db
       .select({
         productId: creditNoteLines.productId,
@@ -262,11 +265,11 @@ export class CreditNoteService {
       })
       .from(creditNoteLines)
       .innerJoin(creditNotes, eq(creditNotes.id, creditNoteLines.creditNoteId))
-      .where(eq(creditNotes.originalDocumentKey, `order:${order.id}:tax_invoice`));
+      .where(eq(creditNotes.originalDocumentKey, basis.documentKey));
     return {
-      hasTaxInvoice: Boolean(taxInvoice),
+      hasTaxInvoice: billingId === undefined ? Boolean(taxInvoice) : true,
       currency: order.currency,
-      invoiceTotal: goodsInvoiceTotal(Number(order.totalAmount), target),
+      invoiceTotal: basis.total ?? goodsInvoiceTotal(Number(order.totalAmount), target),
       creditedTotal: round2(credited.reduce((s, c) => s + Number(c.amount), 0)),
       canRestock: await this.stockWasTaken(order.id),
       deliveryInvoice: await this.deliveryInvoiceCredit(order.id, target),
@@ -327,6 +330,35 @@ export class CreditNoteService {
         };
       }),
     ]);
+  }
+
+  /**
+   * What a credit note is raised against: the order's one tax invoice, or (for an order invoiced in parts) one of its part invoices.
+   * An order invoiced in parts has no whole invoice to credit, so asking for it is refused in words.
+   */
+  private async basisOf(orderId: string, billingId?: string): Promise<{ documentKey: string; sold: SoldProduct[]; target: DeliveryCreditTarget | null; total: number | null }> {
+    if (billingId === undefined) {
+      const [part] = await this.db.select({ id: orderBillings.id }).from(orderBillings).where(eq(orderBillings.orderId, orderId)).limit(1);
+      if (part !== undefined) throw new CreditNoteError('NO_TAX_INVOICE', 'This order was invoiced in parts: choose the part invoice to credit.');
+      const target = await this.deliveryTarget(orderId);
+      return { documentKey: `order:${orderId}:tax_invoice`, sold: await this.soldLinesOf(orderId, target), target, total: null };
+    }
+    const [billing] = await this.db.select().from(orderBillings).where(and(eq(orderBillings.id, billingId), eq(orderBillings.orderId, orderId))).limit(1);
+    if (billing === undefined) throw new CreditNoteError('NOT_FOUND', 'That part invoice does not belong to this order.');
+    const rows = await this.db
+      .select({ line: orderBillingLines, item: orderItems, baseUnitId: unitsOfMeasure.id, baseUnitName: unitsOfMeasure.name, baseDecimals: unitsOfMeasure.decimals })
+      .from(orderBillingLines)
+      .innerJoin(orderItems, eq(orderItems.id, orderBillingLines.orderItemId))
+      .leftJoin(products, eq(products.id, orderItems.productId))
+      .leftJoin(unitsOfMeasure, eq(unitsOfMeasure.id, products.baseUnitId))
+      .where(eq(orderBillingLines.billingId, billingId));
+    const sold = soldByProduct(
+      rows.map(({ line, item: i, baseUnitId, baseUnitName, baseDecimals }): SoldItem => {
+        const unit: SoldUnit | null = has(i.unitId) && has(i.unitCode) && has(i.qtyPerUnit) ? { id: i.unitId, code: i.unitCode, qtyPerUnit: plain(i.qtyPerUnit) } : null;
+        return { productId: line.productId, description: line.description, quantity: line.quantity, unitPrice: Number(i.unitPrice), amount: Number(line.amount), unit, baseUnitId: baseUnitId ?? undefined, baseUnitName: baseUnitName ?? undefined, baseDecimals: baseDecimals ?? undefined };
+      }),
+    );
+    return { documentKey: `order_billing:${billingId}:tax_invoice`, sold, target: null, total: Number(billing.totalAmount) };
   }
 
   /** What of the order's delivery a credit note can reverse, from how its tax invoice was actually issued. */
@@ -390,6 +422,8 @@ export class CreditNoteService {
       issuedBy: string;
       /** Put the credited units back into stock. */
       restock?: boolean;
+      /** The part invoice credited, for an order invoiced in parts. */
+      billingId?: string;
     },
     outer?: Tx,
   ): Promise<CreditNoteRow> {
@@ -409,7 +443,9 @@ export class CreditNoteService {
         ),
       )
       .limit(1);
-    if (!taxInvoice) {
+    // An order invoiced in parts is credited against one of its part invoices; asking for the whole is refused first, in words.
+    const basis = await this.basisOf(order.id, input.billingId);
+    if (!taxInvoice && input.billingId === undefined) {
       throw new CreditNoteError(
         'NO_TAX_INVOICE',
         'A credit note needs a tax invoice. No tax invoice has been issued for this order.',
@@ -421,8 +457,8 @@ export class CreditNoteService {
         'This order was never fulfilled, so no stock was taken for it. Cancel the order to release its reserved stock instead of restocking.',
       );
     }
-    const target = await this.deliveryTarget(order.id);
-    const soldLines = await this.soldLinesOf(order.id, target);
+    const target = basis.target;
+    const soldLines = basis.sold;
 
     return await this.issue(
       {
@@ -431,9 +467,9 @@ export class CreditNoteService {
         module: isSigningModule(order.salesModule) ? order.salesModule : 'ecommerce',
         source: { kind: 'order', id: order.id, ref: order.orderNumber },
         original: {
-          documentKey: `order:${order.id}:tax_invoice`,
+          documentKey: basis.documentKey,
           currency: order.currency,
-          totalAmount: goodsInvoiceTotal(Number(order.totalAmount), target),
+          totalAmount: basis.total ?? goodsInvoiceTotal(Number(order.totalAmount), target),
           soldLines,
         },
         lines: input.lines,
@@ -566,7 +602,7 @@ export class CreditNoteService {
     | { status: 'pending_approval'; message: string }
   > {
     const { getContainer } = await import('@/server/di/container');
-    const preview = await this.previewForOrder(request.orderId, request.lines);
+    const preview = await this.previewForOrder(request.orderId, request.lines, request.billingId);
     const outcome = await getContainer().approvalGate.gate(
       {
         trigger: 'credit_note.requested',
@@ -592,6 +628,7 @@ export class CreditNoteService {
   async previewForOrder(
     orderId: string,
     lines: CreditAsk[],
+    billingId?: string,
   ): Promise<{
     companyId: string;
     branchId: string | null;
@@ -601,8 +638,8 @@ export class CreditNoteService {
   }> {
     const [order] = await this.db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
     if (!order) throw new CreditNoteError('NOT_FOUND', `Order ${orderId} not found.`);
-    const target = await this.deliveryTarget(orderId);
-    const [view, sold] = await Promise.all([this.creditableForOrder(orderId), this.soldLinesOf(orderId, target)]);
+    const basis = await this.basisOf(orderId, billingId);
+    const [view, sold] = [await this.creditableForOrder(orderId, billingId), basis.sold];
     let amount = 0;
     for (const l of lines) {
       const line = view.lines.find((x) => x.productId === l.productId);

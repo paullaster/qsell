@@ -11,6 +11,9 @@ import {
   lineFromRow,
   lineInBase,
   quantityProblem,
+  quantityRangeProblem,
+  stockValueProblem,
+  unitCostProblem,
   quantityStep,
   quantityWords,
   toBaseQuantity,
@@ -300,5 +303,42 @@ describe('how a line shows', () => {
       enteredUnitPrice: 1500,
     });
     expect(lineFromRow({ quantity: 2, unitPrice: 5, totalPrice: 10 }).total).toBe(10);
+  });
+});
+
+describe('how large a quantity or cost may be', () => {
+  it('accepts up to one trillion and refuses anything above it, in words', () => {
+    expect(quantityRangeProblem(1_000_000_000_000, 'Stock')).toBeNull();
+    expect(quantityRangeProblem(999_999_999_999.999, 'Stock')).toBeNull();
+    expect(quantityRangeProblem(1_000_000, 'Stock')).toBeNull();
+    expect(quantityRangeProblem(1_000_000_000_000.001, 'Stock')).not.toBeNull();
+    const big = quantityRangeProblem(10_000_000_000_000, 'The received quantity');
+    expect(big).toContain('The received quantity is too large to record');
+    expect(big).toContain('1,000,000,000,000');
+    expect(big).toContain('extra zero');
+    expect(quantityRangeProblem(-1e13, 'The change')).not.toBeNull();
+    expect(quantityRangeProblem(Number.NaN, 'Stock')).toBe('Stock must be a number.');
+    expect(quantityRangeProblem(Number.POSITIVE_INFINITY, 'Stock')).toBe('Stock must be a number.');
+  });
+  it('refuses stock worth more than the books can hold, however the quantity and cost are split', () => {
+    expect(stockValueProblem(1_000, 15, 'Stock')).toBeNull();
+    expect(stockValueProblem(1_000_000_000_000, 0.5, 'Stock')).toBeNull();
+    expect(stockValueProblem(1_000_000_000_000, 1, 'Stock')).toContain('worth more than the books can hold');
+    expect(stockValueProblem(1_000_000_000_000, 1, 'Stock')).toContain('999,999,999,999.99');
+    expect(stockValueProblem(50_000_000, 25_000, 'Stock')).not.toBeNull();
+    expect(stockValueProblem(10, 0, 'Stock')).toBeNull();
+    expect(stockValueProblem(Number.NaN, 5, 'Stock')).toBe('Stock must be a number.');
+  });
+  it('is part of the rule every quantity goes through, before the unit is looked at', () => {
+    expect(quantityProblem(1e13, 0, 'pieces', 'Stock of "Salt"')).toContain('too large to record');
+    expect(quantityProblem(12, 0, 'pieces', 'Stock')).toBeNull();
+    expect(quantityProblem(2.5, 0, 'pieces', 'Stock')).toContain('whole number');
+  });
+  it('limits a unit cost to what its column holds and refuses a negative one', () => {
+    expect(unitCostProblem(15)).toBeNull();
+    expect(unitCostProblem(9_999_999_999.9999)).toBeNull();
+    expect(unitCostProblem(1e11)).toContain('too large to record');
+    expect(unitCostProblem(-1)).toBe('The unit cost cannot be below zero.');
+    expect(unitCostProblem(Number.NaN)).toBe('The unit cost must be a number.');
   });
 });

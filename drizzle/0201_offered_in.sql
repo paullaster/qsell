@@ -1,0 +1,1 @@
+ALTER TABLE "products" ADD COLUMN "offered_in" text[] DEFAULT ARRAY['quote','sales_order','credit_sale','pos_cash_sale','sales_invoice']::text[] NOT NULL;

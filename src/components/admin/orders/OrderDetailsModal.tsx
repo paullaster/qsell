@@ -32,6 +32,7 @@ import { shownPaymentReference } from '@/lib/paymentReference';
 import type { Choice } from '@/lib/payment-options';
 import type { Order, OrderStatus } from '@/types/index';
 import { OrderStatusBadge } from './OrderStatusBadge';
+import { useWhen } from '@/components/business-time';
 
 export interface FulfilmentChange {
   status: OrderStatus;
@@ -75,6 +76,7 @@ export function OrderDetailsModal({
   onCancel,
   onChanged,
 }: Props) {
+  const when = useWhen();
   const [status, setStatus] = useState<Choice | null>(
     statusChoice(FULFILMENT_STATUSES, order.status),
   );
@@ -111,7 +113,7 @@ export function OrderDetailsModal({
     <Modal title={`Order Details: ${order.orderNumber}`} onClose={onClose}>
       <div className="space-y-6 text-xs">
         <p className="text-[11px] text-fg-muted">
-          Placed on {new Date(order.createdAt).toLocaleString()}
+          Placed on {when(order.createdAt)}
         </p>
 
         <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Invoices">

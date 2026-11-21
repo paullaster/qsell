@@ -3,6 +3,7 @@
 import { use, useId, useState } from 'react';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, type Notice } from '@/components/ui/screen-kit';
 import { preparationSheetAction } from '@/server/domains/pricing/preparation-actions';
+import { PrintButton } from '@/components/ui/PrintButton';
 import type { PreparationView } from '@/server/domains/pricing/preparation-service';
 
 type Loaded = Awaited<ReturnType<typeof preparationSheetAction>>;
@@ -40,7 +41,7 @@ function Body({ today, initial }: { today: string; initial: PreparationView }) {
         <PageHeader
           title="Preparation sheet"
           intro="What has to be made for a day, from the choices on each order. Totals add every serving up; each order's own choices are listed under it. A cancelled order is not on the sheet."
-          actions={<button type="button" className={buttonClass} onClick={() => window.print()}>Print</button>}
+          actions={<PrintButton targetId="preparation-print" title={`Preparation sheet: ${title}`} testId="prep-print" />}
         />
       </div>
       <div className="flex flex-wrap items-end gap-3 print:hidden">
@@ -61,7 +62,7 @@ function Body({ today, initial }: { today: string; initial: PreparationView }) {
       )}
       <Message notice={notice} />
 
-      <section aria-labelledby={`${uid}-title`} className="space-y-4" data-testid="preparation-sheet">
+      <section id="preparation-print" aria-labelledby={`${uid}-title`} className="space-y-4" data-testid="preparation-sheet">
         <h2 id={`${uid}-title`} className="text-lg font-bold text-fg-strong">{title}</h2>
         {view.truncated ? <p role="alert" className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-fg">There are more orders than one sheet holds. The first ones are shown; the totals are for those only.</p> : null}
         {sheet.groups.length === 0 ? <p className="text-sm text-fg-muted" role="status">Nothing to prepare for this day.</p> : null}

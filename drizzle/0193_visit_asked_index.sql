@@ -1,0 +1,1 @@
+CREATE INDEX "order_visits_asked_idx" ON "order_visits" USING btree ("company_id","starts_at") WHERE "order_visits"."time_request_note" IS NOT NULL;

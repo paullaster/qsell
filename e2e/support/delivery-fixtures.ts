@@ -184,6 +184,54 @@ async function cancelOrder(orderNumber: string): Promise<Record<string, string>>
   return { cancelled: orderNumber };
 }
 
+/** Puts the business time zone straight into the company row (no reason, no log): for a test to leave it as it found it. */
+async function setTimeZone(zone: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { companySettings } = await import('@/server/db/drizzle/schema');
+  const company = await getContainer().companySettings.ensureSeeded();
+  await db.update(companySettings).set({ timezone: zone }).where(eq(companySettings.id, company.id));
+  return { timeZone: zone };
+}
+
+/** When the live visit of an order starts, as stored (an instant), so a test can check what a time typed in the booking form was taken to mean. */
+async function visitInstant(orderNumber: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { orders, orderVisits } = await import('@/server/db/drizzle/schema');
+  const [row] = await db.select({ startsAt: orderVisits.startsAt, endsAt: orderVisits.endsAt }).from(orderVisits).innerJoin(orders, eq(orders.id, orderVisits.orderId)).where(eq(orders.orderNumber, orderNumber));
+  if (row === undefined) throw new Error(`e2e fixture: no visit for ${orderNumber}`);
+  return { startsAt: row.startsAt.toISOString(), endsAt: row.endsAt.toISOString() };
+}
+
+/** What a visit's request for another time holds now (empty when none), and one made as the customer would make it. */
+async function visitRequest(orderNumber: string, ask?: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { orders, orderVisits } = await import('@/server/db/drizzle/schema');
+  const company = await getContainer().companySettings.ensureSeeded();
+  const [row] = await db.select({ id: orderVisits.id, orderId: orderVisits.orderId }).from(orderVisits).innerJoin(orders, eq(orders.id, orderVisits.orderId)).where(eq(orders.orderNumber, orderNumber));
+  if (row === undefined) throw new Error(`e2e fixture: no visit for ${orderNumber}`);
+  if (ask !== undefined) {
+    const made = await getContainer().orderVisits.requestChange(company.id, row.orderId, row.id, ask, 'e2e-customer');
+    if (!made.ok) throw new Error(`e2e fixture: ${made.error}`);
+  }
+  const [after] = await db.select({ note: orderVisits.timeRequestNote }).from(orderVisits).where(eq(orderVisits.id, row.id));
+  return { note: after?.note ?? '' };
+}
+
+/** A member of staff with the manager role, who has not been given the permission to change the business time zone. */
+async function managerStaff(tag: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const email = `e2e-manager-${tag}@example.test`.toLowerCase();
+  const password = 'E2e-Manager-pass-1!';
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { users } = await import('@/server/db/drizzle/schema');
+  const user = await getContainer().usersAdmin.createUser({ email, password, name: `Manager ${tag}`, phone: '0711000333', role: 'manager' });
+  // A new account is made to choose its own password at first sign-in; this one signs straight in.
+  await db.update(users).set({ mustChangePassword: false }).where(eq(users.id, user.id));
+  return { id: user.id, email, password };
+}
+
 /** Books a visit for an order, two days ahead, with a note and a contact phone the customer must never see. */
 async function bookVisit(orderNumber: string): Promise<Record<string, string>> {
   const { getContainer } = await import('@/server/di/container');
@@ -391,6 +439,10 @@ async function main(): Promise<void> {
   if (command === 'collection') result = await collection(tag);
   if (command === 'ready') result = await ready(tag, extra);
   if (command === 'collection-ready' && extra !== undefined) result = await markCollectionReady(tag, extra);
+  if (command === 'set-time-zone' && extra !== undefined) result = await setTimeZone(extra);
+  if (command === 'visit-instant') result = await visitInstant(tag);
+  if (command === 'visit-request') result = await visitRequest(tag, extra);
+  if (command === 'manager-staff') result = await managerStaff(tag);
   if (command === 'book-visit') result = await bookVisit(tag);
   if (command === 'close-closed') result = await closeForClosedOrders();
   if (command === 'cancel-order') result = await cancelOrder(tag);

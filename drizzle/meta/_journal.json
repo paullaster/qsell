@@ -1310,6 +1310,146 @@
       "when": 1794885915772,
       "tag": "0186_order_source_quote",
       "breakpoints": true
+    },
+    {
+      "idx": 187,
+      "version": "7",
+      "when": 1794891986454,
+      "tag": "0187_order_invoice_when_approved",
+      "breakpoints": true
+    },
+    {
+      "idx": 188,
+      "version": "7",
+      "when": 1794901684549,
+      "tag": "0188_registers_and_shifts",
+      "breakpoints": true
+    },
+    {
+      "idx": 189,
+      "version": "7",
+      "when": 1794901684550,
+      "tag": "0189_business_timezone",
+      "breakpoints": true
+    },
+    {
+      "idx": 190,
+      "version": "7",
+      "when": 1794925256704,
+      "tag": "0190_visit_messages_by_order",
+      "breakpoints": true
+    },
+    {
+      "idx": 191,
+      "version": "7",
+      "when": 1794935225531,
+      "tag": "0191_visit_text_kinds",
+      "breakpoints": true
+    },
+    {
+      "idx": 192,
+      "version": "7",
+      "when": 1794943943602,
+      "tag": "0192_visit_time_request",
+      "breakpoints": true
+    },
+    {
+      "idx": 193,
+      "version": "7",
+      "when": 1794960557931,
+      "tag": "0193_visit_asked_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 194,
+      "version": "7",
+      "when": 1795052344162,
+      "tag": "0194_webshop_orders_channel_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 195,
+      "version": "7",
+      "when": 1795055138010,
+      "tag": "0195_checkout_attempts_order_channel_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 196,
+      "version": "7",
+      "when": 1795150508038,
+      "tag": "0196_customer_credit_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 197,
+      "version": "7",
+      "when": 1795150568038,
+      "tag": "0197_shift_close_approval",
+      "breakpoints": true
+    },
+    {
+      "idx": 198,
+      "version": "7",
+      "when": 1795150628038,
+      "tag": "0198_cash_sales",
+      "breakpoints": true
+    },
+    {
+      "idx": 199,
+      "version": "7",
+      "when": 1795150688038,
+      "tag": "0199_counter_returns",
+      "breakpoints": true
+    },
+    {
+      "idx": 200,
+      "version": "7",
+      "when": 1795150748038,
+      "tag": "0200_shift_difference_posting",
+      "breakpoints": true
+    },
+    {
+      "idx": 201,
+      "version": "7",
+      "when": 1795150808038,
+      "tag": "0201_offered_in",
+      "breakpoints": true
+    },
+    {
+      "idx": 202,
+      "version": "7",
+      "when": 1795150868038,
+      "tag": "0202_partial_billing",
+      "breakpoints": true
+    },
+    {
+      "idx": 203,
+      "version": "7",
+      "when": 1795150928038,
+      "tag": "0203_offline_selling",
+      "breakpoints": true
+    },
+    {
+      "idx": 204,
+      "version": "7",
+      "when": 1795201804092,
+      "tag": "0204_cash_sale_till",
+      "breakpoints": true
+    },
+    {
+      "idx": 205,
+      "version": "7",
+      "when": 1795234116354,
+      "tag": "0205_collection_waiting_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 206,
+      "version": "7",
+      "when": 1795237542449,
+      "tag": "0206_quantity_columns_to_trillion",
+      "breakpoints": true
     }
   ]
 }

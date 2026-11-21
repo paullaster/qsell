@@ -57,6 +57,10 @@ test.describe('the dispatch board', () => {
       await expect(stops.getByRole('listitem').first()).toContainText(second);
       await stops.getByRole('button', { name: 'Nearest first' }).click();
       await expect(page.getByText(/suggested order/)).toBeVisible({ timeout: 30_000 });
+      // The shortest route the planner can find: said in words, with the length when the stops are on the map.
+      await stops.getByRole('button', { name: 'Shortest route' }).click();
+      await expect(page.getByText(/shortest order found/)).toBeVisible({ timeout: 30_000 });
+      await noHorizontalScroll(page);
       await stops.getByRole('button', { name: `Take ${first} off the run` }).click();
       await expect(page.getByText(`${first} is off the run.`)).toBeVisible({ timeout: 30_000 });
       await expect(stops).not.toContainText(first);

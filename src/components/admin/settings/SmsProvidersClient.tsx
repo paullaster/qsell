@@ -1,5 +1,6 @@
 'use client';
 
+import { useWhen } from '@/components/business-time';
 import { use, useId, useState } from 'react';
 import { createSmsAccountAction, makeSmsAccountDefaultAction, sendTestSmsAction, setSmsAccountActiveAction, smsScreenAction, updateSmsAccountAction } from '@/server/domains/sms/actions';
 import type { SmsAccountView } from '@/server/domains/sms/accounts';
@@ -11,9 +12,8 @@ import { SMS_PROVIDERS, isSmsProviderId, type SmsProviderId } from '@/lib/sms-pr
 
 type Loaded = Awaited<ReturnType<typeof smsScreenAction>>;
 
-const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' });
 
-function testWords(test: SmsAccountView['lastTest']): string {
+function testWords(test: SmsAccountView['lastTest'], when: (iso: string) => string): string {
   if (test === null) return 'Not tested yet.';
   if (test.ok) return `Test message accepted by the provider on ${when(test.at)}.`;
   return `The last test, on ${when(test.at)}, did not go: ${test.error ?? 'no reason was given'}`;
@@ -153,6 +153,7 @@ function AccountForm({ account, onSaved, onError }: { account?: SmsAccountView; 
 }
 
 function AccountRow({ account, onSaved, onError }: { account: SmsAccountView; onSaved: (text: string) => void; onError: (text: string) => void }) {
+  const when = useWhen();
   const uid = useId();
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -187,7 +188,7 @@ function AccountRow({ account, onSaved, onError }: { account: SmsAccountView; on
         <Chip tone={account.isActive ? 'sky' : 'gray'}>{account.isActive ? 'In use' : 'Stopped'}</Chip>
         <Chip tone="gray">{account.adapterWords}</Chip>
       </div>
-      <p className="text-sm text-fg-muted">{testWords(account.lastTest)}</p>
+      <p className="text-sm text-fg-muted">{testWords(account.lastTest, when)}</p>
       <div className="flex flex-wrap items-end gap-2">
         {account.isActive ? (
           <>

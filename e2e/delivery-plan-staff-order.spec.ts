@@ -9,7 +9,7 @@ test.describe('an order taken by staff gets its delivery planned', () => {
     deliveryTool('open', tag);
     try {
       const orderNumber = deliveryTool('unplanned-order', tag).orderNumber ?? '';
-      await open(page, '/admin/orders', /Customer Orders/);
+      await open(page, '/admin/orders', /Web Shop Orders/);
       await page.getByLabel('Search orders').fill(orderNumber);
       const manage = page.getByRole('button', { name: /Manage/ }).first();
       await expect(manage).toBeVisible({ timeout: 60_000 });

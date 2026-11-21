@@ -40,6 +40,7 @@ import {
   targetToState,
   type TargetState,
 } from './TargetEditor';
+import { useBusinessTimeZone } from '@/components/business-time';
 import { fromLocalInput, toLocalInput } from './PriceListForm';
 
 const DAYS = [
@@ -107,7 +108,7 @@ interface State {
   appliesToContract: boolean;
 }
 
-function initialState(r: DiscountRuleDto | undefined, names: Record<string, string>): State {
+function initialState(r: DiscountRuleDto | undefined, names: Record<string, string>, timeZone: string): State {
   return {
     code: r?.code ?? '',
     name: r?.name ?? '',
@@ -125,8 +126,8 @@ function initialState(r: DiscountRuleDto | undefined, names: Record<string, stri
     minOrderValue: r?.conditions.minOrderValue != null ? String(r.conditions.minOrderValue) : '',
     paymentMethods: r?.conditions.paymentMethods ?? [],
     requiresCoupon: r?.requiresCoupon ?? false,
-    validFrom: toLocalInput(r?.validFrom ?? new Date().toISOString()),
-    validTo: toLocalInput(r?.validTo ?? null),
+    validFrom: toLocalInput(r?.validFrom ?? new Date().toISOString(), timeZone),
+    validTo: toLocalInput(r?.validTo ?? null, timeZone),
     days: r?.schedule.days ?? [],
     from: r?.schedule.from ?? '',
     to: r?.schedule.to ?? '',
@@ -141,7 +142,7 @@ function initialState(r: DiscountRuleDto | undefined, names: Record<string, stri
   };
 }
 
-function toFormInput(s: State): DiscountFormInput {
+function toFormInput(s: State, timeZone: string): DiscountFormInput {
   const priceRule = s.kind === 'line' || s.kind === 'order';
   const tiers = s.tiers
     .map((t) => ({ from: num(t.from), value: num(t.value) }))
@@ -158,8 +159,8 @@ function toFormInput(s: State): DiscountFormInput {
     kind: s.kind,
     priority: Math.trunc(num(s.priority) ?? 0),
     stacking: priceRule ? s.stacking : 'exclusive',
-    validFrom: fromLocalInput(s.validFrom) ?? new Date().toISOString(),
-    validTo: fromLocalInput(s.validTo),
+    validFrom: fromLocalInput(s.validFrom, timeZone) ?? new Date().toISOString(),
+    validTo: fromLocalInput(s.validTo, timeZone),
     schedule: {
       ...(s.days.length > 0 ? { days: s.days } : {}),
       ...(s.from ? { from: s.from } : {}),
@@ -225,7 +226,8 @@ export function DiscountForm({
   onCancel: () => void;
 }) {
   const uid = useId();
-  const [s, setS] = useState<State>(() => initialState(initial, productNames));
+  const timeZone = useBusinessTimeZone();
+  const [s, setS] = useState<State>(() => initialState(initial, productNames, timeZone));
   const [reason, setReason] = useState<ReasonValue>({ code: '', text: '' });
   const [message, setMessage] = useState<Message>(null);
   const [busy, setBusy] = useState(false);
@@ -236,7 +238,7 @@ export function DiscountForm({
   const set = <K extends keyof State>(k: K, v: State[K]) => setS((cur) => ({ ...cur, [k]: v }));
   const priceRule = s.kind === 'line' || s.kind === 'order';
 
-  const form = useMemo(() => toFormInput(s), [s]);
+  const form = useMemo(() => toFormInput(s, timeZone), [s, timeZone]);
   const summary = useMemo(() => {
     const pairs = [
       ...s.target.products.map((p) => [p.id, p.label] as const),
@@ -635,7 +637,7 @@ export function DiscountForm({
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label htmlFor={`${uid}-vf`} className={labelClass}>
-              Starts
+              Starts (business time)
             </label>
             <input
               id={`${uid}-vf`}
@@ -648,7 +650,7 @@ export function DiscountForm({
           </div>
           <div>
             <label htmlFor={`${uid}-vt`} className={labelClass}>
-              Ends (leave empty for no end)
+              Ends, business time (leave empty for no end)
             </label>
             <input
               id={`${uid}-vt`}
@@ -686,7 +688,7 @@ export function DiscountForm({
         <div className="grid grid-cols-2 gap-3 sm:max-w-sm">
           <div>
             <label htmlFor={`${uid}-tf`} className={labelClass}>
-              From time (Nairobi)
+              From time (business time)
             </label>
             <input
               id={`${uid}-tf`}

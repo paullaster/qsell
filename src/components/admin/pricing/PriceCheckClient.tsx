@@ -20,6 +20,8 @@ import {
 } from '../approvals/shared';
 import { PriceTraceView } from './PriceTraceView';
 import { ProductPick } from './PriceLinesPanel';
+import { useBusinessTimeZone } from '@/components/business-time';
+import { fromBusinessInput } from '@/lib/visit';
 import { toLocalInput } from './PriceListForm';
 
 const CHANNELS: Record<string, string> = {
@@ -31,6 +33,9 @@ const CHANNELS: Record<string, string> = {
 
 /** Tries a sale through the real pricing engine and shows the price and every reason behind it. */
 export function PriceCheckClient({ lookups }: { lookups: PricingLookups }) {
+  const timeZone = useBusinessTimeZone();
+  // The furthest day the price can be asked for, fixed when the screen opens (the clock is read once, not on every render).
+  const [latest] = useState(() => toLocalInput(new Date(Date.now() + 365 * 864e5).toISOString(), timeZone));
   const uid = useId();
   const [product, setProduct] = useState<{ id: string; label: string } | null>(null);
   const [quantity, setQuantity] = useState('1');
@@ -61,7 +66,7 @@ export function PriceCheckClient({ lookups }: { lookups: PricingLookups }) {
       route: route || null,
       country: country || null,
       currency: currency || null,
-      at: at ? new Date(at).toISOString() : null,
+      at: at === '' ? null : fromBusinessInput(at, timeZone),
     });
     setBusy(false);
     if (r.ok) setResult(r.data);
@@ -204,14 +209,14 @@ export function PriceCheckClient({ lookups }: { lookups: PricingLookups }) {
           </div>
           <div className="sm:col-span-2">
             <label htmlFor={`${uid}-at`} className={labelClass}>
-              As at (empty means now)
+              As at, business time (empty means now)
             </label>
             <input
               id={`${uid}-at`}
               type="datetime-local"
               className={`${fieldClass} sm:max-w-xs`}
               value={at}
-              max={toLocalInput(new Date(Date.now() + 365 * 864e5).toISOString())}
+              max={latest}
               onChange={(e) => setAt(e.target.value)}
             />
           </div>

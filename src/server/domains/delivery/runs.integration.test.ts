@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { and, eq, inArray, like } from 'drizzle-orm';
+import { and, eq, inArray, like, sql } from 'drizzle-orm';
 import { has } from '@/lib/values';
 import type * as mod_server_di_container from '@/server/di/container';
 import type * as mod_server_db_drizzle_client from '@/server/db/drizzle/client';
@@ -255,6 +255,52 @@ describe.skipIf(!has(url))('runs and courier shipments (database)', () => {
       expect(await c.deliveryRuns.removeStop(runStaff(), run.id, ids[0])).toMatchObject({ ok: false, reason: 'not_found' });
       // Taken off, it is free to join another run, and is back on the board.
       expect((await c.deliveryRuns.addStop(runStaff(), (await newRun(o.branchId)).id, ids[0])).ok).toBe(true);
+    });
+
+    it('puts the stops in the shortest order the planner finds, measures the route, names the planner in the log, and refuses a planner it does not have', async () => {
+      const o = await order({ quantities: [7, 1] });
+      const run = await newRun(o.branchId);
+      // Five stops along a line east and west of the branch, put on the run in a poor order.
+      const east = (km: number) => ({ latitude: PIN.latitude, longitude: PIN.longitude + km / 111.19 });
+      const spots = [east(8), east(-9), east(3), east(-2), east(12)];
+      const ids: string[] = [];
+      for (const pin of spots) {
+        const id = await readyDelivery(o, [{ productId: o.a, quantity: 1 }]);
+        await db.update(schema.deliveries).set({ destination: sql`jsonb_set(${schema.deliveries.destination}, '{pin}', ${JSON.stringify(pin)}::jsonb)` }).where(eq(schema.deliveries.id, id));
+        expect((await c.deliveryRuns.addStop(runStaff(), run.id, id)).ok).toBe(true);
+        ids.push(id);
+      }
+      const before = await runView(run.id);
+      // As put on: 0 → 8 → -9 → 3 → -2 → 12 = 8 + 17 + 12 + 5 + 14 = 56 km.
+      expect(before.route).toMatchObject({ pinned: 5, unpinned: 0 });
+      expect(before.route?.km).toBeCloseTo(56, 0);
+      // An unknown planner, an unreadable one and a missing one that is not 'nearest' are refused, and nothing moves.
+      for (const bad of ['fastest', 7, '', null]) expect(await c.deliveryRuns.arrange(runStaff(), run.id, undefined, bad)).toMatchObject({ ok: false, reason: 'bad_input' });
+      expect((await runView(run.id)).stops.map((s) => s.deliveryId)).toEqual(ids);
+      // The shortest: one side to its end, then across: 0 → -2 → -9 → 3 → 8 → 12 would be 2 + 7 + 12 + 5 + 4 = 30; 0 → 3 → 8 → 12 → -2 → -9 is 3 + 5 + 4 + 14 + 7 = 33. The best is 30.
+      const shortest = await c.deliveryRuns.arrange(runStaff(), run.id, undefined, 'shortest');
+      expect(shortest.ok).toBe(true);
+      const after = await runView(run.id);
+      expect(after.route?.km).toBeCloseTo(30, 0);
+      expect(after.stops.map((x) => x.deliveryId)).toEqual([ids[3], ids[1], ids[2], ids[0], ids[4]]);
+      expect(after.version).toBe(before.version + 1);
+      // The log says which planner and how long the route it made is.
+      const log = await db.select().from(schema.decisionLog).where(and(eq(schema.decisionLog.subjectId, run.id), eq(schema.decisionLog.action, 'run.reordered')));
+      const last = log.at(-1);
+      expect(last?.inputs).toMatchObject({ planner: 'shortest' });
+      expect((last?.inputs as { km: number }).km).toBeCloseTo(30, 0);
+      // The nearest next is still the default, and is never shorter than the shortest.
+      expect((await c.deliveryRuns.arrange(runStaff(), run.id)).ok).toBe(true);
+      expect((await runView(run.id)).route?.km ?? 0).toBeGreaterThanOrEqual(30 - 0.01);
+      // A run whose stops have no pin has no route to measure, and the planner leaves its order alone.
+      const plain = await newRun(o.branchId);
+      const p1 = await readyDelivery(o, [{ productId: o.a, quantity: 1 }]);
+      const p2 = await readyDelivery(o, [{ productId: o.a, quantity: 1 }]);
+      await db.update(schema.deliveries).set({ destination: sql`${schema.deliveries.destination} - 'pin'` }).where(inArray(schema.deliveries.id, [p1, p2]));
+      for (const id of [p1, p2]) expect((await c.deliveryRuns.addStop(runStaff(), plain.id, id)).ok).toBe(true);
+      expect((await runView(plain.id)).route).toBeNull();
+      expect((await c.deliveryRuns.arrange(runStaff(), plain.id, undefined, 'shortest')).ok).toBe(true);
+      expect((await runView(plain.id)).stops.map((x) => x.deliveryId)).toEqual([p1, p2]);
     });
 
     it('refuses a stale version, so two dispatchers cannot overwrite each other', async () => {

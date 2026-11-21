@@ -10,6 +10,7 @@ import { useCart } from '@/components/store/cart/CartProvider';
 import { useStore } from '@/components/store/StoreContext';
 import { PackageBuilder } from '@/components/store/product/PackageBuilder';
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
+import { useWhen } from '@/components/business-time';
 
 const saved = (token: string) => `qsell_group_${token}`;
 
@@ -64,12 +65,13 @@ function Loaded({ token, viewPromise }: { token: string; viewPromise: ReturnType
 }
 
 function Body({ token, initial }: { token: string; initial: GroupView }) {
+  const closes = useWhen();
   const [view, setView] = useState(initial);
   const reload = async () => {
     const r = await groupViewAction(token).catch(() => null);
     if (r?.ok === true && r.data !== null) setView(r.data);
   };
-  const when = view.closesAt === null ? null : new Date(view.closesAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+  const when = view.closesAt === null ? null : closes(view.closesAt);
   return (
     <div className="space-y-6">
       <header className="space-y-1">

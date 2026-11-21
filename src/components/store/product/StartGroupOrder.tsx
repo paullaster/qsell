@@ -7,12 +7,15 @@ import { Users } from 'lucide-react';
 import { createGroupAction } from '@/server/domains/pricing/package-group-actions';
 import { MAX_GROUP_TITLE } from '@/lib/group-order';
 import { useStore } from '@/components/store/StoreContext';
+import { useBusinessTimeZone } from '@/components/business-time';
+import { fromBusinessInput } from '@/lib/visit';
 
 /** For a signed-in shopper: start a group order for this package, where each person chooses their own serving and the shopper pays once. */
 export function StartGroupOrder({ productId }: { productId: string }) {
   const { sessionName } = useStore();
   const router = useRouter();
   const uid = useId();
+  const timeZone = useBusinessTimeZone();
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [forDate, setForDate] = useState('');
@@ -33,7 +36,7 @@ export function StartGroupOrder({ productId }: { productId: string }) {
   const start = async () => {
     setBusy(true);
     setProblem(null);
-    const r = await createGroupAction({ productId, title, forDate: forDate === '' ? null : forDate, closesAt: closesAt === '' ? null : new Date(closesAt).toISOString() }).catch(() => null);
+    const r = await createGroupAction({ productId, title, forDate: forDate === '' ? null : forDate, closesAt: closesAt === '' ? null : fromBusinessInput(closesAt, timeZone) }).catch(() => null);
     setBusy(false);
     if (r === null) setProblem('The shop could not be reached. Please try again.');
     else if (!r.ok) setProblem(r.error);
@@ -60,7 +63,7 @@ export function StartGroupOrder({ productId }: { productId: string }) {
           <input id={`${uid}-d`} type="date" value={forDate} onChange={(e) => setForDate(e.target.value)} className="block min-h-11 w-full rounded-lg border border-line bg-surface px-3 text-sm text-fg-strong" />
         </div>
         <div className="space-y-1">
-          <label htmlFor={`${uid}-c`} className="text-sm font-medium text-fg-muted">Choose before (optional)</label>
+          <label htmlFor={`${uid}-c`} className="text-sm font-medium text-fg-muted">Choose before (optional, business time)</label>
           <input id={`${uid}-c`} type="datetime-local" value={closesAt} onChange={(e) => setClosesAt(e.target.value)} className="block min-h-11 w-full rounded-lg border border-line bg-surface px-3 text-sm text-fg-strong" />
         </div>
       </div>

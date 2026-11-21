@@ -3,7 +3,7 @@ import { readOsmConfig } from '@/lib/geo-config';
 import { BuiltinGeoAdapter } from './builtin.adapter';
 import { OsmGeoAdapter } from './osm.adapter';
 
-/** The environment variables the map settings read. Narrow on purpose, so tests pass only what they mean. */
+/** The environment variables the map adapters read (tuning only, such as `GEO_ROAD_FACTOR`; never the choice of provider). Narrow on purpose. */
 export type GeoEnv = Readonly<Record<string, string | undefined>>;
 
 /** A provider's settings as saved by the administrator: checked again here, since a saved value may be older than the rules. */
@@ -11,7 +11,7 @@ export type GeoDriverConfig = Readonly<Record<string, unknown>>;
 
 export type GeoAdapterFactory = (env: GeoEnv, config: GeoDriverConfig) => GeoPort;
 
-/** The provider the administrator chose for the company, or null when nothing was chosen (then the environment decides). */
+/** The provider the administrator chose for the company, or null when nothing was chosen (then the built-in estimate is used). */
 export type GeoSelection = () => Promise<{ driver: string; config: GeoDriverConfig } | null>;
 
 /**
@@ -33,14 +33,6 @@ export function roadFactorFrom(env: GeoEnv): number {
   return Number.isFinite(raw) && raw >= 1 && raw <= 3 ? raw : 1.3;
 }
 
-/** `GEO_DRIVER`: the provider in use. Unset means the built-in one. A name nobody registered is an error that names the choices. */
-export function configuredGeoDriver(env: GeoEnv = process.env, adapters: Record<string, GeoAdapterFactory> = GEO_ADAPTERS): string {
-  const raw = env.GEO_DRIVER?.trim().toLowerCase() ?? '';
-  if (raw === '') return 'builtin';
-  if (!Object.hasOwn(adapters, raw)) throw new Error(`Unknown GEO_DRIVER "${raw}". Use one of: ${Object.keys(adapters).join(', ')}.`);
-  return raw;
-}
-
 /**
  * Builds a provider the first time it is asked for, so a missing key for a provider nobody uses never breaks the app, and
  * the built-in one is always there to fall back on.
@@ -54,20 +46,15 @@ export class GeoPortRegistry {
     private readonly selection: GeoSelection | null = null,
   ) {}
 
-  /** The provider the environment names (`GEO_DRIVER`), built-in when none. */
-  active(): GeoPort {
-    return this.named(configuredGeoDriver(this.env, this.adapters));
-  }
-
   /**
-   * The provider in use now: the one the administrator chose, else the environment's. A choice that cannot be built (a setting
-   * that is no longer valid) falls back to the built-in estimate, so a map mistake never stops a sale.
+   * The provider in use now: the one the administrator chose under Delivery, Maps; the built-in estimate when none has been chosen.
+   * A choice that cannot be built (a setting that is no longer valid) also falls back to the built-in estimate, so a map mistake
+   * never stops a sale. The environment never chooses the provider.
    */
   async current(): Promise<GeoPort> {
     try {
       const chosen = this.selection === null ? null : await this.selection();
-      if (chosen !== null) return this.named(chosen.driver, chosen.config);
-      return this.active();
+      return chosen === null ? this.fallback() : this.named(chosen.driver, chosen.config);
     } catch {
       return this.fallback();
     }

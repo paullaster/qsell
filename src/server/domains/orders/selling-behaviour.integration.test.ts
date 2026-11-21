@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type { getContainer } from '@/server/di/container';
@@ -27,6 +27,8 @@ describe.skipIf(url === undefined || url === '')('selling document behaviour in 
   let productId: string;
   let staffId: string;
   const base = defOf('sales_order').defaults;
+  const actor = { type: 'user' as const, id: 'selling-behaviour-test' };
+  const reason = { code: 'POLICY_CHANGE' };
 
   const customer = async (over: Record<string, unknown> = {}) => {
     const email = `buyer-${randomUUID().slice(0, 8)}@selling.test`;
@@ -81,12 +83,35 @@ describe.skipIf(url === undefined || url === '')('selling document behaviour in 
     await db.execute(sql`select 1`);
   });
 
+  const resetCreditSettings = async () => {
+    await c.customerCreditSettings.saveDisplay(companyId, 'running', actor, reason);
+    await c.customerCreditSettings.setAllowOverCreditLimit(companyId, false, reason, actor);
+  };
+
+  beforeEach(resetCreditSettings);
+  afterEach(resetCreditSettings);
+
   it('behaves as it always has when no settings are given: over the limit is refused when no workflow covers it', async () => {
     const buyer = await customer();
     const refused = await order(buyer.email, 11);
     expect(refused.success).toBe(false);
     expect(refused.error).toContain('would exceed the credit limit of 1,000');
     expect((await order(buyer.email, 5)).success).toBe(true);
+  });
+
+  it('lets an over-limit order through when the company allows proceeding beyond credit', async () => {
+    const buyer = await customer();
+    await c.customerCreditSettings.setAllowOverCreditLimit(companyId, true, reason, actor);
+    const placed = await order(buyer.email, 11);
+    expect(placed.success).toBe(true);
+  });
+
+  it('still checks available credit when the company only changes the display to static', async () => {
+    const buyer = await customer();
+    await c.customerCreditSettings.saveDisplay(companyId, 'static', actor, reason);
+    const refused = await order(buyer.email, 11);
+    expect(refused.success).toBe(false);
+    expect(refused.error).toContain('would exceed the credit limit');
   });
 
   it('does not look at the limit when the credit check is off', async () => {

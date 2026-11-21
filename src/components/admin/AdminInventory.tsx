@@ -1,6 +1,6 @@
 'use client';
 
-import { quantityStep } from '@/lib/unit-rules';
+import { quantityRangeProblem, quantityStep, stockValueProblem, unitCostProblem } from '@/lib/unit-rules';
 import { isInventoryManaged } from '@/lib/inventory-kind';
 import React, { use, useState } from 'react';
 import {
@@ -29,6 +29,7 @@ import {
   writeOffStockAction,
   auditStockCountAction,
 } from '@/server/actions';
+import { useWhen } from '@/components/business-time';
 
 interface AdminInventoryProps {
   productsPromise: Promise<Product[]>;
@@ -37,6 +38,7 @@ interface AdminInventoryProps {
 }
 
 export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: AdminInventoryProps) {
+  const when = useWhen();
   const products = use(productsPromise).filter(isInventoryManaged);
   const ledger = use(ledgerPromise);
 
@@ -142,6 +144,15 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
   const handleReceiveSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedProduct || receiveQty <= 0) return;
+    // The browser says it in words first; the server checks again and is the one that counts.
+    const tooBig =
+      quantityRangeProblem(Number(receiveQty), 'The received quantity') ??
+      unitCostProblem(Number(unitCost)) ??
+      (Number(unitCost) > 0 ? stockValueProblem(selectedProduct.stockQuantity + Number(receiveQty), Number(unitCost), 'The stock after this receipt') : null);
+    if (tooBig !== null) {
+      setActionError(tooBig);
+      return;
+    }
     try {
       setIsSubmitting(true);
       setActionError(null);
@@ -559,7 +570,7 @@ export function AdminInventory({ productsPromise, ledgerPromise, onRefresh }: Ad
                     return (
                       <tr key={entry.id} className="font-mono hover:bg-hover">
                         <td className="px-4 py-3 text-[11px] text-fg-muted">
-                          {new Date(entry.timestamp).toLocaleString()}
+                          {when(entry.timestamp)}
                         </td>
                         <td className="px-4 py-3 font-semibold text-fg-strong">
                           {entry.productName}

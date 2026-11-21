@@ -4,7 +4,7 @@
  * Everything the platform needs from a map service is on this interface: suggest places as someone types, turn a pin into an
  * address and back, and say how far apart two places are. The delivery rules depend on this interface only; a provider
  * (OpenStreetMap, Google, Mapbox, a routing engine of your own) is an adapter under `server/adapters/geo`, registered by name
- * in the registry and chosen with `GEO_DRIVER`. Adding a provider means adding one adapter and one line in the registry.
+ * in the registry and chosen by an administrator under Delivery, Maps (the built-in estimate until one is chosen). Adding a provider means adding one adapter and one line in the registry.
  *
  * Adapters never throw for "nothing found": they answer with an empty list or `null`. They throw `GeoUnavailableError` when the
  * provider itself cannot be reached or refuses, so the caller can fall back to the built-in estimate instead of stopping a sale.

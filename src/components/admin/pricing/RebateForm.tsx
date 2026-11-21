@@ -28,6 +28,7 @@ import {
 } from '../approvals/shared';
 import { ScopeEditor } from './ScopeEditor';
 import { TargetEditor, stateToTarget, targetToState, type TargetState } from './TargetEditor';
+import { useBusinessTimeZone } from '@/components/business-time';
 import { fromLocalInput, toLocalInput } from './PriceListForm';
 
 const num = (v: string): number | undefined => {
@@ -50,7 +51,7 @@ interface State {
   validTo: string;
 }
 
-function initial(r: RebateDto | undefined, names: Record<string, string>): State {
+function initial(r: RebateDto | undefined, names: Record<string, string>, timeZone: string): State {
   return {
     code: r?.code ?? '',
     name: r?.name ?? '',
@@ -63,12 +64,12 @@ function initial(r: RebateDto | undefined, names: Record<string, string>): State
     })),
     scopes: r?.scopes ?? {},
     target: targetToState(r?.target, names),
-    validFrom: toLocalInput(r?.validFrom ?? new Date().toISOString()),
-    validTo: toLocalInput(r?.validTo ?? null),
+    validFrom: toLocalInput(r?.validFrom ?? new Date().toISOString(), timeZone),
+    validTo: toLocalInput(r?.validTo ?? null, timeZone),
   };
 }
 
-function toForm(s: State): RebateFormInput {
+function toForm(s: State, timeZone: string): RebateFormInput {
   return {
     code: s.code,
     name: s.name,
@@ -80,8 +81,8 @@ function toForm(s: State): RebateFormInput {
       .filter((t): t is { from: number; percent: number } => t.from != null && t.percent != null),
     scopes: s.scopes,
     target: stateToTarget(s.target),
-    validFrom: fromLocalInput(s.validFrom) ?? new Date().toISOString(),
-    validTo: fromLocalInput(s.validTo),
+    validFrom: fromLocalInput(s.validFrom, timeZone) ?? new Date().toISOString(),
+    validTo: fromLocalInput(s.validTo, timeZone),
   };
 }
 
@@ -102,7 +103,8 @@ export function RebateForm({
   onCancel: () => void;
 }) {
   const uid = useId();
-  const [s, setS] = useState<State>(() => initial(program, names));
+  const timeZone = useBusinessTimeZone();
+  const [s, setS] = useState<State>(() => initial(program, names, timeZone));
   const [reason, setReason] = useState<ReasonValue>({ code: '', text: '' });
   const [message, setMessage] = useState<Message>(null);
   const [busy, setBusy] = useState(false);
@@ -111,7 +113,7 @@ export function RebateForm({
     warnings: [],
   });
   const set = <K extends keyof State>(k: K, v: State[K]) => setS((cur) => ({ ...cur, [k]: v }));
-  const form = useMemo(() => toForm(s), [s]);
+  const form = useMemo(() => toForm(s, timeZone), [s, timeZone]);
   const summary = useMemo(() => {
     try {
       return summariseRebate(
@@ -350,7 +352,7 @@ export function RebateForm({
         <legend className="mb-1 text-sm font-bold text-fg-strong">When it runs</legend>
         <div>
           <label htmlFor={`${uid}-vf`} className={labelClass}>
-            Starts
+            Starts (business time)
           </label>
           <input
             id={`${uid}-vf`}
@@ -363,7 +365,7 @@ export function RebateForm({
         </div>
         <div>
           <label htmlFor={`${uid}-vt`} className={labelClass}>
-            Ends (leave empty for no end)
+            Ends, business time (leave empty for no end)
           </label>
           <input
             id={`${uid}-vt`}

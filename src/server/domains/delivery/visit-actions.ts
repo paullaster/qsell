@@ -22,19 +22,28 @@ async function actorOf(ctx: { companyId: string; userId: string }): Promise<Visi
   return { companyId: ctx.companyId, userId: ctx.userId, crewOnly: !(await canPermission('visits:manage')) };
 }
 
-const STATUSES: readonly string[] = ['live', 'scheduled', 'crew_assigned', 'on_site', 'completed', 'signed_off', 'cancelled'];
+const STATUSES: readonly string[] = ['live', 'asked', 'scheduled', 'crew_assigned', 'on_site', 'completed', 'signed_off', 'cancelled'];
 
 /** Visits by their time, soonest first. */
 export async function visitsPageAction(raw?: unknown) {
   return await runDelivery('visits:work', async (ctx) => {
     const i = objectOf(raw);
-    const status = typeof i.status === 'string' && STATUSES.includes(i.status) ? (i.status as VisitStatus | 'live') : 'live';
+    const status = typeof i.status === 'string' && STATUSES.includes(i.status) ? (i.status as VisitStatus | 'live' | 'asked') : 'live';
     return await getContainer().orderVisits.list(await actorOf(ctx), { status, cursor: typeof i.cursor === 'string' ? i.cursor : null });
   });
 }
 
+/** The customer is told now rather than at the next sweep; a failure to send never fails the change. */
+function tellCustomer(): void {
+  void getContainer().deliveryMessages.flush(5).catch((e: unknown) => console.error('[visits.messages] flush', e));
+}
+
 export async function bookVisitAction(raw: unknown) {
-  return await runDelivery('visits:manage', async (ctx) => dataOf(await getContainer().orderVisits.book(await actorOf(ctx), objectOf(raw))), PATHS);
+  return await runDelivery('visits:manage', async (ctx) => {
+    const done = dataOf(await getContainer().orderVisits.book(await actorOf(ctx), objectOf(raw)));
+    tellCustomer();
+    return done;
+  }, PATHS);
 }
 
 export async function assignCrewAction(raw: unknown) {
@@ -47,15 +56,24 @@ export async function assignCrewAction(raw: unknown) {
 export async function moveVisitAction(raw: unknown) {
   return await runDelivery('visits:manage', async (ctx) => {
     const i = objectOf(raw);
-    return dataOf(await getContainer().orderVisits.reschedule(await actorOf(ctx), idOf(i.id, 'visit'), { startsAt: i.startsAt, endsAt: i.endsAt, reason: i.reason, expectedVersion: i.expectedVersion }));
+    const done = dataOf(await getContainer().orderVisits.reschedule(await actorOf(ctx), idOf(i.id, 'visit'), { startsAt: i.startsAt, endsAt: i.endsAt, reason: i.reason, expectedVersion: i.expectedVersion }));
+    tellCustomer();
+    return done;
   }, PATHS);
 }
 
 export async function cancelVisitAction(raw: unknown) {
   return await runDelivery('visits:manage', async (ctx) => {
     const i = objectOf(raw);
-    return dataOf(await getContainer().orderVisits.cancel(await actorOf(ctx), idOf(i.id, 'visit'), { reason: i.reason, expectedVersion: i.expectedVersion }));
+    const done = dataOf(await getContainer().orderVisits.cancel(await actorOf(ctx), idOf(i.id, 'visit'), { reason: i.reason, expectedVersion: i.expectedVersion }));
+    tellCustomer();
+    return done;
   }, PATHS);
+}
+
+/** The office sets a customer's request for another time aside without moving the visit. */
+export async function setVisitRequestAsideAction(raw: unknown) {
+  return await runDelivery('visits:manage', async (ctx) => dataOf(await getContainer().orderVisits.setRequestAside(await actorOf(ctx), idOf(objectOf(raw).id, 'visit'))), PATHS);
 }
 
 export async function startVisitAction(raw: unknown) {

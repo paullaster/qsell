@@ -78,7 +78,7 @@ function NewReceiptView({ baseCurrency, presetCustomer, wallet }: { baseCurrency
       <Message notice={notice} />
       <form className={`${cardClass} space-y-5`} aria-label="New receipt" onSubmit={(e) => { e.preventDefault(); void submit(false); }}>
         <div className="space-y-1">
-          <ChoicePicker label="Customer" source="receipt-customers" choice={customer} onChoice={setCustomer} clearable={false} required placeholder="Type a name, number, phone or email" listHref="/admin/customers" listLabel="View all customers" createHref="/admin/customers/new" createLabel="+ Create a customer" />
+          <ChoicePicker label="Customer" source="receipt-customers" choice={customer} onChoice={setCustomer} clearable={false} required placeholder="Type a name, number, phone or email" listHref="/admin/customers/list" listLabel="View all customers" createHref="/admin/customers/new" createLabel="+ Create a customer" />
           {customer !== null ? <p className="text-xs text-fg-muted">{customerStanding(customer.meta, money)}</p> : null}
         </div>
 

@@ -7,6 +7,7 @@ import { askRfqQuestionAction, declineRfqAction, saveQuoteAction, submitQuoteAct
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
 import { blankQuoteLine, quoteTotals, VENDOR_STAGE, type QuoteLineInput } from '@/lib/rfq';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, fieldClass, primaryClass, type Notice } from '@/components/ui/screen-kit';
+import { useWhen } from '@/components/business-time';
 
 type View = Extract<Awaited<ReturnType<typeof vendorRfqAction>>, { ok: true }>['data'];
 type Result = { ok: true } | { ok: false; error: string; problems?: Record<string, string> };
@@ -20,6 +21,7 @@ export function RfqDetailClient({ viewPromise }: { viewPromise: ReturnType<typeo
 }
 
 function Detail({ view }: { view: View }) {
+  const when = useWhen();
   const uid = useId();
   const router = useRouter();
   const stage = VENDOR_STAGE[view.stage];
@@ -61,11 +63,11 @@ function Detail({ view }: { view: View }) {
 
   return (
     <div className="max-w-3xl space-y-5">
-      <PageHeader title={`${view.number ?? ''} ${view.title}`} intro={<span className="flex flex-wrap items-center gap-2">{view.category}<Chip tone={stage.tone}>{stage.label}</Chip><span>Due {new Date(view.deadline).toLocaleString()}</span></span>} actions={<Link href="/vendor/rfqs" className={buttonClass}>All requests</Link>} />
+      <PageHeader title={`${view.number ?? ''} ${view.title}`} intro={<span className="flex flex-wrap items-center gap-2">{view.category}<Chip tone={stage.tone}>{stage.label}</Chip><span>Due {when(view.deadline)}</span></span>} actions={<Link href="/vendor/rfqs" className={buttonClass}>All requests</Link>} />
       <Message notice={notice} />
 
       {view.decision.value === 'rejected' ? <p role="note" className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-fg">Your quote was not accepted.{view.decision.reason === null ? '' : ` ${view.decision.reason}.`}{view.decision.comment === null ? '' : ` ${view.decision.comment}`}</p> : null}
-      {view.decision.value === 'revision_requested' ? <p role="note" className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-fg">The buyer asks you to revise your quote: {view.decision.comment}{view.decision.revisionDue === null ? '' : ` Send it by ${new Date(view.decision.revisionDue).toLocaleString()}.`}</p> : null}
+      {view.decision.value === 'revision_requested' ? <p role="note" className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-fg">The buyer asks you to revise your quote: {view.decision.comment}{view.decision.revisionDue === null ? '' : ` Send it by ${when(view.decision.revisionDue)}.`}</p> : null}
       {view.stage === 'awarded' ? <section className={cardClass} aria-label="Awarded to you"><h2 className="text-sm font-bold text-fg-strong">Awarded to you</h2><ul className="mt-2 divide-y divide-line text-sm">{view.awards.map((a) => <li key={a.rfqLineId} className="py-2">{lineName(a.rfqLineId)}: {a.quantity} at {a.unitPrice} {view.currency}</li>)}</ul><p className="mt-2 text-xs text-fg-muted">A purchase order will follow.</p></section> : null}
 
       <section className={`${cardClass} space-y-3`} aria-label="The request">
@@ -81,7 +83,7 @@ function Detail({ view }: { view: View }) {
         <ol className="divide-y divide-line text-sm" aria-label="Lines">
           {view.lines.map((l, i) => <li key={l.id} className="py-2"><span className="font-semibold text-fg-strong">{i + 1}. {l.description}</span> — {l.quantity} {l.unit}{l.requiredDate === null ? '' : `, by ${l.requiredDate}`}{l.specification === null ? null : <span className="block text-xs text-fg-muted">{l.specification}</span>}</li>)}
         </ol>
-        {view.addenda.length === 0 ? null : <div><h3 className="text-xs font-bold uppercase text-fg-muted">Clarifications from the buyer</h3><ol className="mt-1 space-y-1 text-sm">{view.addenda.map((a) => <li key={a.number}>{a.number}. {a.body}{a.deadlineAfter === null ? '' : ` New deadline: ${new Date(a.deadlineAfter).toLocaleString()}.`}</li>)}</ol></div>}
+        {view.addenda.length === 0 ? null : <div><h3 className="text-xs font-bold uppercase text-fg-muted">Clarifications from the buyer</h3><ol className="mt-1 space-y-1 text-sm">{view.addenda.map((a) => <li key={a.number}>{a.number}. {a.body}{a.deadlineAfter === null ? '' : ` New deadline: ${when(a.deadlineAfter)}.`}</li>)}</ol></div>}
       </section>
 
       {view.window.open && view.invitation.status !== 'declined' ? (
@@ -136,7 +138,7 @@ function Detail({ view }: { view: View }) {
         </section>
       ) : null}
 
-      {view.submitted !== null && !view.window.open ? <section className={cardClass} aria-label="Your sent quote"><h2 className="text-sm font-bold text-fg-strong">Your sent quote</h2><p className="mt-1 text-sm text-fg">Version {view.submitted.version}, total {view.submitted.total} {view.currency}, sent {view.submitted.submittedAt === null ? '' : new Date(view.submitted.submittedAt).toLocaleString()}.</p></section> : null}
+      {view.submitted !== null && !view.window.open ? <section className={cardClass} aria-label="Your sent quote"><h2 className="text-sm font-bold text-fg-strong">Your sent quote</h2><p className="mt-1 text-sm text-fg">Version {view.submitted.version}, total {view.submitted.total} {view.currency}, sent {view.submitted.submittedAt === null ? '' : when(view.submitted.submittedAt)}.</p></section> : null}
       {view.history.length > 1 ? <section className={cardClass} aria-label="Earlier versions"><h2 className="text-sm font-bold text-fg-strong">Your versions</h2><ul className="mt-1 text-sm">{view.history.map((h) => <li key={h.id}>Version {h.version}: {h.total} {view.currency} · {h.status === 'withdrawn' ? 'withdrawn' : 'sent'}</li>)}</ul></section> : null}
 
       <section className={`${cardClass} space-y-3`} aria-label="Questions">

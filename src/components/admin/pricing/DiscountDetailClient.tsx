@@ -30,6 +30,7 @@ import { DiscountForm } from './DiscountForm';
 import { DiscountSimulator } from './DiscountSimulator';
 import { RuleImpactPanel } from './RuleImpactPanel';
 import { discountChip, money } from './DiscountsClient';
+import { useBusinessTimeZone, useDate } from '@/components/business-time';
 import { fromLocalInput } from './PriceListForm';
 
 const EVENTS: Record<string, string> = {
@@ -312,6 +313,8 @@ export function DiscountDetailClient({
 }
 
 function Coupons({ detail, canManage }: { detail: DiscountDetail; canManage: boolean }) {
+  const timeZone = useBusinessTimeZone();
+  const date = useDate();
   const router = useRouter();
   const uid = useId();
   const [mode, setMode] = useState<'typed' | 'random'>('random');
@@ -335,7 +338,7 @@ function Coupons({ detail, canManage }: { detail: DiscountDetail; canManage: boo
         ...(mode === 'typed'
           ? { codes: typed.split(/[\s,;]+/).filter(Boolean) }
           : { generate: { count: Number(count), prefix: prefix || undefined } }),
-        validTo: fromLocalInput(validTo),
+        validTo: fromLocalInput(validTo, timeZone),
         maxUses: maxUses ? Number(maxUses) : null,
         maxUsesPerCustomer: perCustomer ? Number(perCustomer) : null,
       },
@@ -439,7 +442,7 @@ function Coupons({ detail, canManage }: { detail: DiscountDetail; canManage: boo
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div>
               <label htmlFor={`${uid}-e`} className={labelClass}>
-                Expires (optional)
+                Expires, business time (optional)
               </label>
               <input
                 id={`${uid}-e`}
@@ -522,7 +525,7 @@ function Coupons({ detail, canManage }: { detail: DiscountDetail; canManage: boo
                 <tr key={c.id}>
                   <td className="py-2 pr-3 font-mono font-semibold text-fg-strong">{c.code}</td>
                   <td className="py-2 pr-3">
-                    {c.validTo ? new Date(c.validTo).toLocaleDateString('en-KE') : 'No end'}
+                    {c.validTo === null || c.validTo === '' ? 'No end' : date(c.validTo)}
                   </td>
                   <td className="py-2 pr-3 text-right font-mono">
                     {c.uses}

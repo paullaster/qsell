@@ -1,5 +1,6 @@
 'use client';
 
+import { useBusinessTimeZone, useWhen } from '@/components/business-time';
 import { useEffect, useId, useState } from 'react';
 import { bookSlotAction, deliverySlotAction, releaseSlotAction } from '@/server/domains/delivery/slot-actions';
 import { Chip, Field, attempt, buttonClass, cardClass, fieldClass } from '@/components/ui/screen-kit';
@@ -9,13 +10,14 @@ import { addDays } from '@/lib/delivery-slot';
 type Loaded = Awaited<ReturnType<typeof deliverySlotAction>>;
 type Data = Extract<Loaded, { ok: true }>['data'];
 
-const when = (iso: string): string => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Nairobi' });
 const dayWords = (day: string): string => new Date(`${day}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
 
 const roomWords = (s: { available: boolean; left: number; weightLeftKg: number | null; why: string | null }): string => (s.available ? `${String(s.left)} left${s.weightLeftKg === null ? '' : `, ${String(s.weightLeftKg)} kg`}` : (s.why ?? 'not available'));
 
 /** The slot a delivery is promised, and the slots its branch offers over a week, with the room left in each. */
 export function DeliverySlotPanel({ deliveryId, onError, onDone }: { deliveryId: string; onError: (text: string) => void; onDone: (text: string) => void }) {
+  const when = useWhen();
+  const timeZone = useBusinessTimeZone();
   const uid = useId();
   const [data, setData] = useState<Data | null>(null);
   const [from, setFrom] = useState<string | undefined>(undefined);
@@ -75,7 +77,7 @@ export function DeliverySlotPanel({ deliveryId, onError, onDone }: { deliveryId:
           <p className="flex flex-wrap items-center gap-2 text-sm">
             <Chip tone="sky">Promised</Chip>
             <span>
-              {data.held.name}: {when(data.held.windowStart)} to {new Date(data.held.windowEnd).toLocaleTimeString('en-GB', { timeStyle: 'short', timeZone: 'Africa/Nairobi' })}
+              {data.held.name}: {when(data.held.windowStart)} to {new Date(data.held.windowEnd).toLocaleTimeString('en-GB', { timeStyle: 'short', timeZone })}
             </span>
           </p>
           <div className="flex flex-wrap items-end gap-2">

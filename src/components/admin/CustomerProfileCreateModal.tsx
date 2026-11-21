@@ -28,7 +28,7 @@ export function CustomerProfileCreateModal({
 
   const close = () => {
     if (presentation === 'intercepted') router.back();
-    else router.push('/admin/customers');
+    else router.push('/admin/customers/list');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -49,7 +49,7 @@ export function CustomerProfileCreateModal({
         publishCustomerShortcut({ kind: 'profile', profile });
         router.back();
       } else {
-        router.push('/admin/customers');
+        router.push('/admin/customers/list');
         router.refresh();
       }
     } catch (err) {

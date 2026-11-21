@@ -24,15 +24,15 @@ test.describe('visits', () => {
     const form = page.getByRole('form', { name: 'Book a visit' });
     await pick(page, form.getByRole('combobox', { name: 'Order' }), orderNumber, new RegExp(orderNumber));
     // A visit in the past is refused, in words.
-    await form.getByLabel('Starts (Nairobi time)').fill(boxTime(-1, 8));
-    await form.getByLabel('Ends (Nairobi time)').fill(boxTime(-1, 10));
+    await form.getByLabel('Starts (business time)').fill(boxTime(-1, 8));
+    await form.getByLabel('Ends (business time)').fill(boxTime(-1, 10));
     await form.getByLabel('Address the crew goes to').fill('Kileleshwa, Nairobi, Gate 4');
     await form.getByLabel('Checklist, one item to a line').fill('Fit the unit\nTest it');
     await form.getByRole('button', { name: 'Book the visit' }).click();
     await expect(page.getByRole('alert').filter({ hasText: /must start in the future/ })).toBeVisible({ timeout: 30_000 });
 
-    await form.getByLabel('Starts (Nairobi time)').fill(boxTime(2, 8));
-    await form.getByLabel('Ends (Nairobi time)').fill(boxTime(2, 11));
+    await form.getByLabel('Starts (business time)').fill(boxTime(2, 8));
+    await form.getByLabel('Ends (business time)').fill(boxTime(2, 11));
     await form.getByRole('button', { name: 'Book the visit' }).click();
     await expect(page.getByText('The visit is booked.')).toBeVisible({ timeout: 30_000 });
 
@@ -40,6 +40,11 @@ test.describe('visits', () => {
     await expect(card).toContainText('Booked', { timeout: 30_000 });
     await expect(card).toContainText('No crew yet.');
     await expect(card).toContainText('0 of 2 ticked');
+    // What the customer was told about it is on the card: the mail, whether it has left, and where it went with the address hidden.
+    const told = card.getByRole('list', { name: 'Messages about this visit' });
+    await expect(told).toContainText('Visit booked');
+    await expect(told).toContainText(/Waiting to send|Sent/);
+    await expect(told).toContainText('***@');
     await noHorizontalScroll(page);
     await noInnerHorizontalScroll(page);
 
@@ -158,18 +163,38 @@ test.describe('visits', () => {
     await open(page, '/admin/delivery/visits', 'Visits');
     const form = page.getByRole('form', { name: 'Book a visit' });
     await pick(page, form.getByRole('combobox', { name: 'Order' }), orderNumber, new RegExp(orderNumber));
-    await form.getByLabel('Starts (Nairobi time)').fill(boxTime(3, 9));
-    await form.getByLabel('Ends (Nairobi time)').fill(boxTime(3, 12));
+    await form.getByLabel('Starts (business time)').fill(boxTime(3, 9));
+    await form.getByLabel('Ends (business time)').fill(boxTime(3, 12));
     await form.getByLabel('Address the crew goes to').fill('Westlands, Nairobi');
     await form.getByLabel('Checklist, one item to a line').fill('Measure up');
     await form.getByRole('button', { name: 'Book the visit' }).click();
     const card = page.getByRole('list', { name: 'Visit list' }).getByRole('listitem').filter({ hasText: `Order ${orderNumber}` }).first();
     await expect(card).toContainText('Booked', { timeout: 30_000 });
 
+    // The customer asks for another time: the card says so in their words; the office can set it aside, and a second request can follow.
+    deliveryTool('visit-request', orderNumber, 'Any weekday after the 20th');
+    await open(page, '/admin/delivery/visits', 'Visits');
+    await expect(card).toContainText('The customer asked for another time', { timeout: 30_000 });
+    await expect(card).toContainText('Any weekday after the 20th');
+    await noHorizontalScroll(page);
+    // They are also found in a list of their own, with a count.
+    await page.getByRole('button', { name: /^Asked for another time \(\d+\)$/ }).click();
+    await expect(card).toContainText('Any weekday after the 20th', { timeout: 30_000 });
+    await page.getByRole('button', { name: 'Coming up' }).click();
+    await expect(card).toBeVisible({ timeout: 30_000 });
+    await card.getByRole('button', { name: 'Set the request aside' }).click();
+    await expect(page.getByText('The request is set aside.')).toBeVisible({ timeout: 30_000 });
+    await expect(card).not.toContainText('The customer asked for another time', { timeout: 30_000 });
+    expect(deliveryTool('visit-request', orderNumber).note).toBe('');
+    deliveryTool('visit-request', orderNumber, 'Better on a Friday');
+    await open(page, '/admin/delivery/visits', 'Visits');
+    await expect(card).toContainText('Better on a Friday', { timeout: 30_000 });
+
+    // Moving the visit answers the request.
     await card.getByRole('button', { name: 'Move the visit' }).click();
     const move = card.getByRole('form', { name: `Move the visit for order ${orderNumber}` });
-    await move.getByLabel('New start (Nairobi time)').fill(boxTime(4, 9));
-    await move.getByLabel('New end (Nairobi time)').fill(boxTime(4, 12));
+    await move.getByLabel('New start (business time)').fill(boxTime(4, 9));
+    await move.getByLabel('New end (business time)').fill(boxTime(4, 12));
     await move.getByLabel('Why it is being moved').fill('no');
     await move.getByRole('button', { name: 'Move it' }).click();
     await expect(page.getByRole('alert').filter({ hasText: /Say why the visit is moved/ })).toBeVisible({ timeout: 30_000 });
@@ -178,6 +203,8 @@ test.describe('visits', () => {
     await expect(page.getByText('The visit is moved.')).toBeVisible({ timeout: 30_000 });
     // The card is rebuilt from the saved visit; cancelling before that would use the old version.
     await expect(move).toHaveCount(0, { timeout: 30_000 });
+    await expect(card).not.toContainText('The customer asked for another time');
+    expect(deliveryTool('visit-request', orderNumber).note).toBe('');
 
     await card.getByLabel('Why it is being cancelled').fill('Customer is travelling');
     await card.getByRole('button', { name: `Cancel the visit for order ${orderNumber}` }).click();
@@ -188,6 +215,11 @@ test.describe('visits', () => {
     await page.getByRole('button', { name: 'Cancelled' }).click();
     const gone = page.getByRole('list', { name: 'Visit list' }).getByRole('listitem').filter({ hasText: `Order ${orderNumber}` }).first();
     await expect(gone).toContainText('cancelled: Customer is travelling', { timeout: 30_000 });
+    // The customer was told of each change: booked, moved and cancelled.
+    const told = deliveryTool('messages', orderNumber).list;
+    expect(told).toMatch(/visit_booked:/);
+    expect(told).toMatch(/visit_moved:/);
+    expect(told).toMatch(/visit_cancelled:/);
     await noHorizontalScroll(page);
     await noInnerHorizontalScroll(page);
   });
@@ -198,8 +230,8 @@ test.describe('visits', () => {
     await open(page, '/admin/delivery/visits', 'Visits');
     const form = page.getByRole('form', { name: 'Book a visit' });
     await pick(page, form.getByRole('combobox', { name: 'Order' }), orderNumber, new RegExp(orderNumber));
-    await form.getByLabel('Starts (Nairobi time)').fill(boxTime(3, 9));
-    await form.getByLabel('Ends (Nairobi time)').fill(boxTime(3, 12));
+    await form.getByLabel('Starts (business time)').fill(boxTime(3, 9));
+    await form.getByLabel('Ends (business time)').fill(boxTime(3, 12));
     await form.getByLabel('Address the crew goes to').fill('Westlands, Nairobi');
     await form.getByLabel('Checklist, one item to a line').fill('Measure up');
     await form.getByRole('button', { name: 'Book the visit' }).click();

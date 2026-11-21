@@ -45,6 +45,9 @@ test.describe('the address follows the place chosen at checkout', () => {
       await expect(street).not.toHaveValue(savedStreet);
       await expect(section.getByRole('status').filter({ hasText: 'Delivery from' })).toBeVisible({ timeout: 30_000 });
       await expect(section.getByRole('status').filter({ hasText: 'within about 2.4 km' })).toContainText('Drag the pin to your door');
+      // The built-in map cannot name a street: the shopper is told so and asked to write it, and no "use this address" is offered.
+      await expect(section.getByRole('status').filter({ hasText: 'cannot look up street names' })).toBeVisible();
+      await expect(section.getByRole('button', { name: 'Use this address' })).toHaveCount(0);
 
       // Choosing the saved address again puts back its own place (it has none), so the pin is gone and the charge is for the written address.
       await saved.getByRole('button', { name: new RegExp(savedStreet) }).click();

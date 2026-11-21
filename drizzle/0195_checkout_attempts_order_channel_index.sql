@@ -1,0 +1,1 @@
+CREATE INDEX "checkout_attempts_order_channel_idx" ON "checkout_attempts" USING btree ("order_id","channel");

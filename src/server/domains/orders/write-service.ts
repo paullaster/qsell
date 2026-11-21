@@ -1,3 +1,4 @@
+import { isOfferedIn, notOfferedRefusal, offerTypeOfModule } from '@/lib/offered-in';
 import { packageAsLineRefusal, packageOnlyRefusal } from '@/lib/package-only';
 import { creditDaysFor, stockReleaseFor, type SellingSettings } from '@/server/domains/selling/selling-documents';
 import type { RawPick } from '@/server/domains/pricing/domain/packages';
@@ -59,9 +60,9 @@ export function lineAmounts(
 }
 
 /** Who placed an order and from where, for its first event: a shopper at the shop, staff at the till, staff in the office. */
-function placedBy(channel: string, customerId: string | null, requestedBy: string | null): { source: StageSource; actor: StageActor } {
-  if (channel === 'ecommerce') return { source: 'shop', actor: { type: 'customer', id: customerId } };
-  return { source: channel === 'pos_cash_sale' ? 'pos' : 'staff', actor: { type: 'user', id: requestedBy } };
+function placedBy(origin: string, customerId: string | null, requestedBy: string | null): { source: StageSource; actor: StageActor } {
+  if (origin === 'ecommerce' && requestedBy === null) return { source: 'shop', actor: { type: 'customer', id: customerId } };
+  return { source: origin === 'pos_cash_sale' ? 'pos' : 'staff', actor: { type: 'user', id: requestedBy } };
 }
 
 /** What the shopper is told when the database refused the order. */
@@ -118,7 +119,7 @@ export const OrderWriteService = {
       postalCode?: string;
       country: string;
     };
-    items: { productId: string; quantity: number; /** A configurable package: the choices made (ids and counts only), and `quantity` is the servings. */ package?: { picks: RawPick[]; note?: string; groupId?: string } }[];
+    items: { productId: string; quantity: number; /** A price typed at the counter for one unit, by someone who may change prices (the caller checks that): it replaces the price list's, within the floors and that person's limit. */ priceOverride?: number; /** A configurable package: the choices made (ids and counts only), and `quantity` is the servings. */ package?: { picks: RawPick[]; note?: string; groupId?: string } }[];
     quotedItems?: {
       productId: string;
       quantity: number;
@@ -176,6 +177,15 @@ export const OrderWriteService = {
     selling?: SellingSettings;
     /** The quote this order is made from; kept on the order so it can show where it came from. */
     sourceQuoteId?: string;
+    /** The till shift a counter sale is rung up in, and the screen's key for this attempt (a retry finds the order made instead of making another). */
+    shiftId?: string;
+    idempotencyKey?: string;
+    /** Looks at the priced order before anything is held or saved: a message refuses it (a counter sale whose payment does not cover the total). */
+    checkTotal?: (totals: { subtotal: number; tax: number; totalAmount: number }) => string | null;
+    /** Prices the order and stops there: nothing is held, saved or sent. For a screen that shows the total as lines are added. */
+    previewOnly?: boolean;
+    /** The sale was rung up already (offline at the counter), so where a product is offered is not asked again: the sale is kept and flagged instead. */
+    skipOfferedCheck?: boolean;
     /** Hold this one document's stock until it is paid, where its kind allows it (the staff member switched it on). */
     holdUntilPaid?: boolean;
     /**
@@ -203,7 +213,7 @@ export const OrderWriteService = {
           global: Record<string, string>;
           shortcut: Record<string, string>;
         };
-  }): Promise<{ success: boolean; order?: Order; error?: string; /** Why it was refused, for the checkout attempt's record. */ code?: CheckoutRefusal }> {
+  }): Promise<{ success: boolean; order?: Order; error?: string; /** Why it was refused, for the checkout attempt's record. */ code?: CheckoutRefusal; /** What a `previewOnly` call priced. */ preview?: { subtotal: number; tax: number; totalAmount: number; lines: { productId: string; quantity: number; unitPrice: number; lineTotal: number }[] } }> {
     // A shopper may leave the email out; whatever is given is checked here, not trusted from the browser.
     const contact = readOptionalEmail(raw.customerEmail);
     if (!contact.ok) return { success: false, error: contact.error, code: 'invalid_input' };
@@ -326,6 +336,9 @@ export const OrderWriteService = {
       }
     }
 
+    /** Lines whose price was typed at the counter: no promotion is added to them, and they are held to the floors and the person's limit. */
+    const changedPrices: { itemIndex: number; productId: string; label: string; quantity: number; taxRate: number; inclusive: boolean; listUnit: number; typed: number; floor: number | null }[] = [];
+
     /** Lines the price lists priced: discounts apply to them, then they are checked against floors. */
     const guarded: {
       itemIndex: number;
@@ -356,6 +369,11 @@ export const OrderWriteService = {
       // A package-only product is sold by its package, never as a line of its own (also not from a quote or by staff).
       if (prod.soldOnlyInPackages === true) {
         return { success: false, error: packageOnlyRefusal(prod.name), code: 'not_for_sale' };
+      }
+      // Where it is offered: a staff document refuses a product that is not offered in it (an order made from a quote was checked when the quote was).
+      const offerType = offerTypeOfModule(params.salesModule, params.paymentMethod === 'on_account');
+      if (offerType !== null && params.sourceQuoteId === undefined && params.skipOfferedCheck !== true && !isOfferedIn(prod.offeredIn, offerType)) {
+        return { success: false, error: notOfferedRefusal(prod.name, offerType), code: 'not_for_sale' };
       }
       const quoted = quotedFor(item, index);
       if (!prod.isSellable && !quoted) {
@@ -388,10 +406,16 @@ export const OrderWriteService = {
       );
       // A package serving costs the base price plus what the choices add (or the choices' own prices, added up).
       const chosen = quoted === undefined ? preparedPackages.get(index) : undefined;
-      const unitPrice = chosen === undefined ? base.unitPrice : Math.round(((chosen.summedPerServing ?? base.unitPrice + (chosen.addedPerServing ?? 0)) + Number.EPSILON) * 100) / 100;
-      const itemTotal = chosen === undefined ? base.total : Math.round((unitPrice * item.quantity + Number.EPSILON) * 100) / 100;
+      const listUnit = chosen === undefined ? base.unitPrice : Math.round(((chosen.summedPerServing ?? base.unitPrice + (chosen.addedPerServing ?? 0)) + Number.EPSILON) * 100) / 100;
+      // A price typed at the counter by someone who may change prices stands in for the price list's; it is then held to the floors and to that person's limit below.
+      const typed = chosen === undefined && quoted === undefined && priced !== undefined ? item.priceOverride : undefined;
+      const unitPrice = typed ?? listUnit;
+      const itemTotal = chosen === undefined && typed === undefined ? base.total : Math.round((unitPrice * item.quantity + Number.EPSILON) * 100) / 100;
+      if (typed !== undefined && priced) {
+        changedPrices.push({ itemIndex: orderItems.length, productId: prod.id, label: prod.name, quantity: item.quantity, taxRate: Math.max(0, prod.taxRate ?? 0), inclusive: prod.isTaxInclusive !== false, listUnit, typed, floor: priced.trace.floorPrice ?? null });
+      }
       // Promotions and coupons apply to every channel's price-list lines, the shop's included (price floors stay with the staff channels).
-      if (priced && !quoted) {
+      if (priced && !quoted && typed === undefined) {
         guarded.push({
           itemIndex: orderItems.length,
           productId: prod.id,
@@ -534,6 +558,21 @@ export const OrderWriteService = {
           };
         floorBreach = { text, shortfallPercent: verdict.largestShortfallPercent };
       }
+    }
+
+    // A price typed at the counter: never under a floor, never further below list than this person is allowed (a till cannot wait for approval).
+    if (changedPrices.length > 0) {
+      const { companySettings: cs, priceGuard } = getContainer();
+      const toNet = (c: (typeof changedPrices)[number], v: number) => (c.inclusive && c.taxRate > 0 ? v / (1 + c.taxRate / 100) : v);
+      const verdict = await priceGuard.assess((await cs.ensureSeeded()).id, params.requestedBy ?? null, changedPrices.map((c) => ({ productId: c.productId, label: c.label, quantity: c.quantity, netUnit: toNet(c, c.typed), listNetUnit: toNet(c, c.listUnit), explicitFloorNet: c.floor != null ? toNet(c, c.floor) : null })));
+      const names = changedPrices.map((c) => c.label);
+      const lowest = (flags: boolean[]) => names.filter((_, n) => flags[n] === true).join(', ');
+      if (verdict.belowFloor) return { success: false, error: `The price of ${lowest(verdict.lines.map((l) => l.belowFloor))} is below its floor. Charge at least the floor price.`, code: 'approval_needed' };
+      if (verdict.overOverrideLimit) return { success: false, error: `The price of ${lowest(verdict.lines.map((l) => l.overOverrideLimit))} is lower than you may sell it for (at most ${String(verdict.overrideLimitPercent)}% below the list price).`, code: 'approval_needed' };
+      changedPrices.forEach((c, n) => {
+        const line = nth(orderItems, c.itemIndex);
+        line.priceTrace = line.priceTrace === null || line.priceTrace === undefined ? line.priceTrace : { ...line.priceTrace, steps: [...line.priceTrace.steps, `Price changed at the counter from ${c.listUnit.toFixed(2)} to ${c.typed.toFixed(2)}.`], guard: nth(verdict.lines, n) };
+      });
     }
 
     // Free gifts a promotion has earned join the order at no charge (stock is held for them too).
@@ -717,6 +756,11 @@ export const OrderWriteService = {
       const refusal = await doorPayments.checkPayOnDelivery((await settingsForDoor.ensureSeeded()).id, { deliveryMethod: params.delivery?.method ?? null, currency: params.currency, total: totalAmount });
       if (refusal !== null) return { success: false, error: refusal, code: 'pay_on_delivery' };
     }
+    if (params.checkTotal !== undefined) {
+      const refusal = params.checkTotal({ subtotal, tax: orderTax, totalAmount });
+      if (refusal !== null) return { success: false, error: refusal, code: 'invalid_input' };
+    }
+    if (params.previewOnly === true) return { success: true, preview: { subtotal, tax: orderTax, totalAmount, lines: orderItems.map((i) => ({ productId: i.productId, quantity: i.quantity, unitPrice: i.unitPrice, lineTotal: i.totalPrice })) } };
     // The branch that processes a delivered order is the one chosen for it; stock is held from it first.
     const branchId = delivered?.branch.id ?? params.branchId;
     const orderId =
@@ -752,6 +796,8 @@ export const OrderWriteService = {
     const order: Order = {
       id: orderId,
       ...(params.sourceQuoteId === undefined ? {} : { sourceQuoteId: params.sourceQuoteId }),
+      ...(params.shiftId === undefined ? {} : { shiftId: params.shiftId }),
+      ...(params.idempotencyKey === undefined ? {} : { idempotencyKey: params.idempotencyKey }),
       orderNumber: explicitOrderNumber ?? '',
       userId: resolvedUserId,
       customerName: params.customerName,
@@ -781,8 +827,10 @@ export const OrderWriteService = {
     const creditOff = params.selling?.creditCheck === 'off';
 
     try {
-      const { companySettings, dimensionSets, customers } = getContainer();
+      const { companySettings, dimensionSets, customers, customerCreditSettings, finance } = getContainer();
       const company = await companySettings.ensureSeeded();
+      const creditSettings = await customerCreditSettings.get(company.id);
+      const allowOverCreditLimit = creditSettings.allowOverCreditLimit;
       const onAccount = params.paymentMethod === 'on_account';
       const tradeCustomer = await customers.prepareSale({
         companyId: company.id,
@@ -794,16 +842,18 @@ export const OrderWriteService = {
         amount: totalAmount,
         onAccount,
         // Over the limit is let through to approval only when the kind of sale asks for approval; with the credit check off it is not looked at.
-        allowOverLimit: creditOff || (gated && params.selling?.overLimit !== 'refuse'),
+        allowOverLimit: creditOff || allowOverCreditLimit || (gated && params.selling?.overLimit !== 'refuse'),
         updateExisting: params.identityVerified !== false || has(params.requestedBy),
       });
       if (params.selling?.noAccount === 'refuse' && tradeCustomer.accountType !== 'credit') {
         throw new Error(`${tradeCustomer.name} has no credit account, and this kind of sale is only for customers who do.`);
       }
+      const netOwedCents =
+        tradeCustomer.accountType === 'credit' ? await finance.customerLedger.netOwedCents(company.id, tradeCustomer.id) : 0;
       const overLimit =
         !creditOff &&
         tradeCustomer.accountType === 'credit' &&
-        Number(tradeCustomer.balance) + totalAmount > Number(tradeCustomer.creditLimit);
+        netOwedCents + Math.round(totalAmount * 100) > Math.round(Number(tradeCustomer.creditLimit) * 100);
       // The stricter check also stops a customer who has an invoice overdue by more than the days the company chose.
       const overdue =
         params.selling?.creditCheck === 'limit_and_overdue' &&
@@ -814,10 +864,11 @@ export const OrderWriteService = {
       if (params.holdUntilPaid === true && params.selling?.allowHoldUntilPaid !== true) throw new Error('This kind of sale cannot be held until it is paid.');
       // When the stock is issued is decided now and kept with the order, so a later change of the settings leaves it alone.
       if (params.selling !== undefined) {
+        order.invoiceWhenApproved = params.selling.invoice === 'with_document' && params.selling.invoiceAfterApproval;
         order.stockRelease = stockReleaseFor(params.selling, { holdUntilPaid: params.holdUntilPaid === true, hasCreditAccount: tradeCustomer.accountType === 'credit' });
       }
       // A kind of sale that refuses over the limit never asks for approval: it is refused here, before anything is requested.
-      if (overCreditLimit && params.selling?.overLimit === 'refuse') throw new Error(overCreditWords);
+      if (!allowOverCreditLimit && overCreditLimit && params.selling?.overLimit === 'refuse') throw new Error(overCreditWords);
       // The trade customer is the durable identity for this order.
       if (!has(resolvedUserId)) resolvedUserId = tradeCustomer.id;
       const callerDimensions = params.dimensionFields;
@@ -888,7 +939,7 @@ export const OrderWriteService = {
             // An order collected from a branch gets its code in the same transaction, so there is never one without the other.
             if (params.delivery.method === 'pickup') await getContainer().orderCollections.issue(tx, { companyId: company.id, orderId: saved.id, branchId: delivered.branch.id, actor });
             await OrderStages.moveIn(tx, saved.id, 'charge_quoted', 'succeeded', {
-              ...placedBy(channel, params.customerId ?? null, params.requestedBy ?? null),
+              ...placedBy(params.salesModule ?? 'ecommerce', params.customerId ?? null, params.requestedBy ?? null),
               ref: { type: 'delivery_quote', id: saved.id },
               message: delivered.choice.words,
               detail: { charge: delivered.quote.split.gross, tax: delivered.quote.split.tax, policy: delivered.quote.policy === null ? null : `${delivered.quote.policy.code} v${String(delivered.quote.policy.version)}`, branch: delivered.branch.code },
@@ -962,14 +1013,14 @@ export const OrderWriteService = {
             throw new Error(
               `${floorBreach.text} It needs approval, but no approval workflow covers it. Ask an administrator to set one up for orders below their price floor.`,
             );
-          } else if (overCreditLimit) {
+          } else if (!allowOverCreditLimit && overCreditLimit) {
             // Over the limit and nothing releases it: that is exactly what the limit is for.
             throw new Error(overCreditWords);
           }
         },
         // Who placed it and from where is the first event of the order's timeline; a shop checkout carries the time the shopper started it.
         {
-          ...placedBy(channel, params.customerId ?? null, params.requestedBy ?? null),
+          ...placedBy(params.salesModule ?? 'ecommerce', params.customerId ?? null, params.requestedBy ?? null),
           startedAt: params.checkoutStartedAt ?? null,
         },
       );

@@ -10,6 +10,7 @@ import { confirmProblem, itemTone, itemWords } from '@/lib/refund-file-form';
 import { needsComment } from '@/lib/receipt-detail';
 import type { Choice } from '@/lib/payment-options';
 import { Chip, Field, LoadFailed, Message, PageHeader, attempt, buttonClass, cardClass, dangerClass, fieldClass, money, primaryClass, today, type Notice } from './ui';
+import { useWhen } from '@/components/business-time';
 
 type View = Extract<Awaited<ReturnType<typeof refundFileDetailAction>>, { ok: true }>['data'];
 
@@ -19,6 +20,7 @@ export function RefundFileDetailClient({ viewPromise }: { viewPromise: ReturnTyp
 }
 
 function RefundFileView({ view }: { view: View }) {
+  const when = useWhen();
   const router = useRouter();
   const [panel, setPanel] = useState<null | 'confirm' | 'cancel'>(null);
   const [reference, setReference] = useState('');
@@ -83,7 +85,7 @@ function RefundFileView({ view }: { view: View }) {
       />
       <Message notice={notice} />
       <section className={`${cardClass} grid grid-cols-2 gap-x-4 gap-y-3 text-sm md:grid-cols-4`} aria-label="File details">
-        {([['Made by', view.createdBy ?? '—'], ['Made on', new Date(view.createdAt).toLocaleString()], ['Downloaded', `${String(view.downloads)} ${view.downloads === 1 ? 'time' : 'times'}`], ['Bank reference', view.bankReference ?? '—'], ['Confirmed by', view.confirmedBy ?? '—'], ['Fingerprint', view.fingerprint.slice(0, 16)]] as [string, string][]).map(([k, v]) => (
+        {([['Made by', view.createdBy ?? '—'], ['Made on', when(view.createdAt)], ['Downloaded', `${String(view.downloads)} ${view.downloads === 1 ? 'time' : 'times'}`], ['Bank reference', view.bankReference ?? '—'], ['Confirmed by', view.confirmedBy ?? '—'], ['Fingerprint', view.fingerprint.slice(0, 16)]] as [string, string][]).map(([k, v]) => (
           <div key={k}><dt className="text-xs text-fg-muted">{k}</dt><dd className="break-words font-semibold text-fg-strong">{v}</dd></div>
         ))}
         {view.cancelReason !== null ? <div className="col-span-full"><dt className="text-xs text-fg-muted">Cancelled because</dt><dd className="font-semibold text-fg-strong">{view.cancelReason}</dd></div> : null}
@@ -135,7 +137,7 @@ function RefundFileView({ view }: { view: View }) {
       <section className={`${cardClass} space-y-3`} aria-label="The bank's confirmation">
         <h2 className="text-sm font-bold text-fg-strong">The bank&apos;s confirmation</h2>
         <p className="text-xs text-fg-muted">A screenshot or statement showing the bank paid the file. It must be attached before the file can be recorded as paid.</p>
-        {view.attachments.length === 0 ? <p className="text-sm text-fg-muted">Nothing attached yet.</p> : <ul className="space-y-1 text-sm">{view.attachments.map((a) => <li key={a.id}>{a.url !== null ? <a className="font-semibold text-indigo-600 hover:underline" href={a.url} target="_blank" rel="noreferrer">{a.fileName}</a> : a.fileName} <span className="text-xs text-fg-muted">· {new Date(a.createdAt).toLocaleString()}</span></li>)}</ul>}
+        {view.attachments.length === 0 ? <p className="text-sm text-fg-muted">Nothing attached yet.</p> : <ul className="space-y-1 text-sm">{view.attachments.map((a) => <li key={a.id}>{a.url !== null ? <a className="font-semibold text-indigo-600 hover:underline" href={a.url} target="_blank" rel="noreferrer">{a.fileName}</a> : a.fileName} <span className="text-xs text-fg-muted">· {when(a.createdAt)}</span></li>)}</ul>}
         {view.can.attach ? (
           <div>
             <label htmlFor="pf-file" className="text-xs font-semibold text-fg-muted">Add a photo or screenshot</label>

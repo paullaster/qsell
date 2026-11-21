@@ -1,8 +1,9 @@
 'use client';
 
-import { Suspense, use } from 'react';
+import { useBusinessTimeZone } from '@/components/business-time';
+import { Suspense, use, useId, useState } from 'react';
 import { Chip } from '@/components/ui/screen-kit';
-import type { AccountResult, MyOrderTracking, MyVisit } from '@/server/domains/customers/actions';
+import { requestVisitTimeAction, type AccountResult, type MyOrderTracking, type MyVisit } from '@/server/domains/customers/actions';
 import { windowWords } from '@/lib/delivery-sla';
 import {
   formatAmount,
@@ -16,6 +17,7 @@ import { SignInPrompt } from './SignInPrompt';
 
 /** Where the delivery stands, in words, with the page that follows it; nothing is drawn for an order with no delivery to follow. */
 function DeliveryProgress({ tracking }: { tracking: Promise<AccountResult<MyOrderTracking | null>> }) {
+  const timeZone = useBusinessTimeZone();
   const answer = use(tracking);
   if (!answer.ok || answer.data === null) return null;
   const t = answer.data;
@@ -46,7 +48,7 @@ function DeliveryProgress({ tracking }: { tracking: Promise<AccountResult<MyOrde
               <p className="font-medium text-fg-strong">
                 {d.number}: {d.words}
               </p>
-              {d.window === null || d.words === 'Delivered' ? null : <p className="text-fg-muted">Promised: {windowWords(new Date(d.window.start), new Date(d.window.end))}</p>}
+              {d.window === null || d.words === 'Delivered' ? null : <p className="text-fg-muted">Promised: {windowWords(new Date(d.window.start), new Date(d.window.end), timeZone)}</p>}
               {d.receivedBy === null ? null : <p className="text-fg-muted">Received by {d.receivedBy}</p>}
             </li>
           ))}
@@ -61,19 +63,28 @@ function DeliveryProgress({ tracking }: { tracking: Promise<AccountResult<MyOrde
   );
 }
 
-/** The visits booked for the order (an installation, a site job): when, where and how each stands. Nothing is drawn for an order with none. */
-function VisitsProgress({ visits }: { visits: Promise<AccountResult<MyVisit[]>> }) {
+/** The visits booked for the order (an installation, a site job): when, where and how each stands, and a way to ask for another time. Nothing is drawn for an order with none. */
+function VisitsProgress({ orderId, visits }: { orderId: string; visits: Promise<AccountResult<MyVisit[]>> }) {
   const answer = use(visits);
-  if (!answer.ok || answer.data.length === 0) return null;
+  const [fresh, setFresh] = useState<MyVisit[] | null>(null);
+  if (!answer.ok) return null;
+  const list = fresh ?? answer.data;
+  if (list.length === 0) return null;
   return (
     <section aria-label="Your visit" className="rounded-xl border border-line bg-surface-raised p-4 sm:p-5">
-      <h2 className="text-lg font-semibold text-fg-strong">{answer.data.length === 1 ? 'Your visit' : 'Your visits'}</h2>
+      <h2 className="text-lg font-semibold text-fg-strong">{list.length === 1 ? 'Your visit' : 'Your visits'}</h2>
       <ul aria-label="Visits for this order" className="mt-2 space-y-2 text-sm">
-        {answer.data.map((v) => (
-          <li key={`${v.startsAt}-${v.address}`} className="rounded-lg border border-line bg-surface px-3 py-2">
-            <p className="font-medium text-fg-strong">{windowWords(new Date(v.startsAt), new Date(v.endsAt))}</p>
+        {list.map((v) => (
+          <li key={v.id} className="rounded-lg border border-line bg-surface px-3 py-2">
+            <p className="font-medium text-fg-strong">{windowWords(new Date(v.startsAt), new Date(v.endsAt), v.timeZone)}</p>
             <p className="break-words text-fg-muted">{v.address}</p>
             <p className="text-fg-strong">{v.words}</p>
+            {v.asked === null ? null : (
+              <p role="status" className="mt-1 text-fg-muted">
+                You asked for another time: “{v.asked.note}”. We will be in touch.
+              </p>
+            )}
+            {v.canAsk ? <AskForAnotherTime orderId={orderId} visit={v} onAnswered={setFresh} /> : null}
           </li>
         ))}
       </ul>
@@ -81,7 +92,46 @@ function VisitsProgress({ visits }: { visits: Promise<AccountResult<MyVisit[]>> 
   );
 }
 
+/** A shopper who cannot keep a visit says when would suit them better; the office answers by moving the visit. */
+function AskForAnotherTime({ orderId, visit, onAnswered }: { orderId: string; visit: MyVisit; onAnswered: (visits: MyVisit[]) => void }) {
+  const uid = useId();
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="mt-2 min-h-10 cursor-pointer rounded-lg border border-line px-3 text-sm font-semibold text-fg-strong hover:bg-hover">
+        Ask for another time
+      </button>
+    );
+  }
+  const send = async (e: { preventDefault: () => void }) => {
+    e.preventDefault();
+    setBusy(true);
+    setProblem(null);
+    const r = await requestVisitTimeAction(orderId, visit.id, note).catch(() => null);
+    setBusy(false);
+    if (r === null) setProblem('Your request could not be sent. Please try again.');
+    else if (!r.ok) setProblem(r.error);
+    else onAnswered(r.data);
+  };
+  return (
+    <form onSubmit={(e) => void send(e)} aria-label="Ask for another time" className="mt-2 space-y-2">
+      <label htmlFor={`${uid}-n`} className="block text-xs font-semibold text-fg">When would suit you better?</label>
+      <textarea id={`${uid}-n`} value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} rows={3} required className="block w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-strong" />
+      <p className="text-[11px] text-fg-muted">For example “Thursday morning, or any day after the 20th”. We will get back to you; the visit stays as it is until we do.</p>
+      {problem === null ? null : <p role="alert" className="text-sm text-red-700">{problem}</p>}
+      <div className="flex flex-wrap gap-2">
+        <button type="submit" disabled={busy} className="min-h-10 cursor-pointer rounded-lg bg-indigo-600 px-3 text-sm font-semibold text-white disabled:opacity-60">{busy ? 'Sending…' : 'Send'}</button>
+        <button type="button" disabled={busy} onClick={() => setOpen(false)} className="min-h-10 cursor-pointer rounded-lg border border-line px-3 text-sm font-semibold text-fg-strong">Not now</button>
+      </div>
+    </form>
+  );
+}
+
 export function OrderDetailClient({ result, tracking, visits }: { result: Promise<AccountResult<CustomerOrder>>; tracking?: Promise<AccountResult<MyOrderTracking | null>>; visits?: Promise<AccountResult<MyVisit[]>> }) {
+  const timeZone = useBusinessTimeZone();
   const answer = use(result);
   if (!answer.ok) {
     return answer.code === 'SIGN_IN' ? (
@@ -111,19 +161,19 @@ export function OrderDetailClient({ result, tracking, visits }: { result: Promis
           <Chip tone={state.tone}>{state.label}</Chip>
           <Chip tone={payment.tone}>{payment.label}</Chip>
         </div>
-        <p className="mt-1 text-sm text-fg-muted">Placed on {formatOrderDate(order.createdAt)}</p>
+        <p className="mt-1 text-sm text-fg-muted">Placed on {formatOrderDate(order.createdAt, timeZone)}</p>
         {has(state.hint) ? <p className="mt-3 text-sm text-fg">{state.hint}</p> : null}
         <dl className="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-3">
           {order.shippedAt === null ? null : (
             <div>
               <dt className="text-fg-subtle">Shipped</dt>
-              <dd className="font-medium text-fg-strong">{formatOrderDate(order.shippedAt)}</dd>
+              <dd className="font-medium text-fg-strong">{formatOrderDate(order.shippedAt, timeZone)}</dd>
             </div>
           )}
           {order.deliveredAt === null ? null : (
             <div>
               <dt className="text-fg-subtle">Delivered</dt>
-              <dd className="font-medium text-fg-strong">{formatOrderDate(order.deliveredAt)}</dd>
+              <dd className="font-medium text-fg-strong">{formatOrderDate(order.deliveredAt, timeZone)}</dd>
             </div>
           )}
           {order.shippingCourier === null && order.trackingNumber === null ? null : (
@@ -145,7 +195,7 @@ export function OrderDetailClient({ result, tracking, visits }: { result: Promis
 
       {visits === undefined ? null : (
         <Suspense fallback={null}>
-          <VisitsProgress visits={visits} />
+          <VisitsProgress orderId={order.id} visits={visits} />
         </Suspense>
       )}
 

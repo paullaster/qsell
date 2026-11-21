@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { addDays, checkLead, checkSlot, earliestReady, leadWords, dayWords, daysFrom, instantOf, isDay, nairobiDay, shopOffer, unavailable, weekdayOf, weekdaysWords, windowOf, type SlotRule } from './delivery-slot';
+import { dayInZone } from './business-timezone';
+import { addDays, checkLead, checkSlot, earliestReady, leadWords, dayWords, daysFrom, instantOf, isDay, shopOffer, unavailable, weekdayOf, weekdaysWords, windowOf, type SlotRule } from './delivery-slot';
+
+const NAIROBI = 'Africa/Nairobi';
 
 const rule: SlotRule = { weekdays: [1, 2, 3, 4, 5], startsAt: '09:00', endsAt: '12:00', capacity: 2, cutoffMinutes: 120, maxWeightKg: null, isActive: true };
 // Thursday 2026-11-05, 06:00 in Nairobi.
@@ -10,8 +13,8 @@ describe('days in Nairobi', () => {
     expect(weekdayOf('2026-11-05')).toBe(4);
     expect(weekdayOf('2026-11-08')).toBe(7);
     expect(addDays('2026-11-30', 2)).toBe('2026-12-02');
-    expect(nairobiDay(new Date('2026-11-05T21:30:00Z'))).toBe('2026-11-06');
-    expect(instantOf('2026-11-05', '09:00').toISOString()).toBe('2026-11-05T06:00:00.000Z');
+    expect(dayInZone(new Date('2026-11-05T21:30:00Z'), NAIROBI)).toBe('2026-11-06');
+    expect(instantOf('2026-11-05', '09:00', NAIROBI).toISOString()).toBe('2026-11-05T06:00:00.000Z');
     expect(isDay('2026-02-30')).toBe(false);
     expect(isDay('2026-11-05')).toBe(true);
     expect(daysFrom('2026-11-05', 3)).toEqual(['2026-11-05', '2026-11-06', '2026-11-07']);
@@ -35,24 +38,24 @@ describe('a slot as typed', () => {
 
 describe('when a slot can be booked', () => {
   it('can, on a day it runs, in time, with room', () => {
-    expect(unavailable(rule, '2026-11-06', now, 1, null)).toBeNull();
-    expect(windowOf('2026-11-06', rule).start.toISOString()).toBe('2026-11-06T06:00:00.000Z');
+    expect(unavailable(rule, '2026-11-06', now, 1, null, NAIROBI)).toBeNull();
+    expect(windowOf('2026-11-06', rule, NAIROBI).start.toISOString()).toBe('2026-11-06T06:00:00.000Z');
   });
 
   it('cannot when stopped, on the wrong day, in the past, too far ahead or on a closed day', () => {
-    expect(unavailable({ ...rule, isActive: false }, '2026-11-06', now, 0, null)).toBe('stopped');
-    expect(unavailable(rule, '2026-11-07', now, 0, null)).toBe('wrong_day');
-    expect(unavailable(rule, '2026-11-04', now, 0, null)).toBe('past');
-    expect(unavailable(rule, '2027-03-01', now, 0, null)).toBe('too_far');
-    expect(unavailable(rule, '2026-11-06', now, 0, 'Public holiday')).toBe('closed');
+    expect(unavailable({ ...rule, isActive: false }, '2026-11-06', now, 0, null, NAIROBI)).toBe('stopped');
+    expect(unavailable(rule, '2026-11-07', now, 0, null, NAIROBI)).toBe('wrong_day');
+    expect(unavailable(rule, '2026-11-04', now, 0, null, NAIROBI)).toBe('past');
+    expect(unavailable(rule, '2027-03-01', now, 0, null, NAIROBI)).toBe('too_far');
+    expect(unavailable(rule, '2026-11-06', now, 0, 'Public holiday', NAIROBI)).toBe('closed');
   });
 
   it('closes a cut-off before the slot starts, and is full at its capacity', () => {
     // The slot starts at 09:00 on the 5th; with two hours of cut-off it closes at 07:00. It is 06:00 now.
-    expect(unavailable(rule, '2026-11-05', now, 0, null)).toBeNull();
-    expect(unavailable(rule, '2026-11-05', new Date('2026-11-05T04:30:00Z'), 0, null)).toBe('cut_off');
-    expect(unavailable(rule, '2026-11-06', now, 2, null)).toBe('full');
-    expect(unavailable(rule, '2026-11-06', now, 3, null)).toBe('full');
+    expect(unavailable(rule, '2026-11-05', now, 0, null, NAIROBI)).toBeNull();
+    expect(unavailable(rule, '2026-11-05', new Date('2026-11-05T04:30:00Z'), 0, null, NAIROBI)).toBe('cut_off');
+    expect(unavailable(rule, '2026-11-06', now, 2, null, NAIROBI)).toBe('full');
+    expect(unavailable(rule, '2026-11-06', now, 3, null, NAIROBI)).toBe('full');
   });
 
   it('says its weekdays in words', () => {
@@ -66,21 +69,21 @@ describe('when a slot can be booked', () => {
 describe('weight and lead times', () => {
   it('stops a slot taking more than it can carry in a day, to the gram, and lets a delivery that fits in', () => {
     const limited: SlotRule = { ...rule, maxWeightKg: 100 };
-    expect(unavailable(limited, '2026-11-06', now, 0, null, { weight: { kg: 40, takenKg: 60 } })).toBeNull();
-    expect(unavailable(limited, '2026-11-06', now, 0, null, { weight: { kg: 40.01, takenKg: 60 } })).toBe('too_heavy');
-    expect(unavailable(limited, '2026-11-06', now, 0, null, { weight: { kg: 150, takenKg: 0 } })).toBe('too_heavy');
+    expect(unavailable(limited, '2026-11-06', now, 0, null, NAIROBI, { weight: { kg: 40, takenKg: 60 } })).toBeNull();
+    expect(unavailable(limited, '2026-11-06', now, 0, null, NAIROBI, { weight: { kg: 40.01, takenKg: 60 } })).toBe('too_heavy');
+    expect(unavailable(limited, '2026-11-06', now, 0, null, NAIROBI, { weight: { kg: 150, takenKg: 0 } })).toBe('too_heavy');
     // No limit set, or no delivery to weigh: weight does not matter.
-    expect(unavailable(rule, '2026-11-06', now, 0, null, { weight: { kg: 5000, takenKg: 0 } })).toBeNull();
-    expect(unavailable(limited, '2026-11-06', now, 0, null)).toBeNull();
+    expect(unavailable(rule, '2026-11-06', now, 0, null, NAIROBI, { weight: { kg: 5000, takenKg: 0 } })).toBeNull();
+    expect(unavailable(limited, '2026-11-06', now, 0, null, NAIROBI)).toBeNull();
     // Full comes before heavy.
-    expect(unavailable(limited, '2026-11-06', now, 2, null, { weight: { kg: 1, takenKg: 0 } })).toBe('full');
+    expect(unavailable(limited, '2026-11-06', now, 2, null, NAIROBI, { weight: { kg: 1, takenKg: 0 } })).toBe('full');
   });
 
   it('keeps a slot from starting before the goods can be ready', () => {
     const early = new Date('2026-11-06T07:00:00Z');
-    expect(unavailable(rule, '2026-11-06', now, 0, null, { earliest: early })).toBe('too_soon');
-    expect(unavailable(rule, '2026-11-06', now, 0, null, { earliest: new Date('2026-11-06T06:00:00Z') })).toBeNull();
-    expect(unavailable(rule, '2026-11-06', now, 0, null, { earliest: null })).toBeNull();
+    expect(unavailable(rule, '2026-11-06', now, 0, null, NAIROBI, { earliest: early })).toBe('too_soon');
+    expect(unavailable(rule, '2026-11-06', now, 0, null, NAIROBI, { earliest: new Date('2026-11-06T06:00:00Z') })).toBeNull();
+    expect(unavailable(rule, '2026-11-06', now, 0, null, NAIROBI, { earliest: null })).toBeNull();
   });
 
   it('works out when the goods are ready from the longest lead time, and says which held them', () => {
@@ -123,5 +126,25 @@ describe('what a shopper is offered', () => {
   it('has no earliest time when nothing is free', () => {
     expect(shopOffer([{ day: '2026-11-07', closedReason: null, slots: [slot('b', false, 'Full')] }]).earliest).toBeNull();
     expect(shopOffer([]).earliest).toBeNull();
+  });
+});
+
+describe('slots in another business time zone', () => {
+  const london = 'Europe/London';
+  it('hold the hours of the business\'s own clock: 09:00 is 09:00 in London and 06:00 in Nairobi', () => {
+    expect(windowOf('2026-11-06', rule, london).start.toISOString()).toBe('2026-11-06T09:00:00.000Z');
+    expect(windowOf('2026-11-06', rule, london).end.toISOString()).toBe('2026-11-06T12:00:00.000Z');
+    expect(windowOf('2026-07-06', rule, london).start.toISOString()).toBe('2026-07-06T08:00:00.000Z');
+    expect(windowOf('2026-11-06', rule, NAIROBI).start.toISOString()).toBe('2026-11-06T06:00:00.000Z');
+  });
+  it('close for booking by the business\'s clock, and the day is the business\'s day', () => {
+    // The slot starts 09:00 and closes two hours before. 06:30 UTC is 09:30 in Nairobi (closed since 07:00 there) but 06:30 in London (open until 07:00).
+    const at = new Date('2026-11-05T06:30:00Z');
+    expect(unavailable(rule, '2026-11-05', at, 0, null, NAIROBI)).toBe('cut_off');
+    expect(unavailable(rule, '2026-11-05', at, 0, null, london)).toBeNull();
+    // 22:30 UTC on the 5th is already the 6th in Nairobi, so the 5th has passed there and not in London.
+    const late = new Date('2026-11-05T22:30:00Z');
+    expect(unavailable(rule, '2026-11-05', late, 0, null, NAIROBI)).toBe('past');
+    expect(unavailable(rule, '2026-11-05', late, 0, null, london)).not.toBe('past');
   });
 });

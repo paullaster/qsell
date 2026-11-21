@@ -1,3 +1,4 @@
+import { businessTimeZone } from '@/server/kernel/numbering/business-date';
 import type { PackageConfigService } from './package-service';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
@@ -194,7 +195,7 @@ export class InsightsService {
       );
       const daily = this.rows<Record<string, string>>(
         await this.db.execute(sql`
-          select ((o.created_at at time zone 'Africa/Nairobi')::date)::text as day,
+          select ((o.created_at at time zone ${businessTimeZone()})::date)::text as day,
                  count(distinct o.id) as orders,
                  coalesce(sum(${NET}), 0) as net,
                  coalesce(sum(case when i.unit_cost is not null then ${NET} end), 0) as costed_net,

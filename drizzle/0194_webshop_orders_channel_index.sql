@@ -1,0 +1,1 @@
+CREATE INDEX "orders_sales_module_created_idx" ON "orders" USING btree ("sales_module","created_at","id");

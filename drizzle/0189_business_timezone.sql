@@ -1,0 +1,2 @@
+ALTER TABLE "company_settings" ADD COLUMN "timezone" text DEFAULT 'Africa/Nairobi' NOT NULL;--> statement-breakpoint
+ALTER TABLE "company_settings" ADD CONSTRAINT "company_settings_timezone_chk" CHECK ("company_settings"."timezone" ~ '^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$' AND char_length("company_settings"."timezone") <= 64);
