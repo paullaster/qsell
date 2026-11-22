@@ -165,7 +165,7 @@ For a business that makes what it sells to order (meals, catering, assembled set
 
 | Field Label       | Purpose                              | Type & Format         | Required?                                 | Validation Rules & Hints                                       |
 | ----------------- | ------------------------------------ | --------------------- | ----------------------------------------- | -------------------------------------------------------------- |
-| **Account Type**  | Determines payment requirements.     | Radio Selector        | **Required**                              | `Cash` (must pay before dispatch) or `Credit` (invoiced).      |
+| **Account Type**  | Determines payment requirements.     | Picker                | **Required**                              | `Cash` (must pay before dispatch) or `Credit` (invoiced). A customer made on the admin console starts as **Credit**, from the customer profile coded `CREDIT` (otherwise the first active credit profile), until you choose Cash or another profile; a credit customer needs a credit limit above zero. Customers who register on the web shop are **Cash** customers. |
 | **Customer Name** | Full legal or business name.         | Text (Max 120 chars)  | **Required**                              | Displayed on tax invoices.                                     |
 | **KRA PIN**       | Customer's tax registration.         | Text (11 chars)       | Optional for Retail, **Required for B2B** | Must be a valid KRA PIN format for B2B eTIMS transmission.     |
 | **Phone Number**  | Primary mobile contact.              | Phone (Max 25 chars)  | **Required**                              | Used for delivery SMS notifications and M-Pesa STK push.       |

@@ -169,12 +169,8 @@ test.describe('customers screen', () => {
     await noNativeSelect(page);
     await card.getByLabel('Name', { exact: true }).fill(name);
     await card.getByLabel('Email').fill(`card-${stamp.toLowerCase()}@example.test`);
-    await pick(
-      page,
-      card.getByRole('combobox', { name: 'Account type' }),
-      'Credit',
-      /Credit \(pays later\)/,
-    );
+    // On account unless someone picks cash.
+    await expect(card.getByRole('combobox', { name: 'Account type' })).toHaveValue(/Credit \(pays later\)/);
     await expect(card.getByLabel('Credit limit')).toBeEnabled();
     await card.getByLabel('Credit limit').fill('750');
     await card.getByLabel('Payment terms (days)').fill('14');
