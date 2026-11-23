@@ -92,7 +92,7 @@ describe('a discount staff type themselves', () => {
   it('is off everywhere until the company turns it on, and only the counter can', () => {
     for (const def of SELLING_TYPE_DEFS) expect(def.defaults).toMatchObject({ manualDiscount: 'off', manualDiscountBranches: [] });
     expect(allowedOptions('pos_cash_sale', 'manualDiscount')).toEqual(['off', 'all_branches', 'selected_branches']);
-    for (const type of ['sales_order', 'sales_invoice', 'credit_sale'] as const) expect(allowedOptions(type, 'manualDiscount')).toEqual(['off']);
+    for (const type of ['sales_order', 'sales_invoice', 'credit_sale'] as const) expect(allowedOptions(type, 'manualDiscount')).toEqual(['off', 'all_branches', 'selected_branches']);
   });
 
   it('is offered at every branch, only at the branches chosen, or nowhere, and never where discounts are not allowed', () => {
@@ -108,10 +108,10 @@ describe('a discount staff type themselves', () => {
     expect(manualDiscountOffered(readSellingSettings('pos_cash_sale', full({ manualDiscount: 'all_branches', discounts: 'not_allowed' })), A)).toBe(false);
   });
 
-  it('keeps only real branch ids when read, and a type that cannot offer it reads as off', () => {
+  it('keeps only real branch ids when read, and every selling document can offer it', () => {
     expect(readSellingSettings('pos_cash_sale', full({ manualDiscount: 'selected_branches', manualDiscountBranches: [A, 'nope'] })).manualDiscountBranches).toEqual([]);
     expect(readSellingSettings('pos_cash_sale', full({ manualDiscount: 'selected_branches', manualDiscountBranches: [A, A.toUpperCase()] })).manualDiscountBranches).toEqual([A]);
-    expect(readSellingSettings('sales_order', { manualDiscount: 'all_branches' }).manualDiscount).toBe('off');
+    for (const type of ['sales_order', 'credit_sale', 'sales_invoice'] as const) expect(readSellingSettings(type, { ...defOf(type).defaults, manualDiscount: 'all_branches' }).manualDiscount).toBe('all_branches');
   });
 
   it('is checked for real when saved: a known choice, branches that are ids, and at least one branch when only some are chosen', () => {
@@ -121,6 +121,6 @@ describe('a discount staff type themselves', () => {
     expect(checkSellingInput('pos_cash_sale', { ...base, manualDiscount: 'selected_branches', manualDiscountBranches: [] }).ok).toBe(false);
     expect(checkSellingInput('pos_cash_sale', { ...base, manualDiscount: 'selected_branches', manualDiscountBranches: ['x'] }).ok).toBe(false);
     expect(checkSellingInput('pos_cash_sale', { ...base, manualDiscount: 'sometimes' }).ok).toBe(false);
-    expect(checkSellingInput('sales_order', { ...defOf('sales_order').defaults, manualDiscount: 'all_branches' }).ok).toBe(false);
+    expect(checkSellingInput('sales_order', { ...defOf('sales_order').defaults, manualDiscount: 'all_branches' }).ok).toBe(true);
   });
 });

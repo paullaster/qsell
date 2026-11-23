@@ -9,11 +9,18 @@ describe('reading a sales order', () => {
     const ok = parseSalesOrderInput({ ...plain, price: 1, lines: [{ productId: 'p1', quantity: 2, unitPrice: 1 }, { productId: 'pk', quantity: 12, package: { picks: [{ slotName: 'Fish', productId: 'f', name: 'Large fish', count: 1 }], note: ' no pepper ' } }], neededOn: '2030-05-04', holdUntilPaid: true });
     expect(ok.ok && ok.input).toEqual({
       customerId,
-      lines: [{ productId: 'p1', quantity: 2 }, { productId: 'pk', quantity: 12, package: { picks: [{ slotName: 'Fish', productId: 'f', name: 'Large fish', count: 1 }], note: 'no pepper' } }],
+      lines: [{ productId: 'p1', quantity: 2, unitPrice: 1 }, { productId: 'pk', quantity: 12, package: { picks: [{ slotName: 'Fish', productId: 'f', name: 'Large fish', count: 1 }], note: 'no pepper' } }],
       paymentMethod: 'mpesa_daraja',
       neededOn: '2030-05-04',
       holdUntilPaid: true,
     });
+  });
+
+  it('reads a typed price and discount to the cent and refuses what is not one', () => {
+    const line = (extra: Record<string, unknown>) => parseSalesOrderInput({ ...plain, lines: [{ productId: 'p1', quantity: 1, ...extra }] });
+    expect(line({ unitPrice: 10.456, discount: { kind: 'percent', value: 12.5 } })).toMatchObject({ ok: true, input: { lines: [{ unitPrice: 10.46, discount: { kind: 'percent', value: 12.5 } }] } });
+    expect(line({ unitPrice: 0 })).toEqual({ ok: false, error: 'Line 1: the price must be more than nothing.' });
+    for (const discount of [{ kind: 'percent', value: 100 }, { kind: 'amount', value: 0 }, { kind: 'free', value: 1 }, 'ten']) expect(line({ discount })).toEqual({ ok: false, error: 'Line 1: the discount must be a percentage under 100, or an amount more than nothing.' });
   });
 
   it('needs a real customer and at least one line', () => {

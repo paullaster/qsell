@@ -48,7 +48,7 @@ test.describe('sales orders taken by staff', () => {
     await expect(dialog.getByTestId('package-builder')).toBeVisible({ timeout: 60_000 });
     await dialog.getByRole('button', { name: 'Add to the order' }).click();
     await expect(form.getByTestId('order-line')).toHaveCount(2);
-    await expect(form.getByTestId('order-estimate')).toContainText('Estimate at list prices');
+    await expect(form.getByTestId('order-totals')).toBeVisible();
     await noNativeSelect(page);
     await noHorizontalScroll(page);
     await noInnerHorizontalScroll(page);

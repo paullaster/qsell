@@ -27,18 +27,19 @@ export function DiscountEditor({ name, discount, onChange }: { name: string; dis
   };
   if (editing) {
     return (
-      <form className="w-full space-y-1" aria-label={`Discount on ${name}`} data-testid="discount-form" onSubmit={(e) => { e.preventDefault(); apply(); }}>
+      // A group, not a form: this editor also sits inside the order forms, and a form cannot hold a form (its button would place the order).
+      <div role="group" className="w-full space-y-1" aria-label={`Discount on ${name}`} data-testid="discount-form">
         <div className="flex items-center gap-1">
           <div role="group" aria-label="Kind of discount" className="inline-flex shrink-0 overflow-hidden rounded-lg border border-line">
             <button type="button" aria-pressed={kind === 'percent'} className={toggle(kind === 'percent')} onClick={() => setKind('percent')}>%</button>
             <button type="button" aria-pressed={kind === 'amount'} className={toggle(kind === 'amount')} onClick={() => setKind('amount')}>KES</button>
           </div>
-          <input aria-label={kind === 'percent' ? `Percent off ${name}` : `Amount off each ${name}`} data-testid="discount-input" type="number" inputMode="decimal" min={0} step="0.01" autoFocus className="h-10 min-w-0 flex-1 rounded-lg border border-line bg-surface px-2 text-right font-mono text-sm font-bold text-fg-strong focus:outline-2 focus:outline-indigo-500" value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setEditing(false); } }} />
-          <button type="submit" aria-label="Give this discount" data-testid="discount-apply" className="inline-flex size-10 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white hover:bg-indigo-500"><Check className="size-4" aria-hidden /></button>
+          <input aria-label={kind === 'percent' ? `Percent off ${name}` : `Amount off each ${name}`} data-testid="discount-input" type="number" inputMode="decimal" min={0} step="0.01" autoFocus className="h-10 min-w-0 flex-1 rounded-lg border border-line bg-surface px-2 text-right font-mono text-sm font-bold text-fg-strong focus:outline-2 focus:outline-indigo-500" value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setEditing(false); } if (e.key === 'Enter') { e.preventDefault(); apply(); } }} />
+          <button type="button" aria-label="Give this discount" data-testid="discount-apply" onClick={apply} className="inline-flex size-10 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white hover:bg-indigo-500"><Check className="size-4" aria-hidden /></button>
           <button type="button" aria-label="Cancel the discount" className="inline-flex size-10 shrink-0 items-center justify-center rounded-lg text-fg-muted hover:bg-hover" onClick={() => { setEditing(false); setProblem(null); }}><X className="size-4" aria-hidden /></button>
         </div>
         {problem === null ? null : <p role="alert" className="text-xs text-red-700">{problem}</p>}
-      </form>
+      </div>
     );
   }
   return (

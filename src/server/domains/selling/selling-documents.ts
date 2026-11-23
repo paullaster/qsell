@@ -116,13 +116,10 @@ export interface SellingTypeDef {
 
 const base: SellingSettings = { creditCheck: 'limit', overdueDays: 30, noAccount: 'allow', overLimit: 'hold', creditDays: 'customer', fixedDays: 30, stockRelease: 'on_delivery', approval: 'workflow', invoice: 'later', discounts: 'allowed', manualDiscount: 'off', manualDiscountBranches: [], invoiceAfterApproval: true, allowHoldUntilPaid: true };
 
-/** Only the counter offers a manual discount for now; the other selling points follow. */
-const NO_MANUAL_DISCOUNT: SellingTypeDef['limits'] = { manualDiscount: ['off'] };
-
 export const SELLING_TYPE_DEFS: readonly SellingTypeDef[] = [
-  { type: 'sales_order', label: 'Sales orders', description: 'An order staff take for later collection or delivery.', defaults: base, limits: NO_MANUAL_DISCOUNT },
-  { type: 'credit_sale', label: 'Credit sales', description: 'A sale to a customer\'s account, invoiced at once.', defaults: { ...base, noAccount: 'refuse', invoice: 'with_document' }, limits: { ...NO_MANUAL_DISCOUNT, noAccount: ['refuse'] } },
-  { type: 'sales_invoice', label: 'Sales invoices', description: 'A sale invoiced directly, with no sales order.', defaults: { ...base, stockRelease: 'on_issue', invoice: 'with_document' }, limits: { ...NO_MANUAL_DISCOUNT, invoice: ['with_document'] } },
+  { type: 'sales_order', label: 'Sales orders', description: 'An order staff take for later collection or delivery.', defaults: base, limits: { manualDiscount: MANUAL_DISCOUNT_RULES } },
+  { type: 'credit_sale', label: 'Credit sales', description: 'A sale to a customer\'s account, invoiced at once.', defaults: { ...base, noAccount: 'refuse', invoice: 'with_document' }, limits: { manualDiscount: MANUAL_DISCOUNT_RULES, noAccount: ['refuse'] } },
+  { type: 'sales_invoice', label: 'Sales invoices', description: 'A sale invoiced directly, with no sales order.', defaults: { ...base, stockRelease: 'on_issue', invoice: 'with_document' }, limits: { manualDiscount: MANUAL_DISCOUNT_RULES, invoice: ['with_document'] } },
   { type: 'pos_cash_sale', label: 'Cash sales', description: 'A counter sale paid at once, inside a shift.', defaults: { ...base, creditCheck: 'off', noAccount: 'allow', overLimit: 'refuse', creditDays: 'on_issue', stockRelease: 'on_issue', approval: 'never', invoice: 'with_document', allowHoldUntilPaid: false }, limits: { manualDiscount: MANUAL_DISCOUNT_RULES, creditCheck: ['off'], noAccount: ['allow'], overLimit: ['refuse'], creditDays: ['on_issue'], stockRelease: ['on_issue'], approval: ['never'], invoice: ['with_document'] } },
 ];
 
