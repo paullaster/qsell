@@ -681,6 +681,22 @@ export class CustomerLedgerService {
     return row !== undefined;
   }
 
+  /**
+   * Every ledger entry of a period in statement order (oldest first, undated first), for a statement that is downloaded whole.
+   * Asks for one more than the limit so a caller can tell the period is too large to issue as one document.
+   */
+  async entriesInPeriod(companyId: string, customerId: string, from: string | null, to: string | null, limit: number) {
+    const conds = [eq(customerLedgerEntries.companyId, companyId), eq(customerLedgerEntries.customerId, customerId)];
+    if (has(from)) conds.push(gte(customerLedgerEntries.postingDate, from));
+    if (has(to)) conds.push(lte(customerLedgerEntries.postingDate, to));
+    return await this.db
+      .select()
+      .from(customerLedgerEntries)
+      .where(and(...conds))
+      .orderBy(sql`${customerLedgerEntries.postingDate} ASC NULLS FIRST`, asc(customerLedgerEntries.id))
+      .limit(limit + 1);
+  }
+
   async entriesByIds(companyId: string, customerId: string, ids: string[]) {
     if (ids.length === 0) return [];
     return await this.db

@@ -1,9 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import { Suspense, use, useId, useRef, useState } from 'react';
+import { Suspense, use, useEffect, useEffectEvent, useId, useRef, useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
-import { STATEMENT_WORDS as W, statementAgeLabel, statementDocumentNumber, statementSpan } from '@/lib/customer-statement';
+import { STATEMENT_WORDS as W, statementAgeLabel, statementDocumentNumber } from '@/lib/customer-statement';
 import { downloadCsv, downloadPdfBase64 } from '@/lib/downloadPdf';
 import {
   customerLedgerEntryDetailAction,
@@ -250,10 +250,12 @@ export function CustomerStatementPanel({
   const [ranged, setRanged] = useState<{ data: View; from: string; to: string } | null>(null);
   const [moreLines, setMoreLines] = useState<StatementLine[]>([]);
   const [cursor, setCursor] = useState<string | null>(initial.nextCursor);
-  const [range, setRange] = useState(() => statementSpan(initial.lines, { from: '', to: '' }));
+  const [range, setRange] = useState({ from: '', to: '' });
   const [busy, setBusy] = useState(false);
   const [downloadBusy, setDownloadBusy] = useState<'pdf' | 'csv' | null>(null);
   const [moreBusy, setMoreBusy] = useState(false);
+  const [moreFailed, setMoreFailed] = useState(false);
+  const sentinel = useRef<HTMLDivElement | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [selected, setSelected] = useState<{ id: string; label: string } | null>(null);
   const [detail, setDetail] = useState<DetailState | null>(null);
@@ -280,7 +282,6 @@ export function CustomerStatementPanel({
     }
     setNotice(null);
     setRanged({ data: res.data, from: range.from, to: range.to });
-    setRange(statementSpan(res.data.lines, { from: range.from, to: range.to }));
     setMoreLines([]);
     setCursor(res.data.nextCursor);
   };
@@ -288,23 +289,19 @@ export function CustomerStatementPanel({
   const more = async () => {
     if (cursor === null || moreBusy) return;
     setMoreBusy(true);
+    setMoreFailed(false);
     const from = ranged?.from === '' || ranged?.from === undefined ? undefined : ranged.from;
     const to = ranged?.to === '' || ranged?.to === undefined ? undefined : ranged.to;
     const res = await attempt(customerStatementAction(view.customer.id, from, to, cursor));
     setMoreBusy(false);
     if (!res.ok) {
+      setMoreFailed(true);
       setNotice({ kind: 'error', text: res.error });
       return;
     }
     setNotice(null);
     const nextLines = [...moreLines, ...res.data.lines];
     setMoreLines(nextLines);
-    setRange(
-      statementSpan(
-        [...view.lines, ...nextLines],
-        ranged === null ? { from: '', to: '' } : { from: ranged.from, to: ranged.to },
-      ),
-    );
     setCursor(res.data.nextCursor);
   };
 
@@ -315,7 +312,6 @@ export function CustomerStatementPanel({
       customerStatementDownloadAction(
         format,
         c.id,
-        lines.map((line) => line.id),
         ranged?.from === '' || ranged?.from === undefined ? undefined : ranged.from,
         ranged?.to === '' || ranged?.to === undefined ? undefined : ranged.to,
       ),
@@ -338,6 +334,21 @@ export function CustomerStatementPanel({
     if (request !== detailRequest.current) return;
     setDetail(res.ok ? { phase: 'ready', data: res.data } : { phase: 'error', error: res.error });
   };
+
+  // The rest of the transactions load as the end of the list comes into view; after a failure the person asks again.
+  const loadMore = useEffectEvent(() => void more());
+  useEffect(() => {
+    const node = sentinel.current;
+    if (node === null || cursor === null || moreBusy || moreFailed) return;
+    const watcher = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) loadMore();
+      },
+      { rootMargin: '400px 0px' },
+    );
+    watcher.observe(node);
+    return () => watcher.disconnect();
+  }, [cursor, moreBusy, moreFailed, lines.length]);
 
   const closeDetail = () => {
     detailRequest.current += 1;
@@ -452,7 +463,7 @@ export function CustomerStatementPanel({
         >
           {downloadBusy === 'csv' ? 'Preparing CSV…' : 'Download CSV'}
         </button>
-        <p className="text-xs text-fg-muted">The PDF and CSV contain the period and transactions shown above.</p>
+        <p className="text-xs text-fg-muted">The PDF and CSV contain every transaction of the period above, not only the rows loaded.</p>
       </div>
 
       <section aria-labelledby={`${uid}-statement`} className="space-y-3">
@@ -603,15 +614,14 @@ export function CustomerStatementPanel({
               </tfoot>
             </table>
             {cursor === null ? null : (
-              <div className="flex justify-center">
-                <button
-                  type="button"
-                  className={buttonClass}
-                  disabled={moreBusy}
-                  onClick={() => void more()}
-                >
-                  {moreBusy ? 'Loading more…' : 'Show more transactions'}
-                </button>
+              <div ref={sentinel} className="flex justify-center py-3" role="status" aria-live="polite">
+                {moreFailed ? (
+                  <button type="button" className={buttonClass} onClick={() => void more()}>
+                    Try loading more transactions again
+                  </button>
+                ) : (
+                  <span className="text-xs text-fg-muted">Loading more transactions…</span>
+                )}
               </div>
             )}
           </>

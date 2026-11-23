@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { pick } from './support/quotes';
 import { clickUntilVisible, noHorizontalScroll, noNativeSelect } from './support/page';
+import { longStatementCustomer } from './support/statement-fixture';
 
 async function openCustomers(page: Page): Promise<void> {
   for (let attempt = 0; attempt < 4; attempt += 1) {
@@ -44,20 +45,57 @@ test.describe('customers screen', () => {
     await expect(page.getByRole('heading', { name: 'Customers', level: 2 })).toBeVisible();
   });
 
+  test('a long statement loads as the person scrolls and downloads the whole period', async ({ page }, info) => {
+    const who = longStatementCustomer(`${info.project.name}${String(Date.now()).slice(-6)}`);
+    await openCustomers(page);
+    await page.getByLabel('Search customers').fill(who.number);
+    await expect(async () => {
+      await page.getByRole('link', { name: `Open ${who.name}` }).click();
+      await expect(page).toHaveURL(/\/admin\/customers\/(?!list$)[^/]+$/, { timeout: 4_000 });
+    }).toPass({ timeout: 60_000 });
+    await expect(page.getByRole('heading', { name: 'Statement of Account' })).toBeVisible({ timeout: 60_000 });
+
+    // There is no "show more" button: the rest arrives as the end of the list comes into view.
+    await expect(page.getByRole('button', { name: /show more transactions/i })).toHaveCount(0);
+    const rows = page.locator('table:visible tbody tr, ul[aria-label="Statement of Account"]:visible > li');
+    await expect(async () => {
+      await page.mouse.wheel(0, 20_000);
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      expect(await rows.count()).toBeGreaterThanOrEqual(who.lines);
+    }).toPass({ timeout: 60_000 });
+    await expect(page.getByText('Loading more transactions…')).toHaveCount(0);
+
+    // The file holds every transaction of the period, not only the rows that were loaded; a period of September holds 65.
+    const csvAll = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Download CSV' }).click();
+    const all = await (await csvAll).createReadStream();
+    const text: string = await new Promise((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      all.on('data', (c: Buffer) => chunks.push(c));
+      all.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+      all.on('error', reject);
+    });
+    expect(text.split(/\r?\n/).filter((l) => /^\d{2} (Aug|Sep) 2026,/.test(l)).length).toBe(who.lines);
+    expect(text).toContain('Closing balance due');
+  });
+
   test('the customer centre shows a customer statement and drills into each transaction', async ({
     page,
     isMobile,
   }) => {
     await openCustomers(page);
     await page.getByLabel('Search customers').fill('E2E001');
-    await page.getByRole('link', { name: 'Open Alice Cash' }).click();
-    await expect(page).toHaveURL(/\/admin\/customers\/[^/]+$/);
-    await expect(page.getByRole('heading', { name: 'Statement of Account' })).toBeVisible();
-    await expect(page.getByLabel('From', { exact: true })).not.toHaveValue('');
-    await expect(page.getByLabel('To', { exact: true })).not.toHaveValue('');
+    // A click before the page has hydrated is lost, so it is repeated until the page has moved.
+    await expect(async () => {
+      await page.getByRole('link', { name: 'Open Alice Cash' }).click();
+      await expect(page).toHaveURL(/\/admin\/customers\/(?!list$)[^/]+$/, { timeout: 4_000 });
+    }).toPass({ timeout: 60_000 });
+    await expect(page.getByRole('heading', { name: 'Statement of Account' })).toBeVisible({ timeout: 60_000 });
+    // No dates chosen means every transaction; the dates stay what the person chose and do not move as the list scrolls.
+    await expect(page.getByLabel('Period from', { exact: true })).toHaveValue('');
+    await expect(page.getByLabel('Period to', { exact: true })).toHaveValue('');
     await expect(page.getByText('Closing balance due').locator('visible=true').first()).toBeVisible();
     await expect(page.getByText('Balance brought forward').locator('visible=true').first()).toBeVisible();
-    await expect(page.getByText('Closing balance').locator('visible=true').first()).toBeVisible();
 
     const pdfDownload = page.waitForEvent('download');
     await page.getByRole('button', { name: 'Download PDF' }).click();
@@ -84,7 +122,7 @@ test.describe('customers screen', () => {
     const dialog = page.getByRole('dialog', { name: /Transaction detail/ });
     await expect(page.getByRole('link', { name: /Download receipt/ })).toBeVisible();
     await expect(page.getByRole('button', { name: /Print receipt/ })).toBeVisible();
-    await expect(dialog.getByText('Document amount', { exact: true }).first()).toBeVisible();
+    await expect(dialog.getByText('Original amount', { exact: true }).first()).toBeVisible();
     await expect(dialog.getByRole('heading', { name: 'Related documents' })).toBeVisible();
     await expect(dialog.getByRole('link', { name: /^Open / })).not.toHaveCount(0);
     // What a payment was applied to depends on what the shard has already done: the seeded receipt is left
@@ -96,9 +134,9 @@ test.describe('customers screen', () => {
     if (!isMobile) {
       await expect(dialog.getByRole('columnheader', { name: 'When' })).toBeVisible();
       await expect(dialog.getByRole('columnheader', { name: 'What happened' })).toBeVisible();
-      await expect(dialog.getByRole('columnheader', { name: 'Why / by whom' })).toBeVisible();
+      await expect(dialog.getByRole('columnheader', { name: 'Reason / recorded by' })).toBeVisible();
     } else {
-      await expect(dialog.getByText('Why / by whom', { exact: true }).first()).toBeVisible();
+      await expect(dialog.getByText('Reason / recorded by', { exact: true }).first()).toBeVisible();
     }
     await expect(page.getByRole('heading', { name: 'History' })).toBeVisible();
     await page.getByRole('button', { name: 'Close' }).click();
