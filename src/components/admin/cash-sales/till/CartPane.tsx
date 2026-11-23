@@ -4,7 +4,8 @@ import { useState } from 'react';
 import { Check, Minus, PauseCircle, Pencil, Plus, RotateCcw, ShoppingCart, Trash2, UserRound } from 'lucide-react';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import type { Choice } from '@/lib/payment-options';
-import { eachShown, totalShown, unitCount, type Cart } from '@/lib/till/cart';
+import { DiscountEditor } from './DiscountEditor';
+import { eachShown, totalShown, unitCount, type Cart, type LineDiscount } from '@/lib/till/cart';
 import { kes } from '@/lib/till/tile-style';
 
 export interface Priced {
@@ -25,6 +26,8 @@ export function CartPane({
   onQuantity,
   canPrice,
   onPrice,
+  canDiscount,
+  onDiscount,
   onRemove,
   onCustomer,
   onHold,
@@ -43,6 +46,9 @@ export function CartPane({
   /** The person may change an item's price while selling. */
   canPrice: boolean;
   onPrice: (key: string, price: number | null) => void;
+  /** The person may offer a discount where they sell (the permission and the company's setting for their branch). */
+  canDiscount: boolean;
+  onDiscount: (key: string, discount: LineDiscount | null) => void;
   onRemove: (key: string) => void;
   onCustomer: (choice: Choice | null) => void;
   onHold: () => void;
@@ -133,6 +139,7 @@ export function CartPane({
                     {l.price === undefined || editingPrice?.key === l.key ? null : <button type="button" className="inline-flex size-10 items-center justify-center rounded-lg text-fg-muted hover:bg-hover" aria-label={`Back to the list price of ${l.name}`} title="Back to the list price" data-testid="price-reset" onClick={() => onPrice(l.key, null)}><RotateCcw className="size-4" aria-hidden /></button>}
                     <button type="button" className="inline-flex size-10 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-red-700" aria-label={`Remove ${l.name}`} onClick={() => onRemove(l.key)}><Trash2 className="size-4" aria-hidden /></button>
                   </div>
+                  {canDiscount && l.package === undefined ? <DiscountEditor name={l.name} discount={l.discount} onChange={(next) => onDiscount(l.key, next)} /> : null}
                 </li>
               );
             })}

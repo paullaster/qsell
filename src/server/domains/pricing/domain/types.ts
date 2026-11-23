@@ -167,6 +167,8 @@ export interface PriceTrace {
   };
   /** What the discount rules did to this line's price, once they have been applied. */
   discounts?: DiscountTrace;
+  /** A discount typed at the counter: the kind and value as typed, the price of one before it and what it took off each unit. Read by the receipt. */
+  counterDiscount?: { kind: 'percent' | 'amount'; value: number; before: number; perUnit: number };
   /** Set on a component line made from a kit: which kit, how many were sold, and what they came to. */
   kit?: { productId: string; name: string; quantity: number; total: number };
   /** Set on a quote line whose product was a kit when it was quoted, so converting the quote can tell if it has stopped being one. */

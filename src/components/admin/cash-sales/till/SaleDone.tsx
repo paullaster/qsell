@@ -1,15 +1,17 @@
 'use client';
 
 import { CheckCircle2 } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useWhen } from '@/components/business-time';
 import { Modal } from '@/components/ui/Modal';
 import type { SaleSummary } from '@/server/domains/selling/cash-sales/cash-sale-service';
 import { orElse } from '@/lib/values';
 import { kes } from '@/lib/till/tile-style';
+import type { ReceiptDiscount } from '@/server/domains/selling/cash-sales/till-rules';
 
 /** After the sale: the receipt, the change to give in large figures, print, and the next sale one press away. */
-export function SaleDone({ sale, shopName, onClose }: { sale: SaleSummary; shopName: string; onClose: () => void }) {
+export function SaleDone({ sale, shopName, receiptDiscount, onClose }: { sale: SaleSummary; shopName: string; receiptDiscount: ReceiptDiscount; onClose: () => void }) {
   return (
     <Modal title="Sale complete" onClose={onClose}>
       <section aria-label="Receipt" data-testid="receipt" className="space-y-4">
@@ -25,13 +27,14 @@ export function SaleDone({ sale, shopName, onClose }: { sale: SaleSummary; shopN
           <p className="text-fg-muted">Sale {sale.orderNumber} · {sale.customerName}</p>
         </div>
         <dl className="space-y-1 text-sm">
+          {receiptDiscount !== 'hidden' && sale.discount > 0 ? <div className="flex justify-between gap-3 text-emerald-700" data-testid="receipt-discount"><dt>You saved</dt><dd className="font-mono">{kes(sale.discount)}</dd></div> : null}
           <div className="flex justify-between gap-3 text-base font-bold text-fg-strong"><dt>Total</dt><dd className="font-mono">{kes(sale.total)}</dd></div>
           {sale.tenders.map((t) => (
             <div key={t.label + t.kind + String(t.applied)} className="flex justify-between gap-3"><dt>{t.label}{t.reference === null ? '' : ` (${t.reference})`}</dt><dd className="font-mono">{kes(t.applied)}</dd></div>
           ))}
         </dl>
         {sale.warning === undefined ? null : <p role="alert" className="text-sm text-amber-700">{sale.warning}</p>}
-        <PrintedReceipt sale={sale} shopName={shopName} />
+        <PrintedReceipt sale={sale} shopName={shopName} receiptDiscount={receiptDiscount} />
         <div className="flex flex-wrap gap-2 print:hidden">
           <button type="button" className="inline-flex min-h-12 cursor-pointer items-center rounded-xl border border-line px-5 text-sm font-semibold text-fg hover:bg-hover" onClick={() => window.print()}>Print receipt</button>
           <button type="button" autoFocus className="inline-flex min-h-12 flex-1 cursor-pointer items-center justify-center rounded-xl bg-indigo-600 px-5 text-base font-bold text-white hover:bg-indigo-500" onClick={onClose} data-testid="new-sale">New sale</button>
@@ -56,7 +59,19 @@ const RECEIPT_CSS = `
   .receipt-print .big { font-size: 14px; font-weight: 700; }
 }`;
 
-function PrintedReceipt({ sale, shopName }: { sale: SaleSummary; shopName: string }) {
+/** A finished sale's slip straight to the printer, with no window in between (the Receipt button of the sales list). */
+export function ReceiptPrinter({ sale, shopName, receiptDiscount, onDone }: { sale: SaleSummary; shopName: string; receiptDiscount: ReceiptDiscount; onDone: () => void }) {
+  const asked = useRef(false);
+  useEffect(() => {
+    window.addEventListener('afterprint', onDone, { once: true });
+    // React runs an effect twice in development; the printer is asked once.
+    if (!asked.current) { asked.current = true; window.print(); }
+    return () => window.removeEventListener('afterprint', onDone);
+  }, [onDone]);
+  return <PrintedReceipt sale={sale} shopName={shopName} receiptDiscount={receiptDiscount} />;
+}
+
+function PrintedReceipt({ sale, shopName, receiptDiscount }: { sale: SaleSummary; shopName: string; receiptDiscount: ReceiptDiscount }) {
   const when = useWhen();
   if (typeof document === 'undefined') return null;
   return createPortal(
@@ -71,9 +86,11 @@ function PrintedReceipt({ sale, shopName }: { sale: SaleSummary; shopName: strin
         <div key={i}>
           <p>{l.name}</p>
           <div className="row"><span>{l.quantity} x {kes(l.unitPrice)}</span><span>{kes(l.total)}</span></div>
+          {receiptDiscount === 'per_item' && l.discount > 0 ? <div className="row" data-testid="receipt-line-discount"><span>  Discount</span><span>-{kes(l.discount)}</span></div> : null}
         </div>
       ))}
       <hr />
+      {receiptDiscount === 'total' && sale.discount > 0 ? <div className="row" data-testid="receipt-total-discount"><span>Discount</span><span>-{kes(sale.discount)}</span></div> : null}
       <div className="row big"><span>TOTAL</span><span>{kes(sale.total)}</span></div>
       {sale.tenders.map((t) => (
         <div key={t.label + t.kind + String(t.applied)} className="row"><span>{t.label}{t.reference === null ? '' : ` ${t.reference}`}</span><span>{kes(t.handedOver ?? t.applied)}</span></div>

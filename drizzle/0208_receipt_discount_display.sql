@@ -1,0 +1,2 @@
+ALTER TABLE "cash_sale_settings" ADD COLUMN "receipt_discount" text DEFAULT 'hidden' NOT NULL;--> statement-breakpoint
+ALTER TABLE "cash_sale_settings" ADD CONSTRAINT "cash_sale_settings_receipt_discount_chk" CHECK ("cash_sale_settings"."receipt_discount" IN ('hidden','total','per_item'));

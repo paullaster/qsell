@@ -20,6 +20,7 @@ const TITLES: Record<EnumSetting, string> = {
   approval: 'Approval',
   invoice: 'The invoice is made',
   discounts: 'Discounts',
+  manualDiscount: 'Discount typed by staff',
 };
 
 export function SellingSettingsClient({ firstPromise }: { firstPromise: ReturnType<typeof sellingSettingsScreenAction> }) {
@@ -85,6 +86,7 @@ function Summary({ type, onChange }: { type: SellingTypeView; onChange: () => vo
             </dd>
           </div>
         ))}
+        {s.manualDiscount === 'selected_branches' ? <div className="contents"><dt className="text-fg-muted">Discount offered at</dt><dd className="min-w-0 break-words text-fg">{type.branches.map((b) => b.name).join(', ')}</dd></div> : null}
         {s.invoice === 'with_document' && s.approval === 'workflow' ? <div className="contents"><dt className="text-fg-muted">Invoice after approval</dt><dd className="text-fg">{s.invoiceAfterApproval ? 'Made automatically once approved' : 'Staff raise it after approval'}</dd></div> : null}
         <div className="contents"><dt className="text-fg-muted">Hold until paid</dt><dd className="text-fg">{s.allowHoldUntilPaid ? 'Staff may hold a document until it is paid' : 'Not offered'}</dd></div>
       </dl>
@@ -95,6 +97,7 @@ function Summary({ type, onChange }: { type: SellingTypeView; onChange: () => vo
 function Editor({ type, onCancel, onSaved }: { type: SellingTypeView; onCancel: () => void; onSaved: (types: SellingTypeView[], text: string) => void }) {
   const uid = useId();
   const [values, setValues] = useState<SellingSettings>(type.settings);
+  const [branchNames, setBranchNames] = useState<Record<string, string>>(() => Object.fromEntries(type.branches.map((b) => [b.id, b.name])));
   const [reason, setReason] = useState<ReasonValue>({ code: '', text: '' });
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -138,6 +141,21 @@ function Editor({ type, onCancel, onSaved }: { type: SellingTypeView; onCancel: 
             onChoice={(c) => c !== null && setValues((v) => ({ ...v, [name]: c.id }))}
           />
         ))}
+        {values.manualDiscount === 'selected_branches' ? (
+          <div className="sm:col-span-2" data-testid="discount-branches">
+            <ChoicePicker label="Add a branch where a discount may be offered" source="selling-branches" choice={null} placeholder="Search a branch…" onChoice={(c) => { if (c === null) return; setBranchNames((n) => ({ ...n, [c.id]: c.label })); setValues((v) => ({ ...v, manualDiscountBranches: v.manualDiscountBranches.includes(c.id) ? v.manualDiscountBranches : [...v.manualDiscountBranches, c.id] })); }} />
+            {values.manualDiscountBranches.length === 0 ? <p className="mt-2 text-xs text-fg-muted">No branch chosen yet.</p> : (
+              <ul className="mt-2 flex flex-wrap gap-2" aria-label="Branches where a discount may be offered">
+                {values.manualDiscountBranches.map((id) => (
+                  <li key={id} className="inline-flex min-h-10 items-center gap-1 rounded-full border border-line bg-surface pl-3 text-sm text-fg">
+                    <span className="break-words">{branchNames[id] ?? 'Branch'}</span>
+                    <button type="button" className="inline-flex size-10 items-center justify-center rounded-full text-fg-muted hover:bg-hover" aria-label={`Remove ${branchNames[id] ?? 'this branch'}`} onClick={() => setValues((v) => ({ ...v, manualDiscountBranches: v.manualDiscountBranches.filter((x) => x !== id) }))}>×</button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ) : null}
         {values.creditCheck === 'limit_and_overdue' ? days(`${uid}-overdue`, 'An invoice overdue by more than (days)', 'overdueDays') : null}
         {values.creditDays === 'fixed' ? days(`${uid}-fixed`, 'Credit days for every customer', 'fixedDays') : null}
       </div>

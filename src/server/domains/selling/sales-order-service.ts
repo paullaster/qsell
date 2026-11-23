@@ -118,7 +118,7 @@ export class SalesOrderService {
         items: input.lines.map((line, index) => {
           const at = packageLines.findIndex((p) => p.index === index);
           const picks = at < 0 ? undefined : resolved.picks[at];
-          return { productId: line.productId, quantity: line.quantity, ...(kind === 'pos_cash_sale' && line.unitPrice !== undefined && picks === undefined ? { priceOverride: line.unitPrice } : {}), ...(picks === undefined ? {} : { package: { picks, ...(line.package?.note === undefined || line.package.note === '' ? {} : { note: line.package.note }) } }) };
+          return { productId: line.productId, quantity: line.quantity, ...(kind === 'pos_cash_sale' && line.unitPrice !== undefined && picks === undefined ? { priceOverride: line.unitPrice } : {}), ...(kind === 'pos_cash_sale' && line.discount !== undefined && picks === undefined ? { manualDiscount: line.discount } : {}), ...(picks === undefined ? {} : { package: { picks, ...(line.package?.note === undefined || line.package.note === '' ? {} : { note: line.package.note }) } }) };
         }),
         currency: 'KES',
         // How they are expected to pay is a label: money is received by receipt, and a customer's credit comes from their account, not from this.

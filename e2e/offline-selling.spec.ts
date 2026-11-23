@@ -20,7 +20,7 @@ test.describe('selling with no connection', () => {
     const productName = makeProduct(tag);
 
     // Switched on, in its own screen, with a reason.
-    await gotoAdmin(page, '/admin/settings/offline-selling', 'Offline selling');
+    await gotoAdmin(page, '/admin/settings/sales/offline-selling', 'Offline selling');
     await noNativeSelect(page);
     await expect(page.getByTestId('offline-acceptance')).toContainText('provisional slip');
     const form = page.getByRole('form', { name: 'Offline selling' });
@@ -42,7 +42,7 @@ test.describe('selling with no connection', () => {
     }
 
     // A till and an open shift, while online.
-    await gotoAdmin(page, '/admin/settings/registers', 'Registers');
+    await gotoAdmin(page, '/admin/settings/sales/registers', 'Registers');
     await expect(async () => {
       await page.getByRole('button', { name: 'Add a till' }).click();
       await expect(page.getByRole('form', { name: 'Add a till' })).toBeVisible({ timeout: 3000 });

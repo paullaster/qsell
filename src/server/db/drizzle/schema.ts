@@ -4961,10 +4961,15 @@ export const cashSaleSettings = pgTable(
   {
     companyId: uuid('company_id').primaryKey().references(() => companySettings.id, { onDelete: 'cascade' }),
     tillMode: text('till_mode').notNull().default('admin'),
+    /** What a receipt says about discounts: nothing (the price charged), one total near the end, or the discount under each item. */
+    receiptDiscount: text('receipt_discount').notNull().default('hidden'),
     updatedBy: text('updated_by').notNull().default(''),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [check('cash_sale_settings_mode_chk', sql`${t.tillMode} IN ('admin','fullscreen')`)],
+  (t) => [
+    check('cash_sale_settings_mode_chk', sql`${t.tillMode} IN ('admin','fullscreen')`),
+    check('cash_sale_settings_receipt_discount_chk', sql`${t.receiptDiscount} IN ('hidden','total','per_item')`),
+  ],
 );
 
 /** A sale set aside at the counter while the next customer is served, kept with the shift and the person: held, then recalled (once) or given up. Never a sale: nothing is priced, held or paid until it is completed. */

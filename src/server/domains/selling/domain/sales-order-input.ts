@@ -8,6 +8,8 @@ export interface SalesOrderLineInput {
   quantity: number;
   /** A price typed at the till for one unit (tax included, as shown). Only the counter's own reader sets it (never the general order reader), only a counter sale honours it, and only from someone who may change prices. */
   unitPrice?: number;
+  /** A discount typed at the till: a percentage of the price, or an amount off each unit (tax included, as shown). Read only by the counter's reader and honoured only for a counter sale, from someone who may discount where the company allows it. */
+  discount?: { kind: 'percent' | 'amount'; value: number };
   /** A package line: what was chosen, by the slot's name and the part (as a quote keeps it), and the note on each serving. */
   package?: { picks: StoredPick[]; note: string };
 }

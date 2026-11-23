@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { keypad, parseTillMode, payState, quickCash, stepQuantity } from './till-rules';
+import { keypad, lineDiscount, parseReceiptDiscount, parseTillMode, payState, quickCash, stepQuantity } from './till-rules';
 
 describe('till rules', () => {
   it('reads only the two display modes', () => {
@@ -48,5 +48,31 @@ describe('till rules', () => {
     expect(payState(500, 300)).toEqual({ kind: 'short', left: 200 });
     expect(payState(500, 500)).toEqual({ kind: 'exact' });
     expect(payState(499.9, 1000)).toEqual({ kind: 'change', change: 500.1 });
+  });
+});
+
+describe('discounts on the receipt', () => {
+  it('reads only the three choices', () => {
+    for (const ok of ['hidden', 'total', 'per_item'] as const) expect(parseReceiptDiscount(ok)).toBe(ok);
+    for (const bad of ['', 'all', 'TOTAL', null, undefined, 3]) expect(parseReceiptDiscount(bad)).toBeNull();
+  });
+
+  const trace = (extra: Record<string, unknown>) => ({ engineVersion: 1, at: '', inputs: { productId: 'p', quantity: 1, currency: 'KES' }, candidates: [], steps: [], source: 'price_list', unitPrice: 100, lineTotal: 100, ...extra }) as never;
+
+  it('is what a counter discount took off the price of one, times the quantity, less what was charged', () => {
+    expect(lineDiscount(2, 180, trace({ counterDiscount: { kind: 'percent', value: 10, before: 100, perUnit: 10 } }))).toBe(20);
+    expect(lineDiscount(3, 255, trace({ counterDiscount: { kind: 'amount', value: 15, before: 100, perUnit: 15 } }))).toBe(45);
+  });
+
+  it('is what the discount rules took off when they gave one', () => {
+    expect(lineDiscount(2, 170, trace({ discounts: { unitPriceBefore: 100, lineTotalBefore: 200, applied: [], trimmed: 0, considered: [] } }))).toBe(30);
+    expect(lineDiscount(2, 200, trace({ discounts: { unitPriceBefore: 100, lineTotalBefore: 200, applied: [], trimmed: 0, considered: [] } }))).toBe(0);
+  });
+
+  it('is nothing for a line with no discount, a price only changed, no record, or a total above what it was', () => {
+    expect(lineDiscount(2, 200, trace({}))).toBe(0);
+    expect(lineDiscount(2, 160, trace({}))).toBe(0);
+    expect(lineDiscount(2, 200, null)).toBe(0);
+    expect(lineDiscount(2, 250, trace({ counterDiscount: { kind: 'percent', value: 10, before: 100, perUnit: 10 } }))).toBe(0);
   });
 });

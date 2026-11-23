@@ -38,6 +38,26 @@ describe('reading a counter sale', () => {
   });
 });
 
+describe('reading a discount typed at the till', () => {
+  const line = { productId: 'prod_1', quantity: 2 };
+  const read = (discount: unknown) => parseCashSaleLines({ lines: [{ ...line, discount }] });
+  it('reads a percentage or an amount to the cent and keeps it on its line', () => {
+    const pct = read({ kind: 'percent', value: 12.345 });
+    expect(pct.ok ? pct.lines[0]?.discount : null).toEqual({ kind: 'percent', value: 12.35 });
+    const amt = read({ kind: 'amount', value: 50 });
+    expect(amt.ok ? amt.lines[0]?.discount : null).toEqual({ kind: 'amount', value: 50 });
+    const none = parseCashSaleLines({ lines: [line] });
+    expect(none.ok && 'discount' in (none.lines[0] ?? {})).toBe(false);
+  });
+  it('refuses what is not a discount: 100% or more, nothing, a negative, text, an unknown kind', () => {
+    for (const bad of [{ kind: 'percent', value: 100 }, { kind: 'percent', value: 0 }, { kind: 'amount', value: -1 }, { kind: 'amount', value: 'ten' }, { kind: 'coupon', value: 5 }, { kind: 'amount', value: 1e9 }, 'ten', { value: 5 }]) expect(read(bad).ok).toBe(false);
+  });
+  it('travels with a whole sale, and is left off a package line', () => {
+    const sale = parseCashSale({ ...base, lines: [{ ...line, discount: { kind: 'percent', value: 10 } }] });
+    expect(sale.ok ? sale.sale.lines[0]?.discount : null).toEqual({ kind: 'percent', value: 10 });
+  });
+});
+
 describe('reading a return at the till', () => {
   const ok = { orderId: 'ord_1', lines: [{ productId: 'prod_1', quantity: 1 }], reason: { code: 'POLICY_CHANGE', text: 'changed their mind' }, restock: true, refund: { methodId: id(2), phone: '', recipient: '' }, key: id(9) };
   it('reads the sale, lines, reason, restock choice and refund method', () => {

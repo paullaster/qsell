@@ -21,7 +21,7 @@ test.describe('invoicing part of an order', () => {
     const orderNumber = makeSalesOrder(customer, productName);
 
     // Off by default: the setting is changed with a reason, in its own screen.
-    await gotoAdmin(page, '/admin/settings/partial-billing', 'Partial billing');
+    await gotoAdmin(page, '/admin/settings/sales/partial-billing', 'Partial billing');
     await noNativeSelect(page);
     await noHorizontalScroll(page);
     await expect(async () => {
