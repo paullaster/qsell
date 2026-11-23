@@ -113,6 +113,6 @@ export async function setPartialBillingAction(enabled: unknown, reason: unknown)
       await c.partialBilling.setEnabled(companyId, { type: 'user', id: userId }, enabled, reasonOf(reason));
       return await c.partialBilling.settings(companyId);
     },
-    { paths: ['/admin/settings/partial-billing', '/admin/sales-orders', '/admin/sales-invoices'], friendly },
+    { paths: ['/admin/settings/sales/partial-billing', '/admin/sales-orders', '/admin/sales-invoices'], friendly },
   );
 }

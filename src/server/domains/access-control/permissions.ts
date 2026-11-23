@@ -639,6 +639,12 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'Change the price of an item while ringing up a counter sale, within the price floors and the person\'s own limit below list price',
   },
+  'cash_sales:discount': {
+    resource: 'cash_sales',
+    action: 'discount',
+    category: 'Orders & Sales',
+    description: 'Offer a discount of their own on an item while ringing up a counter sale, where the company allows it for the branch, within the price floors and the person\'s own limit below list price',
+  },
   'shifts:open': {
     resource: 'shifts',
     action: 'open',

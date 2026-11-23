@@ -13,7 +13,7 @@ export async function pick(page: Page, field: Locator, text: string): Promise<vo
 /** A new till at the first branch and a shift opened on it with 5,000 in the drawer: the starting point of every counter test. Returns the till's name. */
 export async function openShiftOnNewTill(page: Page, testInfo: TestInfo, tag: string): Promise<string> {
   const tillName = `Counter ${tag}${testInfo.project.name === 'phone' ? 'p' : 'd'}`;
-  await gotoAdmin(page, '/admin/settings/registers', 'Registers');
+  await gotoAdmin(page, '/admin/settings/sales/registers', 'Registers');
   await expect(async () => {
     await page.getByRole('button', { name: 'Add a till' }).click();
     await expect(page.getByRole('form', { name: 'Add a till' })).toBeVisible({ timeout: 3000 });

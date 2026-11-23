@@ -42,6 +42,14 @@ const nextConfig: NextConfig = {
       { protocol: 'http', hostname: '**' },
     ],
   },
+  // Settings that moved under Sales keep working at their old addresses (bookmarks, links in emails and notes).
+  redirects() {
+    return ['registers', 'offline-selling', 'partial-billing'].map((name) => ({
+      source: `/admin/settings/${name}`,
+      destination: `/admin/settings/sales/${name}`,
+      permanent: true,
+    }));
+  },
   headers() {
     return [
       {

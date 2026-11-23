@@ -1,6 +1,6 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { PermissionKey } from '@/server/domains/access-control/permissions';
-import { customers, orders, paymentMethods, products } from '@/server/db/drizzle/schema';
+import { branches, customers, orders, paymentMethods, products } from '@/server/db/drizzle/schema';
 import { acceptFilters, LookupFilterError, staticSource, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
 import { methodLabel } from '@/lib/payment-method-labels';
 import { SALES_ORDER_PAYMENT_METHODS } from './domain/sales-order-input';
@@ -17,6 +17,22 @@ const options = staticSource({
     if (setting === undefined || !isEnum(setting) || type === undefined || !isSellingType(type)) throw new LookupFilterError('Unsupported filter.');
     return allowedOptions(type, setting).map((id) => ({ id, label: OPTION_WORDS[setting][id]?.label ?? id, description: OPTION_WORDS[setting][id]?.description ?? null, badge: null }));
   },
+});
+
+/** The company's active branches, for the settings screen that says where a manual discount is offered. */
+const settingBranches = tableSource({
+  key: 'selling-branches',
+  permission: 'selling_settings:manage',
+  table: branches,
+  id: branches.id,
+  label: branches.name,
+  searchColumns: [branches.name, branches.code],
+  select: { code: branches.code },
+  scope: ({ companyId, filters }) => {
+    acceptFilters(filters, {});
+    return [eq(branches.companyId, companyId), eq(branches.isActive, true)];
+  },
+  toOption: (row) => ({ id: String(row.id), label: `${String(row.code)} — ${String(row.label)}`, description: null, badge: null }),
 });
 
 /**
@@ -148,4 +164,4 @@ const counterRefundMethods = tableSource({
   toOption: (row) => ({ id: String(row.id), label: String(row.label), description: COUNTER_KIND_WORDS[String(row.kind)] ?? null, badge: null, meta: { kind: String(row.kind) } }),
 });
 
-export const SELLING_LOOKUP_SOURCES: LookupSource[] = [options, counterMethods, counterRefundMethods, ...pickers('sales-order', 'sales_orders:create'), ...pickers('sales-invoice', 'sales_invoices:create'), ...pickers('cash-sale', 'cash_sales:create'), ...pickers('credit-sale', 'credit_sales:create'), invoiceableOrders];
+export const SELLING_LOOKUP_SOURCES: LookupSource[] = [options, settingBranches, counterMethods, counterRefundMethods, ...pickers('sales-order', 'sales_orders:create'), ...pickers('sales-invoice', 'sales_invoices:create'), ...pickers('cash-sale', 'cash_sales:create'), ...pickers('credit-sale', 'credit_sales:create'), invoiceableOrders];

@@ -12,6 +12,18 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 const text = (value: unknown, max: number): string => (typeof value === 'string' ? value.trim().slice(0, max) : '');
 
+/** A discount typed at the till: `{ kind, value }`, a percentage above 0 and under 100 or an amount above 0, to the cent; null when none was sent. */
+function readDiscount(raw: unknown): { kind: 'percent' | 'amount'; value: number } | null | 'bad' {
+  if (raw === undefined || raw === null) return null;
+  if (!isRecord(raw) || (raw.kind !== 'percent' && raw.kind !== 'amount')) return 'bad';
+  const value = raw.value;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return 'bad';
+  const cents = Math.round(value * 100) / 100;
+  if (cents <= 0) return 'bad';
+  if (raw.kind === 'percent' ? cents >= 100 : cents > 100_000_000) return 'bad';
+  return { kind: raw.kind, value: cents };
+}
+
 /** Reads the lines of a sale being priced (no payment yet). Ids, counts and choices only; the server prices them. */
 export function parseCashSaleLines(raw: unknown): { ok: true; customerId: string | null; lines: SalesOrderLineInput[] } | { ok: false; error: string } {
   if (!isRecord(raw)) return { ok: false, error: 'The sale could not be read.' };
@@ -24,13 +36,17 @@ export function parseCashSaleLines(raw: unknown): { ok: true; customerId: string
   const sent = Array.isArray(raw.lines) ? (raw.lines as unknown[]) : [];
   const priced: SalesOrderLineInput[] = [];
   for (const [n, line] of lines.input.lines.entries()) {
-    const typed = isRecord(sent[n]) ? sent[n].unitPrice : undefined;
-    if (typed === undefined || typed === null) {
-      priced.push(line);
-      continue;
+    const sentLine = isRecord(sent[n]) ? sent[n] : {};
+    const typed = sentLine.unitPrice;
+    let next: SalesOrderLineInput = line;
+    if (typed !== undefined && typed !== null) {
+      if (typeof typed !== 'number' || !Number.isFinite(typed) || typed <= 0 || typed > 100_000_000) return { ok: false, error: `Line ${String(n + 1)}: the price must be more than nothing.` };
+      if (line.package === undefined) next = { ...next, unitPrice: Math.round(typed * 100) / 100 };
     }
-    if (typeof typed !== 'number' || !Number.isFinite(typed) || typed <= 0 || typed > 100_000_000) return { ok: false, error: `Line ${String(n + 1)}: the price must be more than nothing.` };
-    priced.push(line.package === undefined ? { ...line, unitPrice: Math.round(typed * 100) / 100 } : line);
+    const discount = readDiscount(sentLine.discount);
+    if (discount === 'bad') return { ok: false, error: `Line ${String(n + 1)}: the discount must be a percentage under 100, or an amount more than nothing.` };
+    if (discount !== null && line.package === undefined) next = { ...next, discount };
+    priced.push(next);
   }
   return { ok: true, customerId: customerId === '' ? null : customerId, lines: priced };
 }

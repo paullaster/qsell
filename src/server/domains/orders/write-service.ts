@@ -1,6 +1,6 @@
 import { isOfferedIn, notOfferedRefusal, offerTypeOfModule } from '@/lib/offered-in';
 import { packageAsLineRefusal, packageOnlyRefusal } from '@/lib/package-only';
-import { creditDaysFor, stockReleaseFor, type SellingSettings } from '@/server/domains/selling/selling-documents';
+import { creditDaysFor, manualDiscountOffered, readSellingSettings, stockReleaseFor, type SellingSettings } from '@/server/domains/selling/selling-documents';
 import type { RawPick } from '@/server/domains/pricing/domain/packages';
 import type { PreparedPackage } from '@/server/domains/pricing/package-order-service';
 import { quantityProblem } from '@/lib/unit-rules';
@@ -119,7 +119,7 @@ export const OrderWriteService = {
       postalCode?: string;
       country: string;
     };
-    items: { productId: string; quantity: number; /** A price typed at the counter for one unit, by someone who may change prices (the caller checks that): it replaces the price list's, within the floors and that person's limit. */ priceOverride?: number; /** A configurable package: the choices made (ids and counts only), and `quantity` is the servings. */ package?: { picks: RawPick[]; note?: string; groupId?: string } }[];
+    items: { productId: string; quantity: number; /** A price typed at the counter for one unit, by someone who may change prices (the caller checks that): it replaces the price list's, within the floors and that person's limit. */ priceOverride?: number; /** A discount typed at the counter (a percentage, or an amount off each unit), by someone who may discount (the caller checks that); the writer checks the company allows it for the branch, then holds the result to the floors and that person's limit. */ manualDiscount?: { kind: 'percent' | 'amount'; value: number }; /** A configurable package: the choices made (ids and counts only), and `quantity` is the servings. */ package?: { picks: RawPick[]; note?: string; groupId?: string } }[];
     quotedItems?: {
       productId: string;
       quantity: number;
@@ -337,7 +337,9 @@ export const OrderWriteService = {
     }
 
     /** Lines whose price was typed at the counter: no promotion is added to them, and they are held to the floors and the person's limit. */
-    const changedPrices: { itemIndex: number; productId: string; label: string; quantity: number; taxRate: number; inclusive: boolean; listUnit: number; typed: number; floor: number | null }[] = [];
+    const changedPrices: { itemIndex: number; productId: string; label: string; quantity: number; taxRate: number; inclusive: boolean; listUnit: number; typed: number; floor: number | null; note: string | null; counter: { kind: 'percent' | 'amount'; value: number; before: number; perUnit: number } | null }[] = [];
+    /** What the counter's own discounts come to over the whole order. */
+    let manualTotal = 0;
 
     /** Lines the price lists priced: discounts apply to them, then they are checked against floors. */
     const guarded: {
@@ -408,11 +410,26 @@ export const OrderWriteService = {
       const chosen = quoted === undefined ? preparedPackages.get(index) : undefined;
       const listUnit = chosen === undefined ? base.unitPrice : Math.round(((chosen.summedPerServing ?? base.unitPrice + (chosen.addedPerServing ?? 0)) + Number.EPSILON) * 100) / 100;
       // A price typed at the counter by someone who may change prices stands in for the price list's; it is then held to the floors and to that person's limit below.
-      const typed = chosen === undefined && quoted === undefined && priced !== undefined ? item.priceOverride : undefined;
+      const typedPrice = chosen === undefined && quoted === undefined && priced !== undefined ? item.priceOverride : undefined;
+      // A discount typed at the counter comes off the price in force (the typed one, else the list's), where the company allows it for this branch.
+      const manual = chosen === undefined && quoted === undefined && priced !== undefined ? item.manualDiscount : undefined;
+      let typed = typedPrice;
+      let discountNote: string | null = null;
+      let counter: { kind: 'percent' | 'amount'; value: number; before: number; perUnit: number } | null = null;
+      if (manual !== undefined) {
+        if (!manualDiscountOffered(params.selling ?? readSellingSettings('pos_cash_sale', null), params.branchId ?? null)) return { success: false, error: 'A discount cannot be offered here. Remove it and try again.', code: 'invalid_input' };
+        const start = typedPrice ?? listUnit;
+        const off = manual.kind === 'percent' ? Math.round((start * manual.value) / 100 * 100) / 100 : manual.value;
+        if (off >= start) return { success: false, error: `The discount on ${prod.name} is as much as the price. Give a smaller discount.`, code: 'invalid_input' };
+        typed = Math.round((start - off + Number.EPSILON) * 100) / 100;
+        manualTotal += Math.round(off * item.quantity * 100) / 100;
+        counter = { kind: manual.kind, value: manual.value, before: start, perUnit: off };
+        discountNote = `Discount of ${manual.kind === 'percent' ? `${String(manual.value)}%` : manual.value.toFixed(2)} given at the counter: ${start.toFixed(2)} to ${typed.toFixed(2)}.`;
+      }
       const unitPrice = typed ?? listUnit;
       const itemTotal = chosen === undefined && typed === undefined ? base.total : Math.round((unitPrice * item.quantity + Number.EPSILON) * 100) / 100;
       if (typed !== undefined && priced) {
-        changedPrices.push({ itemIndex: orderItems.length, productId: prod.id, label: prod.name, quantity: item.quantity, taxRate: Math.max(0, prod.taxRate ?? 0), inclusive: prod.isTaxInclusive !== false, listUnit, typed, floor: priced.trace.floorPrice ?? null });
+        changedPrices.push({ itemIndex: orderItems.length, productId: prod.id, label: prod.name, quantity: item.quantity, taxRate: Math.max(0, prod.taxRate ?? 0), inclusive: prod.isTaxInclusive !== false, listUnit, typed, floor: priced.trace.floorPrice ?? null, note: discountNote, counter });
       }
       // Promotions and coupons apply to every channel's price-list lines, the shop's included (price floors stay with the staff channels).
       if (priced && !quoted && typed === undefined) {
@@ -571,9 +588,11 @@ export const OrderWriteService = {
       if (verdict.overOverrideLimit) return { success: false, error: `The price of ${lowest(verdict.lines.map((l) => l.overOverrideLimit))} is lower than you may sell it for (at most ${String(verdict.overrideLimitPercent)}% below the list price).`, code: 'approval_needed' };
       changedPrices.forEach((c, n) => {
         const line = nth(orderItems, c.itemIndex);
-        line.priceTrace = line.priceTrace === null || line.priceTrace === undefined ? line.priceTrace : { ...line.priceTrace, steps: [...line.priceTrace.steps, `Price changed at the counter from ${c.listUnit.toFixed(2)} to ${c.typed.toFixed(2)}.`], guard: nth(verdict.lines, n) };
+        line.priceTrace = line.priceTrace === null || line.priceTrace === undefined ? line.priceTrace : { ...line.priceTrace, ...(c.counter === null ? {} : { counterDiscount: c.counter }), steps: [...line.priceTrace.steps, c.note ?? `Price changed at the counter from ${c.listUnit.toFixed(2)} to ${c.typed.toFixed(2)}.`], guard: nth(verdict.lines, n) };
       });
     }
+
+    if (manualTotal > 0) discountSummary = { ...(discountSummary ?? {}), manualTotal };
 
     // Free gifts a promotion has earned join the order at no charge (stock is held for them too).
     for (const g of gifts) {

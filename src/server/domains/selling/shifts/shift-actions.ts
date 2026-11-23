@@ -154,7 +154,7 @@ export async function withdrawShiftCloseAction(shiftId: unknown): Promise<{ ok: 
 // ── Registers and tolerance (Settings → Registers) ───────────────────────
 
 const friendly = (error: unknown): string | null => (error instanceof ShiftError || error instanceof ReasonError ? error.message : null);
-const PATHS = ['/admin/settings/registers'];
+const PATHS = ['/admin/settings/sales/registers'];
 const reasonOf = (value: unknown): { code: string; text?: string } => {
   const r = obj(value);
   const code = typeof r.code === 'string' ? r.code : '';

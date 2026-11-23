@@ -6,7 +6,7 @@ import type { ShiftReport } from '../shifts/shift-service';
 import { parseCashSale, parseCashSaleLines, parseCounterReturn } from './cash-sale-input';
 import type { ReturnSummary } from './counter-return-service';
 import type { SaleSummary } from './cash-sale-service';
-import type { TillMode } from './till-rules';
+import type { ReceiptDiscount, TillMode } from './till-rules';
 
 export interface SaleRow {
   orderId: string;
@@ -29,8 +29,12 @@ export interface CashSalesScreen {
   offlineEnabled: boolean;
   /** How the counter looks: inside the admin page, or as a full-screen till. */
   tillMode: TillMode;
+  /** What the receipt says about discounts (the company's setting). */
+  receiptDiscount: ReceiptDiscount;
   /** May change an item's price while selling. */
   canPrice: boolean;
+  /** May offer a discount of their own while selling: they have the permission and the company allows it at their branch. Only then is the discount input shown. */
+  canDiscount: boolean;
   /** The shop's trading name, for the top of the printed receipt. */
   shopName: string;
 }
@@ -48,11 +52,31 @@ async function mayPrice<T extends { unitPrice?: number }>(lines: T[]): Promise<T
   return lines.map(({ unitPrice: _dropped, ...rest }) => rest as T);
 }
 
+/** Whether this person may offer a discount now: the permission, and the company's setting for their branch (a person with no branch sells at the default branch). */
+async function mayDiscount(companyId: string, userId: string): Promise<boolean> {
+  if (!(await canPermission('cash_sales:discount'))) return false;
+  const c = getContainer();
+  const branchId = (await c.salesOrders.branchOf(userId)) ?? (await c.branches.getDefault(companyId))?.id ?? null;
+  return await c.sellingSettings.manualDiscountOffered(companyId, 'pos_cash_sale', branchId);
+}
+
+/** A discount typed at the till is refused, in words, unless this person may offer one here: it is never dropped quietly, so nobody is charged a price they did not expect. */
+async function checkDiscounts(companyId: string, userId: string, lines: { discount?: unknown }[]): Promise<string | null> {
+  if (!lines.some((l) => l.discount !== undefined)) return null;
+  return (await mayDiscount(companyId, userId)) ? null : 'You cannot offer a discount here. Remove the discount and try again.';
+}
+
 async function access(): Promise<{ userId: string; create: boolean; readAll: boolean } | null> {
   const [create, readAll] = await Promise.all([canPermission('cash_sales:create'), canPermission('cash_sales:read')]);
   if (!create && !readAll) return null;
   const userId = await requirePermission(create ? 'cash_sales:create' : 'cash_sales:read');
   return { userId, create, readAll };
+}
+
+/** The company's till settings the counter screen needs. */
+async function till(c: ReturnType<typeof getContainer>, companyId: string): Promise<{ tillMode: TillMode; receiptDiscount: ReceiptDiscount }> {
+  const { tillMode, receiptDiscount } = await c.tillSettings.get(companyId);
+  return { tillMode, receiptDiscount };
 }
 
 /** Staff: the till: the open shift with its takings so far, and the sales rung up in it (all of the company's for someone who may read them, otherwise their own shift's). */
@@ -66,7 +90,7 @@ export async function cashSalesScreenAction(): Promise<{ ok: true; data: CashSal
     const shift = mine === null ? null : await c.shifts.report(companyId, mine);
     const listed = await c.cashSales.list(companyId, who.readAll ? {} : { userId: who.userId });
     const canReturn = await canPermission('cash_sales:return');
-    return { ok: true, data: { shift, sales: { rows: listed.rows, next: encode(listed.next) }, can: { create: who.create, readAll: who.readAll, return: canReturn }, returns: canReturn ? await c.counterReturns.unfinished(companyId, who.readAll ? {} : { userId: who.userId }) : [], offlineEnabled: (await c.offlineSales.settings(companyId)).enabled, tillMode: (await c.tillSettings.get(companyId)).tillMode, canPrice: await canPermission('cash_sales:price'), shopName: (await c.companySettings.getProfile()).tradingName } };
+    return { ok: true, data: { shift, sales: { rows: listed.rows, next: encode(listed.next) }, can: { create: who.create, readAll: who.readAll, return: canReturn }, returns: canReturn ? await c.counterReturns.unfinished(companyId, who.readAll ? {} : { userId: who.userId }) : [], offlineEnabled: (await c.offlineSales.settings(companyId)).enabled, ...await till(c, companyId), canPrice: await canPermission('cash_sales:price'), canDiscount: await mayDiscount(companyId, who.userId), shopName: (await c.companySettings.getProfile()).tradingName } };
   } catch (error) {
     console.error('[cash sales] screen', error);
     return { ok: false, error: 'The counter could not be loaded. Please try again.' };
@@ -94,6 +118,8 @@ export async function priceCashSaleAction(raw: unknown): Promise<{ ok: true; dat
   if (!read.ok) return { ok: false, error: read.error };
   try {
     const c = getContainer();
+    const refused = await checkDiscounts((await c.companySettings.ensureSeeded()).id, userId, read.lines);
+    if (refused !== null) return { ok: false, error: refused };
     const priced = await c.cashSales.price((await c.companySettings.ensureSeeded()).id, { userId, branchId: await c.salesOrders.branchOf(userId) }, { customerId: read.customerId, lines: await mayPrice(read.lines) });
     return priced.ok ? { ok: true, data: { subtotal: priced.subtotal, tax: priced.tax, total: priced.total, lines: priced.lines } } : { ok: false, error: priced.error };
   } catch (error) {
@@ -110,6 +136,8 @@ export async function completeCashSaleAction(raw: unknown): Promise<{ ok: true; 
   try {
     const c = getContainer();
     const companyId = (await c.companySettings.ensureSeeded()).id;
+    const refused = await checkDiscounts(companyId, userId, read.sale.lines);
+    if (refused !== null) return { ok: false, error: refused };
     const done = await c.cashSales.complete(companyId, { userId, branchId: await c.salesOrders.branchOf(userId) }, { ...read.sale, lines: await mayPrice(read.sale.lines) });
     return done.ok ? { ok: true, data: done.sale } : { ok: false, error: done.error, ...(done.unfinished === undefined ? {} : { unfinished: done.unfinished }) };
   } catch (error) {

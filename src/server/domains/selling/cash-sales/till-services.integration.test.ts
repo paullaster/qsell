@@ -5,6 +5,7 @@ import type { getContainer } from '@/server/di/container';
 import type { drizzleDb } from '@/server/db/drizzle/client';
 import type * as schemaModule from '@/server/db/drizzle/schema';
 import { parseCount } from '../shifts/shift-rules';
+import { defOf } from '../selling-documents';
 
 /**
  * The till screen's server side against a real database: the display setting, the tiles (by category, search and code; only what the
@@ -79,12 +80,25 @@ describe.skipIf(url === undefined || url === '')('the till screen (database)', (
 
   it('shows the counter inside the admin page until a company chooses the full-screen till, and refuses anything else', async () => {
     expect((await c.tillSettings.get(companyId)).tillMode).toBe('admin');
-    await c.tillSettings.save(companyId, 'u1', 'fullscreen');
+    await c.tillSettings.save(companyId, 'u1', { tillMode: 'fullscreen' });
     expect((await c.tillSettings.get(companyId)).tillMode).toBe('fullscreen');
-    await expect(c.tillSettings.save(companyId, 'u1', 'kiosk')).rejects.toThrow('Choose how the counter looks');
+    await expect(c.tillSettings.save(companyId, 'u1', { tillMode: 'kiosk' })).rejects.toThrow('Choose how the counter looks');
     expect((await c.tillSettings.get(companyId)).tillMode).toBe('fullscreen');
-    await c.tillSettings.save(companyId, 'u1', 'admin');
+    await c.tillSettings.save(companyId, 'u1', { tillMode: 'admin' });
     expect((await c.tillSettings.get(companyId)).tillMode).toBe('admin');
+  });
+
+  it('says nothing about discounts on the receipt until a company chooses a total or each item, keeps the other choice when one is saved, and refuses anything else', async () => {
+    expect((await c.tillSettings.get(companyId)).receiptDiscount).toBe('hidden');
+    await c.tillSettings.save(companyId, 'u1', { receiptDiscount: 'per_item' });
+    expect(await c.tillSettings.get(companyId)).toMatchObject({ receiptDiscount: 'per_item', tillMode: 'admin' });
+    await c.tillSettings.save(companyId, 'u1', { tillMode: 'fullscreen' });
+    expect(await c.tillSettings.get(companyId)).toMatchObject({ receiptDiscount: 'per_item', tillMode: 'fullscreen' });
+    await expect(c.tillSettings.save(companyId, 'u1', { receiptDiscount: 'everything' })).rejects.toThrow('what the receipt says about discounts');
+    await c.tillSettings.save(companyId, 'u1', { receiptDiscount: 'total' });
+    expect((await c.tillSettings.get(companyId)).receiptDiscount).toBe('total');
+    await c.tillSettings.save(companyId, 'u1', { tillMode: 'admin', receiptDiscount: 'hidden' });
+    expect(await c.tillSettings.get(companyId)).toMatchObject({ receiptDiscount: 'hidden', tillMode: 'admin' });
   });
 
   it('lists only what the counter may sell, by category, by search and by exact code, with stock as it is', async () => {
@@ -199,6 +213,62 @@ describe.skipIf(url === undefined || url === '')('the till screen (database)', (
       const asListed = await c.cashSales.price(companyId, who, { customerId: null, lines: [{ productId: item, quantity: 2 }] });
       expect(asListed.ok && asListed.total).toBe(200);
     } finally {
+      await db.delete(schema.priceOverrideLimits).where(eq(schema.priceOverrideLimits.roleKey, 'manager'));
+    }
+  });
+
+  it('gives a discount typed at the till only where the company allows it for the branch, and only within the price floors and the person\'s limit', async () => {
+    const person = await user('discounter');
+    const item = await product('Discounted', { price: '100' });
+    const who = { userId: person.id, branchId };
+    const settings = defOf('pos_cash_sale').defaults;
+    const save = async (over: Record<string, unknown>) => await c.sellingSettings.save(companyId, 'pos_cash_sale', { ...settings, ...over }, actor, reason);
+    const priceWith = async (discount: { kind: 'percent' | 'amount'; value: number }, quantity = 2) => await c.cashSales.price(companyId, who, { customerId: null, lines: [{ productId: item, quantity, discount }] });
+    await db.insert(schema.priceOverrideLimits).values({ companyId, roleKey: 'manager', maxPercent: '10', createdBy: 'till-test' }).onConflictDoNothing();
+    c.priceGuard.invalidate(companyId);
+    try {
+      // Nowhere by default: the sale is refused in words, never priced at list quietly.
+      const off = await priceWith({ kind: 'percent', value: 5 });
+      expect(off.ok).toBe(false);
+      expect(off.ok ? '' : off.error).toContain('discount cannot be offered');
+
+      // At every branch: a percentage and an amount off each unit.
+      await save({ manualDiscount: 'all_branches' });
+      const pct = await priceWith({ kind: 'percent', value: 5 });
+      expect(pct.ok && pct.lines[0]?.unitPrice).toBe(95);
+      expect(pct.ok && pct.total).toBe(190);
+      const amt = await priceWith({ kind: 'amount', value: 4 });
+      expect(amt.ok && amt.lines[0]?.unitPrice).toBe(96);
+      expect(amt.ok && amt.total).toBe(192);
+
+      // Never below this person's limit, and never as much as the price.
+      const tooMuch = await priceWith({ kind: 'percent', value: 40 });
+      expect(tooMuch.ok).toBe(false);
+      expect(tooMuch.ok ? '' : tooMuch.error).toContain('lower than you may sell');
+      const all = await priceWith({ kind: 'amount', value: 100 });
+      expect(all.ok).toBe(false);
+      expect(all.ok ? '' : all.error).toContain('as much as the price');
+
+      // Only at the branches chosen: this branch is not one of them, then it is.
+      const other = (await db.insert(schema.branches).values({ companyId, code: `D${tag}`, name: `Other ${tag}` }).returning())[0];
+      await save({ manualDiscount: 'selected_branches', manualDiscountBranches: [other?.id ?? ''] });
+      expect((await priceWith({ kind: 'percent', value: 5 })).ok).toBe(false);
+      await save({ manualDiscount: 'selected_branches', manualDiscountBranches: [branchId] });
+      expect((await priceWith({ kind: 'percent', value: 5 })).ok).toBe(true);
+      expect(await c.sellingSettings.manualDiscountOffered(companyId, 'pos_cash_sale', branchId)).toBe(true);
+      expect(await c.sellingSettings.manualDiscountOffered(companyId, 'pos_cash_sale', other?.id ?? null)).toBe(false);
+
+      // A document that allows no discounts never takes one, whatever the branches say.
+      await save({ manualDiscount: 'all_branches', discounts: 'not_allowed' });
+      expect((await priceWith({ kind: 'percent', value: 5 })).ok).toBe(false);
+
+      // The screen names the branches it was saved with, and a branch of another company cannot be saved.
+      await save({ manualDiscount: 'selected_branches', manualDiscountBranches: [branchId] });
+      const shown = (await c.sellingSettings.screen(companyId)).find((t) => t.type === 'pos_cash_sale');
+      expect(shown?.branches.map((b) => b.id)).toEqual([branchId]);
+      await expect(save({ manualDiscount: 'selected_branches', manualDiscountBranches: [randomUUID()] })).rejects.toThrow('could not be found');
+    } finally {
+      await c.sellingSettings.reset(companyId, 'pos_cash_sale', actor, reason);
       await db.delete(schema.priceOverrideLimits).where(eq(schema.priceOverrideLimits.roleKey, 'manager'));
     }
   });

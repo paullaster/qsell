@@ -5,6 +5,7 @@ import type { getContainer } from '@/server/di/container';
 import type { drizzleDb } from '@/server/db/drizzle/client';
 import type * as schemaModule from '@/server/db/drizzle/schema';
 import { parseCount } from '../shifts/shift-rules';
+import { defOf } from '../selling-documents';
 
 /**
  * Counter sales against a real database: a sale only into the person's own open shift, paid in cash (with change), M-Pesa or card, one
@@ -99,6 +100,38 @@ describe.skipIf(url === undefined || url === '')('counter sales (database)', () 
     expect(report).toMatchObject({ cashSales: 200, expectedCash: 1200, takings: { count: 1, cash: 200, mobileMoney: 0, card: 0 } });
     const listed = await c.cashSales.list(companyId, { shiftId });
     expect(listed.rows.map((r) => r.orderNumber)).toEqual([sold.sale.orderNumber]);
+  });
+
+  it('tells the receipt what a sale was discounted by: each line and the whole sale, a discount typed at the counter only, and a price changed with no discount gives nothing', async () => {
+    const person = await user('discounter');
+    await shiftFor(person, 1000);
+    const product = await tea(100);
+    const line = { productId: product, quantity: 2 };
+    const pay = (amount: number) => [{ methodId: methods.cash, amount, reference: '' }];
+    const complete = async (lines: Parameters<typeof c.cashSales.complete>[2]['lines']) => await c.cashSales.complete(companyId, { userId: person.id, branchId: null }, { customerId: null, lines, tenders: pay(500), saleKey: randomUUID() });
+    await c.sellingSettings.save(companyId, 'pos_cash_sale', { ...defOf('pos_cash_sale').defaults, manualDiscount: 'all_branches' }, actor, reason);
+    try {
+      const plain = await complete([line]);
+      expect(plain.ok && plain.sale.discount).toBe(0);
+      expect(plain.ok && plain.sale.lines[0]?.discount).toBe(0);
+
+      const percent = await complete([{ ...line, discount: { kind: 'percent', value: 10 } }]);
+      expect(percent.ok && percent.sale).toMatchObject({ total: 180, discount: 20, lines: [{ quantity: 2, unitPrice: 90, total: 180, discount: 20 }] });
+
+      const amount = await complete([{ ...line, discount: { kind: 'amount', value: 15 } }, { productId: product, quantity: 1 }]);
+      expect(amount.ok && amount.sale.lines.map((l) => l.discount)).toEqual([30, 0]);
+      expect(amount.ok && amount.sale.discount).toBe(30);
+
+      // A lower price typed with no discount is a price change: it is charged, and the receipt shows no discount.
+      const changed = await complete([{ ...line, unitPrice: 80 }]);
+      expect(changed.ok && changed.sale).toMatchObject({ total: 160, discount: 0 });
+
+      // The order keeps what the counter's discounts came to.
+      const [order] = percent.ok ? await db.select({ discounts: schema.orders.discounts }).from(schema.orders).where(eq(schema.orders.id, percent.sale.orderId)) : [];
+      expect(order?.discounts).toMatchObject({ manualTotal: 20 });
+    } finally {
+      await c.sellingSettings.reset(companyId, 'pos_cash_sale', actor, reason);
+    }
   });
 
   it('refuses a payment that does not cover the sale before anything is held or saved', async () => {
