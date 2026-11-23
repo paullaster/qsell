@@ -52,11 +52,11 @@ test.describe('customers screen', () => {
     await page.getByLabel('Search customers').fill('E2E001');
     await page.getByRole('link', { name: 'Open Alice Cash' }).click();
     await expect(page).toHaveURL(/\/admin\/customers\/[^/]+$/);
-    await expect(page.getByRole('heading', { name: 'Customer statement' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Statement of Account' })).toBeVisible();
     await expect(page.getByLabel('From', { exact: true })).not.toHaveValue('');
     await expect(page.getByLabel('To', { exact: true })).not.toHaveValue('');
-    await expect(page.getByText('Total balance').locator('visible=true').first()).toBeVisible();
-    await expect(page.getByText('Opening balance').locator('visible=true').first()).toBeVisible();
+    await expect(page.getByText('Closing balance due').locator('visible=true').first()).toBeVisible();
+    await expect(page.getByText('Balance brought forward').locator('visible=true').first()).toBeVisible();
     await expect(page.getByText('Closing balance').locator('visible=true').first()).toBeVisible();
 
     const pdfDownload = page.waitForEvent('download');
