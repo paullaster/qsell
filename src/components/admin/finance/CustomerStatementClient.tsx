@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { Suspense, use, useId, useRef, useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
-import { statementDocumentNumber, statementSpan } from '@/lib/customer-statement';
+import { STATEMENT_WORDS as W, statementAgeLabel, statementDocumentNumber, statementSpan } from '@/lib/customer-statement';
 import { downloadCsv, downloadPdfBase64 } from '@/lib/downloadPdf';
 import {
   customerLedgerEntryDetailAction,
@@ -53,16 +53,16 @@ type DetailState =
 
 const TYPE_LABEL: Record<string, string> = {
   invoice: 'Invoice',
-  payment: 'Payment',
+  payment: 'Payment received',
   credit_note: 'Credit note',
   refund: 'Refund',
   rebate_credit: 'Rebate credit',
-  wallet_use: 'Wallet use',
+  wallet_use: 'Wallet credit applied',
 };
 const ENTRY_LABEL: Record<string, string> = {
   initial: 'Posted',
-  application: 'Applied',
-  unapplication: 'Unapplied',
+  application: 'Allocated',
+  unapplication: 'Allocation reversed',
   reversal: 'Reversed',
   write_off: 'Written off',
   payment_discount: 'Discount',
@@ -189,11 +189,11 @@ export function CustomerStatementClient({
         title={statement.data.customer.name}
         intro={
           <span className="flex flex-wrap items-center gap-2">
-            Customer {statement.data.customer.number} ·{' '}
+            {W.accountNumber} {statement.data.customer.number} ·{' '}
             <Chip tone={statement.data.customer.accountType === 'credit' ? 'sky' : 'gray'}>
               {statement.data.customer.accountType === 'credit'
-                ? 'Credit account'
-                : 'Cash customer'}
+                ? 'Credit (on account)'
+                : 'Cash'}
             </Chip>
             {statement.data.customer.blocked !== 'none' ? (
               <Chip tone="red">Blocked: {statement.data.customer.blocked}</Chip>
@@ -349,18 +349,18 @@ export function CustomerStatementPanel({
     <div className="space-y-5">
       <Message notice={notice} />
       <section
-        aria-label="Customer statement balances"
+        aria-label="Account summary"
         className="grid grid-cols-2 gap-3 md:grid-cols-4"
       >
-        <Balance title="Opening balance" value={balanceMoney(view.openingBalance)} />
-        <Balance title="Debits this period" value={money(view.totalDebit)} />
-        <Balance title="Credits this period" value={money(view.totalCredit)} />
-        <Balance title="Closing balance" value={balanceMoney(view.closingBalance)} />
+        <Balance title={W.broughtForward} value={balanceMoney(view.openingBalance)} />
+        <Balance title={W.debits} value={money(view.totalDebit)} />
+        <Balance title={W.credits} value={money(view.totalCredit)} />
+        <Balance title={W.closing} value={balanceMoney(view.closingBalance)} />
       </section>
       <section aria-label="Position" className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className={cardClass}>
           <p className="text-xs text-fg-muted">
-            {view.creditLimitDisplay === 'static' ? 'Set credit limit' : 'Credit limit'}
+            {W.creditLimit}
           </p>
           <p className="text-lg font-bold text-fg-strong tabular-nums">
             {c.accountType === 'credit' ? money(c.creditLimit) : '—'}
@@ -390,12 +390,12 @@ export function CustomerStatementPanel({
 
       <section aria-labelledby={`${uid}-age`} className="space-y-2">
         <h3 id={`${uid}-age`} className="text-sm font-bold text-fg-strong">
-          By age
+          {W.aged}
         </h3>
         <ul className="grid grid-cols-2 gap-2 md:grid-cols-5">
           {view.ageing.map((b) => (
             <li key={b.label} className="rounded-xl border border-line bg-surface-raised p-3">
-              <p className="text-xs text-fg-muted">{b.label}</p>
+              <p className="text-xs text-fg-muted">{statementAgeLabel(b.label)}</p>
               <p className="text-sm font-bold text-fg-strong tabular-nums">{money(b.amount)}</p>
               <p className="text-[11px] text-fg-muted">
                 {b.count} {b.count === 1 ? 'invoice' : 'invoices'}
@@ -408,9 +408,9 @@ export function CustomerStatementPanel({
       <form
         onSubmit={refresh}
         className={`${cardClass} grid grid-cols-1 gap-3 sm:grid-cols-4`}
-        aria-label="Date range"
+        aria-label="Statement period"
       >
-        <Field id={`${uid}-from`} label="From">
+        <Field id={`${uid}-from`} label="Period from">
           <input
             id={`${uid}-from`}
             type="date"
@@ -419,7 +419,7 @@ export function CustomerStatementPanel({
             className={fieldClass}
           />
         </Field>
-        <Field id={`${uid}-to`} label="To">
+        <Field id={`${uid}-to`} label="Period to">
           <input
             id={`${uid}-to`}
             type="date"
@@ -430,7 +430,7 @@ export function CustomerStatementPanel({
         </Field>
         <div className="flex items-end">
           <button type="submit" className={buttonClass} disabled={busy}>
-            {busy ? 'Showing…' : 'Show'}
+            {busy ? 'Applying…' : 'Apply period'}
           </button>
         </div>
       </form>
@@ -452,18 +452,18 @@ export function CustomerStatementPanel({
         >
           {downloadBusy === 'csv' ? 'Preparing CSV…' : 'Download CSV'}
         </button>
-        <p className="text-xs text-fg-muted">Downloads use the rows and date range shown above.</p>
+        <p className="text-xs text-fg-muted">The PDF and CSV contain the period and transactions shown above.</p>
       </div>
 
       <section aria-labelledby={`${uid}-statement`} className="space-y-3">
         <h3 id={`${uid}-statement`} className="text-sm font-bold text-fg-strong">
-          Customer statement
+          {W.title}
         </h3>
         {lines.length === 0 ? (
-          <p className="text-sm text-fg-muted">No entries in this range.</p>
+          <p className="text-sm text-fg-muted">{W.empty}</p>
         ) : (
           <>
-            <ul className="space-y-2 md:hidden" aria-label="Customer statement">
+            <ul className="space-y-2 md:hidden" aria-label={W.title}>
               {lines.map((l) => (
                 <li key={l.id} className={`${cardClass} space-y-2`}>
                   <div>
@@ -517,26 +517,26 @@ export function CustomerStatementPanel({
             <div
               className={`${cardClass} flex flex-wrap items-center justify-between gap-2 md:hidden`}
             >
-              <span className="text-sm font-bold text-fg-strong">Total balance</span>
+              <span className="text-sm font-bold text-fg-strong">{W.closingDue}</span>
               <span className="inline-block border-b-4 border-double border-current pb-0.5 text-sm font-bold text-fg-strong tabular-nums">
                 {balanceMoney(view.closingBalance)}
               </span>
             </div>
             <table className="hidden w-full text-left text-xs md:table">
-              <caption className="sr-only">Customer statement, oldest first</caption>
+              <caption className="sr-only">{W.title}, oldest first</caption>
               <thead className="text-fg-muted">
                 <tr>
                   <th scope="col" className="py-2 pr-3">
                     Date
                   </th>
                   <th scope="col" className="pr-3">
-                    Document
+                    Reference
                   </th>
                   <th scope="col" className="hidden pr-3 lg:table-cell">
-                    Description
+                    Details
                   </th>
                   <th scope="col" className="hidden pr-3 lg:table-cell">
-                    Due
+                    Due date
                   </th>
                   <th scope="col" className="pr-3 text-right">
                     Debit
@@ -589,7 +589,7 @@ export function CustomerStatementPanel({
               <tfoot>
                 <tr className="border-t border-line text-fg-strong">
                   <td className="py-2 pr-3" />
-                  <td className="py-2 pr-3 font-bold">Total balance</td>
+                  <td className="py-2 pr-3 font-bold">{W.closingDue}</td>
                   <td className="hidden pr-3 lg:table-cell" />
                   <td className="hidden pr-3 lg:table-cell" />
                   <td className="pr-3" />
@@ -741,8 +741,8 @@ function TransactionDetail({
       <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
         <Detail label="Document" value={documentLabel} />
         <Detail label="Date" value={shown(e.date)} />
-        <Detail label="Document amount" value={money(e.amount)} />
-        <Detail label="Still open" value={money(e.remaining)} />
+        <Detail label="Original amount" value={money(e.amount)} />
+        <Detail label="Outstanding" value={money(e.remaining)} />
         <Detail label="Due" value={shown(e.dueDate)} />
         <Detail label="Currency" value={shown(e.currency)} />
         <Detail label="Description" value={shown(e.description)} />
@@ -933,8 +933,8 @@ function TransactionDetail({
                   </div>
                   <dl className="grid grid-cols-2 gap-2 text-xs">
                     <MobileField label="Amount applied">{money(a.appliedAmount)}</MobileField>
-                    <MobileField label="Document amount">{money(a.documentAmount)}</MobileField>
-                    <MobileField label="Still open">{money(a.stillOpen)}</MobileField>
+                    <MobileField label="Original amount">{money(a.documentAmount)}</MobileField>
+                    <MobileField label="Outstanding">{money(a.stillOpen)}</MobileField>
                   </dl>
                 </li>
               ))}
@@ -953,10 +953,10 @@ function TransactionDetail({
                     Amount applied
                   </th>
                   <th scope="col" className={`${modalThClass} text-right`}>
-                    Document amount
+                    Original amount
                   </th>
                   <th scope="col" className="py-2 text-right font-semibold text-fg-muted">
-                    Still open
+                    Outstanding
                   </th>
                 </tr>
               </thead>
@@ -1001,7 +1001,7 @@ function TransactionDetail({
                   </div>
                   <dl className="grid grid-cols-2 gap-2 text-xs">
                     <MobileField label="Amount">{money(h.amount)}</MobileField>
-                    <MobileField label="Why / by whom">{historyWhy(h)}</MobileField>
+                    <MobileField label="Reason / recorded by">{historyWhy(h)}</MobileField>
                   </dl>
                 </li>
               ))}
@@ -1022,7 +1022,7 @@ function TransactionDetail({
                     Amount
                   </th>
                   <th scope="col" className={modalThClass}>
-                    Why / by whom
+                    Reason / recorded by
                   </th>
                 </tr>
               </thead>

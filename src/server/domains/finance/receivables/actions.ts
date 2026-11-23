@@ -15,10 +15,12 @@ import {
   buildCustomerStatementCsv,
   customerStatementFileName,
   ledgerAppliedTotals,
+  statementAddsUp,
   statementDownloadDocument,
   statementRowBalances,
   type StatementDownload,
 } from '@/lib/customer-statement';
+import { businessDate } from '@/server/kernel/numbering/business-date';
 import { renderCustomerStatementPdf } from '@/server/adapters/pdf/pdfkit-customer-statement.adapter';
 
 import { isChequeCountsMode } from '@/lib/order-payment';
@@ -769,9 +771,18 @@ export async function customerStatementDownloadAction(
         ctx.companyId,
         rows.filter((row) => row.documentType === 'invoice').map((row) => row.id),
       );
+      const card = found.customer;
+      const currencies = [...new Set(rows.map((row) => row.currency))];
       const statement: StatementDownload = {
-        customerName: found.customer.name,
-        customerNumber: found.customer.number,
+        customerName: card.name,
+        customerNumber: card.number,
+        customerKraPin: card.buyerKraPin ?? '',
+        customerAddress: [card.street, [card.city, card.countyOrState, card.postalCode].filter(has).join(', '), card.country].filter((part): part is string => has(part)),
+        paymentTerms: card.accountType === 'credit' ? `Credit (on account), ${String(card.paymentTermDays)} days` : 'Cash',
+        creditLimit: card.accountType === 'credit' ? card.creditLimit : '',
+        currency: currencies.join(', '),
+        statementDate: businessDate(),
+        ageing: summary.ageing.map((b) => ({ label: b.label, amount: fromCents(b.cents), count: b.count })),
         from: fromDate ?? '',
         to: toDate ?? '',
         openingBalance: fromCents(summary.openingBalanceCents),
@@ -792,6 +803,9 @@ export async function customerStatementDownloadAction(
           balance: fromCents(balances[index]?.runningCents ?? 0),
         })),
       };
+      // A statement that does not add up is never issued: lenders read these.
+      if (!statementAddsUp(statement.openingBalance, statement.totalDebit, statement.totalCredit, statement.closingBalance))
+        throw new FinanceError('INVALID', 'The statement does not balance. Refresh and try again.');
       const fileName = customerStatementFileName(
         found.customer.number,
         format,
