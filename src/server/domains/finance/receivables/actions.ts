@@ -716,10 +716,16 @@ export async function customerStatementAction(
   );
 }
 
+/** The most transactions one downloaded statement holds; a longer period is asked to be narrowed rather than cut short. */
+const STATEMENT_DOWNLOAD_LIMIT = 5000;
+
+/**
+ * The statement of a period, whole. The server reads every transaction of the period itself; what the screen has loaded does not
+ * decide what is issued, so the lines always add up to the totals.
+ */
 export async function customerStatementDownloadAction(
   format: 'pdf' | 'csv',
   customerId: string,
-  entryIds: string[],
   from?: string,
   to?: string,
 ) {
@@ -729,39 +735,13 @@ export async function customerStatementDownloadAction(
     async (ctx) => {
       const fromDate = statementFilterDate(from);
       const toDate = statementFilterDate(to);
-      if (entryIds.length > 1000)
-        throw new FinanceError('INVALID', 'That statement is too large to download.');
-      if (!entryIds.every(isStatementId))
-        throw new FinanceError('INVALID', 'That statement contains an invalid transaction.');
       const found = await getContainer().customers.getCustomer(ctx.companyId, customerId);
       if (!found) throw new FinanceError('NOT_FOUND', 'That customer does not exist.');
 
-      const summary = await fin().customerLedger.statement(
-        ctx.companyId,
-        customerId,
-        fromDate,
-        toDate,
-        null,
-        1,
-      );
-      const fetched = await fin().customerLedger.entriesByIds(ctx.companyId, customerId, entryIds);
-      const byId = new Map(fetched.map((row) => [row.id, row]));
-      const selected = entryIds.map((id) => byId.get(id));
-      if (selected.some((row) => row === undefined))
-        throw new FinanceError('INVALID', 'The statement has changed. Refresh and try again.');
-      const rows = selected.filter((row): row is NonNullable<typeof row> => row !== undefined);
-      for (const row of rows) {
-        const postingDate = row.postingDate;
-        if (postingDate === null) {
-          if (fromDate !== null || toDate !== null)
-            throw new FinanceError('INVALID', 'The statement has changed. Refresh and try again.');
-          continue;
-        }
-        if (fromDate !== null && postingDate < fromDate)
-          throw new FinanceError('INVALID', 'The statement has changed. Refresh and try again.');
-        if (toDate !== null && postingDate > toDate)
-          throw new FinanceError('INVALID', 'The statement has changed. Refresh and try again.');
-      }
+      const summary = await fin().customerLedger.statement(ctx.companyId, customerId, fromDate, toDate, null, 1);
+      const rows = await fin().customerLedger.entriesInPeriod(ctx.companyId, customerId, fromDate, toDate, STATEMENT_DOWNLOAD_LIMIT);
+      if (rows.length > STATEMENT_DOWNLOAD_LIMIT)
+        throw new FinanceError('INVALID', `That period has more than ${String(STATEMENT_DOWNLOAD_LIMIT)} transactions. Choose a shorter period to download it.`);
       const balances = statementRowBalances(
         rows.map((row) => toCents(row.amount)),
         summary.openingBalanceCents,
@@ -804,7 +784,11 @@ export async function customerStatementDownloadAction(
         })),
       };
       // A statement that does not add up is never issued: lenders read these.
-      if (!statementAddsUp(statement.openingBalance, statement.totalDebit, statement.totalCredit, statement.closingBalance))
+      const lastRunning = statement.lines[statement.lines.length - 1]?.balance ?? statement.openingBalance;
+      if (
+        !statementAddsUp(statement.openingBalance, statement.totalDebit, statement.totalCredit, statement.closingBalance) ||
+        !statementAddsUp(lastRunning, '0', '0', statement.closingBalance)
+      )
         throw new FinanceError('INVALID', 'The statement does not balance. Refresh and try again.');
       const fileName = customerStatementFileName(
         found.customer.number,
