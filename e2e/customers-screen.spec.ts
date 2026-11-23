@@ -52,11 +52,11 @@ test.describe('customers screen', () => {
     await page.getByLabel('Search customers').fill('E2E001');
     await page.getByRole('link', { name: 'Open Alice Cash' }).click();
     await expect(page).toHaveURL(/\/admin\/customers\/[^/]+$/);
-    await expect(page.getByRole('heading', { name: 'Customer statement' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Statement of Account' })).toBeVisible();
     await expect(page.getByLabel('From', { exact: true })).not.toHaveValue('');
     await expect(page.getByLabel('To', { exact: true })).not.toHaveValue('');
-    await expect(page.getByText('Total balance').locator('visible=true').first()).toBeVisible();
-    await expect(page.getByText('Opening balance').locator('visible=true').first()).toBeVisible();
+    await expect(page.getByText('Closing balance due').locator('visible=true').first()).toBeVisible();
+    await expect(page.getByText('Balance brought forward').locator('visible=true').first()).toBeVisible();
     await expect(page.getByText('Closing balance').locator('visible=true').first()).toBeVisible();
 
     const pdfDownload = page.waitForEvent('download');
@@ -169,12 +169,8 @@ test.describe('customers screen', () => {
     await noNativeSelect(page);
     await card.getByLabel('Name', { exact: true }).fill(name);
     await card.getByLabel('Email').fill(`card-${stamp.toLowerCase()}@example.test`);
-    await pick(
-      page,
-      card.getByRole('combobox', { name: 'Account type' }),
-      'Credit',
-      /Credit \(pays later\)/,
-    );
+    // On account unless someone picks cash.
+    await expect(card.getByRole('combobox', { name: 'Account type' })).toHaveValue(/Credit \(pays later\)/);
     await expect(card.getByLabel('Credit limit')).toBeEnabled();
     await card.getByLabel('Credit limit').fill('750');
     await card.getByLabel('Payment terms (days)').fill('14');

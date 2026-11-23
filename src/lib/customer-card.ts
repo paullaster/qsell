@@ -66,9 +66,10 @@ export interface CardForm {
   dimensions: Record<string, string>;
 }
 
+/** A customer made from the admin console is a credit (on account) customer unless someone chooses otherwise; web shop customers are made cash elsewhere. */
 export const emptyCard = (fields: CardField[]): CardForm => ({
   profileId: '', profileLabel: '', name: '', email: '', phone: '', street: '', city: '', countyOrState: '', postalCode: '', country: '',
-  accountType: 'cash', creditLimit: '0', paymentTermDays: '0', blocked: 'none', transmitInvoicesToKra: true, buyerKraPin: '', notes: '', isActive: true,
+  accountType: 'credit', creditLimit: '0', paymentTermDays: '0', blocked: 'none', transmitInvoicesToKra: true, buyerKraPin: '', notes: '', isActive: true,
   dimensions: projectionToSelected(undefined, fields),
 });
 
@@ -149,3 +150,12 @@ export const profileChoice = (p: CustomerProfileRow): Choice => ({
   label: `${p.code} — ${p.name}`,
   meta: { accountType: p.accountType, creditLimit: p.creditLimit, paymentTermDays: String(p.paymentTermDays), transmit: p.transmitInvoicesToKra ? '1' : '', dimensions: JSON.stringify(p.dimensionCodes) },
 });
+
+/**
+ * The profile a new admin customer starts from: the one coded CREDIT when there is one, otherwise the first active credit profile
+ * (the list is in code order). None means the form still starts as a credit customer, with the terms typed in.
+ */
+export function defaultCreditProfile(profiles: readonly CustomerProfileRow[]): CustomerProfileRow | null {
+  const credit = profiles.filter((p) => p.isActive && p.accountType === 'credit');
+  return credit.find((p) => p.code.toUpperCase() === 'CREDIT') ?? credit[0] ?? null;
+}

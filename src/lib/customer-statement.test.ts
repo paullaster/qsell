@@ -3,8 +3,12 @@ import {
   buildCustomerStatementCsv,
   customerStatementFileName,
   ledgerAppliedTotals,
+  statementAddsUp,
+  statementAgeLabel,
+  statementDate,
   statementDocumentNumber,
   statementDownloadDocument,
+  statementPeriodText,
   statementRowBalances,
   statementSpan,
   type StatementDownload,
@@ -57,6 +61,16 @@ describe('statement downloads', () => {
   const statement: StatementDownload = {
     customerName: 'E2E, Customer',
     customerNumber: 'CUS-001',
+    customerKraPin: 'A123456789Z',
+    customerAddress: ['1 Market Road', 'Nairobi, Nairobi, 00100', 'Kenya'],
+    paymentTerms: 'Credit (on account), 30 days',
+    creditLimit: '5000.00',
+    currency: 'KES',
+    statementDate: '2026-09-30',
+    ageing: [
+      { label: 'Not yet due', amount: '100.00', count: 1 },
+      { label: '1–30 days', amount: '200.00', count: 2 },
+    ],
     from: '2026-09-01',
     to: '2026-09-30',
     openingBalance: '100.00',
@@ -97,13 +111,19 @@ describe('statement downloads', () => {
   it('writes a guarded CSV with the tax invoice number and period totals', () => {
     const csv = buildCustomerStatementCsv(statement);
     expect(csv.startsWith('\ufeff')).toBe(true);
-    expect(csv).toContain('Customer number,CUS-001\r\n');
-    expect(csv).toContain('Period,2026-09-01 to 2026-09-30\r\n');
+    expect(csv).toContain('Statement of Account\r\n');
+    expect(csv).toContain('Account no.,CUS-001\r\n');
+    expect(csv).toContain('Statement period,01 Sep 2026 to 30 Sep 2026\r\n');
+    expect(csv).toContain('Currency,KES\r\n');
+    expect(csv).toContain('Balance brought forward,100.00\r\n');
+    expect(csv).toContain('Closing balance due,300.00\r\n');
+    expect(csv).toContain('Current (not yet due),100.00\r\n');
+    expect(csv).toContain('1–30 days past due,200.00\r\n');
     expect(csv).toContain('Tax invoice INV-17');
     expect(csv).toContain("'=SUM(A1:A2)");
     expect(csv).toContain(',-50.00\r\n');
     expect(csv).not.toContain(",'-50.00");
-    expect(csv).toContain('Date,Document,Description,Due,Debit,Credit,Balance');
+    expect(csv).toContain('Date,Reference,Details,Due date,Debit,Credit,Balance');
   });
 });
 
@@ -123,5 +143,26 @@ describe('ledgerAppliedTotals', () => {
       { appliedToEntryId: 'inv-1', amount: '-10.00' },
     ];
     expect([...ledgerAppliedTotals(history, 'payment')]).toEqual([['inv-1', 3000]]);
+  });
+});
+
+describe('statement wording and checks', () => {
+  it('writes dates and periods the way a statement does', () => {
+    expect(statementDate('2026-09-02')).toBe('02 Sep 2026');
+    expect(statementDate(null)).toBe('');
+    expect(statementPeriodText('', '')).toBe('All transactions to date');
+    expect(statementPeriodText('2026-09-01', '')).toBe('01 Sep 2026 to date');
+    expect(statementPeriodText('', '2026-09-30')).toBe('All transactions up to 30 Sep 2026');
+  });
+
+  it('calls what is not due current and the rest past due', () => {
+    expect(statementAgeLabel('Not yet due')).toBe('Current (not yet due)');
+    expect(statementAgeLabel('Over 90 days')).toBe('Over 90 days past due');
+  });
+
+  it('only accepts a statement whose opening balance plus debits less credits is its closing balance', () => {
+    expect(statementAddsUp('100.00', '250.00', '50.00', '300.00')).toBe(true);
+    expect(statementAddsUp('100.10', '0.20', '0.00', '100.30')).toBe(true);
+    expect(statementAddsUp('100.00', '250.00', '50.00', '299.99')).toBe(false);
   });
 });

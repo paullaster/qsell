@@ -46,7 +46,8 @@ export const emptyCustomerForm = (): CustomerForm => ({
   name: '',
   email: '',
   phone: '',
-  accountType: 'cash',
+  // Made from the admin console, so on account unless someone picks cash.
+  accountType: 'credit',
   creditLimit: '0',
   paymentTermDays: '0',
   buyerKraPin: '',
