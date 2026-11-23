@@ -33,6 +33,18 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 const text = (value: unknown, max: number): string => (typeof value === 'string' ? value.trim().slice(0, max) : '');
 
+/** A discount typed on a line: `{ kind, value }`, a percentage above 0 and under 100 or an amount above 0, to the cent; null when none was sent. */
+export function readLineDiscount(raw: unknown): { kind: 'percent' | 'amount'; value: number } | null | 'bad' {
+  if (raw === undefined || raw === null) return null;
+  if (!isRecord(raw) || (raw.kind !== 'percent' && raw.kind !== 'amount')) return 'bad';
+  const value = raw.value;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return 'bad';
+  const cents = Math.round(value * 100) / 100;
+  if (cents <= 0) return 'bad';
+  if (raw.kind === 'percent' ? cents >= 100 : cents > 100_000_000) return 'bad';
+  return { kind: raw.kind, value: cents };
+}
+
 function readPicks(raw: unknown): StoredPick[] | null {
   if (!Array.isArray(raw) || raw.length === 0 || raw.length > SALES_ORDER_LIMITS.picks) return null;
   const picks: StoredPick[] = [];
@@ -64,7 +76,12 @@ export function parseSalesOrderInput(raw: unknown): ParsedSalesOrder {
     if (productId === '') return { ok: false, error: `Line ${String(n + 1)}: choose a product.` };
     if (typeof quantity !== 'number' || !Number.isFinite(quantity) || quantity <= 0 || quantity > SALES_ORDER_LIMITS.quantity) return { ok: false, error: `Line ${String(n + 1)}: the quantity must be more than nothing.` };
     if (entry.package === undefined || entry.package === null) {
-      lines.push({ productId, quantity });
+      // A typed price or discount is only read here; whether this person may give one is decided by the action, and the writer holds it to the floors and limits.
+      const typed = entry.unitPrice;
+      if (typed !== undefined && typed !== null && (typeof typed !== 'number' || !Number.isFinite(typed) || typed <= 0 || typed > 100_000_000)) return { ok: false, error: `Line ${String(n + 1)}: the price must be more than nothing.` };
+      const discount = readLineDiscount(entry.discount);
+      if (discount === 'bad') return { ok: false, error: `Line ${String(n + 1)}: the discount must be a percentage under 100, or an amount more than nothing.` };
+      lines.push({ productId, quantity, ...(typeof typed === 'number' ? { unitPrice: Math.round(typed * 100) / 100 } : {}), ...(discount === null ? {} : { discount }) });
       continue;
     }
     if (!isRecord(entry.package)) return { ok: false, error: `Line ${String(n + 1)}: the package choices could not be read.` };

@@ -273,6 +273,40 @@ describe.skipIf(url === undefined || url === '')('the till screen (database)', (
     }
   });
 
+  it('lets a sales order, a credit sale and a sales invoice take a typed price and a discount, only where the company allows a discount and within the floors and limits', async () => {
+    const person = await user('invoicer');
+    const item = await product('Invoiced', { price: '100' });
+    const who = { userId: person.id, branchId };
+    const [customer] = await db.insert(schema.customers).values({ companyId, number: `LIN-${randomUUID().slice(0, 8)}`, name: 'Line Buyer', email: `lb-${randomUUID().slice(0, 6)}@ln.test`, phone: '0711000777', accountType: 'credit', creditLimit: '1000000', paymentTermDays: 30, street: '1 Rd', city: 'Nairobi', countyOrState: 'Nairobi', country: 'Kenya' } as never).returning();
+    const customerId = customer?.id ?? '';
+    await db.insert(schema.priceOverrideLimits).values({ companyId, roleKey: 'manager', maxPercent: '10', createdBy: 'till-test' }).onConflictDoNothing();
+    c.priceGuard.invalidate(companyId);
+    try {
+      for (const kind of ['sales_order', 'credit_sale', 'sales_invoice'] as const) {
+        const settings = defOf(kind).defaults;
+        const save = async (over: Record<string, unknown>) => await c.sellingSettings.save(companyId, kind, { ...settings, ...over }, actor, reason);
+        const price = async (line: { unitPrice?: number; discount?: { kind: 'percent' | 'amount'; value: number } }) => await c.salesOrders.price(companyId, who, { customerId, lines: [{ productId: item, quantity: 2, ...line }], paymentMethod: 'mpesa_daraja', neededOn: '', holdUntilPaid: false }, kind);
+        // A typed price stands in for the list price, within the person's limit; a discount is refused until the company allows one.
+        const typed = await price({ unitPrice: 95 });
+        expect(typed.ok && typed.lines[0]?.unitPrice).toBe(95);
+        expect((await price({ unitPrice: 50 })).ok).toBe(false);
+        const refused = await price({ discount: { kind: 'percent', value: 5 } });
+        expect(refused.ok).toBe(false);
+        expect(refused.ok ? '' : refused.error).toContain('discount cannot be offered');
+        await save({ manualDiscount: 'all_branches' });
+        const given = await price({ discount: { kind: 'percent', value: 5 } });
+        expect(given.ok && given.lines[0]?.unitPrice).toBe(95);
+        expect(given.ok && given.total).toBe(190);
+        const onTyped = await price({ unitPrice: 98, discount: { kind: 'amount', value: 3 } });
+        expect(onTyped.ok && onTyped.lines[0]?.unitPrice).toBe(95);
+        expect((await price({ discount: { kind: 'percent', value: 40 } })).ok).toBe(false);
+        await c.sellingSettings.reset(companyId, kind, actor, reason);
+      }
+    } finally {
+      await db.delete(schema.priceOverrideLimits).where(eq(schema.priceOverrideLimits.roleKey, 'manager'));
+    }
+  });
+
   it('gives up whatever is still on hold when the shift closes', async () => {
     const person = await user('closer');
     const shiftId = await shiftFor(person);
