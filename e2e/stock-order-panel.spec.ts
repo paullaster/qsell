@@ -12,7 +12,7 @@ test.afterAll(() => setLedger('off'));
 async function openOrder(page: Page, orderNumber: string): Promise<void> {
   await open(page, '/admin/orders', /Web Shop Orders/);
   await page.getByLabel('Search orders').fill(orderNumber);
-  const manage = page.getByRole('button', { name: /Manage/ }).first();
+  const manage = page.getByRole('link', { name: /Open order/ }).first();
   await expect(manage).toBeVisible({ timeout: 60_000 });
   await manage.click();
   await expect(page.getByRole('dialog')).toBeVisible({ timeout: 30_000 });

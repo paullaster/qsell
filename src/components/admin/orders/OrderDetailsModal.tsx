@@ -2,11 +2,13 @@
 
 import { ProductEditLink } from '@/components/admin/ProductEditLink';
 import { useEffect, useState } from 'react';
-import { DollarSign, FileText, Mail, MapPin, Phone, Printer, Truck, User } from 'lucide-react';
+import { ArrowLeft, DollarSign, FileText, Mail, MapPin, Phone, Printer, Truck, User } from 'lucide-react';
+import Link from 'next/link';
 import { Modal } from '@/components/ui/Modal';
+import { orderChannel } from '@/lib/order-links';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { InlineConfirm } from '@/components/ui/InlineConfirm';
-import { Field, fieldClass, primaryClass } from '@/components/ui/screen-kit';
+import { Chip, Field, fieldClass, primaryClass } from '@/components/ui/screen-kit';
 import { OrderApprovalBanner } from '@/components/admin/approvals/OrderApprovalBanner';
 import { deliveryInvoiceAvailableAction } from '@/server/domains/invoices/actions';
 import { OrderCreditNotesPanel } from '@/components/admin/OrderCreditNotesPanel';
@@ -45,6 +47,8 @@ interface Props {
   order: Order;
   /** The person may update products: each line offers a shortcut to the product's edit window. The order keeps what was sold. */
   canEditProducts?: boolean;
+  /** Over the screen the person was on (default), or as a page of its own. */
+  presentation?: 'modal' | 'page';
   busy: boolean;
   invoiceBusy: boolean;
   error: string | null;
@@ -58,12 +62,59 @@ interface Props {
   onChanged: () => void;
 }
 
+const SECTIONS: readonly (readonly [string, string])[] = [
+  ['order-customer', 'Customer'],
+  ['order-items', 'Items'],
+  ['order-fulfilment', 'Fulfilment'],
+  ['order-payments', 'Payments'],
+  ['order-documents', 'Invoices'],
+  ['order-history', 'History'],
+];
+
+/** The window or page around one order: over the screen it was opened from, or a page of its own with the way back to the screen it belongs to. */
+function Frame({ title, presentation, backTo, onClose, children }: { title: string; presentation: 'modal' | 'page'; backTo: { homeHref: string; homeName: string }; onClose: () => void; children: React.ReactNode }) {
+  if (presentation === 'modal') return <Modal title={title} onClose={onClose} extraWide>{children}</Modal>;
+  return (
+    <article aria-label={title} className="mx-auto max-w-[min(96rem,100%)] space-y-4 rounded-2xl border border-line bg-surface-raised p-4 sm:p-6">
+      <header className="space-y-2">
+        <Link href={backTo.homeHref} className="inline-flex min-h-10 items-center gap-1 text-sm font-semibold text-indigo-600 hover:underline"><ArrowLeft className="h-4 w-4" aria-hidden />Back to {backTo.homeName}</Link>
+        <h1 className="text-xl font-bold text-fg-strong">{title}</h1>
+      </header>
+      {children}
+    </article>
+  );
+}
+
+/** Who it is for, when, how much, and where it stands: the first thing seen, so nobody has to read down to find out. */
+function OrderSummary({ order }: { order: Order }) {
+  const when = useWhen();
+  const approval = order.approvalStatus === 'pending' ? 'Waiting for approval' : null;
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-4 rounded-xl border border-line bg-surface p-4" data-testid="order-summary">
+      <div className="min-w-0">
+        <p className="text-base font-bold break-words text-fg-strong">{order.customerName}</p>
+        <p className="text-sm text-fg-muted">Placed {when(order.createdAt)}</p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <OrderStatusBadge status={order.status} />
+          <Chip tone={isOrderPaid(order) ? 'green' : 'gray'}>{order.paymentStatus.replaceAll('_', ' ')}</Chip>
+          {approval === null ? null : <Chip tone="amber">{approval}</Chip>}
+        </div>
+      </div>
+      <div className="text-right">
+        <p className="text-xs font-semibold tracking-wider text-fg-subtle uppercase">Total</p>
+        <p className="font-mono text-2xl font-bold text-fg-strong">{money(order.totalAmount, order.currency)}</p>
+      </div>
+    </div>
+  );
+}
+
 const linkButton =
   'flex min-h-10 cursor-pointer items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-50';
 
 /** One order opened for work: who and what it is, the invoice, the lifecycle form, payments and credit notes. */
 export function OrderDetailsModal({
   order,
+  presentation = 'modal',
   canEditProducts = false,
   busy,
   invoiceBusy,
@@ -76,7 +127,6 @@ export function OrderDetailsModal({
   onCancel,
   onChanged,
 }: Props) {
-  const when = useWhen();
   const [status, setStatus] = useState<Choice | null>(
     statusChoice(FULFILMENT_STATUSES, order.status),
   );
@@ -109,114 +159,53 @@ export function OrderDetailsModal({
     });
   };
 
+  const channel = orderChannel(order.salesModule);
   return (
-    <Modal title={`Order Details: ${order.orderNumber}`} onClose={onClose}>
-      <div className="space-y-6 text-xs">
-        <p className="text-[11px] text-fg-muted">
-          Placed on {when(order.createdAt)}
-        </p>
-
-        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Invoices">
-          <button
-            type="button"
-            disabled={invoiceBusy}
-            onClick={() => onInvoice('download', 'tax_invoice')}
-            className={`${linkButton} bg-surface-sunken text-fg hover:bg-hover`}
-          >
-            <Printer className="h-3.5 w-3.5" aria-hidden />
-            {invoiceBusy ? 'Generating…' : 'Tax Invoice PDF'}
-          </button>
-          {isOrderPaid(order) ? null : (
-            <button
-              type="button"
-              disabled={invoiceBusy}
-              onClick={() => onInvoice('download', 'proforma')}
-              className={`${linkButton} bg-amber-600/20 text-amber-800 hover:bg-amber-600/30`}
-            >
-              <Printer className="h-3.5 w-3.5" aria-hidden />
-              Proforma PDF
-            </button>
-          )}
-          <button
-            type="button"
-            disabled={invoiceBusy}
-            onClick={() => onInvoice('email', 'tax_invoice')}
-            className={`${linkButton} bg-indigo-600/20 text-indigo-800 hover:bg-indigo-600/30`}
-          >
-            <Mail className="h-3.5 w-3.5" aria-hidden />
-            Email Tax Invoice
-          </button>
-          {isOrderPaid(order) ? null : (
-            <button
-              type="button"
-              disabled={invoiceBusy}
-              onClick={() => onInvoice('email', 'proforma')}
-              className={`${linkButton} bg-amber-600/10 text-amber-800 hover:bg-amber-600/20`}
-            >
-              <Mail className="h-3.5 w-3.5" aria-hidden />
-              Email Proforma
-            </button>
-          )}
-          {deliveryInvoice ? (
-            <>
-              <button
-                type="button"
-                disabled={invoiceBusy}
-                onClick={() => onInvoice('download', 'delivery_invoice')}
-                className={`${linkButton} bg-surface-sunken text-fg hover:bg-hover`}
+    <Frame title={`${channel.kind} ${order.orderNumber}`} presentation={presentation} backTo={channel} onClose={onClose}>
+      <div className="space-y-6 text-sm">
+        <OrderSummary order={order} />
+        <nav aria-label="Parts of this order" className="sticky top-0 z-10 -mx-4 space-y-2 border-b border-line bg-surface-raised/95 px-4 py-2 backdrop-blur sm:-mx-6 sm:px-6">
+          <ul className="flex flex-wrap gap-1" role="list">
+            {SECTIONS.map(([id, label]) => (<li key={id}><button type="button" className="inline-flex min-h-10 cursor-pointer items-center rounded-lg px-3 text-sm font-semibold text-fg hover:bg-hover focus-visible:outline-2 focus-visible:outline-indigo-500" onClick={() => document.getElementById(id)?.scrollIntoView({ block: 'start' })}>{label}</button></li>))}
+          </ul>
+          <div aria-live="polite" className="space-y-2">
+            {error === null ? null : (
+              <p
+                role="alert"
+                className="rounded-lg border border-red-800 bg-red-50 p-3.5 text-red-800"
               >
-                <Truck className="h-3.5 w-3.5" aria-hidden />
-                Delivery Invoice PDF
-              </button>
-              <button
-                type="button"
-                disabled={invoiceBusy}
-                onClick={() => onInvoice('email', 'delivery_invoice')}
-                className={`${linkButton} bg-indigo-600/20 text-indigo-800 hover:bg-indigo-600/30`}
+                {error}
+              </p>
+            )}
+            {notice === null ? null : (
+              <p
+                role="status"
+                className="rounded-lg border border-emerald-800 bg-emerald-50 p-3.5 text-emerald-800"
               >
-                <Mail className="h-3.5 w-3.5" aria-hidden />
-                Email Delivery Invoice
-              </button>
-            </>
-          ) : null}
-          <button
-            type="button"
-            onClick={onPreview}
-            className={`${linkButton} bg-surface-sunken text-fg hover:bg-hover`}
-          >
-            <FileText className="h-3.5 w-3.5" aria-hidden />
-            Preview
-          </button>
-        </div>
+                {notice}
+              </p>
+            )}
+          </div>
+        </nav>
+        <OrderApprovalBanner
+          order={order}
+          onChanged={() => {
+            onClose();
+            onChanged();
+          }}
+        />
 
-        <div aria-live="polite" className="space-y-2">
-          {error === null ? null : (
-            <p
-              role="alert"
-              className="rounded-lg border border-red-800 bg-red-50 p-3.5 text-red-800"
-            >
-              {error}
-            </p>
-          )}
-          {notice === null ? null : (
-            <p
-              role="status"
-              className="rounded-lg border border-emerald-800 bg-emerald-50 p-3.5 text-emerald-800"
-            >
-              {notice}
-            </p>
-          )}
-        </div>
-
+        <section id="order-customer" aria-labelledby="order-customer-title" className="scroll-mt-16 space-y-3">
+          <h3 id="order-customer-title" className="text-base font-bold text-fg-strong">Customer and payment</h3>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <section
             className="space-y-2 rounded-xl border border-line bg-surface p-4"
             aria-label="Customer and delivery address"
           >
-            <h3 className="flex items-center gap-1.5 text-xs font-bold tracking-wider text-fg-strong uppercase">
+            <h4 className="flex items-center gap-1.5 text-xs font-bold tracking-wider text-fg-strong uppercase">
               <User className="h-3.5 w-3.5 text-indigo-400" aria-hidden />
               Customer &amp; Delivery Address
-            </h3>
+            </h4>
             <div className="space-y-1 text-fg">
               <div className="text-sm font-bold text-fg-strong">{order.customerName}</div>
               <div className="flex items-center gap-2 font-mono text-[11px] text-fg-muted">
@@ -238,10 +227,10 @@ export function OrderDetailsModal({
             className="space-y-2 rounded-xl border border-line bg-surface p-4"
             aria-label="Payment and settlement"
           >
-            <h3 className="flex items-center gap-1.5 text-xs font-bold tracking-wider text-fg-strong uppercase">
+            <h4 className="flex items-center gap-1.5 text-xs font-bold tracking-wider text-fg-strong uppercase">
               <DollarSign className="h-3.5 w-3.5 text-emerald-600" aria-hidden />
               Payment &amp; Settlement
-            </h3>
+            </h4>
             <dl className="space-y-1.5 text-fg">
               <div className="flex items-center justify-between">
                 <dt className="text-fg-muted">Method:</dt>
@@ -280,10 +269,13 @@ export function OrderDetailsModal({
           </section>
         </div>
 
+        </section>
+        <section id="order-items" aria-labelledby="order-items-title" className="scroll-mt-16 space-y-3">
+          <h3 id="order-items-title" className="text-base font-bold text-fg-strong">What was bought</h3>
         <section className="space-y-2" aria-label="Line items">
-          <h3 className="text-xs font-bold tracking-wider text-fg-strong uppercase">
+          <h4 className="text-xs font-bold tracking-wider text-fg-strong uppercase">
             Itemized Line Items ({order.items.length})
-          </h3>
+          </h4>
           <ul className="space-y-2 sm:hidden">
             {order.items.map((item) => (
               <li
@@ -339,23 +331,18 @@ export function OrderDetailsModal({
           </div>
         </section>
 
-        <OrderApprovalBanner
-          order={order}
-          onChanged={() => {
-            onClose();
-            onChanged();
-          }}
-        />
-
+        </section>
+        <section id="order-fulfilment" aria-labelledby="order-fulfilment-title" className="scroll-mt-16 space-y-3">
+          <h3 id="order-fulfilment-title" className="text-base font-bold text-fg-strong">Fulfilment and delivery</h3>
         <form
           onSubmit={save}
           className="space-y-4 rounded-xl border border-line bg-surface p-4"
           aria-label="Update order fulfilment"
         >
-          <h3 className="flex items-center gap-1.5 text-xs font-bold tracking-wider text-fg-strong uppercase">
+          <h4 className="flex items-center gap-1.5 text-xs font-bold tracking-wider text-fg-strong uppercase">
             <Truck className="h-3.5 w-3.5 text-indigo-400" aria-hidden />
             Update Order Fulfillment Lifecycle
-          </h3>
+          </h4>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <ChoicePicker
               label="Update Status"
@@ -432,17 +419,100 @@ export function OrderDetailsModal({
           </div>
         </form>
 
+        <OrderStockPanel orderId={order.id} canMove={order.status === 'pending' || order.status === 'processing'} />
+        <OrderCollectionPanel key={`c-${order.id}`} orderId={order.id} onChanged={onChanged} />
+        <OrderDeliveriesPanel key={`d-${order.id}`} orderId={order.id} onChanged={onChanged} />
+        </section>
+        <section id="order-payments" aria-labelledby="order-payments-title" className="scroll-mt-16 space-y-3">
+          <h3 id="order-payments-title" className="text-base font-bold text-fg-strong">Payments</h3>
         {isOrderPaid(order) && shownPaymentReference(order) === null ? (
           <OrderReferencePanel orderId={order.id} onChanged={onChanged} />
         ) : null}
         <OrderTenderPanel orderId={order.id} onChanged={onChanged} />
-        <OrderStockPanel orderId={order.id} canMove={order.status === 'pending' || order.status === 'processing'} />
-        <OrderCollectionPanel key={`c-${order.id}`} orderId={order.id} onChanged={onChanged} />
-        <OrderDeliveriesPanel key={`d-${order.id}`} orderId={order.id} onChanged={onChanged} />
+        </section>
+        <section id="order-documents" aria-labelledby="order-documents-title" className="scroll-mt-16 space-y-3">
+          <h3 id="order-documents-title" className="text-base font-bold text-fg-strong">Invoices and documents</h3>
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Invoices">
+          <button
+            type="button"
+            disabled={invoiceBusy}
+            onClick={() => onInvoice('download', 'tax_invoice')}
+            className={`${linkButton} bg-surface-sunken text-fg hover:bg-hover`}
+          >
+            <Printer className="h-3.5 w-3.5" aria-hidden />
+            {invoiceBusy ? 'Generating…' : 'Tax Invoice PDF'}
+          </button>
+          {isOrderPaid(order) ? null : (
+            <button
+              type="button"
+              disabled={invoiceBusy}
+              onClick={() => onInvoice('download', 'proforma')}
+              className={`${linkButton} bg-amber-600/20 text-amber-800 hover:bg-amber-600/30`}
+            >
+              <Printer className="h-3.5 w-3.5" aria-hidden />
+              Proforma PDF
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={invoiceBusy}
+            onClick={() => onInvoice('email', 'tax_invoice')}
+            className={`${linkButton} bg-indigo-600/20 text-indigo-800 hover:bg-indigo-600/30`}
+          >
+            <Mail className="h-3.5 w-3.5" aria-hidden />
+            Email Tax Invoice
+          </button>
+          {isOrderPaid(order) ? null : (
+            <button
+              type="button"
+              disabled={invoiceBusy}
+              onClick={() => onInvoice('email', 'proforma')}
+              className={`${linkButton} bg-amber-600/10 text-amber-800 hover:bg-amber-600/20`}
+            >
+              <Mail className="h-3.5 w-3.5" aria-hidden />
+              Email Proforma
+            </button>
+          )}
+          {deliveryInvoice ? (
+            <>
+              <button
+                type="button"
+                disabled={invoiceBusy}
+                onClick={() => onInvoice('download', 'delivery_invoice')}
+                className={`${linkButton} bg-surface-sunken text-fg hover:bg-hover`}
+              >
+                <Truck className="h-3.5 w-3.5" aria-hidden />
+                Delivery Invoice PDF
+              </button>
+              <button
+                type="button"
+                disabled={invoiceBusy}
+                onClick={() => onInvoice('email', 'delivery_invoice')}
+                className={`${linkButton} bg-indigo-600/20 text-indigo-800 hover:bg-indigo-600/30`}
+              >
+                <Mail className="h-3.5 w-3.5" aria-hidden />
+                Email Delivery Invoice
+              </button>
+            </>
+          ) : null}
+          <button
+            type="button"
+            onClick={onPreview}
+            className={`${linkButton} bg-surface-sunken text-fg hover:bg-hover`}
+          >
+            <FileText className="h-3.5 w-3.5" aria-hidden />
+            Preview
+          </button>
+        </div>
+
         <OrderDocumentsPanel key={`docs-${order.id}`} orderId={order.id} />
-        <OrderTimelinePanel orderId={order.id} />
         <OrderCreditNotesPanel key={`cn-${order.id}`} orderId={order.id} />
+        </section>
+        <section id="order-history" aria-labelledby="order-history-title" className="scroll-mt-16 space-y-3">
+          <h3 id="order-history-title" className="text-base font-bold text-fg-strong">History</h3>
+        <OrderTimelinePanel orderId={order.id} />
+        </section>
       </div>
-    </Modal>
+    </Frame>
   );
 }

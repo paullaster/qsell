@@ -76,7 +76,10 @@ describe.skipIf(url === undefined || url === '')('sales invoices (database)', ()
     expect(page.rows[0]).toMatchObject({ invoiceNumber: made.invoiceNumber, kind: 'tax_invoice', orderNumber: placed.orderNumber, customerName: owner.name, currency: 'KES', total: 200, credited: 0, payment: 'unpaid', salesModule: 'sales_order', emailed: false });
     const detail = await c.salesInvoices.detail(made.invoiceNumber);
     expect(detail).toMatchObject({ invoiceNumber: made.invoiceNumber, customerEmail: owner.email, orderStatus: 'pending', creditNotes: [] });
-    expect(detail?.lines).toEqual([{ name: 'Invoice tea', quantity: 2, total: 200 }]);
+    // Each line says what it is: one unit's price, the quantity and the line's total; the sums and what is owed come with it.
+    expect(detail?.lines).toEqual([expect.objectContaining({ name: 'Invoice tea', quantity: 2, unitPrice: 100, total: 200, discount: 0, listUnitPrice: null })]);
+    expect(detail?.figures).toMatchObject({ discount: 0 });
+    expect(detail).toMatchObject({ paid: 0, balance: 200 });
     expect(Array.isArray(detail?.signingLog)).toBe(true);
     expect(await c.salesInvoices.detail('NO-SUCH-INVOICE')).toBeNull();
   });
@@ -92,6 +95,7 @@ describe.skipIf(url === undefined || url === '')('sales invoices (database)', ()
     const [listed] = (await c.salesInvoices.page({ query: made.invoiceNumber })).rows;
     expect(listed).toMatchObject({ credited: 200, payment: 'credited' });
     expect((await c.salesInvoices.detail(made.invoiceNumber))?.creditNotes).toHaveLength(1);
+    expect(await c.salesInvoices.detail(made.invoiceNumber)).toMatchObject({ balance: 0 });
   });
 
   it('lists newest first in pages, narrows by kind, and sends and prints an invoice under the number it already has', async () => {

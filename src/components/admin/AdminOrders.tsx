@@ -1,55 +1,31 @@
 'use client';
 
-import { use, useState } from 'react';
+import { use, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { RefreshCw, Search, ShoppingBag } from 'lucide-react';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { usePagedList, type PageResult } from '@/components/ui/usePagedList';
 import { useDebouncedValue } from '@/components/ui/useDebouncedValue';
 import { buttonClass, fieldClass } from '@/components/ui/screen-kit';
 import { ordersPageAction } from '@/server/domains/orders/actions';
-import { updateOrderStatusAction, cancelOrderAction } from '@/server/actions';
-import { generateInvoicePdfAction, emailInvoiceAction } from '@/server/domains/invoices/actions';
-import { downloadPdfBase64 } from '@/lib/downloadPdf';
+import { orderHref } from '@/lib/order-links';
+import { onOrdersChanged } from '@/lib/orders-changed';
 import { money, unitsIn } from '@/lib/order-admin';
 import { shownPaymentReference } from '@/lib/paymentReference';
-import type { PublicCompany } from '@/lib/company-view';
 import type { Choice } from '@/lib/payment-options';
 import type { Order } from '@/types/index';
-import { OrderDetailsModal, type FulfilmentChange } from './orders/OrderDetailsModal';
-import { OrderInvoicePreview } from './orders/OrderInvoicePreview';
 import { LeftAtCounterBadge, OrderStatusBadge } from './orders/OrderStatusBadge';
 import { useWhen } from '@/components/business-time';
-
-/** The order (and invoice preview) the address asked to open, read on the server. */
-export interface OpenTarget {
-  order: Order | null;
-  invoice: boolean;
-  /** An order was named but could not be found (or is not this company's). */
-  missing: boolean;
-}
-
-export const NO_TARGET: Promise<OpenTarget> = Promise.resolve({ order: null, invoice: false, missing: false });
 
 interface AdminOrdersProps {
   /** The first page, already on its way when the screen is drawn. */
   firstPage: Promise<PageResult<Order>>;
-  companyPromise: Promise<PublicCompany>;
-  /** Whether the person may update products: order lines then offer a shortcut to the product's edit window. */
-  canEditProductsPromise: Promise<boolean>;
-  /** Opens one order, or its invoice, at once: the address of a link from another screen. */
-  targetPromise?: Promise<OpenTarget>;
 }
 
-const messageOf = (error: unknown, fallback: string): string =>
-  error instanceof Error ? error.message : fallback;
-
 /** The orders, a page at a time: search, narrow by state, and open one to fulfil, invoice, take payment on or credit. */
-export function AdminOrders({ firstPage, companyPromise, canEditProductsPromise, targetPromise = NO_TARGET }: AdminOrdersProps) {
+export function AdminOrders({ firstPage }: AdminOrdersProps) {
   const when = useWhen();
   const first = use(firstPage);
-  const company = use(companyPromise);
-  const canEditProducts = use(canEditProductsPromise);
-  const target = use(targetPromise);
 
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<Choice | null>(null);
@@ -62,93 +38,9 @@ export function AdminOrders({ firstPage, companyPromise, canEditProductsPromise,
     initialPage: first,
   });
 
-  // What was changed on screen shows in the list at once, without reading every page again.
-  const [patched, setPatched] = useState<Record<string, Order>>({});
-  const [selected, setSelected] = useState<Order | null>(target.order);
-  const [previewing, setPreviewing] = useState(target.invoice && target.order !== null);
-  const [busy, setBusy] = useState(false);
-  const [invoiceBusy, setInvoiceBusy] = useState(false);
-  const [error, setError] = useState<string | null>(target.missing ? 'That order could not be found.' : null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const rows = list.rows.map((o) => patched[o.id] ?? o);
-  const selectedModule = selected?.salesModule;
-  const showingWebShopOrders = selectedModule === undefined || selectedModule === 'ecommerce';
-
-  /** Once the order that a link named is closed, its address no longer asks for it again on a reload. */
-  const forgetTarget = () => {
-    if (window.location.search.includes('order=')) window.history.replaceState(null, '', window.location.pathname);
-  };
-  const open = (order: Order) => {
-    setSelected(order);
-    setError(null);
-    setNotice(null);
-  };
-  const changed = (order: Order) => {
-    setPatched((p) => ({ ...p, [order.id]: order }));
-    setSelected(order);
-  };
-
-  const invoice = async (
-    action: 'download' | 'email',
-    type: 'tax_invoice' | 'proforma' | 'delivery_invoice',
-    orderId: string,
-  ) => {
-    setInvoiceBusy(true);
-    setNotice(null);
-    setError(null);
-    try {
-      const kind = { proforma: 'Proforma invoice', delivery_invoice: 'Delivery invoice', tax_invoice: 'Posted tax invoice' }[type];
-      if (action === 'download') {
-        const result = await generateInvoicePdfAction(orderId, type);
-        downloadPdfBase64(result.pdfBase64, result.filename);
-        setNotice(`${kind} ${result.invoiceNumber} downloaded.`);
-      } else {
-        const result = await emailInvoiceAction(orderId, type);
-        downloadPdfBase64(result.pdfBase64, result.filename);
-        const id = result.emailMessageId ?? '';
-        setNotice(
-          `${kind} ${result.invoiceNumber} emailed to customer${id === '' ? '' : ` (${id})`}.`,
-        );
-      }
-    } catch (err: unknown) {
-      setError(
-        messageOf(
-          err,
-          action === 'download' ? 'Invoice generation failed' : 'Invoice email failed',
-        ),
-      );
-    } finally {
-      setInvoiceBusy(false);
-    }
-  };
-
-  const save = async (order: Order, change: FulfilmentChange) => {
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await updateOrderStatusAction(order.id, change);
-      if (result.ok) changed(result.data);
-      else setError(result.error);
-    } catch (err: unknown) {
-      setError(messageOf(err, 'The order could not be updated.'));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const cancel = async (order: Order, reason: string) => {
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await cancelOrderAction(order.id, reason);
-      if (result.ok) changed(result.data);
-      else setError(result.error);
-    } catch (err: unknown) {
-      setError(messageOf(err, 'The order could not be cancelled.'));
-    } finally {
-      setBusy(false);
-    }
-  };
+  // An order changed in the window that opened over this list: the rows are read again, so the list is never behind what was just done.
+  useEffect(() => onOrdersChanged(list.reload), [list.reload]);
+  const rows = list.rows;
 
   const reference = (o: Order) => shownPaymentReference(o);
 
@@ -158,7 +50,7 @@ export function AdminOrders({ firstPage, companyPromise, canEditProductsPromise,
         <div>
           <h2 className="flex items-center gap-2 text-base font-bold text-fg-strong">
             <ShoppingBag className="h-5 w-5 text-indigo-400" aria-hidden />
-            {showingWebShopOrders ? 'Web Shop Orders & Fulfillment' : 'Order Fulfillment'}
+            Web Shop Orders
           </h2>
           <p className="mt-0.5 text-xs text-fg-muted">
             Review orders customers placed through the web shop; assign courier tracking, print
@@ -264,9 +156,9 @@ export function AdminOrders({ firstPage, companyPromise, canEditProductsPromise,
                     {o.paymentMethod}
                   </span>
                 </div>
-                <button type="button" onClick={() => open(o)} className={`${buttonClass} w-full`}>
-                  Manage &amp; Fulfill
-                </button>
+                <Link href={orderHref(o.id)} className={`${buttonClass} w-full`}>
+                  Open order
+                </Link>
               </li>
             ))}
           </ul>
@@ -342,9 +234,9 @@ export function AdminOrders({ firstPage, companyPromise, canEditProductsPromise,
                       </div>
                     </td>
                     <td className="px-4 py-3.5 text-right">
-                      <button type="button" onClick={() => open(o)} className={buttonClass}>
-                        Manage &amp; Fulfill
-                      </button>
+                      <Link href={orderHref(o.id)} className={buttonClass} aria-label={`Open order ${o.orderNumber}`}>
+                        Open order
+                      </Link>
                     </td>
                   </tr>
                 ))}
@@ -375,41 +267,6 @@ export function AdminOrders({ firstPage, companyPromise, canEditProductsPromise,
         </>
       ) : null}
 
-      {selected === null ? null : (
-        <OrderDetailsModal
-          key={selected.id}
-          order={selected}
-          canEditProducts={canEditProducts}
-          busy={busy}
-          invoiceBusy={invoiceBusy}
-          error={error}
-          notice={notice}
-          onClose={() => {
-            setSelected(null);
-            forgetTarget();
-          }}
-          onPreview={() => setPreviewing(true)}
-          onInvoice={(action, type) => void invoice(action, type, selected.id)}
-          onSave={(change) => void save(selected, change)}
-          onCancel={(reason) => void cancel(selected, reason)}
-          onChanged={list.reload}
-        />
-      )}
-
-      {previewing && selected !== null ? (
-        <OrderInvoicePreview
-          order={selected}
-          canEditProducts={canEditProducts}
-          company={company}
-          busy={invoiceBusy}
-          onClose={() => {
-            setPreviewing(false);
-            forgetTarget();
-          }}
-          onEmail={() => void invoice('email', 'tax_invoice', selected.id)}
-          onDownload={(type) => void invoice('download', type, selected.id)}
-        />
-      ) : null}
     </div>
   );
 }
