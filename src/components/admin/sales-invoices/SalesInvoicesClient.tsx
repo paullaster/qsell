@@ -127,13 +127,13 @@ function Body({ first }: { first: Extract<FirstPage, { ok: true }> }) {
                 <Chip tone={SIGNING_WORDS[row.signing].tone}>{SIGNING_WORDS[row.signing].label}</Chip>
                 <Chip tone={PAYMENT_WORDS[row.payment].tone}>{PAYMENT_WORDS[row.payment].label}</Chip>
                 {row.credited > 0 && row.payment !== 'credited' ? <Chip tone="sky">{`Credited ${row.currency} ${row.credited.toLocaleString()}`}</Chip> : null}
-                <button type="button" className={buttonClass} aria-expanded={open === row.invoiceNumber} aria-label={`${open === row.invoiceNumber ? 'Close' : 'Open'} invoice ${row.invoiceNumber}`} onClick={() => setOpen(open === row.invoiceNumber ? null : row.invoiceNumber)}>{open === row.invoiceNumber ? 'Close' : 'Open'}</button>
+                <button type="button" className={buttonClass} aria-label={`Open invoice ${row.invoiceNumber}`} onClick={() => setOpen(row.invoiceNumber)}>Open invoice</button>
               </div>
             </div>
-            {open === row.invoiceNumber ? <SalesInvoiceDetail invoiceNumber={row.invoiceNumber} canSend={first.data.canSend} onSent={list.reload} /> : null}
           </li>
         ))}
       </ul>
+      {open === null ? null : <SalesInvoiceDetail invoiceNumber={open} canSend={first.data.canSend} onSent={list.reload} onClose={() => setOpen(null)} />}
       {list.cursor === null ? null : <button type="button" className={buttonClass} disabled={list.phase === 'more'} onClick={list.loadMore}>{list.phase === 'more' ? 'Loading…' : 'Show more'}</button>}
     </>
   );

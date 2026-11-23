@@ -7,7 +7,7 @@ import { fieldClass } from '@/components/ui/screen-kit';
 import { lineShown, pricedFor, readTypedPrice, type DocLine, type LineShown, type Priced } from '@/lib/selling/lines';
 import type { LineDiscount } from '@/lib/till/cart';
 
-const money = (amount: number): string => new Intl.NumberFormat('en-KE', { style: 'currency', currency: 'KES' }).format(amount);
+const money = (amount: number): string => new Intl.NumberFormat('en-KE', { style: 'currency', currency: 'KES', currencyDisplay: 'code' }).format(amount);
 const inputClass = `${fieldClass} h-11 text-right font-mono tabular-nums`;
 const labelClass = 'text-xs font-semibold text-fg-subtle xl:sr-only';
 

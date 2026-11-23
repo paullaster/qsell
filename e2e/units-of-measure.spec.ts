@@ -290,8 +290,8 @@ test.describe('credit notes in the unit the goods were sold in', () => {
     const row = page.getByRole(testInfo.project.name === 'phone' ? 'listitem' : 'row').filter({ hasText: order });
     await expect(row).toBeVisible({ timeout: 30_000 });
     await clickUntilVisible(
-      row.getByRole('button', { name: 'Manage & Fulfill' }),
-      page.getByRole('heading', { name: new RegExp(`Order Details: ${order}`) }),
+      row.getByRole('link', { name: /Open order/ }),
+      page.getByRole('heading', { name: new RegExp(order) }),
     );
     const panel = page.getByRole('region', { name: 'Credit notes' });
     await clickUntilVisible(

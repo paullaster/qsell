@@ -78,7 +78,7 @@ function OrderTotals({ empty, priced, guide, reason }: { empty: boolean; priced:
   return <dl className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-sm" data-testid="order-totals" aria-live="polite">{figures}</dl>;
 }
 
-const money = (amount: number): string => new Intl.NumberFormat('en-KE', { style: 'currency', currency: 'KES' }).format(amount);
+const money = (amount: number): string => new Intl.NumberFormat('en-KE', { style: 'currency', currency: 'KES', currencyDisplay: 'code' }).format(amount);
 let counter = 0;
 const nextKey = (): string => `line-${String((counter += 1))}`;
 

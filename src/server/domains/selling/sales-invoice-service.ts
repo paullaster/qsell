@@ -3,6 +3,8 @@ import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { decodeCursor, escapeLike } from '@/server/domains/lookups/request';
 import { PAGE_SIZE, pageOf } from '@/server/domains/settings/paging';
 import type { GeneratedInvoice, InvoiceDocumentType, InvoiceService } from '@/server/domains/invoices/service';
+import { balanceOf, invoiceLine, partLine, type InvoiceLine } from './domain/invoice-figures';
+import type { PriceTrace } from '@/server/domains/pricing/domain/types';
 import { isListKind, paymentStateOf, signingStateOf, type PaymentState, type SigningState } from './domain/invoice-status';
 
 export interface SalesInvoiceRow {
@@ -30,7 +32,12 @@ export interface SalesInvoiceDetail extends SalesInvoiceRow {
   emailedAt: string | null;
   creditNotes: { number: string; total: number; currency: string; kraStatus: string; createdAt: string }[];
   signingLog: { eventType: string; outcome: string; reason: string; createdAt: string }[];
-  lines: { name: string; quantity: number; total: number }[];
+  lines: InvoiceLine[];
+  /** The figures under the lines, for a whole-order invoice (a part invoice has only its lines and total). */
+  figures: { subtotal: number; tax: number; delivery: number; discount: number } | null;
+  /** What has been paid against it, and what is still owed; null for a part invoice, whose payments are not tracked per part. */
+  paid: number | null;
+  balance: number | null;
 }
 
 export type RaiseOutcome = { ok: true; invoiceNumber: string; orderNumber: string } | { ok: false; error: string };
@@ -114,20 +121,53 @@ export class SalesInvoiceService {
         LEFT JOIN orders o2 ON o2.id = x.order_id`);
     if (raw === undefined) return null;
     const key = raw.document_type === 'tax_invoice_part' ? `order_billing:${raw.billing_id ?? ''}:tax_invoice` : `order:${raw.order_id}:${raw.document_type}`;
-    const [notes, log, lines] = await Promise.all([
+    const whole = raw.document_type !== 'tax_invoice_part';
+    // Only a tax invoice is something to be paid; a proforma or a delivery invoice shows its lines and no balance.
+    const owed = raw.document_type === 'tax_invoice';
+    const [notes, log, items, partLines, totals, settled] = await Promise.all([
       this.db.execute<{ credit_note_no: string; total_amount: string; currency: string; kra_status: string; created_at: string }>(sql`SELECT credit_note_no, total_amount::text, currency, kra_status, created_at::text FROM credit_notes WHERE original_document_key = ${key} ORDER BY created_at`),
       this.db.execute<{ event_type: string; outcome: string; reason: string; created_at: string }>(sql`SELECT event_type, outcome, reason, created_at::text FROM kra_signing_events WHERE document_key = ${key} ORDER BY created_at DESC LIMIT 20`),
-      this.db.execute<{ product_name: string; quantity: string; total_price: string }>(raw.document_type === 'tax_invoice_part' ? sql`SELECT description AS product_name, quantity::text, amount::text AS total_price FROM order_billing_lines WHERE billing_id = ${raw.billing_id ?? ''}::uuid ORDER BY id` : sql`SELECT product_name, quantity::text, total_price::text FROM order_items WHERE order_id = ${raw.order_id} ORDER BY id`),
+      whole
+        ? this.db.execute<{ product_name: string; sku: string; quantity: string; unit_code: string | null; unit_price: string; total_price: string; price_trace: PriceTrace | string | null; tax_rate: string | null }>(sql`SELECT i.product_name, i.sku, i.quantity::text, i.unit_code, i.unit_price::text, i.total_price::text, i.price_trace, p.tax_rate::text AS tax_rate FROM order_items i LEFT JOIN products p ON p.id = i.product_id WHERE i.order_id = ${raw.order_id} ORDER BY i.id`)
+        : Promise.resolve([]),
+      whole
+        ? Promise.resolve([])
+        : this.db.execute<{ description: string; quantity: string; amount: string }>(sql`SELECT description, quantity::text, amount::text AS amount FROM order_billing_lines WHERE billing_id = ${raw.billing_id ?? ''}::uuid ORDER BY id`),
+      whole
+        ? this.db.execute<{ subtotal: string; tax: string; shipping_fee: string }>(sql`SELECT subtotal::text, tax::text, shipping_fee::text FROM orders WHERE id = ${raw.order_id}`)
+        : Promise.resolve([]),
+      // What the customer's ledger shows settled against this order's invoice (receipts, wallet, credit from other documents; credit notes of the order itself are not payments).
+      owed
+        ? this.db.execute<{ paid: string }>(sql`
+            SELECT COALESCE(SUM(-d.amount) FILTER (WHERE NOT (c.document_type = 'credit_note' AND c.order_id = inv.order_id)), 0)::text AS paid
+              FROM customer_ledger_entries inv
+              LEFT JOIN customer_detailed_entries d ON d.ledger_entry_id = inv.id AND d.entry_type IN ('application', 'unapplication')
+              LEFT JOIN customer_ledger_entries c ON c.id = d.applied_to_entry_id
+             WHERE inv.document_type = 'invoice' AND inv.order_id = ${raw.order_id}`)
+        : Promise.resolve([]),
     ]);
+    const row = rowOf(raw);
+    const lines = whole
+      ? items.map((l) => invoiceLine({ name: l.product_name, sku: l.sku, quantity: Number(l.quantity), unitCode: l.unit_code, unitPrice: Number(l.unit_price), total: Number(l.total_price), taxRate: l.tax_rate === null ? null : Number(l.tax_rate), trace: typeof l.price_trace === 'string' ? (JSON.parse(l.price_trace) as PriceTrace) : l.price_trace }))
+      : partLines.map((l) => partLine({ name: l.description, quantity: Number(l.quantity), amount: Number(l.amount) }));
+    const credited = notes.reduce((sum, n) => sum + Number(n.total_amount), 0);
+    // An order the shop already records as paid (a card or M-Pesa payment at checkout) is paid in full whatever the ledger says.
+    const ledgerPaid = Number(settled[0]?.paid ?? 0);
+    const settledInFull = row.payment === 'paid' ? Math.max(ledgerPaid, Math.max(0, row.total - credited)) : ledgerPaid;
+    const paid = owed ? settledInFull : null;
+    const figures = whole && totals[0] !== undefined ? { subtotal: Number(totals[0].subtotal), tax: Number(totals[0].tax), delivery: Number(totals[0].shipping_fee), discount: lines.reduce((sum, l) => sum + l.discount, 0) } : null;
     return {
-      ...rowOf(raw),
+      ...row,
       customerEmail: raw.customer_email,
       orderStatus: raw.order_status,
       approvalStatus: raw.approval_status,
       emailedAt: raw.emailed_at,
       creditNotes: notes.map((n) => ({ number: n.credit_note_no, total: Number(n.total_amount), currency: n.currency, kraStatus: n.kra_status, createdAt: n.created_at })),
       signingLog: log.map((e) => ({ eventType: e.event_type, outcome: e.outcome, reason: e.reason, createdAt: e.created_at })),
-      lines: lines.map((l) => ({ name: l.product_name, quantity: Number(l.quantity), total: Number(l.total_price) })),
+      lines,
+      figures,
+      paid,
+      balance: paid === null ? null : balanceOf(row.total, credited, paid),
     };
   }
 

@@ -1,5 +1,6 @@
 'use client';
 
+import { orderHref } from '@/lib/order-links';
 import Link from 'next/link';
 import { Suspense, use, useEffect, useEffectEvent, useId, useRef, useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
@@ -145,7 +146,7 @@ function relatedDocumentHref(doc: RelatedDocument, permissions: RelatedPermissio
   )
     return `/admin/finance/refunds/${encodeURIComponent(doc.documentId)}`;
   if (permissions.canReadOrders && doc.orderId !== null && doc.orderId !== '')
-    return `/admin/orders?order=${encodeURIComponent(doc.orderId)}`;
+    return orderHref(doc.orderId);
   return null;
 }
 
@@ -786,7 +787,7 @@ function TransactionDetail({
                   <li>
                     <Link
                       className="font-semibold text-indigo-600 hover:underline"
-                      href={`/admin/orders?order=${encodeURIComponent(orderId)}`}
+                      href={orderHref(orderId)}
                     >
                       Open source sales order
                       {view.invoice.orderNumber === null || view.invoice.orderNumber === ''

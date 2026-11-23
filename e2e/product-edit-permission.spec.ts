@@ -15,10 +15,10 @@ async function openOrder(page: Page, number: string) {
   await page.getByLabel('Search orders').fill(number);
   // The button of the row that names this order: the list is filtered by the search a moment after it is typed, and the first
   // button on the screen before that belongs to some other order.
-  const manage = page.locator('tr, li, article').filter({ hasText: number }).getByRole('button', { name: /Manage/ }).first();
+  const manage = page.locator('tr, li, article').filter({ hasText: number }).getByRole('link', { name: /Open order/ }).first();
   await expect(manage).toBeVisible({ timeout: 60_000 });
   await manage.click();
-  const details = page.getByRole('dialog', { name: `Order Details: ${number}` });
+  const details = page.getByRole('dialog', { name: new RegExp(number) });
   await expect(details).toBeVisible({ timeout: 30_000 });
   return details;
 }
@@ -48,7 +48,10 @@ test.describe('the Edit product shortcut on orders and invoices', () => {
     await link.click();
     await expect(productWindow(page)).toBeVisible({ timeout: 90_000 });
     await expect(page).toHaveURL(/\/admin\/products\/.+quick=1/);
-    await expect(preview).toBeAttached();
+    // Closing the product returns to the order, with its invoice preview open as it was left.
+    await page.keyboard.press('Escape');
+    await expect(page).toHaveURL(/\/admin\/orders\/view\/[\w-]+\?invoice=1/);
+    await expect(preview).toBeVisible({ timeout: 30_000 });
     await noHorizontalScroll(page);
   });
 
