@@ -73,7 +73,7 @@ graph LR
         INV["KRA Tax Invoice"]
     end
 
-    Q -- "Convert to Order" --> O
+    Q -- "Convert quote: order, invoice, credit or cash sale" --> O
     C -- "Credit Check & Terms" --> O
     O --> CONF
     CONF --> STK
@@ -190,10 +190,27 @@ For a business that makes what it sells to order (meals, catering, assembled set
 6. Enter the **Quantity** (e.g. `20`). The system automatically pulls the current customer group price.
 7. Enter a negotiated discount (e.g. `5%`). The system recalculates the subtotal and VAT in real time.
 8. Click **Save Quote**. The quote status becomes `Sent`.
-9. When the client approves the proposal, open the quote details and click the **Convert to Order** button.
-10. An `InlineConfirm` prompt appears: _"Convert Quote #QT-00142 into a confirmed Sales Order?"_
-11. Click **Confirm Conversion**.
-12. The quote status updates to `Converted`, and the system redirects to the newly created Sales Order with all lines, prices, and customer details intact.
+9. When the client says yes, open the quote (or use the convert button on its row) and click **Convert quote…**. A quote that is *Sent* or *Accepted* can be converted; a *Sent* quote is accepted on the customer's behalf at the same moment (a customer who agrees by phone).
+10. **What should this quote become?** Four choices appear as cards, each saying what it is for. Nothing is chosen for you:
+    - **Sales order**: the customer has agreed; you prepare and deliver the goods and bill later.
+    - **Sales invoice**: bill now, with the tax invoice, and deliver afterwards.
+    - **Credit sale**: sell on the customer's account, to be paid within their credit terms.
+    - **Cash sale**: the customer pays now at the counter, in your open shift.
+11. A card that cannot be chosen stays on screen with the reason: *This customer has no credit account*, *Open a shift on a till first*, *It is over their limit by KES …* (when the company refuses over-limit sales), *The quote includes a delivery charge* (a cash sale has no delivery), *The customer is blocked*, *You do not have permission to create …*, or *The quote has expired / was rejected / already became …*.
+12. Choosing a card shows **What will happen**, worked out from the company's own settings for that kind of document: whether the stock leaves now or is set aside, whether the tax invoice is made now or raised later, the days the customer has to pay, and whether it fits their credit limit. A caution in amber says what to look at first (an amount over the limit that will wait for approval, an overdue invoice).
+13. Press the button, which is named for the choice (*Create the sales order*, *Issue the sales invoice*, *Sell on credit*). For a **cash sale** the button is *Continue to payment*, and the same payment screen as the till opens: choose cash, M-Pesa or card (one or several ways), enter what the customer hands over, and *Complete sale*.
+14. The quote becomes `Converted` and a result screen shows the new document's number and its tax invoice (or the till receipt), the change to hand back for a cash sale, and a link to where it now lives. A document that waits for approval says so.
+
+**When the customer answers by the link in the email**: the page they open (`/quote/…`) shows the quote with **Accept quote** and **Decline quote**. The customer sees **Quote accepted successfully**, with the quotation number, the total, the day, and a **Browse our catalogue** button to the shop. The same page says the same whenever the link is opened again; a declined quote says **Quote declined**, an old one says **This quote has expired**, and a withdrawn one says **This quote is no longer available**, each with who to contact. Only an address that is not a quote link at all shows a missing page.
+
+**What happens when a customer accepts (Quotes screen, button *On acceptance*; needs the *Manage settings* permission)**. The company chooses one of four behaviours, and how the staff concerned are told:
+- **Only tell my staff**: the quote is marked *Accepted* and nothing else is made. Nobody's stock, invoice or account is touched until a person opens the quote, presses **Convert quote…** and chooses a sales order, sales invoice, credit sale or cash sale.
+- **Make a sales order** (the setting until someone chooses, as it always was), **Make a sales invoice** (with its tax invoice) or **Make a credit sale**: the quote becomes that document at once, at the quoted prices, behaving as the company's settings for that kind of document say. A cash sale is never made automatically, because it needs a person at a till to take the payment.
+- **When it cannot be made** (a credit sale for a customer with no credit account, a missing delivery address, a product removed from the catalogue, no stock), the quote stays *Accepted*, the reason is written in its history as *order conversion failed*, and the staff are told that it needs them. The customer's acceptance is never lost and the customer is still thanked.
+- **How staff are told**, by three independent switches, whichever behaviour is chosen: **Email** (to the people chosen in *Settings, Email routing* for *Quote accepted by the customer: alert to staff*; the staff member who made the quote until others are chosen; and always whoever sent the quote), **Text message** (to the same staff accounts that have a phone number, through the company's connected text message provider) and **Browser alert** (to the same staff who have turned alerts on for their browser). A way that cannot work yet says so beside its switch (no text provider connected, alerts not set up on the installation). One that is off, not set up or fails never stops the others, and none of them can undo the acceptance.
+- What was sent, or why it was not, is written in the quote's history (*staff notified*) for each of the three ways. A quote marked accepted by a person follows the same behaviour but tells nobody, as they did it themselves. Declined quotes do not notify staff.
+
+**Rules that always hold**: the quote's prices, taxes and discounts stand exactly as quoted, whatever the price list says today. The same quote converts only once; pressing the button again finds the same document and takes nothing twice. The person needs the right to approve quotes and the right to create the chosen kind of document. A *Sales invoice* always has its tax invoice made with it. A cash sale needs the person's own open shift, takes no delivery charge, and its receipt is the signed tax invoice on the receipt series. A converted quote shows *Became the sales invoice / credit sale / cash sale / sales order* with the document number.
 
 ### Action 2: Inspecting an Order's Timestamped Stage Timeline
 

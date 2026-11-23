@@ -105,6 +105,13 @@ export class EmailRouteService {
     return await this.resolveConfig(companyId, (await this.stored(companyId, point)).config, context);
   }
 
+  /** The staff accounts a point writes to (the To, Cc and Bcc lists only): who a text message or a browser alert for it goes to as well. */
+  async staffIds(companyId: string, point: EmailPointKey, context: Pick<SendContext, 'actorUserId' | 'ownerUserId'>): Promise<string[]> {
+    const { config } = await this.stored(companyId, point);
+    const needed = idsNeeded({ ...config, replyTo: [], shown: [] }, { actorUserId: context.actorUserId ?? null, ownerUserId: context.ownerUserId ?? null });
+    return needed.staff;
+  }
+
   private async resolveConfig(companyId: string, config: RouteConfig, context: SendContext): Promise<ResolvedRoute> {
     const actorUserId = context.actorUserId ?? null;
     const ownerUserId = context.ownerUserId ?? null;

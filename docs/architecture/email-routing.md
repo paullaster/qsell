@@ -17,6 +17,7 @@ A **point** is one place the system writes a mail. Each is a row in a registry i
 | `shop_quote_request_staff` | A shopper asked for a quote on the web shop (alert to the team) | To: the company's own address |
 | `shop_quote_request_customer` | The confirmation to that shopper | To: the customer |
 | `quote_sent` | A quote emailed from Sales Quotes to the customer | To: the customer; Reply-To: the company's own address |
+| `quote_accepted_staff` | New: the team is told a customer accepted a quote from their link. Text messages and browser alerts for it go to the staff accounts on this list and to whoever sent the quote | To: the staff member who made the quote |
 | `shop_order_placed_customer` | The shopper's "we have your order" mail | To: the customer |
 | `shop_order_paid_customer` | The shopper's "payment received" mail | To: the customer |
 | `shop_order_placed_staff` | New: the team is told an order was placed | **Off** until configured |

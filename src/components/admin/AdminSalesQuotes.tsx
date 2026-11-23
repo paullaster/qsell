@@ -3,7 +3,7 @@
 import { Suspense, use, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useProductUpdated } from '@/components/admin/product-updated';
-import { Plus, RefreshCw, Settings2, Files, LayoutList } from 'lucide-react';
+import { BellRing, Plus, RefreshCw, Settings2, Files, LayoutList } from 'lucide-react';
 import type { CatalogueProduct } from '@/lib/catalogue-entry';
 
 import { downloadPdfBase64 } from '@/lib/downloadPdf';
@@ -11,7 +11,6 @@ import {
   approveSalesQuoteAction,
   resubmitSalesQuoteApprovalAction,
   cancelSalesQuoteAction,
-  convertSalesQuoteToOrderAction,
   createSalesQuoteAction,
   generateSalesQuotePdfAction,
   getSalesQuoteAction,
@@ -39,6 +38,8 @@ import type { QuoteStatusFilter } from '@/lib/quote-statuses';
 import { getQuoteFormAction, startNewQuoteAction } from '@/server/domains/quotes/form-actions';
 import { Modal } from '@/components/ui/Modal';
 import { QuoteEditor } from './quotes/QuoteEditor';
+import { ConvertQuoteDialog } from './quotes/ConvertQuoteDialog';
+import { QuoteAcceptanceSettings } from './quotes/QuoteAcceptanceSettings';
 import { PdfPreview, QuoteDetails } from './quotes/QuoteDetails';
 
 import { unwrapQuoteAction, type QuoteActionResult } from '@/server/domains/quotes/action-result';
@@ -115,10 +116,12 @@ export function AdminSalesQuotes({
   const [editing, setEditing] = useState<{ id: string; quoteNumber: string } | null>(null);
   const [startForm, setStartForm] = useState<QuoteInput | null>(null);
   const [details, setDetails] = useState<SalesQuote | null>(null);
+  const [converting, setConverting] = useState<{ id: string; number: string } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [acceptanceOpen, setAcceptanceOpen] = useState(false);
   const [previewPdf, setPreviewPdf] = useState<string | null>(null);
   /** A quote someone chose to make a template from: the Templates tab opens its editor on it. */
   const [templateFrom, setTemplateFrom] = useState<QuoteSearchHit | null>(null);
@@ -274,15 +277,7 @@ export function AdminSalesQuotes({
                   () => sendSalesQuoteAction(row.id).then(unwrapQuoteAction),
                   `${row.quoteNumber} emailed to ${row.customerEmail ?? 'customer'}.`,
                 ),
-              convert: (row) =>
-                void withAction(
-                  row.id,
-                  async () => {
-                    const order = unwrapQuoteAction(await convertSalesQuoteToOrderAction(row.id));
-                    setNotice(`Converted to order ${order?.orderNumber ?? ''}.`);
-                  },
-                  `${row.quoteNumber} converted to an order.`,
-                ),
+              convert: (row) => setConverting({ id: row.id, number: row.quoteNumber }),
             }}
           />
         </Suspense>
@@ -350,6 +345,16 @@ export function AdminSalesQuotes({
               className="inline-flex items-center gap-2 rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-hover"
             >
               <Settings2 className="h-4 w-4" /> Margin floor
+            </button>
+          )}
+          {capabilities.canConfigure && (
+            <button
+              type="button"
+              onClick={() => setAcceptanceOpen(true)}
+              className="inline-flex items-center gap-2 rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-hover"
+              data-testid="open-acceptance"
+            >
+              <BellRing className="h-4 w-4" aria-hidden /> On acceptance
             </button>
           )}
           <button
@@ -505,23 +510,29 @@ export function AdminSalesQuotes({
               }
             })()
           }
-          onConvert={() =>
-            void withAction(
-              details.id,
-              async () => {
-                const order = unwrapQuoteAction(await convertSalesQuoteToOrderAction(details.id));
-                setNotice(`Converted to order ${order?.orderNumber ?? ''}.`);
-              },
-              `${details.quoteNumber} converted to an order.`,
-            )
-          }
+          onConvert={() => setConverting({ id: details.id, number: details.quoteNumber })}
           onPreview={() => void handlePreview(details.id)}
+        />
+      )}
+
+      {converting === null ? null : (
+        <ConvertQuoteDialog
+          quoteId={converting.id}
+          quoteNumber={converting.number}
+          onClose={() => setConverting(null)}
+          onDone={() => {
+            setNotice(`${converting.number} was converted.`);
+            setDetails(null);
+            refresh();
+          }}
         />
       )}
 
       {previewPdf !== null && (
         <PdfPreview base64={previewPdf} onClose={() => setPreviewPdf(null)} />
       )}
+
+      {acceptanceOpen && <QuoteAcceptanceSettings onClose={() => setAcceptanceOpen(false)} />}
 
       {settingsOpen && (
         <Modal title="Quote approval policy" onClose={() => setSettingsOpen(false)}>
