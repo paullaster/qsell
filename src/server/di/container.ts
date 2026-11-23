@@ -46,7 +46,7 @@ import {
   NodemailerSmtpAdapter,
 } from '@/server/adapters/email/nodemailer.adapter';
 import { eq, sql } from 'drizzle-orm';
-import { companySettings, customers, salesQuoteSettings } from '@/server/db/drizzle/schema';
+import { customers, salesQuoteSettings } from '@/server/db/drizzle/schema';
 import { ReportsService } from '@/server/domains/reports/service';
 import { drizzleDb, kernelDb, type DrizzleDb } from '@/server/db/drizzle/client';
 import { CompanySettingsRepository } from '@/server/domains/company/repository';
@@ -469,24 +469,6 @@ async function legacyCounterStart(companyId: string, kind: string): Promise<numb
 }
 
 /**
- * The company's configured invoice prefix shapes the first tax invoice series, so existing
- * setups keep their look ("INV" becomes "INV-{BRANCH}-{YY}-"). Anything else uses the standard.
- */
-async function legacyPrefix(companyId: string, kind: string): Promise<string | null> {
-  if (kind !== 'tax_invoice') return null;
-  const [row] = await kernelDb
-    .select({ prefix: companySettings.invoicePrefix })
-    .from(companySettings)
-    .where(eq(companySettings.id, companyId))
-    .limit(1);
-  const base = row.prefix
-    .trim()
-    .replace(/[^A-Za-z0-9]/g, '')
-    .slice(0, 6);
-  return base !== '' ? `${base}-{BRANCH}-{YY}-` : null;
-}
-
-/**
  * Number series run on two connection pools: the document's own transaction uses the main one,
  * while block reservation and first-use setup (which happen while that transaction is open) use
  * a small pool of their own, so numbering can never starve the transactions waiting on it.
@@ -496,11 +478,10 @@ function createNumbering(decisionLog: DecisionLog, reasonCodes: ReasonCodes): Nu
     kernelDb,
     new DecisionLog(kernelDb),
     new ReasonCodes(kernelDb),
-    { legacyStart: legacyCounterStart, legacyPrefix, counterDb: kernelDb, autoSetup: false },
+    { legacyStart: legacyCounterStart, counterDb: kernelDb, autoSetup: false },
   );
   return new NumberSeriesService(drizzleDb, decisionLog, reasonCodes, {
     legacyStart: legacyCounterStart,
-    legacyPrefix,
     counterDb: kernelDb,
     setupService: setup,
     // A sale must not fail because a document has no branch: fiscal series that number per

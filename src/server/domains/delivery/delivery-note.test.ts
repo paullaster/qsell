@@ -4,7 +4,7 @@ import type { CompanyProfile } from '@/server/ports/communications';
 import { buildDeliveryNote, deliveryNoteFileName } from './delivery-note';
 import type { DeliveryView } from './documents';
 
-const company: CompanyProfile = { legalName: 'Test Traders Ltd', tradingName: 'Test Traders', email: 'shop@example.test', phone: '0700000000', streetAddress: '1 Test Road', city: 'Nairobi', countyOrState: 'Nairobi', postalCode: '00100', country: 'Kenya', kraPin: 'P000000000X', invoicePrefix: 'INV', primaryColor: '#111827', accentColor: '#4F46E5' };
+const company: CompanyProfile = { legalName: 'Test Traders Ltd', tradingName: 'Test Traders', email: 'shop@example.test', phone: '0700000000', streetAddress: '1 Test Road', city: 'Nairobi', countyOrState: 'Nairobi', postalCode: '00100', country: 'Kenya', kraPin: 'P000000000X', primaryColor: '#111827', accentColor: '#4F46E5' };
 
 const view = (over: Partial<DeliveryView> = {}): DeliveryView => ({
     id: 'd1', number: 'DLV-26-0000000007', orderId: 'o1', orderNumber: 'ORD-77', customerName: 'Wanjiru Buyer', method: 'own_fleet', status: 'ready', statusWords: 'Ready', branch: { id: 'b1', name: 'Westlands Branch' },

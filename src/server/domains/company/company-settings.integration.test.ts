@@ -43,7 +43,6 @@ describe.skipIf(url === '')('company setup (database)', () => {
       email: 'Hello@Setup.TEST',
       phone: '+254 711 000 111',
       kraPin: 'p012345678q',
-      invoicePrefix: 'stp',
       streetAddress: '1 Test Rd',
       city: 'Nairobi',
       countyOrState: 'Nairobi',
@@ -60,7 +59,6 @@ describe.skipIf(url === '')('company setup (database)', () => {
       legalName: 'Setup Test Ltd',
       email: 'hello@setup.test',
       kraPin: 'P012345678Q',
-      invoicePrefix: 'STP',
       bankName: 'Test Bank',
       tagline: 'Hello',
     });

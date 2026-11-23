@@ -75,7 +75,6 @@ async function printed(
       phone: '1',
       address: 'x',
       kraPin: 'P',
-      invoicePrefix: 'I',
       primaryColor: '#111111',
       accentColor: '#222222',
       documentLayouts: resolveDocumentLayouts(

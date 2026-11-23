@@ -193,8 +193,8 @@ function buildInvoiceEmailHtml(args: {
       <p style="margin: 0 0 4px; color: #4B5563; font-size: 13px;">${escapeHtml(company.legalName)}</p>
       <p style="margin: 0 0 16px; color: #6B7280; font-size: 12px;">
         ${companyAddress}<br/>
-        Email: ${escapeHtml(company.email)} · Phone: ${escapeHtml(company.phone)}<br/>
-        KRA PIN: ${escapeHtml(company.kraPin)}
+        Email: ${escapeHtml(company.email)} · Phone: ${escapeHtml(company.phone)}${has(company.kraPin) ? `<br/>
+        KRA PIN: ${escapeHtml(company.kraPin)}` : ''}
       </p>
       <p style="margin: 0 0 16px; color: #4B5563;">
         Your ${escapeHtml(labels.emailIntro)} for order <strong>${escapeHtml(order.orderNumber)}</strong>.
