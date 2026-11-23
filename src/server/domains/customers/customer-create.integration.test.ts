@@ -22,7 +22,7 @@ describe.skipIf(url === '')('new customer (database)', () => {
   const tag = randomUUID().slice(0, 6);
 
   const save = (over: Partial<ReturnType<typeof emptyCustomerForm>>) => {
-    const checked = newCustomerPayload({ ...emptyCustomerForm(), name: `Cust ${tag}`, ...over });
+    const checked = newCustomerPayload({ ...emptyCustomerForm(), accountType: 'cash' as const, name: `Cust ${tag}`, ...over });
     if (!checked.ok) throw new Error(checked.error);
     return c.customers.saveCustomer(companyId, { ...checked.payload, blocked: 'none' });
   };

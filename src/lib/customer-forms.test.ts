@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { accountTypeOf, blockOf, emptyCustomerForm, isAccountType, labelOfAccountType, newCustomerPayload } from './customer-forms';
 
-const filled = (over: Partial<ReturnType<typeof emptyCustomerForm>> = {}) => ({ ...emptyCustomerForm(), name: '  Jane Doe ', ...over });
+const filled = (over: Partial<ReturnType<typeof emptyCustomerForm>> = {}) => ({ ...emptyCustomerForm(), accountType: 'cash' as const, name: '  Jane Doe ', ...over });
 
 describe('customer forms', () => {
   it('reads stored values safely', () => {
@@ -24,6 +24,12 @@ describe('customer forms', () => {
     const errorOf = (r: ReturnType<typeof newCustomerPayload>) => (r.ok ? '' : r.error);
     expect(errorOf(newCustomerPayload(filled({ email: 'nope' })))).toMatch(/email/i);
     expect(errorOf(newCustomerPayload(filled({ buyerKraPin: '12345' })))).toMatch(/KRA PIN/);
+  });
+
+  it('starts a customer made from the admin console as a credit (on account) customer', () => {
+    expect(emptyCustomerForm().accountType).toBe('credit');
+    expect(newCustomerPayload({ ...emptyCustomerForm(), name: 'Jane' })).toMatchObject({ ok: false });
+    expect(newCustomerPayload({ ...emptyCustomerForm(), name: 'Jane', creditLimit: '1000', paymentTermDays: '30' })).toMatchObject({ ok: true, payload: { accountType: 'credit', creditLimit: 1000, paymentTermDays: 30 } });
   });
 
   it('keeps credit terms for credit customers only', () => {

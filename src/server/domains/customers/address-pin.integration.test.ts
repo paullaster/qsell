@@ -22,7 +22,7 @@ describe.skipIf(url === '')('saved address with its place on the map (database)'
   const tag = randomUUID().slice(0, 6);
 
   const customer = async (): Promise<string> => {
-    const checked = newCustomerPayload({ ...emptyCustomerForm(), name: `Pin ${tag}`, email: `pin-${randomUUID().slice(0, 8)}@example.test` });
+    const checked = newCustomerPayload({ ...emptyCustomerForm(), accountType: 'cash' as const, name: `Pin ${tag}`, email: `pin-${randomUUID().slice(0, 8)}@example.test` });
     if (!checked.ok) throw new Error(checked.error);
     return (await c.customers.saveCustomer(companyId, { ...checked.payload, blocked: 'none' })).id;
   };
