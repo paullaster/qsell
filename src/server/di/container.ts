@@ -156,6 +156,7 @@ import { DeliveryReports } from '@/server/domains/delivery/reports';
 import { CourierInvoices } from '@/server/domains/delivery/courier-invoices';
 import { DeliverySlaNotices } from '@/server/domains/delivery/sla-notices';
 import { DeliveryPush } from '@/server/domains/delivery/push';
+import { QuoteAcceptanceNotices } from '@/server/domains/quotes/acceptance-notices';
 import type { DeliveryTextSettings } from '@/server/domains/delivery/text-settings';
 import { SmsAccounts } from '@/server/domains/sms/accounts';
 import { DeliverySlaTexts } from '@/server/domains/delivery/sla-texts';
@@ -399,6 +400,7 @@ export interface AppContainer {
   kitConfig: KitConfigService;
   packageConfig: PackageConfigService;
   emailRoutes: EmailRouteService;
+  quoteNotices: QuoteAcceptanceNotices;
   sellingSettings: SellingSettingsService;
   customerCreditSettings: CustomerCreditSettingsService;
   businessTime: BusinessTimeService;
@@ -497,7 +499,8 @@ export function getContainer(): AppContainer {
 
   const invoicePdf = createPdfPort();
   const email = createEmailPort();
-  const deliveryPush = new DeliveryPush(drizzleDb, createPushPort());
+  const pushPort = createPushPort();
+  const deliveryPush = new DeliveryPush(drizzleDb, pushPort);
   const companySettings = new CompanySettingsRepository(drizzleDb);
   // A new process learns the company's business time zone at once (read only; every request and job reads it again afterwards).
   void companySettings.getActive().then((row) => followBusinessTimeZone(row?.timezone)).catch(() => undefined);
@@ -818,6 +821,7 @@ export function getContainer(): AppContainer {
     kitConfig: new KitConfigService(drizzleDb, decisionLog, reasonCodes, kits),
     packageConfig,
     emailRoutes,
+    quoteNotices: new QuoteAcceptanceNotices(drizzleDb, email, emailRoutes, smsAccounts, pushPort),
     sellingSettings,
     customerCreditSettings,
     businessTime,

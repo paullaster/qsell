@@ -397,8 +397,8 @@ function QuoteRow({
           {can.convert && (
             <button
               type="button"
-              title="Convert to order"
-              aria-label={`Convert ${quote.quoteNumber} to an order`}
+              title="Convert to a sales order, sales invoice, credit sale or cash sale"
+              aria-label={`Convert ${quote.quoteNumber}…`}
               disabled={busy}
               onClick={() => handlers.convert(quote)}
               className={`${iconButton} text-emerald-700 hover:bg-emerald-50`}

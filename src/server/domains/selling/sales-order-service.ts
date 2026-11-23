@@ -58,6 +58,8 @@ export interface PlaceExtra {
   quotedItems?: Parameters<typeof OrderWriteService.createOrder>[0]['quotedItems'];
   quotedTotals?: Parameters<typeof OrderWriteService.createOrder>[0]['quotedTotals'];
   skipOfferedCheck?: boolean;
+  /** The quote this order came from: the order keeps it, and the quote's own prices stand. */
+  sourceQuoteId?: string;
 }
 
 /** Sales orders taken by staff: placing one (through the order writer, with the company's settings for the kind), the customer's credit position, and the list. */

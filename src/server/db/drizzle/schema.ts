@@ -5124,9 +5124,18 @@ export const salesQuoteSettings = pgTable('sales_quote_settings', {
     .notNull()
     .default('0'),
   nextQuoteNumber: integer('next_quote_number').notNull().default(1),
+  /**
+   * What happens when a customer accepts a quote from their link: only tell staff (`notify`), or also make a sales order, a sales invoice
+   * or a credit sale. Sales orders are what always happened, so that stays the default.
+   */
+  onAcceptance: text('on_acceptance').notNull().default('sales_order'),
+  /** How staff are told that a customer accepted: by email (to the people chosen in Email routing), by text message, and by a browser alert. */
+  notifyEmail: boolean('notify_email').notNull().default(true),
+  notifySms: boolean('notify_sms').notNull().default(false),
+  notifyPush: boolean('notify_push').notNull().default(true),
   updatedBy: text('updated_by'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [check('sales_quote_settings_acceptance_chk', sql`${t.onAcceptance} IN ('notify', 'sales_order', 'sales_invoice', 'credit_sale')`)]);
 
 /** Reusable quote defaults; product prices can either refresh or be fixed. */
 export const salesQuoteTemplates = pgTable(

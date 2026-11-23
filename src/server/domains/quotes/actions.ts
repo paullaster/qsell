@@ -340,6 +340,26 @@ export async function updateSalesQuoteSettingsAction(minimumGrossMarginPercent: 
   });
 }
 
+/** What happens when a customer accepts a quote, with whether text messages and browser alerts can be sent on this installation (so the screen can say so). */
+export async function getQuoteAcceptanceAction() {
+  return run(async () => {
+    const userId = await requirePermission('settings:manage');
+    const c = getContainer();
+    const companyId = (await c.companySettings.ensureSeeded()).id;
+    const [settings, sms, push] = await Promise.all([service().getAcceptance(companyId), c.smsAccounts.defaultSender(companyId), c.deliveryPush.state(companyId, userId)]);
+    return { settings, smsConnected: sms !== null, pushAvailable: push.available };
+  });
+}
+
+export async function updateQuoteAcceptanceAction(raw: unknown) {
+  return run(async () => {
+    const userId = await requirePermission('settings:manage');
+    const settings = await service().updateAcceptance(userId, raw);
+    revalidatePath('/admin/quotes');
+    return settings;
+  });
+}
+
 export async function getPublicSalesQuoteAction(token: string) {
   return service().getShared(token);
 }

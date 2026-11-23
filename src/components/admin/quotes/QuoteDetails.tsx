@@ -78,9 +78,9 @@ export function QuoteDetails({
           />
           {quote.convertedOrderNumber === undefined || quote.convertedOrderNumber === null ? null : (
             <Summary
-              label="Became the order"
+              label={`Became the ${(quote.convertedAs ?? 'sales order').toLowerCase()}`}
               value={quote.convertedOrderNumber}
-              detail="Find it in Sales Orders or Web Shop Orders"
+              detail="Find it under Sales in the admin menu"
             />
           )}
           <Summary
@@ -317,13 +317,13 @@ export function QuoteDetails({
               </ActionButton>
             </>
           )}
-          {quote.status === 'accepted' && canApprove && (
+          {(quote.status === 'accepted' || quote.status === 'sent') && canApprove && (
             <ActionButton
               onClick={onConvert}
               disabled={busy}
               icon={<ShoppingCart className="h-4 w-4" />}
             >
-              Convert to order
+              Convert quote…
             </ActionButton>
           )}
           {canRevise && (

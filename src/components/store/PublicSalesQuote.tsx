@@ -2,20 +2,25 @@
 
 import { lineDisplay, lineFromRow, quantityWords } from '@/lib/unit-rules';
 import { useState } from 'react';
-import { CheckCircle2, LoaderCircle } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Clock3, LoaderCircle, XCircle } from 'lucide-react';
 import { keyed } from '@/lib/keyed';
 import { respondToPublicSalesQuoteAction, type getPublicSalesQuoteAction } from '@/server/domains/quotes/actions';
 import { has } from '@/lib/values';
+import Link from 'next/link';
 import { useDate } from '@/components/business-time';
 
 type SharedQuote = NonNullable<
   Awaited<ReturnType<typeof getPublicSalesQuoteAction>>
 >;
 
+type Outcome = 'accepted' | 'rejected' | 'expired' | 'closed';
+
 export function PublicSalesQuote({ token, quote }: { token: string; quote: SharedQuote }) {
   const date = useDate();
   const [response, setResponse] = useState<'accepted' | 'rejected' | null>(null);
   const [busy, setBusy] = useState(false);
+  /** How this quote stands: what the person has just answered, or what it already was when the page opened. */
+  const outcome: Outcome | null = response ?? (quote.state === 'open' ? null : quote.state);
   const [error, setError] = useState<string | null>(null);
 
   const respond = async (accepted: boolean) => {
@@ -51,19 +56,8 @@ export function PublicSalesQuote({ token, quote }: { token: string; quote: Share
           )}
         </header>
         <section className="p-6 sm:p-8">
-          {response !== null ? (
-            <div
-              className="rounded-xl border border-emerald-200 bg-emerald-50 p-5 text-emerald-900"
-              role="status"
-            >
-              <CheckCircle2 className="mb-2 h-6 w-6" />
-              <h2 className="font-semibold">Quote {response}</h2>
-              <p className="mt-1 text-sm">
-                {response === 'accepted'
-                  ? 'Thank you. The seller has been notified and will follow up with your order.'
-                  : 'Your response has been recorded. Contact the seller if you would like a revised quotation.'}
-              </p>
-            </div>
+          {outcome !== null ? (
+            <QuoteOutcome outcome={outcome} quote={quote} />
           ) : (
             <>
               <div className="overflow-x-auto rounded-xl border border-line">
@@ -247,6 +241,44 @@ function TotalRow({
       <dd>
         {currency} {Number(value).toFixed(2)}
       </dd>
+    </div>
+  );
+}
+
+/** Where a quote's link leads once it has been answered, has expired or is no longer available: what happened, in words, and a way on. */
+function QuoteOutcome({ outcome, quote }: { outcome: Outcome; quote: SharedQuote }) {
+  const date = useDate();
+  const shop = quote.company.tradingName;
+  const total = `${quote.currency} ${Number(quote.totalAmount).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const words: Record<Outcome, { title: string; body: string; tone: string }> = {
+    accepted: { title: 'Quote accepted successfully', body: `Thank you, ${quote.customerName}. ${shop} has received your acceptance of quotation ${quote.quoteNumber} and will be in touch about your order.`, tone: 'border-emerald-200 bg-emerald-50 text-emerald-900' },
+    rejected: { title: 'Quote declined', body: `Your response has been recorded. Contact ${shop} if you would like a revised quotation.`, tone: 'border-line bg-surface-raised text-fg' },
+    expired: { title: 'This quote has expired', body: `Quotation ${quote.quoteNumber} is past its valid date, so it can no longer be accepted. Contact ${shop} for an updated quotation.`, tone: 'border-amber-200 bg-amber-50 text-amber-900' },
+    closed: { title: 'This quote is no longer available', body: `Quotation ${quote.quoteNumber} has been withdrawn or replaced. Contact ${shop} for the current one.`, tone: 'border-line bg-surface-raised text-fg' },
+  };
+  const icons: Record<Outcome, typeof CheckCircle2> = { accepted: CheckCircle2, rejected: XCircle, expired: Clock3, closed: XCircle };
+  const Icon = icons[outcome];
+  const w = words[outcome];
+  return (
+    <div className="space-y-5" data-testid="quote-outcome">
+      <div className={`rounded-xl border p-5 ${w.tone}`} role="status">
+        <Icon className="mb-2 h-7 w-7" aria-hidden />
+        <h2 className="text-lg font-semibold">{w.title}</h2>
+        <p className="mt-1 text-sm">{w.body}</p>
+      </div>
+      {outcome === 'accepted' || outcome === 'rejected' ? (
+        <dl className="grid gap-3 rounded-xl border border-line bg-surface-raised p-4 text-sm sm:grid-cols-3">
+          <div><dt className="text-fg-muted">Quotation</dt><dd className="font-semibold text-fg-strong">{quote.quoteNumber}</dd></div>
+          <div><dt className="text-fg-muted">Total</dt><dd className="font-semibold tabular-nums text-fg-strong">{total}</dd></div>
+          {quote.respondedAt === null ? null : <div><dt className="text-fg-muted">{outcome === 'accepted' ? 'Accepted on' : 'Declined on'}</dt><dd className="font-semibold text-fg-strong">{date(quote.respondedAt)}</dd></div>}
+        </dl>
+      ) : null}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <Link href="/" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-indigo-600 px-5 text-sm font-semibold text-white hover:bg-indigo-500" data-testid="quote-browse">
+          Browse our catalogue <ArrowRight className="h-4 w-4" aria-hidden />
+        </Link>
+        <p className="text-sm text-fg-muted">See what else {shop} has for you.</p>
+      </div>
     </div>
   );
 }
