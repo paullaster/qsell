@@ -1,3 +1,5 @@
+import type { PriceTrace } from '@/server/domains/pricing/domain/types';
+
 /** Pure rules of the counter screen: how the till looks, the keypad, and the cash buttons. No clock, no database. */
 
 export const TILL_MODES = ['admin', 'fullscreen'] as const;
@@ -6,6 +8,15 @@ export const TILL_DEFAULT: TillMode = 'admin';
 
 export function parseTillMode(value: unknown): TillMode | null {
   return TILL_MODES.find((m) => m === value) ?? null;
+}
+
+/** What the receipt says about discounts: nothing (only the price charged, the built-in behaviour), one total near the end, or the discount under each item. */
+export const RECEIPT_DISCOUNTS = ['hidden', 'total', 'per_item'] as const;
+export type ReceiptDiscount = (typeof RECEIPT_DISCOUNTS)[number];
+export const RECEIPT_DISCOUNT_DEFAULT: ReceiptDiscount = 'hidden';
+
+export function parseReceiptDiscount(value: unknown): ReceiptDiscount | null {
+  return RECEIPT_DISCOUNTS.find((m) => m === value) ?? null;
 }
 
 const cents = (value: number): number => Math.round(value * 100) / 100;
@@ -80,4 +91,16 @@ export function payWords(state: PayState, kes: (n: number) => string): { text: s
     case 'change':
       return { text: `Change to give: ${kes(state.change)}`, tone: 'good' };
   }
+}
+
+/**
+ * What a line was discounted by, for the receipt: a discount typed at the counter (the price of one before it, less what was charged), or
+ * what the discount rules took off (the line before the rules, less what was charged). A price typed higher or lower, with no discount
+ * given, is a price change, not a discount, and shows nothing. Never negative.
+ */
+export function lineDiscount(quantity: number, total: number, trace: PriceTrace | null): number {
+  if (trace === null) return 0;
+  const before = trace.counterDiscount !== undefined ? trace.counterDiscount.before * quantity : trace.discounts?.lineTotalBefore;
+  if (before === undefined) return 0;
+  return Math.max(0, Math.round((before - total) * 100) / 100);
 }

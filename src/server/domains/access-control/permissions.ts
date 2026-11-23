@@ -579,6 +579,18 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'Take a sales order for a customer, with products and packages, and see the customer\'s credit position',
   },
+  'sales_orders:price': {
+    resource: 'sales_orders',
+    action: 'price',
+    category: 'Orders & Sales',
+    description: 'Change the price of an item while taking a sales order, within the price floors and the person\'s own limit below list price',
+  },
+  'sales_orders:discount': {
+    resource: 'sales_orders',
+    action: 'discount',
+    category: 'Orders & Sales',
+    description: 'Offer a discount of their own on an item while taking a sales order, where the company allows it for the branch, within the price floors and the person\'s own limit below list price',
+  },
   'credit_sales:read': {
     resource: 'credit_sales',
     action: 'read',
@@ -590,6 +602,18 @@ export const PERMISSIONS = {
     action: 'create',
     category: 'Orders & Sales',
     description: 'Make a sale to a customer\'s account, with the credit limit, credit days and approval of the company\'s settings',
+  },
+  'credit_sales:price': {
+    resource: 'credit_sales',
+    action: 'price',
+    category: 'Orders & Sales',
+    description: 'Change the price of an item while taking a credit sale, within the price floors and the person\'s own limit below list price',
+  },
+  'credit_sales:discount': {
+    resource: 'credit_sales',
+    action: 'discount',
+    category: 'Orders & Sales',
+    description: 'Offer a discount of their own on an item while taking a credit sale, where the company allows it for the branch, within the price floors and the person\'s own limit below list price',
   },
   'registers:manage': {
     resource: 'registers',
@@ -639,6 +663,12 @@ export const PERMISSIONS = {
     category: 'Orders & Sales',
     description: 'Change the price of an item while ringing up a counter sale, within the price floors and the person\'s own limit below list price',
   },
+  'cash_sales:discount': {
+    resource: 'cash_sales',
+    action: 'discount',
+    category: 'Orders & Sales',
+    description: 'Offer a discount of their own on an item while ringing up a counter sale, where the company allows it for the branch, within the price floors and the person\'s own limit below list price',
+  },
   'shifts:open': {
     resource: 'shifts',
     action: 'open',
@@ -668,6 +698,18 @@ export const PERMISSIONS = {
     action: 'create',
     category: 'Orders & Sales',
     description: 'Raise the tax invoice of an order that has none',
+  },
+  'sales_invoices:price': {
+    resource: 'sales_invoices',
+    action: 'price',
+    category: 'Orders & Sales',
+    description: 'Change the price of an item while taking a sales invoice, within the price floors and the person\'s own limit below list price',
+  },
+  'sales_invoices:discount': {
+    resource: 'sales_invoices',
+    action: 'discount',
+    category: 'Orders & Sales',
+    description: 'Offer a discount of their own on an item while taking a sales invoice, where the company allows it for the branch, within the price floors and the person\'s own limit below list price',
   },
   'sales_invoices:send': {
     resource: 'sales_invoices',

@@ -1,10 +1,10 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { sellingDocumentSettings } from '@/server/db/drizzle/schema';
+import { branches, sellingDocumentSettings } from '@/server/db/drizzle/schema';
 import type { Actor } from '@/server/kernel/context';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { ReasonCodes, ReasonInput } from '@/server/kernel/reason-codes/service';
-import { checkSellingInput, defOf, isSellingType, readSellingSettings, SELLING_TYPE_DEFS, type SellingSettings, type SellingType } from './selling-documents';
+import { checkSellingInput, defOf, isSellingType, manualDiscountOffered, readSellingSettings, SELLING_TYPE_DEFS, type SellingSettings, type SellingType } from './selling-documents';
 
 export class SellingSettingsError extends Error {}
 
@@ -16,6 +16,8 @@ export interface SellingTypeView {
   /** Changed from the built-in behaviour. */
   configured: boolean;
   version: number;
+  /** The branches named for the manual discount, by name, so the screen can show them. */
+  branches: { id: string; name: string }[];
 }
 
 type Why = ReasonInput;
@@ -38,16 +40,33 @@ export class SellingSettingsService {
   async screen(companyId: string): Promise<SellingTypeView[]> {
     const rows = await this.db.select().from(sellingDocumentSettings).where(eq(sellingDocumentSettings.companyId, companyId));
     const byType = new Map(rows.map((r) => [r.docType, r]));
+    const settings = new Map(SELLING_TYPE_DEFS.map((d) => [d.type, readSellingSettings(d.type, byType.get(d.type)?.config)]));
+    const named = await this.branchNames(companyId, [...settings.values()].flatMap((s) => s.manualDiscountBranches));
     return SELLING_TYPE_DEFS.map((d) => {
       const row = byType.get(d.type);
-      return { type: d.type, label: d.label, description: d.description, settings: readSellingSettings(d.type, row?.config), configured: row !== undefined, version: row?.version ?? 0 };
+      const s = settings.get(d.type) ?? d.defaults;
+      return { type: d.type, label: d.label, description: d.description, settings: s, configured: row !== undefined, version: row?.version ?? 0, branches: s.manualDiscountBranches.flatMap((id) => { const name = named.get(id); return name === undefined ? [] : [{ id, name }]; }) };
     });
+  }
+
+  /** Names for branch ids of this company (one query); an id that is not one of its branches has no name. */
+  private async branchNames(companyId: string, ids: string[]): Promise<Map<string, string>> {
+    if (ids.length === 0) return new Map();
+    const rows = await this.db.select({ id: branches.id, name: branches.name }).from(branches).where(and(eq(branches.companyId, companyId), inArray(branches.id, [...new Set(ids)])));
+    return new Map(rows.map((r) => [r.id, r.name]));
+  }
+
+  /** Whether staff may type a discount at this branch under this type's setting (the person's permission is checked by the caller). A branch left blank is the company's default branch. */
+  async manualDiscountOffered(companyId: string, type: SellingType, branchId: string | null): Promise<boolean> {
+    return manualDiscountOffered(await this.get(companyId, type), branchId);
   }
 
   async save(companyId: string, typeRaw: unknown, raw: unknown, actor: Actor, reason: Why): Promise<void> {
     if (!isSellingType(typeRaw)) throw new SellingSettingsError('That is not a selling document that can be set up.');
     const checked = checkSellingInput(typeRaw, raw);
     if (!checked.ok) throw new SellingSettingsError(checked.error);
+    const known = await this.branchNames(companyId, checked.settings.manualDiscountBranches);
+    if (known.size !== checked.settings.manualDiscountBranches.length) throw new SellingSettingsError('One of the branches could not be found. Choose the branches again.');
     const why = await this.reasons.require(companyId, reason, 'selling_configuration');
     const config: Record<string, unknown> = { ...checked.settings };
     await this.db.transaction(async (tx) => {

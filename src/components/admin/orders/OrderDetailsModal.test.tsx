@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Order } from '@/types/index';
 
@@ -39,7 +39,10 @@ const order = {
 } as unknown as Order;
 
 describe('the order details window', () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
 
   it('gives every panel its own key, so React never sees two children with the same one', () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -47,5 +50,14 @@ describe('the order details window', () => {
     for (const id of ['tender', 'stock', 'collection', 'deliveries', 'timeline', 'credit-notes']) expect(screen.getByTestId(id)).toBeTruthy();
     const keyWarnings = errors.mock.calls.filter((call) => String(call[0]).includes('same key'));
     expect(keyWarnings).toEqual([]);
+  });
+
+  it('puts who, when, how much and where it stands first, and names each part of the order', () => {
+    render(<OrderDetailsModal order={order} busy={false} invoiceBusy={false} error={null} notice={null} onClose={vi.fn()} onPreview={vi.fn()} onInvoice={vi.fn()} onSave={vi.fn()} onCancel={vi.fn()} onChanged={vi.fn()} />);
+    const summary = screen.getByTestId('order-summary');
+    expect(summary.textContent).toContain('Wanjiru');
+    expect(summary.textContent).toContain('Total');
+    expect(screen.getByRole('dialog', { name: 'Web shop order ORD-2026-1' })).toBeTruthy();
+    for (const part of ['Customer', 'Items', 'Fulfilment', 'Payments', 'Invoices', 'History']) expect(screen.getByRole('button', { name: part })).toBeTruthy();
   });
 });

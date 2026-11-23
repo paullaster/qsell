@@ -45,9 +45,25 @@ test.describe('sales invoices', () => {
 
     // Its detail: the lines, no credit notes, the signing log; it can be downloaded and sent again.
     await row.getByRole('button', { name: `Open invoice ${invoiceNumber}` }).click();
-    const detail = row.getByTestId('invoice-detail');
+    const detail = page.getByTestId('invoice-detail');
     await expect(detail).toBeVisible({ timeout: 30_000 });
     await expect(detail).toContainText(productName);
+    // The invoice reads as a document: who, how it stands, then the lines with each figure named, the sums and what is owed.
+    await expect(detail.getByTestId('invoice-summary')).toContainText('Balance due');
+    await expect(detail.getByTestId('invoice-summary')).toContainText('Invoice total');
+    if (testInfo.project.name === 'desktop') {
+      for (const name of ['Item', 'Quantity', 'Unit price', 'Line total']) await expect(detail.getByRole('columnheader', { name })).toBeVisible();
+    }
+    const invoiceLine = detail.getByTestId('invoice-line').first();
+    await expect(invoiceLine).toContainText(productName);
+    await expect(invoiceLine).toContainText('Quantity');
+    await expect(invoiceLine).toContainText('Unit price');
+    await expect(invoiceLine).toContainText('Line total');
+    await expect(detail.getByTestId('invoice-totals')).toContainText('Total');
+    await expect(detail.getByTestId('invoice-balance')).toContainText(/KES\s*[\d,]+\.\d\d/);
+    await expect(page.getByRole('link', { name: `Open order ${orderNumber}` })).toBeVisible();
+    await noHorizontalScroll(page);
+    await noInnerHorizontalScroll(page);
     await expect(detail).toContainText('No credit notes against this invoice');
     await expect(detail).toContainText(`order ${orderNumber}`);
     const download = page.waitForEvent('download');
@@ -55,6 +71,10 @@ test.describe('sales invoices', () => {
     expect((await download).suggestedFilename()).toContain(invoiceNumber);
     await detail.getByRole('button', { name: 'Send again by email' }).click();
     await expect(detail.getByText(/Sent .* to|could not be emailed|could not be sent/)).toBeVisible({ timeout: 60_000 });
+    // Closing it returns to the list, as it was.
+    await page.keyboard.press('Escape');
+    await expect(detail).toHaveCount(0);
+    await expect(row).toBeVisible();
 
     // The order has its invoice now: it is no longer offered, and a kind with none shows nothing.
     await expect(page.getByRole('combobox', { name: 'Order to invoice' })).toBeVisible();

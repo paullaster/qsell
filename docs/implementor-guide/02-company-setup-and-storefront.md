@@ -134,10 +134,9 @@ Dedicated rich-text editors for mandatory legal and operational pages:
 | **Storefront Tagline** | Subtitle below brand name. | Text (Max 120 chars) | Optional | e.g., *"Solar PV & Electrical Supplies"*. |
 | **Legal Name** | Official registered company name. | Text (Max 120 chars) | **Required** | Must match Certificate of Incorporation. |
 | **Trading Name** | Public brand name seen by customers. | Text (Max 120 chars) | **Required** | Displayed in website header and titles. |
-| **KRA PIN** | Corporate tax identification number. | Text (Monospace, 11 chars) | **Required** | Must match pattern: Letter (`A` or `P`), 9 digits, ending in a letter (e.g. `P051234567Z`). |
+| **KRA PIN** | Corporate tax identification number. | Text (Monospace, 11 chars) | Optional | Can be left empty and added later. When given, it must match the pattern: Letter (`A` or `P`), 9 digits, ending in a letter (e.g. `P051234567Z`). |
 | **VAT Number** | Value Added Tax registration number. | Text (Max 40 chars) | Optional | Displayed on tax invoices when populated. |
 | **Registration Number** | Company registrar certificate number. | Text (Max 40 chars) | Optional | Displayed in legal footer notes. |
-| **Invoice Prefix** | Default sequence prefix for invoices. | Text (Max 10 chars, uppercase) | **Required** | Default `INV`. e.g. `INV-` yields `INV-0001`. |
 | **Street Address** | Physical office or warehouse location. | Text (Max 160 chars) | **Required** | e.g. *"Enterprise Road, Industrial Area, Godown #4"*. |
 | **City** | Operating city. | Text (Max 80 chars) | **Required** | e.g. *"Nairobi"*. |
 | **County / State** | County or administrative state. | Text (Max 80 chars) | **Required** | e.g. *"Nairobi County"*. |
@@ -161,7 +160,7 @@ Dedicated rich-text editors for mandatory legal and operational pages:
 1. Navigate to `/admin/company/profile`.
 2. In the **Brand & logo** section, click **Upload logo** (or drag and drop an image file into the drop zone).
 3. The uploaded logo previews immediately inside the **Brand preview** card.
-4. Fill in the **Legal name**, **Trading name**, and **KRA PIN** fields.
+4. Fill in the **Legal name** and **Trading name**. The **KRA PIN**, **VAT number** and **Registration number** can be left empty and added later; documents leave them out until they are entered.
 5. In the **Address & location** section, enter the physical street address, city, and county.
 6. In the **Banking** section, enter the bank name and account number where customer wire transfers should be directed.
 7. Click the **Save profile** button in the top right header.
@@ -194,6 +193,10 @@ Dedicated rich-text editors for mandatory legal and operational pages:
 ---
 
 ## 7. Conditions, Business Rules & Edge Cases
+
+### Invoice numbers are not set here
+
+The company profile has no invoice prefix. Every document takes its number from its number series under Settings > Numbering, which starts with a standard series for each kind of document (tax invoices begin `INV-{branch}-{year}-`). Change the prefix, digits or yearly restart there, with a reason.
 
 ### KRA PIN Format Validation
 - The system enforces strict regular expression validation on the `kraPin` field:

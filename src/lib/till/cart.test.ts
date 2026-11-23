@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addToCart, guideTotal, removeLine, setPrice, setQuantity, stepLine, unitCount, type Cart } from './cart';
+import { addToCart, discountWords, guideTotal, readDiscount, removeLine, setDiscount, setPrice, setQuantity, stepLine, unitCount, type Cart } from './cart';
 
 const item = (id: string, price: number | null = 100) => ({ productId: id, name: id, listPrice: price, imageUrl: '' });
 
@@ -49,5 +49,27 @@ describe('the till cart', () => {
     expect(setPrice(cart, 'k1', 0)[0]).not.toHaveProperty('price');
     expect(setPrice(cart, 'k1', Number.NaN)[0]).not.toHaveProperty('price');
     expect(setPrice(cart, 'other', 50)).toEqual(cart);
+  });
+});
+
+describe('a discount typed on a line', () => {
+  const cart: Cart = addToCart([], item('a'), 'k1');
+  it('reads a percentage above 0 and under 100, or an amount above 0, to the cent, and nothing else', () => {
+    expect(readDiscount('percent', 12.345)).toEqual({ kind: 'percent', value: 12.35 });
+    expect(readDiscount('amount', 50)).toEqual({ kind: 'amount', value: 50 });
+    for (const bad of [0, -5, 100, 150, Number.NaN, Number.POSITIVE_INFINITY, 0.001]) expect(readDiscount('percent', bad)).toBeNull();
+    for (const bad of [0, -1, Number.NaN, 0.004]) expect(readDiscount('amount', bad)).toBeNull();
+  });
+  it('sets and clears the discount on its own line only', () => {
+    const two = addToCart(cart, item('b'), 'k2');
+    const set = setDiscount(two, 'k1', { kind: 'percent', value: 10 });
+    expect(set[0]?.discount).toEqual({ kind: 'percent', value: 10 });
+    expect(set[1]).not.toHaveProperty('discount');
+    expect(setDiscount(set, 'k1', null)[0]).not.toHaveProperty('discount');
+    expect(setDiscount(two, 'nope', { kind: 'amount', value: 5 })).toEqual(two);
+  });
+  it('says it in words', () => {
+    expect(discountWords({ kind: 'percent', value: 10 })).toBe('10% off');
+    expect(discountWords({ kind: 'amount', value: 50 })).toMatch(/50\.00 off each/);
   });
 });

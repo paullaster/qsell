@@ -17,7 +17,7 @@ test.describe('till shifts', () => {
     const tillName = `Front till ${tag}`;
 
     // Set up the till (Settings, Registers) and how far a till may be out.
-    await gotoAdmin(page, '/admin/settings/registers', 'Registers');
+    await gotoAdmin(page, '/admin/settings/sales/registers', 'Registers');
     await noNativeSelect(page);
     await noHorizontalScroll(page);
     await expect(async () => {
@@ -124,7 +124,7 @@ test.describe('till shifts', () => {
     const tag = `${String(Date.now()).slice(-6)}${testInfo.project.name === 'phone' ? 'p' : 'd'}`;
     const tillName = `Approval till ${tag}`;
     const chooseMode = async (label: 'A supervisor closes it' | 'It goes to approval', help: RegExp) => {
-      await gotoAdmin(page, '/admin/settings/registers', 'Registers');
+      await gotoAdmin(page, '/admin/settings/sales/registers', 'Registers');
       const form = page.getByRole('form', { name: 'How far a till may be out' });
       await expect(async () => {
         await form.locator('label').filter({ hasText: new RegExp(`^${label}$`) }).click();
@@ -138,7 +138,7 @@ test.describe('till shifts', () => {
       await noHorizontalScroll(page);
     };
 
-    await gotoAdmin(page, '/admin/settings/registers', 'Registers');
+    await gotoAdmin(page, '/admin/settings/sales/registers', 'Registers');
     await expect(async () => {
       await page.getByRole('button', { name: 'Add a till' }).click();
       await expect(page.getByRole('form', { name: 'Add a till' })).toBeVisible({ timeout: 3000 });

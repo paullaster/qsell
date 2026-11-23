@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, use, useState } from 'react';
+import { Suspense, use, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Plus } from 'lucide-react';
 import { salesOrdersPageAction } from '@/server/domains/selling/sales-order-actions';
@@ -10,6 +10,8 @@ import { Chip, LoadFailed, PageHeader, PageSkeleton, buttonClass, fieldClass, pr
 import { useDebouncedValue } from '@/components/ui/useDebouncedValue';
 import { usePagedList } from '@/components/ui/usePagedList';
 import { SalesOrderEditor } from './SalesOrderEditor';
+import { orderHref } from '@/lib/order-links';
+import { onOrdersChanged } from '@/lib/orders-changed';
 import { useDate } from '@/components/business-time';
 
 type FirstPage = Awaited<ReturnType<typeof salesOrdersPageAction>>;
@@ -54,6 +56,8 @@ function Body({ first, variant }: { first: Extract<FirstPage, { ok: true }>; var
       return result.ok ? { ok: true, data: { rows: result.data.rows, nextCursor: result.data.nextCursor } } : result;
     },
   });
+  // An order opened over this list was changed: the rows are read again.
+  useEffect(() => onOrdersChanged(list.reload), [list.reload]);
   return (
     <>
       <PageHeader
@@ -92,7 +96,7 @@ function Body({ first, variant }: { first: Extract<FirstPage, { ok: true }>; var
               <Chip tone={STATUS_TONE[row.status] ?? 'gray'}>{row.status}</Chip>
               <Chip tone={row.paymentStatus === 'paid' ? 'green' : 'gray'}>{row.paymentStatus.replaceAll('_', ' ')}</Chip>
               {row.approvalStatus === 'pending' ? <Chip tone="amber">Waiting for approval</Chip> : null}
-              <Link href={`/admin/orders?order=${encodeURIComponent(row.id)}`} className="min-h-10 content-center text-sm font-medium text-indigo-600 underline">Open for fulfilment</Link>
+              <Link href={orderHref(row.id)} className={buttonClass} aria-label={`Open order ${row.orderNumber}`}>Open order</Link>
             </div>
           </li>
         ))}

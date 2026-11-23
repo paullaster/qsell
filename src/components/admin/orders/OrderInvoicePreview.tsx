@@ -64,8 +64,7 @@ export function OrderInvoicePreview({ order, canEditProducts = false, company, b
                 {has(company.locationLabel) ? ` · ${company.locationLabel}` : ''}
                 <br />
                 {company.email} · {company.phone}
-                <br />
-                KRA PIN: {company.kraPin}
+                {has(company.kraPin) ? <><br />KRA PIN: {company.kraPin}</> : null}
               </p>
             </div>
           </div>

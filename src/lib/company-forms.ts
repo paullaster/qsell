@@ -24,7 +24,6 @@ export interface ProfileForm {
   kraPin: string;
   vatNumber: string;
   registrationNumber: string;
-  invoicePrefix: string;
   bankName: string;
   bankBranch: string;
   bankAccountName: string;
@@ -51,7 +50,6 @@ export const profileFormFrom = (row: CompanySettingsRow): ProfileView => ({
   kraPin: row.kraPin,
   vatNumber: row.vatNumber ?? '',
   registrationNumber: row.registrationNumber ?? '',
-  invoicePrefix: row.invoicePrefix,
   bankName: row.bankName ?? '',
   bankBranch: row.bankBranch ?? '',
   bankAccountName: row.bankAccountName ?? '',
@@ -88,7 +86,6 @@ export type ProfileUpdate = Omit<
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE = /^\+?[0-9][0-9\s()-]{5,22}$/;
 const KRA_PIN = /^[AP]\d{9}[A-Z]$/;
-const PREFIX = /^[A-Z0-9-]{1,10}$/;
 
 const REQUIRED: [keyof ProfileForm, string, number][] = [
   ['legalName', 'Legal name', 120],
@@ -157,16 +154,10 @@ export function profilePayload(
       error: 'The landline number should be digits only (spaces, dashes and a leading + are fine).',
     };
   const kraPin = form.kraPin.trim().toUpperCase();
-  if (!KRA_PIN.test(kraPin))
+  if (has(kraPin) && !KRA_PIN.test(kraPin))
     return {
       ok: false,
       error: 'A KRA PIN is a letter (A or P), nine digits and a letter, like P051234567Z.',
-    };
-  const invoicePrefix = form.invoicePrefix.trim().toUpperCase();
-  if (!PREFIX.test(invoicePrefix))
-    return {
-      ok: false,
-      error: 'The invoice prefix is up to 10 capital letters, digits or dashes, like INV.',
     };
   const website = webAddress(form.website);
   if (website === null)
@@ -193,7 +184,6 @@ export function profilePayload(
       kraPin,
       vatNumber: orNull(form.vatNumber),
       registrationNumber: orNull(form.registrationNumber),
-      invoicePrefix,
       bankName: orNull(form.bankName),
       bankBranch: orNull(form.bankBranch),
       bankAccountName: orNull(form.bankAccountName),

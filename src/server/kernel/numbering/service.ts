@@ -12,7 +12,7 @@ import { DOCUMENT_KINDS, isDocumentKind, type DocumentKind } from './document-ki
 import { formatNumber, isBeyondEnd, nextSequence } from './domain/format';
 import { counterKey, isIsoDate } from './domain/period';
 import { selectLines } from './domain/select-line';
-import { TemplateError, numbersPerBranch, validateTemplate } from './domain/template';
+import { TemplateError, numbersPerBranch } from './domain/template';
 import type { ConsideredLine, Issue, LineConfig, ResetPolicy, SeriesMode } from './domain/types';
 import { findOverlap, frozenViolations, validateLine } from './domain/validate';
 import {
@@ -64,11 +64,6 @@ export interface NumberSeriesOptions {
    * instead of restarting. Return null when there is nothing to carry on from.
    */
   legacyStart?: (companyId: string, kind: DocumentKind) => Promise<number | null>;
-  /**
-   * An existing setting that should shape the standard prefix (the company's configured invoice
-   * prefix, for instance). Return null to use the standard one. Ignored if it is not a valid pattern.
-   */
-  legacyPrefix?: (companyId: string, kind: DocumentKind) => Promise<string | null>;
   /**
    * Set up the standard series the first time a document kind is numbered, so a sale never fails
    * because numbering was not configured. On by default; turn off to require explicit setup.
@@ -1264,8 +1259,7 @@ export class NumberSeriesService {
           { code: 'POLICY_CHANGE', text: 'Standard setup' },
         );
         const startAt = (await this.legacyStart?.(companyId, kind)) ?? 1;
-        const custom = await this.options.legacyPrefix?.(companyId, kind);
-        const prefix = has(custom) && !has(validateTemplate(custom)) ? custom : def.suggested.prefix;
+        const prefix = def.suggested.prefix;
         await this.addLine(
           companyId,
           series.id,

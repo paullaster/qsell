@@ -93,7 +93,7 @@ export function rowActions(
       quote.approvalManagedBy !== 'workflow',
     email:
       can.canUpdate && open && !['pending', 'rejected', 'draft'].includes(quote.approvalStatus),
-    convert: can.canApprove && quote.status === 'accepted',
+    convert: can.canApprove && (quote.status === 'accepted' || quote.status === 'sent'),
     missingEmail: !hasEmail && open,
   };
 }

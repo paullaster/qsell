@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { canPermission, requirePermission } from '@/server/domains/access-control/guard';
 import { getContainer } from '@/server/di/container';
 import { parseSalesOrderInput } from './domain/sales-order-input';
+import { holdToRights, lineRights, priceStaffDocument } from './line-rights';
 import type { CreditPosition, SalesOrderRow } from './sales-order-service';
 
 const STATUSES = ['pending', 'processing', 'shipped', 'delivered', 'cancelled'];
@@ -28,12 +29,13 @@ export async function creditSalesPageAction(raw: unknown): Promise<{ ok: true; d
 }
 
 /** Staff: what the company's settings let a credit sale do, so the screen offers only that. */
-export async function creditSaleBehaviourAction(): Promise<{ ok: true; data: { allowHoldUntilPaid: boolean } } | { ok: false; error: string }> {
-  await requirePermission('credit_sales:create');
+export async function creditSaleBehaviourAction(): Promise<{ ok: true; data: { allowHoldUntilPaid: boolean; canPrice: boolean; canDiscount: boolean; discountSwitchedOff: boolean } } | { ok: false; error: string }> {
+  const userId = await requirePermission('credit_sales:create');
   try {
     const c = getContainer();
-    const settings = await c.sellingSettings.get((await c.companySettings.ensureSeeded()).id, 'credit_sale');
-    return { ok: true, data: { allowHoldUntilPaid: settings.allowHoldUntilPaid } };
+    const companyId = (await c.companySettings.ensureSeeded()).id;
+    const [settings, rights] = await Promise.all([c.sellingSettings.get(companyId, 'credit_sale'), lineRights('credit_sale', companyId, userId)]);
+    return { ok: true, data: { ...rights, allowHoldUntilPaid: settings.allowHoldUntilPaid } };
   } catch (error) {
     console.error('[credit sales] behaviour', error);
     return { ok: false, error: 'The settings for credit sales could not be read.' };
@@ -77,7 +79,9 @@ export async function placeCreditSaleAction(raw: unknown): Promise<{ ok: true; d
   try {
     const c = getContainer();
     const company = await c.companySettings.ensureSeeded();
-    const placed = await c.salesOrders.place(company.id, { userId, branchId: await c.salesOrders.branchOf(userId) }, parsed.input, 'credit_sale');
+    const held = holdToRights(await lineRights('credit_sale', company.id, userId), parsed.input);
+    if (!held.ok) return { ok: false, error: held.error };
+    const placed = await c.salesOrders.place(company.id, { userId, branchId: await c.salesOrders.branchOf(userId) }, held.input, 'credit_sale');
     if (!placed.ok) return { ok: false, error: placed.error };
     const docs = await c.orderDocuments.of(company.id, placed.orderId);
     revalidatePath('/admin/credit-sales');
@@ -85,5 +89,20 @@ export async function placeCreditSaleAction(raw: unknown): Promise<{ ok: true; d
   } catch (error) {
     console.error('[credit sales] place', error);
     return { ok: false, error: 'The credit sale could not be placed just now. Nothing was charged. Please try again.' };
+  }
+}
+
+/** Staff: what the lines would total for this customer, priced as the credit sales will be placed (nothing is saved). Shows the unit price, the line total and the tax as the lines are typed. */
+export async function priceCreditSaleAction(raw: unknown): Promise<{ ok: true; data: { subtotal: number; tax: number; total: number; lines: { productId: string; quantity: number; unitPrice: number; lineTotal: number }[] } } | { ok: false; error: string }> {
+  const userId = await requirePermission('credit_sales:create');
+  const parsed = parseSalesOrderInput(raw);
+  if (!parsed.ok) return { ok: false, error: parsed.error };
+  try {
+    const c = getContainer();
+    const priced = await priceStaffDocument('credit_sale', (await c.companySettings.ensureSeeded()).id, userId, parsed.input);
+    return priced.ok ? { ok: true, data: { subtotal: priced.subtotal, tax: priced.tax, total: priced.total, lines: priced.lines } } : { ok: false, error: priced.error };
+  } catch (error) {
+    console.error('[credit sales] price', error);
+    return { ok: false, error: 'The total could not be worked out just now. Please try again.' };
   }
 }

@@ -201,6 +201,39 @@ describe.skipIf(!has(url))('receivables (database)', () => {
       expect(await fin.customerLedger.detail('00000000-0000-4000-8000-000000000000', c.invoice)).toBeNull();
     });
 
+    it('reads a whole period for a download, past the screen\'s page of 100, in statement order and inside the dates', async () => {
+      seq += 1;
+      const [c] = await db
+        .insert(schema.customers)
+        .values({ companyId, number: `W${seq}`, name: `Whole ${seq}`, accountType: 'credit', creditLimit: '1000000' })
+        .returning();
+      // 130 invoices over September and October: more than one screen page.
+      for (let i = 0; i < 130; i += 1) {
+        const day = String((i % 28) + 1).padStart(2, '0');
+        await fin.customerLedger.addEntry(db, { companyId, customerId: c.id, documentType: 'invoice', documentNo: `WH-${String(i).padStart(3, '0')}`, amountCents: 1000 + i, currency: 'KES', postingDate: `2026-${i < 65 ? '09' : '10'}-${day}` });
+      }
+      const all = await fin.customerLedger.entriesInPeriod(companyId, c.id, null, null, 5000);
+      expect(all).toHaveLength(130);
+      const dates = all.map((r) => r.postingDate ?? '');
+      expect([...dates].sort()).toEqual(dates);
+
+      // The first screen page holds 100; the whole period holds all 130 and ends at the closing balance.
+      const page = await fin.customerLedger.statement(companyId, c.id, null, null);
+      expect(page.lines).toHaveLength(100);
+      const total = all.reduce((n, r) => n + Math.round(Number(r.amount) * 100), 0);
+      expect(total).toBe(page.closingBalanceCents);
+
+      // A period holds only its own dates; the last of September is not in an October-only download.
+      const october = await fin.customerLedger.entriesInPeriod(companyId, c.id, '2026-10-01', null, 5000);
+      expect(october).toHaveLength(65);
+      expect(october.every((r) => (r.postingDate ?? '') >= '2026-10-01')).toBe(true);
+      const oct = await fin.customerLedger.statement(companyId, c.id, '2026-10-01', null);
+      expect(oct.openingBalanceCents + october.reduce((n, r) => n + Math.round(Number(r.amount) * 100), 0)).toBe(oct.closingBalanceCents);
+
+      // A limit smaller than the period says so by returning one more, so a caller can refuse rather than cut it short.
+      expect(await fin.customerLedger.entriesInPeriod(companyId, c.id, null, null, 50)).toHaveLength(51);
+    });
+
     it('pages through undated legacy rows before dated rows without losing any', async () => {
       const c = await statementCustomer();
       const legacyIds = [randomUUID(), randomUUID()].sort();

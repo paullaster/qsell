@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allowedOptions, checkSellingInput, creditDaysFor, defOf, ENUM_SETTINGS, isSellingType, readSellingSettings, SELLING_TYPE_DEFS, SELLING_TYPES } from './selling-documents';
+import { allowedOptions, checkSellingInput, creditDaysFor, defOf, ENUM_SETTINGS, isSellingType, manualDiscountOffered, readSellingSettings, SELLING_TYPE_DEFS, SELLING_TYPES } from './selling-documents';
 
 describe('the selling document types', () => {
   it('has a definition for every type, and every default is one of the choices the type offers', () => {
@@ -82,4 +82,45 @@ describe('the invoice after approval', () => {
     expect(checkSellingInput('sales_invoice', { ...full, invoiceAfterApproval: undefined })).toEqual({ ok: false, error: 'Say whether the invoice is made automatically once the document is approved.' });
   });
 });
+});
+
+describe('a discount staff type themselves', () => {
+  const A = '11111111-1111-4111-8111-111111111111';
+  const B = '22222222-2222-4222-8222-222222222222';
+  const full = (over: Record<string, unknown>) => ({ ...defOf('pos_cash_sale').defaults, ...over });
+
+  it('is off everywhere until the company turns it on, and only the counter can', () => {
+    for (const def of SELLING_TYPE_DEFS) expect(def.defaults).toMatchObject({ manualDiscount: 'off', manualDiscountBranches: [] });
+    expect(allowedOptions('pos_cash_sale', 'manualDiscount')).toEqual(['off', 'all_branches', 'selected_branches']);
+    for (const type of ['sales_order', 'sales_invoice', 'credit_sale'] as const) expect(allowedOptions(type, 'manualDiscount')).toEqual(['off', 'all_branches', 'selected_branches']);
+  });
+
+  it('is offered at every branch, only at the branches chosen, or nowhere, and never where discounts are not allowed', () => {
+    const everywhere = readSellingSettings('pos_cash_sale', full({ manualDiscount: 'all_branches' }));
+    expect(manualDiscountOffered(everywhere, A)).toBe(true);
+    expect(manualDiscountOffered(everywhere, null)).toBe(true);
+    const some = readSellingSettings('pos_cash_sale', full({ manualDiscount: 'selected_branches', manualDiscountBranches: [A] }));
+    expect(manualDiscountOffered(some, A)).toBe(true);
+    expect(manualDiscountOffered(some, A.toUpperCase())).toBe(true);
+    expect(manualDiscountOffered(some, B)).toBe(false);
+    expect(manualDiscountOffered(some, null)).toBe(false);
+    expect(manualDiscountOffered(readSellingSettings('pos_cash_sale', full({ manualDiscount: 'off' })), A)).toBe(false);
+    expect(manualDiscountOffered(readSellingSettings('pos_cash_sale', full({ manualDiscount: 'all_branches', discounts: 'not_allowed' })), A)).toBe(false);
+  });
+
+  it('keeps only real branch ids when read, and every selling document can offer it', () => {
+    expect(readSellingSettings('pos_cash_sale', full({ manualDiscount: 'selected_branches', manualDiscountBranches: [A, 'nope'] })).manualDiscountBranches).toEqual([]);
+    expect(readSellingSettings('pos_cash_sale', full({ manualDiscount: 'selected_branches', manualDiscountBranches: [A, A.toUpperCase()] })).manualDiscountBranches).toEqual([A]);
+    for (const type of ['sales_order', 'credit_sale', 'sales_invoice'] as const) expect(readSellingSettings(type, { ...defOf(type).defaults, manualDiscount: 'all_branches' }).manualDiscount).toBe('all_branches');
+  });
+
+  it('is checked for real when saved: a known choice, branches that are ids, and at least one branch when only some are chosen', () => {
+    const base = { ...defOf('pos_cash_sale').defaults };
+    expect(checkSellingInput('pos_cash_sale', { ...base, manualDiscount: 'all_branches', manualDiscountBranches: [A] })).toMatchObject({ ok: true, settings: { manualDiscount: 'all_branches', manualDiscountBranches: [] } });
+    expect(checkSellingInput('pos_cash_sale', { ...base, manualDiscount: 'selected_branches', manualDiscountBranches: [A, B] })).toMatchObject({ ok: true, settings: { manualDiscountBranches: [A, B] } });
+    expect(checkSellingInput('pos_cash_sale', { ...base, manualDiscount: 'selected_branches', manualDiscountBranches: [] }).ok).toBe(false);
+    expect(checkSellingInput('pos_cash_sale', { ...base, manualDiscount: 'selected_branches', manualDiscountBranches: ['x'] }).ok).toBe(false);
+    expect(checkSellingInput('pos_cash_sale', { ...base, manualDiscount: 'sometimes' }).ok).toBe(false);
+    expect(checkSellingInput('sales_order', { ...defOf('sales_order').defaults, manualDiscount: 'all_branches' }).ok).toBe(true);
+  });
 });

@@ -4,7 +4,7 @@ import type { CompanyProfile } from '@/server/ports/communications';
 import { buildShiftReportDocument } from './shift-report-document';
 import type { ShiftReport } from './shift-service';
 
-const company: CompanyProfile = { legalName: 'Test Traders Ltd', tradingName: 'Test Traders', email: 'shop@example.test', phone: '0700000000', streetAddress: '1 Test Road', city: 'Nairobi', countyOrState: 'Nairobi', postalCode: '00100', country: 'Kenya', kraPin: 'P000000000X', invoicePrefix: 'INV', primaryColor: '#111827', accentColor: '#4F46E5' };
+const company: CompanyProfile = { legalName: 'Test Traders Ltd', tradingName: 'Test Traders', email: 'shop@example.test', phone: '0700000000', streetAddress: '1 Test Road', city: 'Nairobi', countyOrState: 'Nairobi', postalCode: '00100', country: 'Kenya', kraPin: 'P000000000X', primaryColor: '#111827', accentColor: '#4F46E5' };
 const report = (over: Partial<ShiftReport> = {}): ShiftReport => ({
   id: 'abcdef12-0000-4000-8000-000000000000', status: 'open', registerName: 'Till 1', branchName: 'Head office', openedBy: 'Wanjiku', openedById: 'u1', openedAt: '2026-11-20T18:53:00.000Z',
   closedBy: null, closedAt: null, openingFloat: 25920, openingCounted: [], paidIn: 0, paidOut: 0, cashSales: 182, expectedCash: 26102, declaredCash: null, closingCounted: [], variance: null, varianceReason: null, zNumber: null,

@@ -325,6 +325,14 @@ async function writeStock(productId: string, quantity: string): Promise<Record<s
   return { productId, quantity };
 }
 
+/** Lets staff type a discount at every branch on one kind of selling document (`manual` off puts it back); the rest of that document's settings are left as they are. */
+async function allowDiscount(docType: string, mode: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const patch = JSON.stringify({ manualDiscount: mode, manualDiscountBranches: [] });
+  await db.execute(sql`INSERT INTO selling_document_settings (company_id, doc_type, config, updated_by) SELECT id, ${docType}, ${patch}::jsonb, 'e2e' FROM company_settings LIMIT 1 ON CONFLICT (company_id, doc_type) DO UPDATE SET config = selling_document_settings.config || ${patch}::jsonb, updated_at = now()`);
+  return { docType, mode };
+}
+
 async function readOrderStages(orderNumber: string): Promise<Record<string, string>> {
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
   const [order] = await db.execute<{ id: string; current_stage: string | null; status: string; payment_status: string }>(sql`SELECT id, current_stage, status, payment_status FROM orders WHERE order_number = ${orderNumber}`);
@@ -384,6 +392,7 @@ async function main(): Promise<void> {
   else if (command === 'forget-packaging' && a !== undefined) result = await removePackaging(a);
   else if (command === 'inventory-kind-product' && a !== undefined && b !== undefined) result = await inventoryKindProduct(a, b);
   else if (command === 'set-stock' && a !== undefined && b !== undefined) result = await writeStock(a, b);
+  else if (command === 'discount-setting' && a !== undefined && b !== undefined) result = await allowDiscount(a, b);
   else if (command === 'order-stages' && a !== undefined) result = await readOrderStages(a);
   else if (command === 'late-order' && a !== undefined) result = await lateOrder(a, b ?? '3');
   else if (command === 'latest-attempt') result = await readLatestAttempt();
@@ -475,6 +484,11 @@ export function latestAttempt(): { outcome: string; stage: string; reason: strin
 /** Sets a product's stock, to make a checkout in progress run short. */
 export function setStock(productId: string, quantity: number): void {
   storefrontTool('set-stock', productId, String(quantity));
+}
+
+/** Turns the manual discount for one kind of selling document on at every branch ('all_branches') or off ('off'). */
+export function setManualDiscount(docType: 'sales_order' | 'credit_sale' | 'sales_invoice', mode: 'all_branches' | 'off'): void {
+  storefrontTool('discount-setting', docType, mode);
 }
 
 /** An order that has waited in "payment started" for `hours` hours, with the late-order record the sweep makes for it; its number is returned. */

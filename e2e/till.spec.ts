@@ -1,8 +1,47 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { noHorizontalScroll, noInnerHorizontalScroll, noNativeSelect } from './support/page';
 import { gotoAdmin } from './support/quotes';
 import { makeProduct } from './support/storefront-fixtures';
 import { amountOf, closeCart, closeShiftRight, openCart, openShiftOnNewTill, tapProduct } from './support/till-kit';
+
+/** Chooses an option of a picker once its list has loaded (the page is drawn before it is wired up, so try until it takes). */
+async function choose(page: Page, field: Locator, option: RegExp): Promise<void> {
+  await expect(async () => {
+    await field.click();
+    await page.getByRole('option', { name: option }).first().click({ timeout: 4000 });
+  }).toPass({ timeout: 60_000 });
+}
+
+/** The cash sales card on the settings page (the sidebar has a list item of the same name, so the card is the one with its Change button). */
+const cashSaleCard = (page: Page): Locator => page.getByRole('listitem').filter({ hasText: 'Cash sales' }).filter({ has: page.getByRole('button', { name: /^Change Cash sales/ }) }).first();
+
+/** Opens the cash sale settings card and returns its form. */
+async function openCashSaleSettings(page: Page): Promise<Locator> {
+  await gotoAdmin(page, '/admin/settings/selling-documents', 'Selling documents');
+  const form = page.getByRole('form', { name: /^Change Cash sales/ });
+  // A click before the page has hydrated is lost, so it is repeated until the form opens.
+  await expect(async () => {
+    await cashSaleCard(page).getByRole('button', { name: /^Change Cash sales/ }).click({ timeout: 5_000 });
+    await expect(form).toBeVisible({ timeout: 5_000 });
+  }).toPass({ timeout: 90_000 });
+  return form;
+}
+
+async function saveWithReason(page: Page, form: Locator): Promise<void> {
+  await form.getByRole('combobox', { name: /Reason/ }).click();
+  await page.getByRole('option').first().click();
+  await form.getByRole('button', { name: 'Save' }).click();
+}
+
+/** Puts the cash sales selling settings back to how they were built in, so the other specs sell at list. */
+async function putCashSaleSettingsBack(page: Page): Promise<void> {
+  const last = await openCashSaleSettings(page);
+  await last.getByRole('combobox', { name: /Reason/ }).click();
+  await page.getByRole('option').first().click();
+  await last.getByRole('button', { name: /^Put .* back to how it was built in/ }).click();
+  await last.getByRole('button', { name: /^Confirm: Put / }).click();
+  await expect(page.getByText('Put back to how it was built in.')).toBeVisible({ timeout: 30_000 });
+}
 
 test.describe('the till screen', () => {
   test('products are tiles: tapping adds and counts, a sale is held and brought back, a payment is split with a number pad, and the receipt shows the change', async ({ page }, testInfo) => {
@@ -156,5 +195,132 @@ test.describe('the till screen', () => {
     await page.getByTestId('till-clear').click();
     await closeCart(page);
     await closeShiftRight(page);
+  });
+  test('a discount can be typed at the till only where the company has allowed it, by the branch, and it takes the price down', async ({ page }, testInfo) => {
+    test.setTimeout(360_000);
+    const tag = `dc${String(Date.now()).slice(-6)}`;
+    const item = makeProduct(`${tag}a`);
+
+    // The company chooses where staff may offer a discount: choosing "only some branches" needs at least one.
+    const form = await openCashSaleSettings(page);
+    try {
+      await choose(page, form.getByRole('combobox', { name: 'Discount typed by staff' }), /Only at the branches chosen/);
+      await expect(form.getByTestId('discount-branches')).toBeVisible();
+      await saveWithReason(page, form);
+      await expect(form.getByRole('alert')).toContainText('Choose at least one branch');
+      await choose(page, form.getByRole('combobox', { name: 'Add a branch where a discount may be offered' }), /./);
+      await expect(form.getByRole('list', { name: 'Branches where a discount may be offered' }).getByRole('listitem')).toHaveCount(1);
+      await noNativeSelect(page);
+      await noHorizontalScroll(page);
+      await saveWithReason(page, form);
+      await expect(page.getByText('Saved. It applies to the next document.')).toBeVisible({ timeout: 30_000 });
+      await expect(cashSaleCard(page)).toContainText('Discount offered at');
+
+      // Offered at every branch: the till shows the discount input.
+      const again = await openCashSaleSettings(page);
+      await choose(page, again.getByRole('combobox', { name: 'Discount typed by staff' }), /At every branch/);
+      await expect(again.getByTestId('discount-branches')).toHaveCount(0);
+      await saveWithReason(page, again);
+      await expect(page.getByText('Saved. It applies to the next document.')).toBeVisible({ timeout: 30_000 });
+
+      await openShiftOnNewTill(page, testInfo, tag);
+      await gotoAdmin(page, '/admin/cash-sales', 'Cash Sales');
+      await expect(page.getByTestId('till-tile').first()).toBeVisible({ timeout: 60_000 });
+      await tapProduct(page, item);
+      await openCart(page);
+      await expect(page.getByTestId('till-pay')).toBeEnabled({ timeout: 60_000 });
+      const listed = amountOf(await page.getByTestId('sale-total').innerText());
+
+      await page.getByTestId('discount-edit').click();
+      await page.getByTestId('discount-input').fill('150');
+      await page.getByTestId('discount-apply').click();
+      await expect(page.getByTestId('discount-form')).toContainText('percentage above 0 and under 100');
+      await page.getByTestId('discount-input').fill('10');
+      await page.getByTestId('discount-apply').click();
+      await expect(page.getByTestId('discount-edit')).toContainText('10% off');
+      await expect.poll(async () => amountOf(await page.getByTestId('sale-total').innerText()), { timeout: 30_000 }).toBeCloseTo(listed * 0.9, 1);
+
+      await page.getByTestId('discount-remove').click();
+      await expect(page.getByTestId('discount-edit')).not.toContainText('off');
+      await expect.poll(async () => amountOf(await page.getByTestId('sale-total').innerText()), { timeout: 30_000 }).toBeCloseTo(listed, 1);
+      await noHorizontalScroll(page);
+      await page.getByTestId('till-clear').click();
+      await closeCart(page);
+      await closeShiftRight(page);
+    } finally {
+      // Back to nobody offering a discount, so the other specs sell at list.
+      await putCashSaleSettingsBack(page);
+    }
+  });
+  test('a discount shows on the receipt only as the company chose: not at all, one total at the end, or under each item', async ({ page }, testInfo) => {
+    test.setTimeout(420_000);
+    const tag = `rd${String(Date.now()).slice(-6)}`;
+    const item = makeProduct(`${tag}a`);
+    const setReceipt = async (label: string) => {
+      await gotoAdmin(page, '/admin/settings/sales/cash-sales', 'Cash Sales');
+      await noNativeSelect(page);
+      await expect(async () => {
+        await page.locator('label', { hasText: label }).click({ timeout: 3000 });
+        const save = page.getByRole('button', { name: 'Save', exact: true });
+        if (await save.isEnabled()) await save.click();
+        await expect(page.getByText(/Saved\. Tills show this/).or(page.getByText(/receipts show/)).first()).toBeVisible({ timeout: 10_000 });
+      }).toPass({ timeout: 60_000 });
+    };
+    const sellDiscounted = async () => {
+      await gotoAdmin(page, '/admin/cash-sales', 'Cash Sales');
+      await expect(page.getByTestId('till-tile').first()).toBeVisible({ timeout: 60_000 });
+      await tapProduct(page, item);
+      await openCart(page);
+      await expect(page.getByTestId('till-pay')).toBeEnabled({ timeout: 60_000 });
+      await page.getByTestId('discount-edit').click();
+      await page.getByTestId('discount-input').fill('10');
+      await page.getByTestId('discount-apply').click();
+      await expect(page.getByTestId('discount-edit')).toContainText('10% off');
+      await expect(page.getByTestId('till-pay')).toBeEnabled({ timeout: 30_000 });
+      await page.getByTestId('till-pay').click();
+      await page.getByTestId('pay-method').filter({ hasText: /^E2E Cash$/ }).click();
+      await page.getByTestId('quick-cash').getByRole('button').first().click();
+      await expect(page.getByTestId('pay-state')).toContainText('Paid in full');
+      await page.getByTestId('pay-complete').click();
+      await expect(page.getByTestId('receipt')).toContainText('Receipt RCT-', { timeout: 60_000 });
+    };
+    const finish = async () => {
+      await page.getByTestId('receipt').getByRole('button', { name: 'New sale' }).click();
+      await closeCart(page);
+    };
+
+    const form = await openCashSaleSettings(page);
+    try {
+      await choose(page, form.getByRole('combobox', { name: 'Discount typed by staff' }), /At every branch/);
+      await saveWithReason(page, form);
+      await expect(page.getByText('Saved. It applies to the next document.')).toBeVisible({ timeout: 30_000 });
+      await openShiftOnNewTill(page, testInfo, tag);
+
+      // As built in: only the price charged.
+      await sellDiscounted();
+      await expect(page.getByTestId('receipt-discount')).toHaveCount(0);
+      await expect(page.getByTestId('receipt-print')).not.toContainText('Discount');
+      await finish();
+
+      // One total near the end.
+      await setReceipt('Total discount at the end');
+      await sellDiscounted();
+      await expect(page.getByTestId('receipt-discount')).toContainText('You saved');
+      await expect(page.getByTestId('receipt-total-discount')).toContainText('Discount');
+      await expect(page.getByTestId('receipt-line-discount')).toHaveCount(0);
+      await finish();
+
+      // Under each item.
+      await setReceipt('Discount on each item');
+      await sellDiscounted();
+      await expect(page.getByTestId('receipt-line-discount')).toHaveCount(1);
+      await expect(page.getByTestId('receipt-total-discount')).toHaveCount(0);
+      await noHorizontalScroll(page);
+      await finish();
+      await closeShiftRight(page);
+    } finally {
+      await setReceipt('Price charged only');
+      await putCashSaleSettingsBack(page);
+    }
   });
 });
