@@ -14,7 +14,6 @@ const company: CompanyProfile = {
   postalCode: '00100',
   country: 'Kenya',
   kraPin: 'P000000000X',
-  invoicePrefix: 'INV',
   primaryColor: '#111827',
   accentColor: '#4F46E5',
 };

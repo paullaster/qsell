@@ -151,7 +151,7 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
         has(payload.company.tel) ? `Tel: ${payload.company.tel}` : null,
         `Email: ${payload.company.email}`,
         has(payload.company.website) ? `Web: ${payload.company.website}` : null,
-        `KRA PIN: ${payload.company.kraPin}`,
+        has(payload.company.kraPin) ? `KRA PIN: ${payload.company.kraPin}` : null,
       ]);
 
       for (const row of companyLines) {
@@ -628,7 +628,7 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
           .font('Helvetica')
           .fontSize(7)
           .text(
-            `${payload.company.tradingName}  ·  KRA PIN ${payload.company.kraPin}  ·  ${title}`,
+            [payload.company.tradingName, has(payload.company.kraPin) ? `KRA PIN ${payload.company.kraPin}` : null, title].filter(Boolean).join('  ·  '),
             M,
             PAGE_H - 30,
             { width: CONTENT_W * 0.7, lineBreak: false },

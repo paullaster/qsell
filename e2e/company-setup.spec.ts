@@ -13,7 +13,7 @@ test.describe('company setup', () => {
     const form = page.getByRole('form', { name: 'Company profile' });
 
     // Every box is tied to its label.
-    for (const label of ['Legal name', 'Trading name', 'KRA PIN', 'Invoice prefix', 'Street address', 'City', 'Email', 'Phone (mobile)', 'Website', 'Bank name', 'Account number']) {
+    for (const label of ['Legal name', 'Trading name', 'KRA PIN', 'Street address', 'City', 'Email', 'Phone (mobile)', 'Website', 'Bank name', 'Account number']) {
       await expect(form.getByLabel(label, { exact: true })).toBeVisible();
     }
 
@@ -25,7 +25,6 @@ test.describe('company setup', () => {
     await form.getByLabel('Postal code').fill('00100');
     await form.getByLabel('Country', { exact: true }).fill('Kenya');
     await form.getByLabel('Phone (mobile)').fill(phone);
-    await form.getByLabel('Invoice prefix').fill('inv');
 
     // What is wrong is said in words, one thing at a time, and nothing is saved.
     await form.getByLabel('Email', { exact: true }).fill('admin@localhost');
@@ -46,7 +45,7 @@ test.describe('company setup', () => {
     await form.getByRole('button', { name: 'Save profile' }).click();
     await expect(form.getByRole('status')).toContainText('Company profile saved.', { timeout: 30_000 });
     await expect(form.getByLabel('KRA PIN')).toHaveValue('P051234567Z');
-    await expect(form.getByLabel('Invoice prefix')).toHaveValue('INV');
+    await expect(form.getByLabel('Invoice prefix')).toHaveCount(0);
 
     // It is kept.
     await open(page, '/admin/company/profile', 'Company profile');

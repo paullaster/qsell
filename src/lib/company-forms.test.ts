@@ -23,7 +23,6 @@ const good: ProfileForm = {
   kraPin: 'p051234567z',
   vatNumber: '',
   registrationNumber: '',
-  invoicePrefix: 'inv',
   bankName: '',
   bankBranch: '',
   bankAccountName: '',
@@ -43,7 +42,6 @@ describe('company profile', () => {
         legalName: 'Acme Ltd',
         email: 'sales@acme.co.ke',
         kraPin: 'P051234567Z',
-        invoicePrefix: 'INV',
         tagline: null,
         tel: null,
         website: null,
@@ -52,19 +50,22 @@ describe('company profile', () => {
     });
   });
 
+  it('does not need a KRA PIN, VAT number or registration number to save', () => {
+    const r = profilePayload({ ...good, kraPin: '', vatNumber: '', registrationNumber: '' });
+    expect(r).toMatchObject({ ok: true, payload: { kraPin: '', vatNumber: null, registrationNumber: null } });
+  });
+
   it('names what is missing', () => {
     expect(errorOf({ legalName: ' ' })).toMatch(/Legal name is required/);
     expect(errorOf({ city: '' })).toMatch(/City is required/);
     expect(errorOf({ country: '' })).toMatch(/Country is required/);
   });
 
-  it('refuses a bad email, phone, PIN, prefix or web address', () => {
+  it('refuses a bad email, phone, PIN or web address', () => {
     expect(errorOf({ email: 'admin@localhost' })).toMatch(/email/i);
     expect(errorOf({ phone: 'call me' })).toMatch(/mobile/i);
     expect(errorOf({ tel: 'abc' })).toMatch(/landline/i);
-    expect(errorOf({ kraPin: '' })).toMatch(/KRA PIN/);
     expect(errorOf({ kraPin: 'X051234567Z' })).toMatch(/KRA PIN/);
-    expect(errorOf({ invoicePrefix: 'too long prefix' })).toMatch(/prefix/i);
     expect(errorOf({ website: 'javascript:alert(1)' })).toMatch(/http/);
     expect(errorOf({ website: 'example' })).toMatch(/http/);
   });
