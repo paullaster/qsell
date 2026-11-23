@@ -1,6 +1,8 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
+import { profilesPageAction } from '@/server/domains/customers/manage-actions';
+import { defaultCreditProfile, profileChoice } from '@/lib/customer-card';
 import { createCustomerAction, type CreatedCustomer } from '@/server/domains/customers/create-action';
 import { ChoicePicker } from '@/components/ui/autocomplete/ChoicePicker';
 import { attempt, buttonClass, Field, fieldClass, primaryClass } from '@/components/ui/screen-kit';
@@ -15,6 +17,16 @@ interface Props {
   onCancel: () => void;
 }
 
+const applyProfile = (prev: CustomerForm, c: Choice): CustomerForm => ({
+  ...prev,
+  profileId: c.id,
+  profileLabel: c.label,
+  accountType: accountTypeOf(metaValue(c.meta, 'accountType')),
+  creditLimit: firstFilled(metaValue(c.meta, 'creditLimit')) ?? prev.creditLimit,
+  paymentTermDays: firstFilled(metaValue(c.meta, 'paymentTermDays')) ?? prev.paymentTermDays,
+  transmitInvoicesToKra: metaValue(c.meta, 'transmit') === '1',
+});
+
 /** The quick form for a new customer: the details the pickers need, with the full card left to the customers screen. */
 export function CustomerCreateForm({ onSaved, onCancel }: Props) {
   const uid = useId();
@@ -24,20 +36,27 @@ export function CustomerCreateForm({ onSaved, onCancel }: Props) {
   const set = <K extends keyof CustomerForm>(key: K, value: CustomerForm[K]) => setForm((prev) => ({ ...prev, [key]: value }));
   const credit = form.accountType === 'credit';
 
+  // A new customer is on account: start from the credit profile when there is one, unless the person has already chosen something.
+  useEffect(() => {
+    const live = { on: true };
+    void (async () => {
+      const named = await attempt(profilesPageAction({ query: 'CREDIT' }));
+      let start = named.ok ? defaultCreditProfile(named.data.rows) : null;
+      if (start === null) {
+        const all = await attempt(profilesPageAction({}));
+        start = all.ok ? defaultCreditProfile(all.data.rows) : null;
+      }
+      if (!live.on || start === null) return;
+      const choice = profileChoice(start);
+      setForm((prev) => (prev.profileId !== '' || prev.accountType !== 'credit' ? prev : applyProfile(prev, choice)));
+    })();
+    return () => {
+      live.on = false;
+    };
+  }, []);
+
   /** A profile brings its account type and terms; they can still be changed after. */
-  const chooseProfile = (c: Choice | null) =>
-    setForm((prev) => {
-      if (c === null) return { ...prev, profileId: '', profileLabel: '' };
-      return {
-        ...prev,
-        profileId: c.id,
-        profileLabel: c.label,
-        accountType: accountTypeOf(metaValue(c.meta, 'accountType')),
-        creditLimit: firstFilled(metaValue(c.meta, 'creditLimit')) ?? prev.creditLimit,
-        paymentTermDays: firstFilled(metaValue(c.meta, 'paymentTermDays')) ?? prev.paymentTermDays,
-        transmitInvoicesToKra: metaValue(c.meta, 'transmit') === '1',
-      };
-    });
+  const chooseProfile = (c: Choice | null) => setForm((prev) => (c === null ? { ...prev, profileId: '', profileLabel: '' } : applyProfile(prev, c)));
 
   const submit = async (e: React.SyntheticEvent) => {
     e.preventDefault();

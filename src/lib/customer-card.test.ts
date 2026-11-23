@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { emptyCard, money, projectionToSelected, selectedToProjection, withAccountType, withProfile, type CardField } from './customer-card';
+import type { CustomerProfileRow } from '@/server/db/drizzle/schema';
+import { defaultCreditProfile, emptyCard, money, projectionToSelected, selectedToProjection, withAccountType, withProfile, type CardField } from './customer-card';
 
 const fields: CardField[] = [
   { fieldName: 'globalDimension1Code', dimensionId: 'd1', dimensionCode: 'DEPT', kind: 'global' },
@@ -39,5 +40,13 @@ describe('customer card', () => {
     expect(money('1234.5')).toMatch(/1,?234\.50/);
     expect(money(null)).toBe('0.00');
     expect(money('x')).toBe('0.00');
+  });
+
+  it('starts a new admin customer as a credit customer, from the CREDIT profile first, else the first active credit profile', () => {
+    expect(emptyCard(fields).accountType).toBe('credit');
+    const p = (code: string, accountType: string, isActive = true) => ({ code, accountType, isActive }) as CustomerProfileRow;
+    expect(defaultCreditProfile([p('CASH', 'cash'), p('CR', 'credit'), p('CREDIT', 'credit')])?.code).toBe('CREDIT');
+    expect(defaultCreditProfile([p('CASH', 'cash'), p('OLD', 'credit', false), p('WHOLESALE', 'credit')])?.code).toBe('WHOLESALE');
+    expect(defaultCreditProfile([p('CASH', 'cash')])).toBeNull();
   });
 });

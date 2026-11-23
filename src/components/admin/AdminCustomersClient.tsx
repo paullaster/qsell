@@ -33,6 +33,7 @@ import {
 import { accountTypeOf, blockOf, labelOfAccountType, labelOfBlock } from '@/lib/customer-forms';
 import {
   cardFrom,
+  defaultCreditProfile,
   emptyCard,
   money,
   profileChoice,
@@ -189,11 +190,16 @@ function Customers({
     setLedger([]);
     setNotice(null);
     setForm(emptyCard(fields));
-    // New customers start from the CASH profile when there is one.
-    const found = await attempt(profilesPageAction({ query: 'CASH' }));
-    const cash = found.ok ? found.data.rows.find((p) => p.code === 'CASH') : undefined;
-    if (cash !== undefined) {
-      setForm((f) => (f === null ? f : withProfile(f, profileChoice(cash), fields)));
+    // New customers start as credit (on account) customers, from the credit profile when there is one.
+    const named = await attempt(profilesPageAction({ query: 'CREDIT' }));
+    let start = named.ok ? defaultCreditProfile(named.data.rows) : null;
+    if (start === null) {
+      const all = await attempt(profilesPageAction({}));
+      start = all.ok ? defaultCreditProfile(all.data.rows) : null;
+    }
+    if (start !== null) {
+      const chosen = start;
+      setForm((f) => (f === null ? f : withProfile(f, profileChoice(chosen), fields)));
     }
   };
 
