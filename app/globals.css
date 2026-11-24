@@ -61,6 +61,29 @@
   --company-accent-soft: var(--company-accent-soft-light, #e0e7ff);
   --company-accent-faint: var(--company-accent-faint-light, #eef2ff);
   --company-accent-text: var(--company-accent-text-light, #4338ca);
+
+  /*
+   * Report charts. Categorical (told apart), sequential (how much) and diverging (above or below a reference).
+   * Kept in step with src/lib/reports/chart/palette.ts, which checks contrast and colour-blind separation.
+   */
+  --data-1: #0072b2;
+  --data-2: #d55e00;
+  --data-3: #2a9d3f;
+  --data-4: #b5528a;
+  --data-5: #8a5a44;
+  --data-6: #a87900;
+  --data-7: #6a51a3;
+  --data-8: #6b7280;
+  --seq-1: #eaf2fb;
+  --seq-2: #bcd7ef;
+  --seq-3: #7fb2de;
+  --seq-4: #3f86c4;
+  --seq-5: #14518f;
+  --div-1: #b2410e;
+  --div-2: #e39a64;
+  --div-3: #e5e7eb;
+  --div-4: #7fb2de;
+  --div-5: #14518f;
 }
 
 [data-theme='dark'] {
@@ -84,6 +107,25 @@
   --company-accent-soft: var(--company-accent-soft-dark, #c7d2fe);
   --company-accent-faint: var(--company-accent-faint-dark, #e0e7ff);
   --company-accent-text: var(--company-accent-text-dark, #818cf8);
+
+  --data-1: #4da3e0;
+  --data-2: #f08a3c;
+  --data-3: #3cc79b;
+  --data-4: #e08dbb;
+  --data-5: #c58b6d;
+  --data-6: #e6b422;
+  --data-7: #a78bfa;
+  --data-8: #9ca3af;
+  --seq-1: #10243a;
+  --seq-2: #17416b;
+  --seq-3: #2663a3;
+  --seq-4: #4f8fd1;
+  --seq-5: #9cc4ec;
+  --div-1: #f08a3c;
+  --div-2: #a65a24;
+  --div-3: #3f3f46;
+  --div-4: #2663a3;
+  --div-5: #9cc4ec;
 }
 
 /*

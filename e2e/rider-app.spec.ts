@@ -814,7 +814,7 @@ test.describe('the rider app', () => {
 
       // The report: the shared test shop has other deliveries in these days, so what is checked is this rider's own row (one delivery, the
       // pay for it, the day pay having been taken back) and that the totals are shown; the sums themselves are proved against the database.
-      await open(page, '/admin/delivery/reports', 'Delivery report');
+      await open(page, '/admin/reports/delivery-report', 'Delivery report');
       const margin = page.getByRole('region', { name: 'Margin' });
       await expect(margin).toContainText('Customers paid for delivery');
       await expect(margin).toContainText(/Rider pay [\d.]+ · courier [\d.]+ · fuel [\d.]+ · vehicles [\d.]+ · other [\d.]+/);

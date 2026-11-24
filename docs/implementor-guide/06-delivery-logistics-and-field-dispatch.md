@@ -140,7 +140,7 @@ graph TD
 - **In the books**: the two accounts rider pay is posted to. Pay is saved first and posted afterwards, so a mistake in the accounts never stops a rider's delivery; what is waiting is counted and can be posted at once.
 - **Owed to riders / Paid to riders**: what each rider is owed (pay earned less anything taken back, not yet paid) and the payouts made, each with its number.
 
-### 8. Late Deliveries (`/admin/delivery/late`)
+### 8. Late Deliveries (`/admin/reports/late-deliveries`)
 - Every delivery promised a window that is **At risk** or **Late** now, the most overdue first, showing how late, the highest level reached (*At risk: the dispatcher is told*, *Late: the dispatcher is told*, *Still late: the supervisor is told*), when it was raised, and how many mails were sent about it (sent, waiting, could not be sent).
 - **Alerts on this device** (a card at the top): a person turns on alerts for the phone or computer they are using, and then gets a pop-up alert, even with the page closed, when a delivery is at risk or late. A person is alerted when the email on their account is on the dispatcher list (for *At risk* and *Late*) or the supervisor list (for *Still late*), the same lists the mails use. The alert names the delivery and the time promised, and says how late; it never shows the customer's name, address, phone or payment. The card says plainly when it cannot work: *not set up on this installation yet* (the push keys are missing, see the checklist), or *this browser cannot show alerts* (on an iPhone, add the site to the Home Screen first). Turning alerts off in a browser stops them for that browser only. Mails still go as before.
 - Each has an **Acknowledge** box (**What is being done about it**) that records who answered, when and what they said. One acknowledgement covers every level raised for that window.
@@ -178,7 +178,7 @@ graph TD
 - **What the customer was told**: each visit card on *Visits* has a *What the customer was told* list: the mail sent when the visit was booked, moved or cancelled, whether it is *Sent*, *Waiting to send*, *Not sent yet* (it will be tried again) or *Not sent* (for example the order has no email address, with the reason beside it), where it went (only the first letter and the mail host of the address are shown) and when. A visit with no messages shows no list. The crew's own phone does not show it.
 - **What the customer sees**: a signed-in customer's order page has a *Your visit* section for each visit booked for the order: the day and hours (in the business's time zone, set in Settings, Business Time Zone; Nairobi until changed), the address they gave, and its state in words: booked (and whether a crew is assigned), the crew is with you, the work is done and waiting for your sign-off, signed off, or cancelled. They never see the crew, the contact phone, the notes, the checklist, the materials or the photos. They are also sent a mail when a visit is booked, moved or cancelled, with the day and hours but never the address, a phone number or a note; it leads to their orders page. A visit cancelled because its order was cancelled sends no visit mail, since the order's own cancellation is what they are told.
 
-### 12. Delivery Report (`/admin/delivery/reports`)
+### 12. Delivery Report (`/admin/reports/delivery-report`)
 - Executive analytics: Delivery success rates, failure reason distributions (e.g. customer unavailable, wrong address), and zone profitability.
 - **By vehicle**: for each vehicle on the Vehicles list that ran a delivery or had a running cost in the days chosen: deliveries delivered on its runs and how many runs, its running costs (fuel, repairs, other) and the **cost per delivery**. A delivery counts for the vehicle of the run it was delivered on. Running costs not tied to any vehicle are shown in a line under the table, so the table and the total cost reconcile. A vehicle with costs and nothing delivered shows *Nothing delivered* in place of a cost per delivery. Where fuel fills gave kilometres or litres, the line also reads the kilometres, the litres, **kilometres a litre** (from fills that gave both) and the **fuel cost of a kilometre** (from fills that gave kilometres); a fill that was taken back takes its figures back too, and a vehicle with no such fills shows none of these.
 
@@ -188,7 +188,7 @@ graph TD
 - **Each invoice** shows its total, the charges matched to it and the difference, with a status: *Nothing matched yet*, *Agrees with our charges*, *We have fewer charges than the invoice*, or *We have more charges than the invoice*. **Match charges** lists that courier's charges that are on no invoice, to tick; matched charges can be taken off. A wrong invoice is **voided with a reason**.
 - Matching changes no charge and posts nothing; paying the invoice is done in the usual way.
 
-### 14. Delivery Performance (`/admin/delivery/performance`)
+### 14. Delivery Performance (`/admin/reports/delivery-performance`)
 - For the days chosen (the last 30 by default, at most a year): **Overall** (deliveries made, % on time, % at the first try, average time from going out to delivered, how late the late ones were, release-to-delivered time), **By rider**, **By courier** (parcels sent and what became of them, including parcels that could not be booked), and **Delivery times** (places offered, booked, days full and share used for each slot; how many times shoppers chose at checkout and how many had gone by delivery).
 - *On time* means delivered by the end of the window the customer was promised; deliveries promised no window are left out of that rate. *First try* means no failed attempt before. Rates are marked good (95% and over), to watch (80% and over) or poor.
 
@@ -371,7 +371,7 @@ graph TD
 | **Note (optional)** | Anything worth keeping. | Text (Max 300) | Optional | |
 | **Why it is being voided** | The reason kept with a voided invoice. | Text | **Required** to void | At least a few words. |
 
-### Delivery Performance Fields (`/admin/delivery/performance`)
+### Delivery Performance Fields (`/admin/reports/delivery-performance`)
 
 | Field Label | Purpose | Type & Format | Required? | Validation Rules & Hints |
 |---|---|---|---|---|
@@ -428,7 +428,7 @@ graph TD
 3. A wrong number and a wrong PIN get the same answer, so someone guessing cannot learn which numbers belong to riders.
 
 ### Action 6: Handling a Late Delivery
-1. Open `/admin/delivery/late` (or watch the mail the dispatchers receive, if mail addresses are set).
+1. Open `/admin/reports/late-deliveries` (or watch the mail the dispatchers receive, if mail addresses are set).
 2. Find the delivery: its card shows how late it is and the highest level reached.
 3. Act on it (call the rider, tell the customer, move the delivery to another run).
 4. In **What is being done about it** type what you did (a few words) and click **Acknowledge**. The answer, your name and the time are kept; the card then shows who acknowledged it.

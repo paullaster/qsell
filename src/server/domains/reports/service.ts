@@ -1,8 +1,10 @@
 import { eq } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, currencies, users } from '@/server/db/drizzle/schema';
+import { branches, currencies } from '@/server/db/drizzle/schema';
 import type { AccessControlService } from '@/server/domains/access-control/engine';
 import type { PermissionKey } from '@/server/domains/access-control/permissions';
+import { ResultCache } from './engine/cache';
+import { resolveReportScope, scopeLabel } from './engine/scope';
 import { buildHeadline } from './headline';
 import {
   COMPARE_LABELS,
@@ -37,6 +39,19 @@ const PROVIDER_NAMES: Record<string, string> = {
   kcb_buni: 'KCB Buni',
 };
 
+/** The permissions that change what the overview shows; the runner resolves them once for the viewer. */
+export const OVERVIEW_PERMISSIONS: readonly PermissionKey[] = [
+  'report_sales:read',
+  'report_collections:read',
+  'report_profit:read',
+  'report_receivables:read',
+  'report_inventory:read',
+  'reports:all_branches',
+  'orders:read',
+  'approvals:act',
+  'transactions:read',
+];
+
 export const PAYMENT_SETUP_HREF = '/admin/settings/payments';
 
 export function compare(current: number, previous: number): Comparison {
@@ -54,26 +69,36 @@ export interface OverviewRequest extends PeriodInput {
   branchId?: string;
 }
 
-interface CacheEntry {
-  value: BusinessOverview;
-  expiresAt: number;
-}
-
 export class ReportsService {
-  private readonly cache = new Map<string, CacheEntry>();
-  private readonly inFlight = new Map<string, Promise<BusinessOverview>>();
+  private readonly cache: ResultCache<BusinessOverview>;
 
   constructor(
     private readonly db: DrizzleDb,
     private readonly access: Pick<AccessControlService, 'can'>,
     private readonly clock: () => Date = () => new Date(),
-  ) {}
+  ) {
+    this.cache = new ResultCache<BusinessOverview>(CACHE_TTL_MS, MAX_CACHE_ENTRIES, () =>
+      this.clock().getTime(),
+    );
+  }
 
   async getBusinessOverview(userId: string, request: OverviewRequest): Promise<BusinessOverview> {
+    return await this.overview(userId, request, await this.allowedPermissions(userId));
+  }
+
+  /**
+   * The overview for someone whose permissions are already known (the report runner resolves them once and
+   * passes them in, so they are not asked for twice).
+   */
+  async overview(
+    userId: string,
+    request: OverviewRequest,
+    allowed: ReadonlySet<PermissionKey>,
+  ): Promise<BusinessOverview> {
     const now = this.clock();
     const period = resolvePeriod(request, now);
-    const allowed = await this.allowedPermissions(userId);
-    const scope = await this.resolveScope(
+    const scope = await resolveReportScope(
+      this.db,
       userId,
       allowed.has('reports:all_branches'),
       request.branchId,
@@ -91,76 +116,19 @@ export class ReportsService {
       scope,
       [...allowed].sort(),
     ]);
-    const hit = this.cache.get(key);
-    if (hit && hit.expiresAt > now.getTime()) {
-      return { ...hit.value, meta: { ...hit.value.meta, cached: true } };
-    }
-    const pending = this.inFlight.get(key);
-    if (pending) return await pending;
-
-    const run = this.build(period, scope, allowed, now)
-      .then((value) => {
-        if (this.cache.size >= MAX_CACHE_ENTRIES) {
-          const oldest = this.cache.keys().next().value;
-          if (oldest !== undefined) this.cache.delete(oldest);
-        }
-        this.cache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
-        return value;
-      })
-      .finally(() => this.inFlight.delete(key));
-    this.inFlight.set(key, run);
-    return await run;
+    const { value, source } = await this.cache.getOrCompute(key, () =>
+      this.build(period, scope, allowed, now),
+    );
+    return source === 'cache' ? { ...value, meta: { ...value.meta, cached: true } } : value;
   }
 
   // ---------- access ----------
 
   private async allowedPermissions(userId: string): Promise<Set<PermissionKey>> {
-    const keys: PermissionKey[] = [
-      'report_sales:read',
-      'report_collections:read',
-      'report_profit:read',
-      'report_receivables:read',
-      'report_inventory:read',
-      'reports:all_branches',
-      'orders:read',
-      'approvals:act',
-      'transactions:read',
-    ];
     const checks = await Promise.all(
-      keys.map(async (k) => [k, await this.access.can(userId, k)] as const),
+      OVERVIEW_PERMISSIONS.map(async (k) => [k, await this.access.can(userId, k)] as const),
     );
     return new Set(checks.filter(([, ok]) => ok).map(([k]) => k));
-  }
-
-  /**
-   * Who sees which branch: users with `reports:all_branches` see the whole company (or one
-   * branch they pick); everyone else is pinned to their own branch. A user with no branch and
-   * no company-wide right sees nothing rather than everything.
-   */
-  private async resolveScope(
-    userId: string,
-    allBranches: boolean,
-    requested: string | undefined,
-  ): Promise<ReportScope> {
-    if (allBranches) {
-      if (requested) {
-        const [b] = await this.db
-          .select({ id: branches.id, name: branches.name })
-          .from(branches)
-          .where(eq(branches.id, requested))
-          .limit(1);
-        if (b) return { kind: 'branch', branchId: b.id, branchName: b.name };
-      }
-      return { kind: 'all' };
-    }
-    const [row] = await this.db
-      .select({ branchId: users.branchId, name: branches.name })
-      .from(users)
-      .leftJoin(branches, eq(branches.id, users.branchId))
-      .where(eq(users.id, userId))
-      .limit(1);
-    if (!row?.branchId) return { kind: 'none' };
-    return { kind: 'branch', branchId: row.branchId, branchName: row.name ?? 'Your branch' };
   }
 
   // ---------- assembly ----------
@@ -177,7 +145,7 @@ export class ReportsService {
   private async build(
     period: ResolvedPeriod,
     scope: ReportScope,
-    allowed: Set<PermissionKey>,
+    allowed: ReadonlySet<PermissionKey>,
     now: Date,
   ): Promise<BusinessOverview> {
     const currency = await this.baseCurrency();
@@ -342,12 +310,7 @@ export class ReportsService {
       scope: {
         kind: scope.kind,
         branchId: scope.kind === 'branch' ? scope.branchId : null,
-        label:
-          scope.kind === 'all'
-            ? 'All branches'
-            : scope.kind === 'branch'
-              ? scope.branchName
-              : 'No branch assigned',
+        label: scopeLabel(scope),
       },
       compare: { mode: period.compare, label: COMPARE_LABELS[period.compare] },
       lastActivityDate,
@@ -582,7 +545,7 @@ export class ReportsService {
   /** Items needing action, each shown only to people who can act on it. */
   private async attention(
     scope: ReportScope,
-    allowed: Set<PermissionKey>,
+    allowed: ReadonlySet<PermissionKey>,
   ): Promise<AttentionItem[]> {
     const items: AttentionItem[] = [];
     const [orderCounts, approvals, kra] = await Promise.all([

@@ -119,7 +119,7 @@ export async function acknowledgeLateAction(raw: unknown) {
   return await runDelivery('deliveries:dispatch', async (ctx) => {
     const i = objectOf(raw);
     return dataOf(await getContainer().deliverySla.acknowledge({ companyId: ctx.companyId, userId: ctx.userId }, idOf(i.deliveryId, 'delivery'), { note: i.note }));
-  }, ['/admin/delivery/late']);
+  }, ['/admin/reports/late-deliveries']);
 }
 
 /** Turns the shop's choice of delivery time on or off; off means dispatch plans every delivery. */

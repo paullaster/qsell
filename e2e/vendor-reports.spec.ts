@@ -6,7 +6,7 @@ test.describe('vendor reports', () => {
   test('commitments, performance, purchases and the watch list open, fit the screen and respond to a date range', async ({ page }) => {
     test.slow();
     invoiceTool('prepare');
-    await open(page, '/admin/vendors/reports', 'Vendor reports');
+    await open(page, '/admin/reports/vendor-reports', 'Vendor reports');
     await noNativeSelect(page);
     await noHorizontalScroll(page);
 

@@ -13,10 +13,11 @@ import {
   Delta,
   EmptyNote,
   Kpi,
+  MoreLink,
   SectionFailed,
 } from '@/components/admin/overview/parts';
-import { OverviewFrame, type FilterState } from '@/components/admin/overview/OverviewFrame';
-import { TrendChart } from '@/components/admin/overview/TrendChart';
+import { FilterBar, type FilterState } from '@/components/reports/kit/FilterBar';
+import { SalesTrend } from '@/components/admin/overview/SalesTrend';
 import {
   formatCount,
   formatDateRange,
@@ -24,7 +25,15 @@ import {
   formatLocalDate,
   formatMoney,
   formatMoneyShort,
-} from '@/components/admin/overview/format';
+} from '@/lib/reports/format';
+
+/** What the margin figure is based on, in one sentence. */
+function marginNote(coveragePct: number | null): string {
+  if (coveragePct === null) return 'No sales in this period.';
+  if (coveragePct < 100)
+    return `Based on the ${String(coveragePct)}% of sales that have a recorded cost.`;
+  return 'Based on all sales.';
+}
 
 function filtersFor(data: BusinessOverview, selectedBranchId: string): FilterState {
   const { meta } = data;
@@ -32,7 +41,13 @@ function filtersFor(data: BusinessOverview, selectedBranchId: string): FilterSta
   return {
     preset: p.preset,
     compare: meta.compare.mode,
-    branchId: selectedBranchId,
+    branch:
+      selectedBranchId === ''
+        ? null
+        : {
+            id: selectedBranchId,
+            name: data.branches?.find((b) => b.id === selectedBranchId)?.name ?? meta.scope.label,
+          },
     fromDate: p.fromDate,
     toDate: p.toDate,
     rangeLabel: formatDateRange(p.fromDate, p.toDate),
@@ -44,7 +59,7 @@ function filtersFor(data: BusinessOverview, selectedBranchId: string): FilterSta
       label: PERIOD_PRESET_LABELS[value],
     })),
     compareModes: COMPARE_MODES.map((value) => ({ value, label: COMPARE_LABELS[value] })),
-    branches: data.branches,
+    canPickBranch: data.branches !== null && data.branches.length > 1,
   };
 }
 
@@ -65,19 +80,34 @@ export function BusinessOverviewView({
 
   const placed = data.sales ? data.sales.flow.reduce((s, f) => s + f.count, 0) : 0;
   const noActivity = data.sales !== null && placed === 0;
-  const jump = meta.lastActivityDate
-    ? `?${new URLSearchParams({
-        period: 'custom',
-        from: shiftDate(meta.lastActivityDate, -29),
-        to: meta.lastActivityDate,
-        compare: meta.compare.mode,
-        ...(selectedBranchId ? { branch: selectedBranchId } : {}),
-      }).toString()}`
-    : null;
+  const last = meta.lastActivityDate;
+  const jump =
+    last === null
+      ? null
+      : `?${new URLSearchParams({
+          period: 'custom',
+          from: shiftDate(last, -29),
+          to: last,
+          compare: meta.compare.mode,
+          ...(selectedBranchId === '' ? {} : { branch: selectedBranchId }),
+        }).toString()}`;
+
+  // Opening a full report keeps what is on this screen: the same period, comparison and branch.
+  const reportHref = (code: string): string => {
+    const query = new URLSearchParams({
+      period: meta.period.preset,
+      compare: meta.compare.mode,
+      ...(meta.period.preset === 'custom'
+        ? { from: meta.period.fromDate, to: meta.period.toDate }
+        : {}),
+      ...(selectedBranchId === '' ? {} : { branch: selectedBranchId }),
+    });
+    return `/admin/reports/${code}?${query.toString()}`;
+  };
 
   return (
-    <OverviewFrame filters={filtersFor(data, selectedBranchId)}>
-      {meta.period.notice ? (
+    <FilterBar filters={filtersFor(data, selectedBranchId)}>
+      {meta.period.notice !== null && meta.period.notice !== '' ? (
         <p
           role="status"
           className="rounded-lg border border-amber-700 bg-amber-50 px-3 py-2 text-sm text-amber-900"
@@ -91,11 +121,13 @@ export function BusinessOverviewView({
           Your account is not assigned to a branch, so there is nothing to show. Ask an
           administrator to assign you to a branch or give you access to all branches.
         </EmptyNote>
-      ) : meta.sections.length === 0 ? (
+      ) : null}
+
+      {meta.scope.kind !== 'none' && meta.sections.length === 0 ? (
         <EmptyNote>
           Your role does not include any report permissions, so no figures can be shown for{' '}
-          {meta.period.fromDate} to {meta.period.toDate}. Ask an administrator to grant the
-          report permissions you need (Reports &amp; Insights).
+          {meta.period.fromDate} to {meta.period.toDate}. Ask an administrator to grant the report
+          permissions you need (Reports &amp; Insights).
         </EmptyNote>
       ) : null}
 
@@ -115,16 +147,16 @@ export function BusinessOverviewView({
       {noActivity ? (
         <section className="space-y-2 rounded-xl border border-dashed border-line bg-surface-raised p-4 sm:p-5">
           <h2 className="text-sm font-bold text-fg-strong">No orders were placed in this period</h2>
-          {meta.lastActivityDate && jump ? (
+          {last !== null && jump !== null ? (
             <>
               <p className="text-sm text-fg-muted">
-                The latest order was on {formatLocalDate(meta.lastActivityDate)}.
+                The latest order was on {formatLocalDate(last)}.
               </p>
               <Link
                 href={jump}
                 className="inline-flex min-h-11 items-center rounded-lg bg-indigo-600 px-4 text-sm font-semibold text-white hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-indigo-500"
               >
-                Show the 30 days up to {formatLocalDate(meta.lastActivityDate)}
+                Show the 30 days up to {formatLocalDate(last)}
               </Link>
             </>
           ) : (
@@ -156,6 +188,7 @@ export function BusinessOverviewView({
         <Card
           id="sales-heading"
           title="Sales"
+          more={{ href: reportHref('sales-summary'), label: 'See the full report' }}
           definition="Orders placed in the period that were paid, are being paid, or are on credit. Abandoned checkouts, cancelled, failed and refunded orders are not counted."
         >
           {failed('sales') || !data.sales ? (
@@ -193,7 +226,7 @@ export function BusinessOverviewView({
               </div>
 
               {data.sales.orders.current > 0 ? (
-                <TrendChart
+                <SalesTrend
                   trend={data.sales.trend}
                   currency={cur}
                   compareLabel={`${meta.compare.label} (${prevLabel})`}
@@ -256,9 +289,14 @@ export function BusinessOverviewView({
 
               {data.sales.byBranch ? (
                 <div className="space-y-2">
-                  <h3 className="text-xs font-bold tracking-wide text-fg-subtle uppercase">
-                    Sales by branch
-                  </h3>
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-xs font-bold tracking-wide text-fg-subtle uppercase">
+                      Sales by branch
+                    </h3>
+                    <MoreLink
+                      more={{ href: reportHref('sales-by-branch'), label: 'All branches' }}
+                    />
+                  </div>
                   <div className="overflow-x-auto rounded-lg border border-line">
                     <table className="w-full min-w-[28rem] text-left text-sm">
                       <caption className="sr-only">Sales, orders and change by branch</caption>
@@ -307,9 +345,14 @@ export function BusinessOverviewView({
 
               {data.sales.topProducts.length > 0 ? (
                 <div className="space-y-2">
-                  <h3 className="text-xs font-bold tracking-wide text-fg-subtle uppercase">
-                    Best sellers by revenue
-                  </h3>
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-xs font-bold tracking-wide text-fg-subtle uppercase">
+                      Best sellers by revenue
+                    </h3>
+                    <MoreLink
+                      more={{ href: reportHref('sales-by-product'), label: 'All products' }}
+                    />
+                  </div>
                   <ol className="divide-y divide-line rounded-lg border border-line">
                     {data.sales.topProducts.map((p, i) => (
                       <li
@@ -339,101 +382,107 @@ export function BusinessOverviewView({
           <Card
             id="collections-heading"
             title="Money collected"
+            more={{ href: reportHref('money-collected'), label: 'See the full report' }}
             definition="Payments confirmed in the period through your payment methods, dated by when each payment was confirmed."
           >
-            {failed('collections') || !data.collections ? (
-              <SectionFailed name="Money collected" />
-            ) : !data.collections.configured ? (
-              <div className="space-y-2 rounded-lg border border-dashed border-line px-3 py-4 text-sm text-fg-muted">
-                <p>No payment method is set up yet, so there is nothing to collect through.</p>
-                <Link
-                  href={data.collections.setupHref}
-                  className="inline-flex min-h-11 items-center font-semibold text-indigo-400 underline-offset-2 hover:underline"
-                >
-                  Set up a payment method
-                </Link>
-              </div>
-            ) : (
-              <>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <Kpi
-                    label="Collected"
-                    value={short(data.collections.collected.current)}
-                    fullValue={m(data.collections.collected.current)}
-                  >
-                    <Delta value={data.collections.collected} previousLabel={prevLabel} />
-                  </Kpi>
-                  <Kpi
-                    label="Collection rate"
-                    value={
-                      data.collections.collectionRatePct === null
-                        ? '—'
-                        : `${data.collections.collectionRatePct}%`
-                    }
-                    note="Collected ÷ sales in the same period. Can pass 100% when earlier orders are paid now."
-                  />
-                </div>
-                {data.collections.inFlight.pendingCount > 0 ||
-                data.collections.inFlight.failedCount > 0 ? (
-                  <p className="rounded-lg border border-line bg-surface px-3 py-2 text-xs text-fg-muted">
-                    {data.collections.inFlight.pendingCount > 0
-                      ? `${formatCount(data.collections.inFlight.pendingCount)} payment${data.collections.inFlight.pendingCount === 1 ? '' : 's'} (${m(data.collections.inFlight.pendingAmount)}) started but not confirmed. `
-                      : ''}
-                    {data.collections.inFlight.failedCount > 0
-                      ? `${formatCount(data.collections.inFlight.failedCount)} payment attempt${data.collections.inFlight.failedCount === 1 ? '' : 's'} failed, were cancelled or expired.`
-                      : ''}
-                  </p>
-                ) : null}
-                <ul className="space-y-3">
-                  {data.collections.methods.map((method) => (
-                    <li key={method.providerCode} className="space-y-1">
-                      <div className="flex items-baseline justify-between gap-2 text-sm">
-                        <span className="min-w-0 truncate font-medium text-fg-strong">
-                          {method.name}
-                        </span>
-                        <span className="shrink-0 text-fg-strong tabular-nums">
-                          {m(method.amount)}
-                        </span>
-                      </div>
-                      <div
-                        className="h-2 rounded-full bg-surface-sunken"
-                        role="meter"
-                        aria-label={`${method.name} share of money collected`}
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                        aria-valuenow={method.sharePct}
-                        aria-valuetext={`${method.sharePct}%`}
-                      >
+            {(() => {
+              if (failed('collections') || !data.collections)
+                return <SectionFailed name="Money collected" />;
+              if (!data.collections.configured)
+                return (
+                  <div className="space-y-2 rounded-lg border border-dashed border-line px-3 py-4 text-sm text-fg-muted">
+                    <p>No payment method is set up yet, so there is nothing to collect through.</p>
+                    <Link
+                      href={data.collections.setupHref}
+                      className="inline-flex min-h-11 items-center font-semibold text-indigo-400 underline-offset-2 hover:underline"
+                    >
+                      Set up a payment method
+                    </Link>
+                  </div>
+                );
+              return (
+                <>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <Kpi
+                      label="Collected"
+                      value={short(data.collections.collected.current)}
+                      fullValue={m(data.collections.collected.current)}
+                    >
+                      <Delta value={data.collections.collected} previousLabel={prevLabel} />
+                    </Kpi>
+                    <Kpi
+                      label="Collection rate"
+                      value={
+                        data.collections.collectionRatePct === null
+                          ? '—'
+                          : `${data.collections.collectionRatePct}%`
+                      }
+                      note="Collected ÷ sales in the same period. Can pass 100% when earlier orders are paid now."
+                    />
+                  </div>
+                  {data.collections.inFlight.pendingCount > 0 ||
+                  data.collections.inFlight.failedCount > 0 ? (
+                    <p className="rounded-lg border border-line bg-surface px-3 py-2 text-xs text-fg-muted">
+                      {data.collections.inFlight.pendingCount > 0
+                        ? `${formatCount(data.collections.inFlight.pendingCount)} payment${data.collections.inFlight.pendingCount === 1 ? '' : 's'} (${m(data.collections.inFlight.pendingAmount)}) started but not confirmed. `
+                        : ''}
+                      {data.collections.inFlight.failedCount > 0
+                        ? `${formatCount(data.collections.inFlight.failedCount)} payment attempt${data.collections.inFlight.failedCount === 1 ? '' : 's'} failed, were cancelled or expired.`
+                        : ''}
+                    </p>
+                  ) : null}
+                  <ul className="space-y-3">
+                    {data.collections.methods.map((method) => (
+                      <li key={method.providerCode} className="space-y-1">
+                        <div className="flex items-baseline justify-between gap-2 text-sm">
+                          <span className="min-w-0 truncate font-medium text-fg-strong">
+                            {method.name}
+                          </span>
+                          <span className="shrink-0 text-fg-strong tabular-nums">
+                            {m(method.amount)}
+                          </span>
+                        </div>
                         <div
-                          className="h-2 rounded-full bg-indigo-500"
-                          style={{ width: `${method.sharePct}%` }}
-                        />
-                      </div>
-                      <p className="text-[11px] text-fg-subtle">
-                        {method.sharePct}% · {formatCount(method.count)} payment
-                        {method.count === 1 ? '' : 's'}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-                {data.collections.unconfigured.count > 0 ? (
-                  <p className="rounded-lg border border-amber-700 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                    {m(data.collections.unconfigured.amount)} (
-                    {formatCount(data.collections.unconfigured.count)} payment
-                    {data.collections.unconfigured.count === 1 ? '' : 's'}) came through methods
-                    that are no longer set up ({data.collections.unconfigured.providers.join(', ')}
-                    ). It is included in the total above.
-                  </p>
-                ) : null}
-                {data.collections.tenders.count > 0 ? (
-                  <p className="text-xs text-fg-muted">
-                    Not included above: {m(data.collections.tenders.amount)} paid with gift cards
-                    and loyalty points ({formatCount(data.collections.tenders.count)} redemption
-                    {data.collections.tenders.count === 1 ? '' : 's'}).
-                  </p>
-                ) : null}
-              </>
-            )}
+                          className="h-2 rounded-full bg-surface-sunken"
+                          role="meter"
+                          aria-label={`${method.name} share of money collected`}
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          aria-valuenow={method.sharePct}
+                          aria-valuetext={`${method.sharePct}%`}
+                        >
+                          <div
+                            className="h-2 rounded-full bg-indigo-500"
+                            style={{ width: `${method.sharePct}%` }}
+                          />
+                        </div>
+                        <p className="text-[11px] text-fg-subtle">
+                          {method.sharePct}% · {formatCount(method.count)} payment
+                          {method.count === 1 ? '' : 's'}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                  {data.collections.unconfigured.count > 0 ? (
+                    <p className="rounded-lg border border-amber-700 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                      {m(data.collections.unconfigured.amount)} (
+                      {formatCount(data.collections.unconfigured.count)} payment
+                      {data.collections.unconfigured.count === 1 ? '' : 's'}) came through methods
+                      that are no longer set up (
+                      {data.collections.unconfigured.providers.join(', ')}
+                      ). It is included in the total above.
+                    </p>
+                  ) : null}
+                  {data.collections.tenders.count > 0 ? (
+                    <p className="text-xs text-fg-muted">
+                      Not included above: {m(data.collections.tenders.amount)} paid with gift cards
+                      and loyalty points ({formatCount(data.collections.tenders.count)} redemption
+                      {data.collections.tenders.count === 1 ? '' : 's'}).
+                    </p>
+                  ) : null}
+                </>
+              );
+            })()}
           </Card>
         ) : null}
 
@@ -441,6 +490,7 @@ export function BusinessOverviewView({
           <Card
             id="profit-heading"
             title="Gross profit"
+            more={{ href: reportHref('gross-margin'), label: 'See the full report' }}
             definition="Sales minus what the products cost when they were sold. Only items with a recorded cost are counted."
           >
             {failed('profit') || !data.profit ? (
@@ -457,13 +507,7 @@ export function BusinessOverviewView({
                 <Kpi
                   label="Margin"
                   value={data.profit.marginPct === null ? '—' : `${data.profit.marginPct}%`}
-                  note={
-                    data.profit.costCoveragePct === null
-                      ? 'No sales in this period.'
-                      : data.profit.costCoveragePct < 100
-                        ? `Based on the ${data.profit.costCoveragePct}% of sales that have a recorded cost.`
-                        : 'Based on all sales.'
-                  }
+                  note={marginNote(data.profit.costCoveragePct)}
                 />
               </div>
             )}
@@ -474,63 +518,66 @@ export function BusinessOverviewView({
           <Card
             id="receivables-heading"
             title="Owed by customers"
+            more={{ href: reportHref('receivables-ageing'), label: 'See the full report' }}
             definition="Unpaid credit invoices right now (not limited to the period). Overdue means the due date has passed."
           >
-            {failed('receivables') || !data.receivables ? (
-              <SectionFailed name="Owed by customers" />
-            ) : data.receivables.outstanding === 0 ? (
-              <EmptyNote>No customer owes you anything.</EmptyNote>
-            ) : (
-              <>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <Kpi
-                    label="Outstanding"
-                    value={short(data.receivables.outstanding)}
-                    fullValue={m(data.receivables.outstanding)}
-                  />
-                  <Kpi
-                    label="Overdue"
-                    value={short(data.receivables.overdue)}
-                    fullValue={m(data.receivables.overdue)}
-                    note={`${formatCount(data.receivables.overdueCustomers)} customer${data.receivables.overdueCustomers === 1 ? '' : 's'}`}
-                  />
-                </div>
-                {data.receivables.overdue > 0 ? (
-                  <dl className="grid grid-cols-2 gap-2 text-xs">
-                    {data.receivables.aging.map((a) => (
-                      <div
-                        key={a.label}
-                        className="rounded-lg border border-line bg-surface px-3 py-2"
-                      >
-                        <dt className="text-fg-subtle">{a.label}</dt>
-                        <dd className="font-medium text-fg-strong tabular-nums">{m(a.amount)}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                ) : null}
-                <div className="space-y-2">
-                  <h3 className="text-xs font-bold tracking-wide text-fg-subtle uppercase">
-                    Who owes the most overdue
-                  </h3>
-                  <ol className="divide-y divide-line rounded-lg border border-line">
-                    {data.receivables.topDebtors.map((d) => (
-                      <li
-                        key={d.customerId}
-                        className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-3 py-2 text-sm"
-                      >
-                        <span className="min-w-0 flex-1 truncate text-fg-strong">{d.name}</span>
-                        <span className="shrink-0 text-xs text-fg-muted">
-                          {m(d.outstanding)} owed
-                        </span>
-                        <span className="shrink-0 font-medium text-fg-strong tabular-nums">
-                          {m(d.overdue)} overdue
-                        </span>
-                      </li>
-                    ))}
-                  </ol>
-                </div>
-              </>
-            )}
+            {(() => {
+              if (failed('receivables') || !data.receivables)
+                return <SectionFailed name="Owed by customers" />;
+              if (data.receivables.outstanding === 0)
+                return <EmptyNote>No customer owes you anything.</EmptyNote>;
+              return (
+                <>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <Kpi
+                      label="Outstanding"
+                      value={short(data.receivables.outstanding)}
+                      fullValue={m(data.receivables.outstanding)}
+                    />
+                    <Kpi
+                      label="Overdue"
+                      value={short(data.receivables.overdue)}
+                      fullValue={m(data.receivables.overdue)}
+                      note={`${formatCount(data.receivables.overdueCustomers)} customer${data.receivables.overdueCustomers === 1 ? '' : 's'}`}
+                    />
+                  </div>
+                  {data.receivables.overdue > 0 ? (
+                    <dl className="grid grid-cols-2 gap-2 text-xs">
+                      {data.receivables.aging.map((a) => (
+                        <div
+                          key={a.label}
+                          className="rounded-lg border border-line bg-surface px-3 py-2"
+                        >
+                          <dt className="text-fg-subtle">{a.label}</dt>
+                          <dd className="font-medium text-fg-strong tabular-nums">{m(a.amount)}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  ) : null}
+                  <div className="space-y-2">
+                    <h3 className="text-xs font-bold tracking-wide text-fg-subtle uppercase">
+                      Who owes the most overdue
+                    </h3>
+                    <ol className="divide-y divide-line rounded-lg border border-line">
+                      {data.receivables.topDebtors.map((d) => (
+                        <li
+                          key={d.customerId}
+                          className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-3 py-2 text-sm"
+                        >
+                          <span className="min-w-0 flex-1 truncate text-fg-strong">{d.name}</span>
+                          <span className="shrink-0 text-xs text-fg-muted">
+                            {m(d.outstanding)} owed
+                          </span>
+                          <span className="shrink-0 font-medium text-fg-strong tabular-nums">
+                            {m(d.overdue)} overdue
+                          </span>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                </>
+              );
+            })()}
           </Card>
         ) : null}
 
@@ -538,6 +585,7 @@ export function BusinessOverviewView({
           <Card
             id="inventory-heading"
             title="Stock health"
+            more={{ href: reportHref('low-stock'), label: 'See the full report' }}
             definition="Active products right now, company-wide. Available stock is on hand minus what is reserved for open orders."
           >
             {failed('inventory') || !data.inventory ? (
@@ -568,55 +616,31 @@ export function BusinessOverviewView({
 
       <details className="rounded-xl border border-line bg-surface px-4 py-3 text-xs text-fg-muted">
         <summary className="min-h-8 cursor-pointer py-1 font-semibold text-fg">
-          How these numbers were produced
+          How this is counted
         </summary>
         <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2">
           <div>
-            <dt className="font-semibold text-fg">Read at</dt>
-            <dd>{meta.asOf} (UTC)</dd>
+            <dt className="font-semibold text-fg">Period</dt>
+            <dd>{formatDateRange(meta.period.fromDate, meta.period.toDate)}</dd>
           </div>
           <div>
-            <dt className="font-semibold text-fg">Period (UTC)</dt>
-            <dd>
-              {meta.period.from} to {meta.period.to} (end not included)
-            </dd>
+            <dt className="font-semibold text-fg">Compared with</dt>
+            <dd>{formatDateRange(meta.period.previousFromDate, meta.period.previousToDate)}</dd>
           </div>
           <div>
-            <dt className="font-semibold text-fg">Compared with (UTC)</dt>
-            <dd>
-              {meta.period.previousFrom} to {meta.period.previousTo}
-            </dd>
+            <dt className="font-semibold text-fg">Days run</dt>
+            <dd>Midnight to midnight, {meta.period.timeZone}</dd>
           </div>
           <div>
-            <dt className="font-semibold text-fg">Days are cut in</dt>
-            <dd>{meta.period.timeZone}</dd>
-          </div>
-          <div>
-            <dt className="font-semibold text-fg">Scope</dt>
+            <dt className="font-semibold text-fg">Branches</dt>
             <dd>{meta.scope.label}</dd>
           </div>
           <div>
             <dt className="font-semibold text-fg">Currency</dt>
             <dd>{cur}</dd>
           </div>
-          <div>
-            <dt className="font-semibold text-fg">Definitions version</dt>
-            <dd>{meta.definitionsVersion}</dd>
-          </div>
-          <div>
-            <dt className="font-semibold text-fg">Freshness</dt>
-            <dd>
-              {meta.cached
-                ? 'Shared with a read from the last 15 seconds.'
-                : 'Read live from the database.'}
-            </dd>
-          </div>
         </dl>
-        <p className="mt-3">
-          The page address holds the period, comparison and branch. Open it again to repeat this
-          view; figures change only if records changed since.
-        </p>
       </details>
-    </OverviewFrame>
+    </FilterBar>
   );
 }

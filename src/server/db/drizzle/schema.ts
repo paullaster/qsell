@@ -12316,3 +12316,39 @@ export const deliveryTextSettings = pgTable(
     check('delivery_text_settings_quiet_chk', sql`(${t.quietFromMinute} is null and ${t.quietUntilMinute} is null) or (${t.quietFromMinute} between 0 and 1439 and ${t.quietUntilMinute} between 0 and 1439 and ${t.quietFromMinute} <> ${t.quietUntilMinute})`),
 ],
 );
+
+/**
+ * Who ran or downloaded a sensitive report, and when. Written by the report runner (sensitive reports) and the export
+ * service (every download). Append-only: a row is never changed or removed, so the answer to "who took this file" cannot be
+ * edited away. Parameters hold only the typed values a report accepts (days, ids, choices), never personal data.
+ */
+export const reportAudit = pgTable(
+  'report_audit',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companySettings.id, { onDelete: 'restrict' }),
+    userId: text('user_id').notNull(),
+    reportCode: text('report_code').notNull(),
+    action: text('action').$type<'run' | 'export'>().notNull(),
+    params: jsonb('params').$type<Record<string, unknown>>().notNull().default({}),
+    /** csv, xlsx or pdf for a download; empty for a run. */
+    format: text('format'),
+    rowCount: integer('row_count'),
+    truncated: boolean('truncated').notNull().default(false),
+    /** SHA-256 of the file handed over, so a file found later can be matched to the download that made it. */
+    contentHash: text('content_hash'),
+    definitionsVersion: text('definitions_version').notNull(),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('report_audit_company_time_idx').on(t.companyId, t.occurredAt),
+    index('report_audit_report_time_idx').on(t.companyId, t.reportCode, t.occurredAt),
+    index('report_audit_user_time_idx').on(t.companyId, t.userId, t.occurredAt),
+    check('report_audit_action_chk', sql`${t.action} in ('run', 'export')`),
+    check('report_audit_format_chk', sql`${t.format} is null or ${t.format} in ('csv', 'xlsx', 'pdf')`),
+    check('report_audit_export_chk', sql`${t.action} <> 'export' or (${t.format} is not null and ${t.contentHash} is not null)`),
+  ],
+);
+export type ReportAuditRow = typeof reportAudit.$inferSelect;

@@ -12,13 +12,13 @@ test.describe('delivery performance', () => {
     try {
       const orderNumber = await placeDeliveredOrder(page);
       const number = deliveryTool('ready', orderNumber).number ?? '';
-      await open(page, '/admin/delivery/performance', 'Delivery performance');
+      await open(page, '/admin/reports/delivery-performance', 'Delivery performance');
       await noNativeSelect(page);
       const overall = page.getByRole('region', { name: 'Overall' });
       await expect(overall).toBeVisible({ timeout: 30_000 });
 
       expect(deliveryTool('deliver-promised', number, 'late').delivered).toBe(number);
-      await open(page, '/admin/delivery/performance', 'Delivery performance');
+      await open(page, '/admin/reports/delivery-performance', 'Delivery performance');
       await expect(overall).toContainText('Delivered on time', { timeout: 30_000 });
       await expect(overall).toContainText(/\d+ of \d+ promised a window/);
       await expect(page.getByRole('region', { name: 'Delivery times' })).toContainText(`Performance ${number}`);

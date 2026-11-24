@@ -115,7 +115,7 @@ graph TD
 - The master audit log: Each row represents one atomic posting event, recording Register No, Starting/Ending Entry ID, Posting Date, User ID, Source Document, and Reason Code.
 - **Reverse Transaction Action**: Reverses an entire register with an equal-and-opposite posting in one click with mandatory reason capture.
 
-#### 5. Trial Balance (`/admin/finance/trial-balance`)
+#### 5. Trial Balance (`/admin/reports/trial-balance`)
 
 - Real-time trial balance report: Filter by Date Range, Dimension (Branch/Cost Center), or Account Group. Shows Opening Balance, Period Net Movement (Debits/Credits), and Closing Balance. Total Debits strictly equal Total Credits.
 
@@ -154,7 +154,7 @@ graph TD
   - Multi-tier refund request workflow (Request $\rightarrow$ Verification & Evidence $\rightarrow$ Approval $\rightarrow$ Disbursement).
   - Anti-Fraud Limits: Sets maximum daily refund amount per customer phone number, per cashier, and per branch.
 
-#### 12. Receivables Ageing (`/admin/finance/receivables/ageing`)
+#### 12. Receivables Ageing (`/admin/reports/receivables-ageing`)
 
 - Debtor analysis dashboard: Buckets outstanding customer debt into _Current_, _1-30 Days_, _31-60 Days_, _61-90 Days_, and _90+ Days_. Drill down to individual overdue invoices to trigger dunning notices or pause credit accounts.
 

@@ -123,3 +123,15 @@ Every module, sub-module, screen, and workflow in the application must have comp
    - Implementor Checklist & Go-Live Verification (verification steps, common client pitfalls, test transactions).
 4. **Permanent definition of done**: A feature or screen change is incomplete until its corresponding implementor guide in `docs/implementor-guide/` has been updated and verified against the live navigation tree.
 
+
+## 13. Nothing here may look or read as machine-made (permanent)
+
+Everything on this project, screens, words, documents, tests and commit messages, must read as if a careful person wrote it for another person. There is no AI-looking filler, ever. This applies to every person and every agent, whichever tool or model they run on.
+
+1. **Every word on screen earns its place for the person using it.** Before adding a label, badge, caption, banner or sentence, ask what that person does differently because of it. If the answer is nothing, it does not go in. Internal facts (definition or version labels, tier or cache words such as "Live", ids, codes, request details) belong in logs, exports and implementor documents, never on a screen people work in.
+2. **Say a thing once, where it is needed.** Do not repeat what the screen already shows (the same time, scope or title in two places). No explanatory paragraphs under a title that restate it. Longer explanations of how a figure is counted sit behind a quiet "How this is counted" control, not in the open.
+3. **Plain, short, specific language.** Write the way a colleague would say it: "Sales by product", not "A comprehensive view of product performance". No marketing tone, no slogans, no filler such as "seamless", "powerful", "insights", "leverage", "unlock", no exclamation marks, no emoji, no "Please note that". Never address the reader as an audience ("Here is your...").
+4. **Honest states, not decoration.** A check that passed is a small, calm mark; only a failure is loud. No success banners for ordinary results, no congratulations, no empty-state pep talks. Say what is wrong and what to do about it, in one sentence.
+5. **No machine habits in text or code.** Do not produce symmetrical lists of three, stock openings and closings, summary paragraphs that repeat the above, hedging phrases, or comments that narrate the obvious. Comments say only why. Commit messages and pull requests describe the change in plain words, as a person on the team would.
+6. **Real data, never placeholder showpieces.** No invented names, figures, quotes, testimonials or demo content on a screen a customer can reach. Demonstration data lives only in the style guide, and says so.
+7. **Review against this rule.** A change is not finished until its screens have been read for anything a person would find pointless, odd or robotic, and that has been removed. If you find existing work that breaks this rule, fix it in the same change.

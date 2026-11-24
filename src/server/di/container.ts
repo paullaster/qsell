@@ -48,6 +48,16 @@ import {
 import { eq, sql } from 'drizzle-orm';
 import { companySettings, customers, salesQuoteSettings } from '@/server/db/drizzle/schema';
 import { ReportsService } from '@/server/domains/reports/service';
+import { ReportRunner, registerExecutor } from '@/server/domains/reports/engine/run';
+import { ReportAuditService } from '@/server/domains/reports/audit/report-audit-service';
+import { ReportExportService } from '@/server/domains/reports/export/export-service';
+import { overviewExecutor } from '@/server/domains/reports/executors/overview';
+import { collectionsExecutors } from '@/server/domains/reports/executors/collections';
+import { financialExecutors } from '@/server/domains/reports/executors/financial';
+import { inventoryExecutors } from '@/server/domains/reports/executors/inventory';
+import { salesExecutors } from '@/server/domains/reports/executors/sales';
+import { receivablesAgeingExecutor } from '@/server/domains/reports/executors/receivables-ageing';
+import { payablesAgeingExecutor } from '@/server/domains/reports/executors/payables-ageing';
 import { drizzleDb, kernelDb, type DrizzleDb } from '@/server/db/drizzle/client';
 import { CompanySettingsRepository } from '@/server/domains/company/repository';
 import { InvoiceService } from '@/server/domains/invoices/service';
@@ -238,6 +248,12 @@ export interface AppContainer {
   usersAdmin: UsersAdminRepository;
   accessControl: AccessControlService;
   reports: ReportsService;
+  /** The one door through which a registered report is produced (permissions, scope, cache, as-of, audit). */
+  reportRunner: ReportRunner;
+  /** Turns a registered report into a CSV, Excel or PDF file, records the download, and refuses what must not be exported. */
+  reportExport: ReportExportService;
+  /** Who ran or downloaded a sensitive report. */
+  reportAudit: ReportAuditService;
   dimensions: DimensionRepository;
   units: UnitRepository;
   unitWriter: UnitWriteService;
@@ -544,6 +560,7 @@ export function getContainer(): AppContainer {
   void seedAccessControl(accessControl.repo).catch((err: unknown) => {
     console.error('[access-control] seed failed', err);
   });
+  const reportsService = new ReportsService(drizzleDb, accessControl);
   const dimensions = new DimensionRepository(drizzleDb);
   const dimensionSets = new DimensionSetService(drizzleDb, dimensions);
   const units = new UnitRepository(drizzleDb);
@@ -610,6 +627,32 @@ export function getContainer(): AppContainer {
   const rgnService = new RgnService(drizzleDb, numbering, finance.fx);
   const invoicePortal = new SupplierInvoicePortalService(drizzleDb, numbering, vendorFiles, advancePayments, vendorNotifier);
   const payablesFx = new PayablesFxService(drizzleDb, finance.engine, finance.fx);
+  const payablesReports = new PayablesReportService(drizzleDb, finance.vendorLedger, payablesFx);
+  // Reports produced through the registry. Each executor calls the same service its screen calls.
+  const companyId = async (): Promise<string> => (await companySettings.ensureSeeded()).id;
+  const reportAudit = new ReportAuditService(drizzleDb, companyId);
+  const reportRunner = new ReportRunner({
+    access: accessControl,
+    audit: reportAudit,
+    executors: [
+      registerExecutor(overviewExecutor(reportsService)),
+      registerExecutor(receivablesAgeingExecutor({ companyId, ledger: finance.customerLedger })),
+      registerExecutor(payablesAgeingExecutor({ companyId, payables: payablesReports })),
+      ...salesExecutors({ db: drizzleDb }),
+      ...financialExecutors({ db: drizzleDb, companyId }),
+      ...inventoryExecutors({ db: drizzleDb }),
+      ...collectionsExecutors({ db: drizzleDb }),
+    ],
+  });
+  const reportExport = new ReportExportService({
+    runner: reportRunner,
+    access: accessControl,
+    audit: reportAudit,
+    companyName: async () => {
+      const company = await companySettings.ensureSeeded();
+      return company.tradingName.trim() === '' ? company.legalName : company.tradingName;
+    },
+  });
   const vendorInsights = new VendorInsightsService(drizzleDb);
   const vendorPaymentService = new VendorPaymentService(drizzleDb, numbering, finance.engine, finance.vendorLedger, advancePayments, finance.fx, vendorNotifier);
   vendorPaymentService.useDestinationOpener((blob) => vendorProfileService.openBankNumber(blob));
@@ -700,7 +743,10 @@ export function getContainer(): AppContainer {
     users,
     usersAdmin,
     accessControl,
-    reports: new ReportsService(drizzleDb, accessControl),
+    reports: reportsService,
+    reportRunner,
+    reportExport,
+    reportAudit,
     dimensions,
     units,
     unitWriter,
@@ -746,7 +792,7 @@ export function getContainer(): AppContainer {
     pettyCash: new PettyCashService(drizzleDb, numbering, finance.engine, finance.vendorLedger),
     creditMemos: new CreditMemoService(drizzleDb, finance.engine, finance.postingSetup, finance.vendorLedger, vendorNotifier),
     paymentRuns: new PaymentRunService(drizzleDb, numbering, vendorPaymentService, (blob) => vendorProfileService.openBankNumber(blob)),
-    payablesReports: new PayablesReportService(drizzleDb, finance.vendorLedger, payablesFx),
+    payablesReports,
     transactionLedger,
     transactionReconcile,
     paymentCallbacks,

@@ -83,6 +83,33 @@ export const PERMISSIONS = {
     category: 'Reports & Insights',
     description: 'Run reports across every branch instead of only your own branch',
   },
+  'report_financials:read': {
+    resource: 'report_financials',
+    action: 'read',
+    category: 'Reports & Insights',
+    description:
+      'Open the financial statements: income statement (profit and loss), balance sheet, statement of changes in equity and cash flow statement',
+  },
+  'reports:read': {
+    resource: 'reports',
+    action: 'read',
+    category: 'Reports & Insights',
+    description:
+      'Open the Reports hub and see the list of reports. Each report still needs its own permission to run.',
+  },
+  'reports:export': {
+    resource: 'reports',
+    action: 'export',
+    category: 'Reports & Insights',
+    description:
+      'Download a report as CSV, Excel or PDF. Every download is recorded with who took it and when. The report itself needs its own permission too.',
+  },
+  'reports:view_audit': {
+    resource: 'reports',
+    action: 'view_audit',
+    category: 'Reports & Insights',
+    description: 'See who ran and downloaded sensitive reports, and when',
+  },
 
   'orders:read': {
     resource: 'orders',

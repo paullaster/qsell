@@ -9,7 +9,7 @@ test.describe('the vendor scorecard', () => {
     const vendor = makeVendor(tag, 'approved');
     invoiceTool('scorecard-review', vendor.vendorId);
 
-    await open(page, '/admin/vendors/scorecards', 'Vendor scorecard');
+    await open(page, '/admin/reports/vendor-scorecards', 'Vendor scorecard');
     await noNativeSelect(page);
     await noHorizontalScroll(page);
     const card = page.getByRole('list', { name: 'Scorecards' }).getByRole('listitem').filter({ hasText: vendor.legalName }).first();

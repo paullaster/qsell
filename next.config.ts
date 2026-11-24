@@ -42,6 +42,21 @@ const nextConfig: NextConfig = {
       { protocol: 'http', hostname: '**' },
     ],
   },
+  // Reports all live under /admin/reports. The addresses they had in other modules still work.
+  redirects() {
+    const moved: [string, string][] = [
+      ['/admin/finance/trial-balance', '/admin/reports/trial-balance'],
+      ['/admin/finance/receivables/ageing', '/admin/reports/receivables-ageing'],
+      ['/admin/vendors/reports', '/admin/reports/vendor-reports'],
+      ['/admin/vendors/scorecards', '/admin/reports/vendor-scorecards'],
+      ['/admin/delivery/reports', '/admin/reports/delivery-report'],
+      ['/admin/delivery/performance', '/admin/reports/delivery-performance'],
+      ['/admin/delivery/late', '/admin/reports/late-deliveries'],
+      ['/admin/pricing/insights', '/admin/reports/pricing-insights'],
+      ['/admin/analytics', '/admin/reports/customer-analytics'],
+    ];
+    return moved.map(([source, destination]) => ({ source, destination, permanent: true }));
+  },
   headers() {
     return [
       {

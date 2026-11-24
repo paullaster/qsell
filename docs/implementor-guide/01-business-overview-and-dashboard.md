@@ -129,6 +129,9 @@ The Dashboard consists of five integrated functional sections:
 
 ---
 
+### Customer Analytics (`/admin/reports/customer-analytics`)
+- An older screen, behind the permission *Analytics: read*, that shows customer accounts and buying patterns for the whole business. It is **not** filtered by period or branch like the Business Overview, so its figures are an overall picture rather than a comparison. It is listed in the Reports hub as an existing report and is planned to be rebuilt with periods, branches and comparisons; until then do not use it to compare one month with another.
+
 ## 5. Granular Field-by-Field Reference
 
 | Control / Metric | Type | Purpose | Validation & Rules |

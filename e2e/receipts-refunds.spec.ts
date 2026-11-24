@@ -192,7 +192,7 @@ test.describe('invoices on the customer account', () => {
   test('an invoice can be downloaded and printed from the customer account', async ({ page }, testInfo) => {
     test.slow();
     const label = testInfo.project.name === 'phone' ? 'Phone' : 'Desktop';
-    await open(page, '/admin/finance/receivables/ageing', 'Receivables ageing');
+    await open(page, '/admin/reports/receivables-ageing', 'Receivables ageing');
     await page.getByRole('link', { name: `Invoiced buyer ${label}` }).first().click();
     // The customer account's statement opens a document with its own actions: open the invoice (its debit) first.
     await page.getByRole('button', { name: /^View details for .* debit$/ }).first().click();
