@@ -20,9 +20,9 @@ env:
   IMAGE_NAME: ghcr.io/${{ github.repository }}
   # Must match the length of the e2e job's strategy.matrix.shard list.
   # About 770 tests (385 on desktop, 385 on phone) take about 17 s each with the heavier delivery and rider ones, and one shard may run
-  # for 22 minutes (globalTimeout in playwright.config.ts): 10 shards of 77 tests ran out of the last minute. 14 shards leave about 55
+  # for 22 minutes (globalTimeout in playwright.config.ts): 10 shards of 77 tests ran out of the last minute. 20 shards leave about 39
   # tests (16 minutes) each. Add shards as the suite grows, before a shard runs out of time.
-  E2E_SHARDS: 14
+  E2E_SHARDS: 20
 
 jobs:
   validate:
@@ -87,7 +87,7 @@ jobs:
       # Let every shard finish so one failure shows all the failing specs, not just the first.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     services:
       postgres:
         image: postgres:18-alpine
