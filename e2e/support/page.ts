@@ -58,8 +58,10 @@ export const noNativeSelect = async (page: Page): Promise<void> => {
  * its buttons are wired up, and a click in that moment does nothing; trying again is what a person does.
  */
 export async function clickUntilVisible(trigger: Locator, target: Locator): Promise<void> {
+  const from = trigger.page().url();
   await expect(async () => {
-    await trigger.click();
+    // A click that did take effect moved the page (an order opens as a route); clicking again would land on what it opened.
+    if (trigger.page().url() === from) await trigger.click({ timeout: 5_000 });
     await expect(target).toBeVisible({ timeout: 3000 });
   }).toPass({ timeout: 60_000 });
 }
