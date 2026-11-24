@@ -21,7 +21,7 @@ test.describe('late deliveries', () => {
       await expect(ready).toContainText(number, { timeout: 30_000 });
       await expect(ready).toContainText(/Promised .*Late/);
 
-      await open(page, '/admin/delivery/late', 'Late deliveries');
+      await open(page, '/admin/reports/late-deliveries', 'Late deliveries');
       await noNativeSelect(page);
       const card = page.getByRole('list', { name: 'Late delivery list' }).getByRole('listitem').filter({ hasText: number }).first();
       await expect(card).toContainText('Late by', { timeout: 30_000 });
@@ -46,7 +46,7 @@ test.describe('late deliveries', () => {
 
   test('the late screen has an alerts card that says plainly when this installation cannot send alerts, and the alert workers are served', async ({ page, request }) => {
     // A real alert needs the browsers' push services, so the end-to-end check is what a person sees and what is served; sending is tested with the database.
-    await open(page, '/admin/delivery/late', 'Late deliveries');
+    await open(page, '/admin/reports/late-deliveries', 'Late deliveries');
     const card = page.getByRole('region', { name: 'Alerts on this device' });
     await expect(card).toBeVisible({ timeout: 30_000 });
     await expect(card).toContainText(/not set up on this installation yet|Turn on alerts in this browser|cannot show alerts/, { timeout: 30_000 });

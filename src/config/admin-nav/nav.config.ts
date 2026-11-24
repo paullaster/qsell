@@ -1,4 +1,5 @@
 import type { AdminNavItem } from './types';
+import { reportsNavModules } from './reports-nav';
 
 /**
  * Central admin navbar configuration.
@@ -110,7 +111,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Sales Orders',
         name: 'sales-orders',
         href: '/admin/sales-orders',
-        description: 'Take an order for a customer, with products and packages, and see their credit',
+        description:
+          'Take an order for a customer, with products and packages, and see their credit',
         icon: 'ClipboardList',
         permission: 'sales_orders:read',
       },
@@ -119,7 +121,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Cash Sales',
         name: 'cash-sales',
         href: '/admin/cash-sales',
-        description: 'Ring up a counter sale in your open shift: take cash with change, M-Pesa or card, and give the receipt',
+        description:
+          'Ring up a counter sale in your open shift: take cash with change, M-Pesa or card, and give the receipt',
         icon: 'ShoppingBag',
         permission: ['cash_sales:create', 'cash_sales:read'],
       },
@@ -128,7 +131,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Shifts',
         name: 'shifts',
         href: '/admin/shifts',
-        description: 'Open and close a till shift with the cash counted, put cash in or take it out, and see the X and Z reports',
+        description:
+          'Open and close a till shift with the cash counted, put cash in or take it out, and see the X and Z reports',
         icon: 'CalendarClock',
         permission: 'shifts:read',
       },
@@ -137,7 +141,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Credit Sales',
         name: 'credit-sales',
         href: '/admin/credit-sales',
-        description: 'Sell to a customer\'s account: their credit position, limit and days, and the invoice on account',
+        description:
+          "Sell to a customer's account: their credit position, limit and days, and the invoice on account",
         icon: 'Wallet',
         permission: 'credit_sales:read',
       },
@@ -146,7 +151,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Sales Invoices',
         name: 'sales-invoices',
         href: '/admin/sales-invoices',
-        description: 'Find invoices, see whether each is signed, paid or credited, raise one for an order, and send it again',
+        description:
+          'Find invoices, see whether each is signed, paid or credited, raise one for an order, and send it again',
         icon: 'Receipt',
         permission: 'sales_invoices:read',
       },
@@ -278,16 +284,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             icon: 'BookOpen',
             permission: 'pricing:read',
           },
-          {
-            id: 'pricing-insights',
-            title: 'Insights',
-            name: 'pricing-insights',
-            href: '/admin/pricing/insights',
-            description:
-              'Margin, what promotions cost, overrides, price gaps, what is owed, what looks wrong',
-            icon: 'Activity',
-            permission: 'pricing:read',
-          },
+
           {
             id: 'pricing-floors',
             title: 'Price floors',
@@ -361,7 +358,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Business Classifications',
         name: 'item-types',
         href: '/admin/item-types',
-        description: 'Classify products by business purpose and sellability, separately from stock handling',
+        description:
+          'Classify products by business purpose and sellability, separately from stock handling',
         icon: 'Shapes',
         permission: 'products:read',
       },
@@ -397,7 +395,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Packages',
         name: 'pricing-packages',
         href: '/admin/pricing/packages',
-        description: 'One product made of choices, such as a lunch with a fish, a starch and vegetables to pick',
+        description:
+          'One product made of choices, such as a lunch with a fish, a starch and vegetables to pick',
         icon: 'Boxes',
         permission: 'pricing:read',
       },
@@ -474,7 +473,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
     title: 'Delivery',
     name: 'delivery',
     href: '/admin/delivery/zones',
-    description: 'Where you deliver, how each branch gets orders to customers, and what delivery costs',
+    description:
+      'Where you deliver, how each branch gets orders to customers, and what delivery costs',
     icon: 'Truck',
     subLinks: [
       {
@@ -482,7 +482,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Deliveries',
         name: 'delivery-deliveries',
         href: '/admin/delivery/deliveries',
-        description: 'The deliveries of orders: make them, pick, pack, send them out and mark them delivered',
+        description:
+          'The deliveries of orders: make them, pick, pack, send them out and mark them delivered',
         icon: 'ClipboardCheck',
         permission: 'deliveries:read',
       },
@@ -500,7 +501,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Dispatch board',
         name: 'delivery-dispatch',
         href: '/admin/delivery/dispatch',
-        description: 'What is ready to go, plan runs for riders, put deliveries on them, and record what couriers report',
+        description:
+          'What is ready to go, plan runs for riders, put deliveries on them, and record what couriers report',
         icon: 'Route',
         permission: 'deliveries:dispatch',
       },
@@ -518,7 +520,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Riders',
         name: 'delivery-riders',
         href: '/admin/delivery/riders',
-        description: 'Who carries deliveries: your own staff, riders with an account of their own, or both',
+        description:
+          'Who carries deliveries: your own staff, riders with an account of their own, or both',
         icon: 'Users',
         permission: 'riders:manage',
       },
@@ -527,7 +530,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Vehicles',
         name: 'delivery-vehicles',
         href: '/admin/delivery/vehicles',
-        description: 'The vehicles your riders go out in, and the most weight and stops a run may carry in each',
+        description:
+          'The vehicles your riders go out in, and the most weight and stops a run may carry in each',
         icon: 'Truck',
         permission: 'riders:manage',
       },
@@ -536,7 +540,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Door payments',
         name: 'delivery-door-payments',
         href: '/admin/delivery/door-payments',
-        description: 'Cash riders collect at the door: how it is received and what each rider holds',
+        description:
+          'Cash riders collect at the door: how it is received and what each rider holds',
         icon: 'Wallet',
         permission: 'door_payments:manage',
       },
@@ -549,21 +554,14 @@ export const ADMIN_NAV: AdminNavItem[] = [
         icon: 'Wallet',
         permission: 'delivery_costs:manage',
       },
-      {
-        id: 'delivery-late',
-        title: 'Late deliveries',
-        name: 'delivery-late',
-        href: '/admin/delivery/late',
-        description: 'Deliveries at risk or late against the window the customer was promised, and what is being done about them',
-        icon: 'Route',
-        permission: 'deliveries:dispatch',
-      },
+
       {
         id: 'delivery-messages',
         title: 'Customer messages',
         name: 'delivery-messages',
         href: '/admin/delivery/messages',
-        description: 'The messages customers get as their delivery moves, and whether they are also texted',
+        description:
+          'The messages customers get as their delivery moves, and whether they are also texted',
         icon: 'Mail',
         permission: 'deliveries:manage',
       },
@@ -572,7 +570,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Delivery slots',
         name: 'delivery-slots',
         href: '/admin/delivery/slots',
-        description: 'The delivery windows each branch can promise, with room for so many a day, cut-offs and days with no slots',
+        description:
+          'The delivery windows each branch can promise, with room for so many a day, cut-offs and days with no slots',
         icon: 'CalendarClock',
         permission: 'delivery_slots:manage',
       },
@@ -581,7 +580,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Couriers',
         name: 'delivery-couriers',
         href: '/admin/delivery/couriers',
-        description: 'Connect the couriers you send parcels with, so each is booked, followed and cancelled without typing, and keep their keys sealed',
+        description:
+          'Connect the couriers you send parcels with, so each is booked, followed and cancelled without typing, and keep their keys sealed',
         icon: 'Truck',
         permission: 'couriers:manage',
       },
@@ -590,43 +590,30 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Visits',
         name: 'delivery-visits',
         href: '/admin/delivery/visits',
-        description: 'Book a crew to visit a customer at an agreed time, tick the checklist on site, and record the customer\'s sign-off',
+        description:
+          "Book a crew to visit a customer at an agreed time, tick the checklist on site, and record the customer's sign-off",
         icon: 'CalendarClock',
         permission: 'visits:work',
       },
-      {
-        id: 'delivery-report',
-        title: 'Delivery report',
-        name: 'delivery-report',
-        href: '/admin/delivery/reports',
-        description: 'What delivery earned and cost: margin, by rider, courier and zone, and why attempts failed',
-        icon: 'Wallet',
-        permission: 'delivery_costs:manage',
-      },
+
       {
         id: 'delivery-courier-invoices',
         title: 'Courier invoices',
         name: 'delivery-courier-invoices',
         href: '/admin/delivery/courier-invoices',
-        description: 'Type in the invoices couriers send and match them to the charges kept for their parcels, to see what agrees and what does not',
+        description:
+          'Type in the invoices couriers send and match them to the charges kept for their parcels, to see what agrees and what does not',
         icon: 'FileCheck',
         permission: 'delivery_costs:manage',
       },
-      {
-        id: 'delivery-performance',
-        title: 'Delivery performance',
-        name: 'delivery-performance',
-        href: '/admin/delivery/performance',
-        description: 'How well delivery is doing: deliveries on time, first-time success, rider and courier performance, and how full the delivery times run',
-        icon: 'Activity',
-        permission: 'deliveries:dispatch',
-      },
+
       {
         id: 'delivery-charges',
         title: 'Delivery charges',
         name: 'delivery-charges',
         href: '/admin/delivery/charges',
-        description: 'How much delivery costs: by zone, flat or by weight, or by distance, with extras and discounts',
+        description:
+          'How much delivery costs: by zone, flat or by weight, or by distance, with extras and discounts',
         icon: 'Coins',
         permission: 'deliveries:read',
       },
@@ -644,7 +631,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Delivery invoicing',
         name: 'delivery-invoicing',
         href: '/admin/delivery/invoicing',
-        description: 'Whether delivery goes on the same invoice as the products or on its own, and how KRA is told',
+        description:
+          'Whether delivery goes on the same invoice as the products or on its own, and how KRA is told',
         icon: 'FileText',
         permission: 'deliveries:read',
       },
@@ -653,7 +641,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Stock timing',
         name: 'delivery-stock',
         href: '/admin/delivery/stock',
-        description: 'When the stock of a delivered order leaves the shelf: when it is paid, when a delivery goes out, or when it arrives',
+        description:
+          'When the stock of a delivered order leaves the shelf: when it is paid, when a delivery goes out, or when it arrives',
         icon: 'Package',
         permission: 'deliveries:read',
       },
@@ -662,7 +651,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Map service',
         name: 'delivery-maps',
         href: '/admin/delivery/maps',
-        description: 'Choose the map service for addresses and distances, and compare cost and reliability',
+        description:
+          'Choose the map service for addresses and distances, and compare cost and reliability',
         icon: 'MapPin',
         permission: 'deliveries:read',
       },
@@ -797,24 +787,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
         icon: 'FileText',
         permission: 'vendor_payments:read',
       },
-      {
-        id: 'vendor-reports',
-        title: 'Vendor reports',
-        name: 'vendor-reports',
-        href: '/admin/vendors/reports',
-        description: 'Commitments, vendor performance, purchases and a watch list',
-        icon: 'Activity',
-        permission: 'vendor_reports:read',
-      },
-      {
-        id: 'vendor-scorecards',
-        title: 'Vendor scorecard',
-        name: 'vendor-scorecards',
-        href: '/admin/vendors/scorecards',
-        description: 'One score per vendor from delivery, quality, invoices and people’s ratings',
-        icon: 'ShieldCheck',
-        permission: 'scorecards:read',
-      },
+
       {
         id: 'vendor-landed-costs',
         title: 'Landed costs',
@@ -1012,15 +985,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             icon: 'ShieldCheck',
             permission: 'ledger_registers:read',
           },
-          {
-            id: 'gl-trial-balance',
-            title: 'Trial balance',
-            name: 'gl-trial-balance',
-            href: '/admin/finance/trial-balance',
-            description: 'Opening, movement and closing balance per account',
-            icon: 'Scale',
-            permission: 'trial_balance:read',
-          },
+
           {
             id: 'gl-periods',
             title: 'Fiscal periods',
@@ -1171,15 +1136,6 @@ export const ADMIN_NAV: AdminNavItem[] = [
             icon: 'Scale',
             permission: 'exchange_rates:read',
           },
-          {
-            id: 'ar-ageing',
-            title: 'Receivables ageing',
-            name: 'ar-ageing',
-            href: '/admin/finance/receivables/ageing',
-            description: 'Who owes what, and for how long',
-            icon: 'Scale',
-            permission: 'receivables_ageing:read',
-          },
         ],
       },
       {
@@ -1303,14 +1259,35 @@ export const ADMIN_NAV: AdminNavItem[] = [
           },
         ],
       },
+    ],
+  },
+  {
+    id: 'reports',
+    title: 'Reports',
+    name: 'reports',
+    href: '/admin/reports',
+    description:
+      'Every report in one place: find it by the question it answers, compare, and download',
+    icon: 'BarChart3',
+    subLinks: [
       {
-        id: 'analytics',
-        title: 'Customer Analytics',
-        name: 'analytics',
-        href: '/admin/analytics',
-        description: 'Accounts and buying patterns',
-        icon: 'Users',
-        permission: 'analytics:read',
+        id: 'reports-all',
+        title: 'All reports',
+        name: 'reports-all',
+        href: '/admin/reports',
+        description: 'Search every report you may open',
+        icon: 'BarChart3',
+        permission: 'reports:read',
+      },
+      ...reportsNavModules(),
+      {
+        id: 'reports-activity',
+        title: 'Report activity',
+        name: 'reports-activity',
+        href: '/admin/reports/activity',
+        description: 'Who opened and downloaded reports, and when',
+        icon: 'Activity',
+        permission: 'reports:view_audit',
       },
     ],
   },
@@ -1402,7 +1379,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'SMS Providers',
         name: 'settings-sms',
         href: '/admin/settings/sms',
-        description: 'Connect the SMS provider this business sends text messages with, keep its keys safe, and send a test message',
+        description:
+          'Connect the SMS provider this business sends text messages with, keep its keys safe, and send a test message',
         icon: 'Mail',
         permission: 'sms:manage',
       },
@@ -1419,7 +1397,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
             title: 'Customer',
             name: 'settings-sales-customer',
             href: '/admin/settings/sales/customer',
-            description: 'What customer credit shows, and whether orders may proceed beyond the available credit limit',
+            description:
+              'What customer credit shows, and whether orders may proceed beyond the available credit limit',
             icon: 'Users',
             permission: 'selling_settings:manage',
           },
@@ -1437,7 +1416,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
             title: 'Selling Documents',
             name: 'settings-selling-documents',
             href: '/admin/settings/selling-documents',
-            description: 'How sales orders, sales invoices, credit sales and cash sales behave: credit check, credit days, when stock is released, approval and invoicing',
+            description:
+              'How sales orders, sales invoices, credit sales and cash sales behave: credit check, credit days, when stock is released, approval and invoicing',
             icon: 'FileText',
             permission: 'selling_settings:manage',
           },
@@ -1475,7 +1455,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Business Time Zone',
         name: 'settings-business-time',
         href: '/admin/settings/business-time',
-        description: 'The time zone the business works in, which decides the day a posting belongs to, quiet hours for text messages, delivery windows and report days',
+        description:
+          'The time zone the business works in, which decides the day a posting belongs to, quiet hours for text messages, delivery windows and report days',
         icon: 'CalendarClock',
         permission: 'timezone:manage',
       },
@@ -1484,7 +1465,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
         title: 'Email Routing',
         name: 'settings-email-routing',
         href: '/admin/settings/email-routing',
-        description: 'Who receives quote and web shop order emails, who is copied, where replies go, and which business emails a quote shows',
+        description:
+          'Who receives quote and web shop order emails, who is copied, where replies go, and which business emails a quote shows',
         icon: 'Mail',
         permission: 'email_routing:manage',
       },

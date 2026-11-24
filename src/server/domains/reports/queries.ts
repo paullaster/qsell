@@ -12,18 +12,18 @@ import type { ReportScope } from './types';
 
 type Rows<T> = T[];
 
-async function rows<T>(db: DrizzleDb, query: SQL): Promise<Rows<T>> {
+export async function rows<T>(db: DrizzleDb, query: SQL): Promise<Rows<T>> {
   // postgres-js returns the row array directly.
   return (await db.execute(query)) as unknown as Rows<T>;
 }
 
 /** Dates go in as ISO text: raw SQL templates are not mapped by the column types. */
-const ts = (d: Date): SQL => sql`${d.toISOString()}::timestamptz`;
+export const ts = (d: Date): SQL => sql`${d.toISOString()}::timestamptz`;
 
-const num = (v: string | number | null | undefined): number =>
+export const num = (v: string | number | null | undefined): number =>
   v === null || v === undefined ? 0 : Number(v);
 
-function branchFilter(scope: ReportScope, column: SQL): SQL {
+export function branchFilter(scope: ReportScope, column: SQL): SQL {
   return scope.kind === 'branch' ? sql`and ${column} = ${scope.branchId}` : sql``;
 }
 
@@ -32,7 +32,7 @@ function branchFilter(scope: ReportScope, column: SQL): SQL {
  * approval, and either paid-or-in-payment or placed by a trade (credit) customer. An unpaid
  * retail checkout that was never paid is an abandoned cart, not a sale.
  */
-const SALE = sql`
+export const SALE = sql`
   o.status not in ('failed', 'cancelled', 'refunded')
   and o.payment_status <> 'failed'
   and o.approval_status not in ('rejected', 'draft')
@@ -382,7 +382,7 @@ export async function inventoryHealth(db: DrizzleDb): Promise<{
              )::int as low,
              coalesce(sum(greatest(p.stock_quantity, 0) * p.cost_price), 0)::text as value
       from products p
-      where p.deleted_at is null and p.is_active = true
+      where p.deleted_at is null and p.is_active = true and p.inventory_kind = 'inventory'
     `,
   );
   const row = r[0];

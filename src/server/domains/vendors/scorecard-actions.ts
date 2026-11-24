@@ -14,7 +14,7 @@ const id = (value: unknown): string => {
 };
 const str = (value: unknown, max = 500): string => (typeof value === 'string' ? value.slice(0, max) : '');
 const obj = (value: unknown): Record<string, unknown> => (typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {});
-const PATHS = ['/admin/vendors/scorecards'];
+const PATHS = ['/admin/reports/vendor-scorecards'];
 
 export async function scorecardsAction(from?: string, to?: string) {
   return await run('scorecards:read', { surface: 'scorecards', action: 'view' }, async (ctx) => {

@@ -122,7 +122,7 @@ graph TD
 ### 8. What We Owe / Payables Ageing (`/admin/vendors/payables`)
 - Accounts Payable ageing report: Current, 1-30 days, 31-60 days, 61-90 days, 90+ days overdue, with printable vendor statements.
 
-### 9. Vendor Scorecards (`/admin/vendors/scorecards`)
+### 9. Vendor Scorecards (`/admin/reports/vendor-scorecards`)
 - Automated supplier rating based on: Delivery on-time %, quality acceptance rate (% goods rejected at RGN), and price stability.
 
 ### 10. Anti-Fraud Bank Changes (`/admin/vendors/bank-changes`)
@@ -134,6 +134,10 @@ graph TD
 
 ### 11. Petty Cash Floats (`/admin/vendors/petty-cash`)
 - Office expense float management: Imprest float balance, petty cash expense vouchers with scanned receipts, float replenishment workflows, and GL account allocation.
+
+### 12. Vendor Reports (`/admin/reports/vendor-reports`)
+- Cross-vendor reports for buyers and management, behind the permission *Vendor reports: read*: what the business has **committed to buy** (open orders), how suppliers **perform**, what has been **purchased**, and a **watch list** of suppliers that need attention. It answers "what have we committed to, who is delivering, and who should we look at?".
+- It also appears in the Reports hub (`/admin/reports`) under *Vendors and purchasing*, with the question it answers and the same permission.
 
 ---
 
