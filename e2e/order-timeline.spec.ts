@@ -39,7 +39,8 @@ test.describe('every stage of an order is timestamped, failures included', () =>
     await readyToPay(page, productName);
     // Someone else buys the last stock while this shopper is typing.
     setStock(`prod_rv_${tag}`, 0);
-    await page.getByRole('button', { name: /^Pay / }).click();
+    // Once the stock is gone the checkout redraws its form, and a normal click keeps waiting for a button that is being replaced; the press is sent straight to it.
+    await page.getByRole('button', { name: /^Pay / }).dispatchEvent('click', undefined, { timeout: 15_000 });
     // The refusal may empty the cart (the item sold out), which replaces the form, so the alert is not looked for inside it.
     await expect(page.getByRole('alert').filter({ hasText: /Insufficient inventory|not enough|sold out/i })).toBeVisible({ timeout: 60_000 });
     // It is on record with its time, where it stopped and why, and the guest is only a hash.
