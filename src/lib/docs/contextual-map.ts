@@ -151,7 +151,7 @@ const ROUTE_RULES: readonly RouteDocRule[] = [
     chapterTitle: 'Sales Quotes & Web Shop Orders',
   },
   {
-    prefix: '/admin/analytics',
+    prefix: '/admin/reports/customer-analytics',
     slug: '01-business-overview-and-dashboard',
     chapterTitle: 'Business Overview & Executive Dashboard',
   },

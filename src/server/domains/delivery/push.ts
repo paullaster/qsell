@@ -148,7 +148,7 @@ export class DeliveryPush {
       return false;
     }
     const alert = lateAlert({ level: row.level, number: row.d.number, windowStart: row.d.windowStart, windowEnd: row.d.windowEnd, minutesLate: row.minutesLate, timeZone: businessTimeZone() });
-    const outcome = await this.push.send({ endpoint: row.sub.endpoint, p256dh: row.sub.p256dh, auth: row.sub.auth }, { ...alert, url: n.audience === 'rider' ? '/rider' : '/admin/delivery/late', tag: `delivery-${row.d.id}` });
+    const outcome = await this.push.send({ endpoint: row.sub.endpoint, p256dh: row.sub.p256dh, auth: row.sub.auth }, { ...alert, url: n.audience === 'rider' ? '/rider' : '/admin/reports/late-deliveries', tag: `delivery-${row.d.id}` });
     if (outcome === 'gone') {
       await this.db.delete(pushSubscriptions).where(eq(pushSubscriptions.id, row.sub.id));
       return false;

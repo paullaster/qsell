@@ -80,6 +80,7 @@ graph TD
 | [**Guide 12**](12-approvals-and-internal-controls.md) | Approvals & Internal Controls | `/admin/approvals`, `/admin/settings/approvals` | Runtime workflow builder, threshold limits, substitute approvers, scenario switches, and stuck request reassignment. |
 | [**Guide 13**](13-settings-branches-numbering-and-kra-etims.md) | Settings, Branches & KRA eTIMS | `/admin/settings` | Operating branches, dimensions, gapless number series, stage SLA targets, and KRA eTIMS tax classification setup. |
 | [**Guide 14**](14-external-portals-customer-rider-vendor.md) | External & Field Portals | `/(store)`, `/rider`, `/vendor` | Branded web shop checkout, rider mobile run sheet & PIN verification, and supplier quotation/invoice self-service. |
+| [**Guide 15**](15-reports-and-analytics.md) | Reports & Analytics | `/admin/reports`, `/admin` | Reports hub and search, Business Overview, period and branch scope, CSV/Excel/PDF downloads with audit trail, report activity, and the report style guide. |
 
 ---
 

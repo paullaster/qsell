@@ -78,7 +78,7 @@ export class DeliverySlaNotices {
       .where(eq(deliverySlaEvents.id, n.eventId));
     if (row === undefined) throw new Error('The delivery of this notice is gone.');
     const settings = await this.company.ensureSeeded();
-    const url = `${resolvePublicBaseUrl(settings.publicBaseUrl)}/admin/delivery/late`;
+    const url = `${resolvePublicBaseUrl(settings.publicBaseUrl)}/admin/reports/late-deliveries`;
     const windowText = row.d.windowStart !== null && row.d.windowEnd !== null ? windowWords(row.d.windowStart, row.d.windowEnd, businessTimeZone()) : 'no window';
     const headline = LEVEL_WORDS[row.level];
     const late = row.level === 'at_risk' ? 'Not late yet' : `Late by ${lateWords(row.minutesLate)}`;

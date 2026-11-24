@@ -42,11 +42,26 @@ const nextConfig: NextConfig = {
       { protocol: 'http', hostname: '**' },
     ],
   },
-  // Settings that moved under Sales keep working at their old addresses (bookmarks, links in emails and notes).
+  // Settings that moved under Sales, and reports that moved under /admin/reports, keep working at their old addresses
+  // (bookmarks, links in emails and notes).
   redirects() {
-    return ['registers', 'offline-selling', 'partial-billing'].map((name) => ({
-      source: `/admin/settings/${name}`,
-      destination: `/admin/settings/sales/${name}`,
+    const settings: [string, string][] = ['registers', 'offline-selling', 'partial-billing'].map(
+      (name) => [`/admin/settings/${name}`, `/admin/settings/sales/${name}`],
+    );
+    const reports: [string, string][] = [
+      ['/admin/finance/trial-balance', '/admin/reports/trial-balance'],
+      ['/admin/finance/receivables/ageing', '/admin/reports/receivables-ageing'],
+      ['/admin/vendors/reports', '/admin/reports/vendor-reports'],
+      ['/admin/vendors/scorecards', '/admin/reports/vendor-scorecards'],
+      ['/admin/delivery/reports', '/admin/reports/delivery-report'],
+      ['/admin/delivery/performance', '/admin/reports/delivery-performance'],
+      ['/admin/delivery/late', '/admin/reports/late-deliveries'],
+      ['/admin/pricing/insights', '/admin/reports/pricing-insights'],
+      ['/admin/analytics', '/admin/reports/customer-analytics'],
+    ];
+    return [...settings, ...reports].map(([source, destination]) => ({
+      source,
+      destination,
       permanent: true,
     }));
   },
