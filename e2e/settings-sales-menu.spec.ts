@@ -18,6 +18,8 @@ test.describe('settings under Sales', () => {
       await expect(page.locator(`a[href="/admin/settings/${name}"]`)).toHaveCount(0);
       expect(title).not.toBe('');
     }
+    // Van sales is new here, so it has no older address to lead from.
+    await expect(page.locator('a[href="/admin/settings/sales/van-sales"]').first()).toBeVisible();
     await noHorizontalScroll(page);
   });
 

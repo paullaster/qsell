@@ -168,7 +168,7 @@ Every stage of a van day (planned, loading, loaded, out, each visit's arrival an
 
 ## 15. Data and indexes (summary)
 
-New tables: `van_sales_settings`, `vans`, `sales_reps`, `sales_routes`, `route_stops`, `route_par_levels`, `van_days`, `van_visits`, `van_drops`, `van_day_events` (append-only, trigger), `van_loads` (links a transfer to a day), `van_stock_variances`, `van_offline_documents` (as `offline_sales`), `van_commission_rules`, `van_commissions`. New columns: `orders.van_day_id`, `orders.visit_id`, `stock_documents.van_day_id`. New numbering kinds `van_day`, `van_load`. Unique indexes for one open day per van and per rep, one stop per customer per route; indexes for every list (by day, by status, by route and date, by customer for the next visit). Every query is company-scoped; no list is unbounded.
+New tables: `van_sales_settings`, `vans`, `sales_reps`, `sales_routes`, `route_stops`, `route_par_levels`, `van_days`, `van_visits`, `van_drops`, `van_day_events` (append-only, trigger), `van_loads` (links a transfer to a day), `van_stock_variances`, `van_offline_documents` (as `offline_sales`), `van_commission_rules`, `van_commissions`. New columns: `orders.van_day_id`, `orders.visit_id`, `stock_documents.van_day_id`. New numbering kind `van_day` (a load is a stock transfer and takes the transfer series, so there is no `van_load` kind). Unique indexes for one open day per van and per rep, one stop per customer per route; indexes for every list (by day, by status, by route and date, by customer for the next visit). Every query is company-scoped; no list is unbounded.
 
 ## 16. Decisions taken (defaults; change them by telling me)
 
@@ -206,3 +206,24 @@ Each slice ships with its own unit, database, API and browser tests, the impleme
 ## 18. Not in scope (first release)
 
 Route optimisation by traffic (the delivery planners are reused for the order of stops, straight-line), van-to-van transfers mid-day (done as unload and load), consignment stock at the customer, promotions that need the full web basket, offline returns for credit notes, a printer protocol other than the browser's (the receipt link can be shared), and multi-currency days.
+
+## 19. As built
+
+### V-0 (2026-11-24)
+- **Pure rules** (`src/lib/van-sales/`, 40 unit tests): `settings` (reading and refusing the company's settings, which route modes need which switch), `visits` (weekday masks, every 1, 2 or 4 weeks counted from the week a stop starts, due and overdue), `load` (par less what is on the van, plus drops, against the warehouse), `reconcile` (expected on the van, variance and its worth at cost, who bears it, when a second person must decide), `rep-limits` (discount, credit per day, price change, in words).
+- **Data:** `van_sales_settings` (migration 0212): both modes off by default, check constraints for every value, a version for two people at once.
+- **Server:** `VanSalesSettingsService` (read, save with a reason, the version on screen and a decision-log entry holding the old and new values), actions behind `van_sales:settings`, wired in the container. Reason list `van-sales-reasons`.
+- **Permissions:** `van_sales:read`, `manage`, `plan`, `sell`, `reconcile`, `settings`, `report`, `offline`. Administrator gets all but `sell`; `sell` is given to reps by hand.
+- **Numbering:** kind `van_day`, standard series `VDY-{YY}-`.
+- **Screen:** *Settings › Sales › Van sales* (large tappable choices, no drop-downs, a clear reason and Undo), and its place in the Sales settings menu.
+- **Docs:** Guide 16, and a pointer in Guide 13.
+- **Not yet:** the platform SEO entry and the main *Van sales* navigation group arrive with the first screen that belongs in them (V-1), because a navigation module and its SEO entry must exist together. Switching a mode off while a route or van day uses it is refused from V-2 and V-3, when those exist.
+
+### V-1 (2026-11-24)
+- **Data:** `vans` and `sales_reps` (migration 0213). A van holds its stock location and its till (both unique to it), a vehicle that can be behind one active van at a time, a cash limit and a status; a rep holds the person (unique per company), modes, limits and a status. A stopped van and a paused or ended rep must have a reason (checks); a rep's modes are only van sell and pre-sell; discount 0 to 100; credit and cash limits not negative.
+- **Server:** `VanService` (create makes the location, the till and the van in one transaction, so none can exist without the others; change under a version; stop and resume with a reason, refused while the van has stock or a shift open or its vehicle went to another van) and `RepService` (staff only, once each; change, pause, end, resume). Both page by keyset with a search and a status filter and write the decision log. The location carries the channel `van_sale` only, so `StockAvailability` for every shop, quote, order and counter channel never counts it.
+- **Guards:** Stock › Locations (change, make default, stop, use again) and Registers (switch off, change branch) refuse a van's location or till and say where to do it.
+- **Lookups:** `van-branches`, `van-cash-accounts`, `van-vehicles` (in use and free), `van-staff` (staff not yet reps), each behind `van_sales:manage`.
+- **Screens:** Sales › Van sales (home, with a switched-off notice), Vans, Sales reps. Navigation under Sales; the platform SEO entry of Sales names the new sub-module and its search words.
+- **Decision:** the screens always show, with a notice when both modes are off, because a navigation item cannot depend on a database setting; vans and reps may be set up before the modes are switched on.
+- **Not yet:** a rep cannot be given a default van or a route (V-2); stopping or pausing is refused while a van day is open (V-3, when days exist).

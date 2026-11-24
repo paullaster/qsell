@@ -61,6 +61,11 @@ export const DOCUMENT_KINDS = {
     fiscal: false,
     suggested: { code: 'RUN', prefix: 'RUN-{YY}-', digits: 8, reset: 'yearly', blockSize: 50 },
   },
+  van_day: {
+    label: 'Van day',
+    fiscal: false,
+    suggested: { code: 'VDY', prefix: 'VDY-{YY}-', digits: 8, reset: 'yearly', blockSize: 50 },
+  },
   proforma_invoice: {
     label: 'Proforma invoice',
     fiscal: false,

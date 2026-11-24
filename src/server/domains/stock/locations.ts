@@ -1,6 +1,6 @@
 import { and, asc, eq, ne, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, stockBalances, stockLocations, type StockLocationRow } from '@/server/db/drizzle/schema';
+import { branches, stockBalances, stockLocations, vans, type StockLocationRow } from '@/server/db/drizzle/schema';
 import { checkLocation, type LocationInput } from '@/lib/stock';
 import { StockError } from './errors';
 
@@ -54,6 +54,12 @@ export class StockLocationService {
     if (b === undefined) throw new StockError('That branch could not be found.', 'BAD_BRANCH');
   }
 
+  /** A van's stock location is made, changed and stopped with the van, under Van sales: changing it here would put the van and its stock out of step. */
+  private async notAVan(companyId: string, id: string): Promise<void> {
+    const [van] = await this.db.select({ name: vans.name }).from(vans).where(and(eq(vans.companyId, companyId), eq(vans.locationId, id))).limit(1);
+    if (van !== undefined) throw new StockError(`This is the stock of the van ${van.name}. Change, stop or use it again under Van sales.`, 'IS_VAN');
+  }
+
   async create(companyId: string, input: LocationInput): Promise<StockLocationRow> {
     const checked = checkLocation(input);
     if (!checked.ok) throw new StockError(checked.error, 'BAD_LOCATION');
@@ -70,6 +76,7 @@ export class StockLocationService {
 
   async update(companyId: string, id: string, input: LocationInput): Promise<StockLocationRow> {
     const current = await this.get(companyId, id);
+    await this.notAVan(companyId, current.id);
     const checked = checkLocation(input);
     if (!checked.ok) throw new StockError(checked.error, 'BAD_LOCATION');
     await this.branchOk(companyId, checked.location.branchId);
@@ -89,6 +96,7 @@ export class StockLocationService {
 
   /** Makes this the company's default location, and the old default an ordinary one, in one step. */
   async makeDefault(companyId: string, id: string): Promise<void> {
+    await this.notAVan(companyId, id);
     await this.db.transaction(async (tx) => {
       const [target] = await tx.select().from(stockLocations).where(and(eq(stockLocations.companyId, companyId), eq(stockLocations.id, id))).for('update').limit(1);
       if (target === undefined) throw new StockError('That location could not be found.', 'NOT_FOUND');
@@ -100,6 +108,7 @@ export class StockLocationService {
 
   /** Stops a location being used. Refused for the default location and for one that still holds or has promised stock. */
   async deactivate(companyId: string, id: string): Promise<void> {
+    await this.notAVan(companyId, id);
     await this.db.transaction(async (tx) => {
       const [target] = await tx.select().from(stockLocations).where(and(eq(stockLocations.companyId, companyId), eq(stockLocations.id, id))).for('update').limit(1);
       if (target === undefined) throw new StockError('That location could not be found.', 'NOT_FOUND');
@@ -114,6 +123,7 @@ export class StockLocationService {
   }
 
   async reactivate(companyId: string, id: string): Promise<void> {
+    await this.notAVan(companyId, id);
     const changed = await this.db.update(stockLocations).set({ isActive: true, updatedAt: sql`now()` }).where(and(eq(stockLocations.companyId, companyId), eq(stockLocations.id, id))).returning({ id: stockLocations.id });
     if (changed.length === 0) throw new StockError('That location could not be found.', 'NOT_FOUND');
   }

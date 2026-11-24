@@ -4954,6 +4954,103 @@ export const offlineSellingSettings = pgTable('offline_selling_settings', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** How the company runs van sales and pre-sales: which modes are on and the rules every van day follows (docs/architecture/van-sales.md §16). Both modes are off until the company switches them on. */
+export const vanSalesSettings = pgTable(
+  'van_sales_settings',
+  {
+    companyId: uuid('company_id').primaryKey().references(() => companySettings.id, { onDelete: 'cascade' }),
+    vanSell: boolean('van_sell').notNull().default(false),
+    preSell: boolean('pre_sell').notNull().default(false),
+    offRoute: text('off_route').notNull().default('allow'),
+    overnightStock: boolean('overnight_stock').notNull().default(false),
+    shortage: text('shortage').notNull().default('charge_rep'),
+    /** A shortage worth more than this (KES, at cost) needs a second person; 0 means every shortage does. */
+    shortageApprovalAbove: numeric('shortage_approval_above', { precision: 14, scale: 2 }).notNull().default('1000'),
+    position: text('position').notNull().default('record'),
+    nearMetres: integer('near_metres').notNull().default(200),
+    version: integer('version').notNull().default(1),
+    updatedBy: text('updated_by').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('van_sales_settings_off_route_chk', sql`${t.offRoute} IN ('allow','refuse')`),
+    check('van_sales_settings_shortage_chk', sql`${t.shortage} IN ('charge_rep','write_off')`),
+    check('van_sales_settings_position_chk', sql`${t.position} IN ('record','require')`),
+    check('van_sales_settings_limit_chk', sql`${t.shortageApprovalAbove} >= 0`),
+    check('van_sales_settings_near_chk', sql`${t.nearMetres} BETWEEN 20 AND 5000`),
+  ],
+);
+
+/**
+ * A van: one stock location (its stock) and one till (its cash), held together so the three can never drift apart
+ * (docs/architecture/van-sales.md §4.1). A van is stopped, never deleted; its location and till stop and start with it.
+ */
+export const vans = pgTable(
+  'vans',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    branchId: uuid('branch_id').notNull().references(() => branches.id, { onDelete: 'restrict' }),
+    name: text('name').notNull(),
+    locationId: uuid('location_id').notNull().references(() => stockLocations.id, { onDelete: 'restrict' }),
+    registerId: uuid('register_id').notNull().references(() => registers.id, { onDelete: 'restrict' }),
+    vehicleId: uuid('vehicle_id').references(() => deliveryVehicles.id, { onDelete: 'restrict' }),
+    /** The most cash the van should hold before a cash drop is asked for; null for no limit. */
+    maxCash: numeric('max_cash', { precision: 14, scale: 2 }),
+    status: text('status').notNull().default('active'),
+    statusReason: text('status_reason'),
+    version: integer('version').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('vans_company_name_uidx').on(t.companyId, sql`lower(${t.name})`),
+    uniqueIndex('vans_location_uidx').on(t.locationId),
+    uniqueIndex('vans_register_uidx').on(t.registerId),
+    // A vehicle is behind one van that is in use at a time.
+    uniqueIndex('vans_active_vehicle_uidx').on(t.vehicleId).where(sql`${t.vehicleId} IS NOT NULL AND ${t.status} = 'active'`),
+    index('vans_company_status_idx').on(t.companyId, t.status, t.name),
+    check('vans_status_chk', sql`${t.status} IN ('active','stopped')`),
+    check('vans_stopped_reason_chk', sql`${t.status} = 'active' OR (${t.statusReason} IS NOT NULL AND length(btrim(${t.statusReason})) > 0)`),
+    check('vans_max_cash_chk', sql`${t.maxCash} IS NULL OR ${t.maxCash} > 0`),
+  ],
+);
+
+/** A person who sells outside: which modes they do and what they may do on their own (docs/architecture/van-sales.md §4.1). Ended, never deleted. */
+export const salesReps = pgTable(
+  'sales_reps',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
+    /** The name they go by on days and lists, kept here so those never need the account. */
+    name: text('name').notNull(),
+    phone: text('phone'),
+    homeBranchId: uuid('home_branch_id').references(() => branches.id, { onDelete: 'restrict' }),
+    modes: text('modes').array().notNull().default(sql`ARRAY['van_sell','pre_sell']::text[]`),
+    maxDiscountPercent: numeric('max_discount_percent', { precision: 5, scale: 2 }).notNull().default('0'),
+    /** The most credit they may give in one day; 0 means no limit while they may sell on credit. */
+    maxCreditPerDay: numeric('max_credit_per_day', { precision: 14, scale: 2 }).notNull().default('0'),
+    mayOverridePrice: boolean('may_override_price').notNull().default(false),
+    maySellOnCredit: boolean('may_sell_on_credit').notNull().default(false),
+    status: text('status').notNull().default('active'),
+    statusReason: text('status_reason'),
+    version: integer('version').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('sales_reps_company_user_uidx').on(t.companyId, t.userId),
+    index('sales_reps_company_status_idx').on(t.companyId, t.status, t.name),
+    check('sales_reps_status_chk', sql`${t.status} IN ('active','paused','ended')`),
+    check('sales_reps_reason_chk', sql`${t.status} = 'active' OR (${t.statusReason} IS NOT NULL AND length(btrim(${t.statusReason})) > 0)`),
+    check('sales_reps_modes_chk', sql`cardinality(${t.modes}) > 0 AND ${t.modes} <@ ARRAY['van_sell','pre_sell']::text[]`),
+    check('sales_reps_discount_chk', sql`${t.maxDiscountPercent} BETWEEN 0 AND 100`),
+    check('sales_reps_credit_chk', sql`${t.maxCreditPerDay} >= 0`),
+  ],
+);
+
 /** How the counter looks: inside the admin page (default) or as a full-screen till. A preference of the company, not a control. */
 export const cashSaleSettings = pgTable(
   'cash_sale_settings',

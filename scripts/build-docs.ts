@@ -35,6 +35,7 @@ const CATEGORY_MAP: Record<string, string> = {
   '12-approvals-and-internal-controls': 'Governance & Security',
   '13-settings-branches-numbering-and-kra-etims': 'Fiscal & Administration',
   '14-external-portals-customer-rider-vendor': 'External Ecosystem',
+  '16-van-sales-and-pre-sales': 'Commercial Operations',
 };
 
 function resolveGitSha(): string {

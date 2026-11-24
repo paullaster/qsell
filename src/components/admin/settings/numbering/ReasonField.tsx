@@ -11,7 +11,7 @@ export interface ReasonValue {
 }
 
 /** The lists of reasons a change can be explained by, one per screen family (each behind its own permission). */
-export type ReasonSource = 'numbering-reasons' | 'approval-config-reasons' | 'approval-reasons' | 'pricing-reasons' | 'email-routing-reasons' | 'selling-reasons' | 'shift-reasons' | 'return-reasons' | 'billing-reasons' | 'offline-reasons' | 'business-time-reasons';
+export type ReasonSource = 'numbering-reasons' | 'approval-config-reasons' | 'approval-reasons' | 'pricing-reasons' | 'email-routing-reasons' | 'selling-reasons' | 'shift-reasons' | 'return-reasons' | 'billing-reasons' | 'offline-reasons' | 'van-sales-reasons' | 'business-time-reasons';
 
 /**
  * "Why are you doing this?": a reason from the controlled list plus a comment, which some reasons

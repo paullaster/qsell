@@ -12,7 +12,7 @@ import { has } from '@/lib/values';
 type FirstPage = Awaited<ReturnType<typeof stockLocationsPageAction>>;
 
 const KIND_WORDS: Record<string, string> = { warehouse: 'Warehouse', store: 'Shop or store', van: 'Van or vehicle', quarantine: 'Quarantine', damaged: 'Damaged or scrap', consignment_in: 'Consignment' };
-const CHANNEL_WORDS: Record<string, string> = { ecommerce: 'Web shop', sales_order: 'Sales orders', credit_sale: 'Credit sales', pos_cash_sale: 'Point of sale', sales_invoice: 'Sales invoices' };
+const CHANNEL_WORDS: Record<string, string> = { ecommerce: 'Web shop', sales_order: 'Sales orders', credit_sale: 'Credit sales', pos_cash_sale: 'Point of sale', sales_invoice: 'Sales invoices', van_sale: 'Van sales' };
 
 const channelWords = (channels: string[]): string => (channels.length === 0 ? 'no channel' : channels.map((c) => CHANNEL_WORDS[c] ?? c).join(', '));
 

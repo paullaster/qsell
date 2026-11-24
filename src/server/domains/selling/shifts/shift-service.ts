@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { bankAccounts, branches, counterReturns, heldSales, offlineSales, orders, glAccounts, orderTenders, registers, shiftCloseRequests, shiftMovements, shiftSettings, shiftVariancePostings, shifts, users } from '@/server/db/drizzle/schema';
+import { bankAccounts, branches, counterReturns, heldSales, offlineSales, orders, glAccounts, orderTenders, registers, vans, shiftCloseRequests, shiftMovements, shiftSettings, shiftVariancePostings, shifts, users } from '@/server/db/drizzle/schema';
 import type { Actor } from '@/server/kernel/context';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { ReasonCodes, ReasonInput } from '@/server/kernel/reason-codes/service';
@@ -104,6 +104,10 @@ export class ShiftService {
     if (typeof input.cashAccountId === 'string') {
       const [cash] = await this.db.select({ id: bankAccounts.id }).from(bankAccounts).where(and(eq(bankAccounts.id, input.cashAccountId), eq(bankAccounts.companyId, companyId), eq(bankAccounts.kind, 'cash'), eq(bankAccounts.blocked, false))).limit(1);
       if (cash === undefined) throw new ShiftError('Choose one of the company\'s cash accounts for the till.');
+    }
+    if (input.id !== undefined) {
+      const [van] = await this.db.select({ name: vans.name, branchId: vans.branchId }).from(vans).where(and(eq(vans.companyId, companyId), eq(vans.registerId, input.id))).limit(1);
+      if (van !== undefined && (!input.isActive || input.branchId !== van.branchId)) throw new ShiftError(`This till belongs to the van ${van.name}. Its branch stays, and it is stopped or used again with the van, under Van sales.`);
     }
     const why = await this.reasons.require(companyId, reason, 'shift_configuration');
     await this.db.transaction(async (tx) => {

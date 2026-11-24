@@ -132,6 +132,9 @@ Whether a **till can keep ringing up cash sales when the connection drops**. Beh
 - **Save** needs a **reason** and is recorded in the decision log (who, from what, to what, why). Tills pick the change up the next time they are made ready (every few minutes while online).
 - **Go-live check**: switch it on; open a shift; on *Cash Sales* wait for "Ready to sell with no connection"; open the offline till; disconnect the device; sell something; reload the page (it must still open); reconnect and watch the sale become receipt `RCT-…`; then confirm the shift's X report includes it and the shift closes.
 
+### 7g. Van sales (`/admin/settings/sales/van-sales`)
+Switches **van selling** and **pre-selling** on or off and sets the rules every van day follows (customers off the route, what happens to missing stock, the shortage a second person must decide, stock overnight, and where the rep must be). Behind its own permission, ***Van sales: settings***. **Both modes are off by default.** Every field, rule and checklist is in [Guide 16](16-van-sales-and-pre-sales.md).
+
 ### 7e. Partial billing (`/admin/settings/sales/partial-billing`)
 Whether a **sales order can be invoiced in parts**. Behind its **own permission, *Partial billing: manage*** (in the *Orders & Sales* group), which **no other permission includes**: only people you give it to can switch the feature on or off. **Off by default.**
 - **Switch on / Switch off**: asks for a **reason**, records who changed it, from what, to what and why (the decision log), and shows who last changed it. Switching on to what it already is, is refused.

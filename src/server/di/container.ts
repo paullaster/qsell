@@ -30,6 +30,9 @@ import { TillSettingsService } from '@/server/domains/selling/cash-sales/till-se
 import { HeldSaleService } from '@/server/domains/selling/cash-sales/held-sale-service';
 import { CounterCatalogueService } from '@/server/domains/selling/cash-sales/counter-catalogue-service';
 import { OfflineSaleService } from '@/server/domains/selling/offline/offline-sale-service';
+import { VanSalesSettingsService } from '@/server/domains/van-sales/settings-service';
+import { VanService } from '@/server/domains/van-sales/vans';
+import { RepService } from '@/server/domains/van-sales/reps';
 import { PartialBillingService } from '@/server/domains/selling/partial-billing-service';
 import { CashSaleService } from '@/server/domains/selling/cash-sales/cash-sale-service';
 import { ShiftService } from '@/server/domains/selling/shifts/shift-service';
@@ -425,6 +428,9 @@ export interface AppContainer {
   cashSales: CashSaleService;
   partialBilling: PartialBillingService;
   offlineSales: OfflineSaleService;
+  vanSalesSettings: VanSalesSettingsService;
+  vans: VanService;
+  salesReps: RepService;
   tillSettings: TillSettingsService;
   heldSales: HeldSaleService;
   counterCatalogue: CounterCatalogueService;
@@ -689,6 +695,9 @@ export function getContainer(): AppContainer {
   const heldSales = new HeldSaleService(drizzleDb, shifts);
   const counterCatalogue = new CounterCatalogueService(drizzleDb);
   const offlineSales = new OfflineSaleService(drizzleDb, decisionLog, reasonCodes, shifts, cashSales);
+  const vanSalesSettings = new VanSalesSettingsService(drizzleDb, decisionLog, reasonCodes);
+  const vans = new VanService(drizzleDb, decisionLog);
+  const salesReps = new RepService(drizzleDb, decisionLog);
   const preparation = new PreparationService(drizzleDb);
   const packageGroups = new PackageGroupService(drizzleDb, packageShop, packageOrders);
   const packageQuoteRequests = new PackageQuoteRequestService(drizzleDb, packageShop, packageOrders);
@@ -876,6 +885,9 @@ export function getContainer(): AppContainer {
     cashSales,
     partialBilling,
     offlineSales,
+    vanSalesSettings,
+    vans,
+    salesReps,
     tillSettings,
     heldSales,
     counterCatalogue,

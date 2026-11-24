@@ -11,11 +11,14 @@ import {
 } from '@/generated/docs';
 import { resolveContextualDoc } from './contextual-map';
 
+/** The index plus one chapter for every guide in docs/implementor-guide: the count follows the files, so a new guide never needs this test edited. */
+const CHAPTERS = 1 + fs.readdirSync(path.join(process.cwd(), 'docs', 'implementor-guide')).filter((f) => /^\d{2}-.+\.md$/.test(f)).length;
+
 describe('Build-Time Documentation Engine & Version-Tagged PDF', () => {
   it('loads the pre-compiled documentation manifest without filesystem markdown reads', () => {
     const manifest = getDocsManifest();
     expect(manifest).toBeDefined();
-    expect(manifest.chapters.length).toBe(15);
+    expect(manifest.chapters.length).toBe(CHAPTERS);
     expect(manifest.searchIndex.length).toBeGreaterThan(100);
   });
 
@@ -27,13 +30,13 @@ describe('Build-Time Documentation Engine & Version-Tagged PDF', () => {
       `v${versionManifest.version}-${versionManifest.gitSha}`,
     );
     expect(versionManifest.sourceChecksum).toHaveLength(64); // SHA-256
-    expect(versionManifest.chaptersCount).toBe(15);
+    expect(versionManifest.chaptersCount).toBe(CHAPTERS);
     expect(versionManifest.pdfSizeBytes).toBeGreaterThan(50 * 1024); // spec: > 50KB
   });
 
-  it('verifies all 15 chapters have titles, TOCs, HTML content, and reading metrics', () => {
+  it('verifies every chapter has titles, TOCs, HTML content, and reading metrics', () => {
     const chapters = getAllChapters();
-    expect(chapters).toHaveLength(15);
+    expect(chapters).toHaveLength(CHAPTERS);
 
     for (const chapter of chapters) {
       expect(chapter.slug).toBeTruthy();
@@ -87,8 +90,8 @@ describe('Build-Time Documentation Engine & Version-Tagged PDF', () => {
     const header = buffer.subarray(0, 5).toString('ascii');
     expect(header).toBe('%PDF-');
 
-    // Cover + TOC + 15 chapters, one or more pages each
-    expect(versionManifest.pdfPageCount).toBeGreaterThanOrEqual(17);
+    // Cover + TOC + every chapter, one or more pages each
+    expect(versionManifest.pdfPageCount).toBeGreaterThanOrEqual(CHAPTERS + 2);
 
     // The manifest checksum is the exact sha256 of the served PDF bytes
     const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');

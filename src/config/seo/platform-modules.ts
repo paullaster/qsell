@@ -81,6 +81,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'Customer records, order history and newsletter',
       'Product reviews with moderation',
       'A preparation sheet for catering and made-to-order meals: what to make for each day and delivery time, with totals to print',
+      'Van sales: reps sell from a loaded van or take orders on a route, with stock and cash signed out and counted back',
       'Price lists, discounts and promotions',
     ],
     keywords: [
@@ -93,6 +94,9 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'retail POS Nairobi',
       'catering order software Kenya',
       'meal preparation sheet',
+      'van sales software Kenya',
+      'route sales and distribution software',
+      'pre-sales order taking app',
     ],
     subModules: [
       'Sales Quotes',
@@ -101,6 +105,7 @@ export const PLATFORM_MODULES: readonly PlatformModuleSeo[] = [
       'Cash Sales',
       'Shifts',
       'Sales Invoices',
+      'Van sales',
       'Web Shop Orders',
       'Preparation sheet',
       'Newsletter',
