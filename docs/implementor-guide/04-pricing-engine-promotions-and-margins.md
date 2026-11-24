@@ -107,7 +107,7 @@ graph TD
 ### Sub-Module 7: Price Book (`/admin/pricing/book`)
 - Printable and exportable matrix showing what every product sells for in any combination of Customer Group, Branch, and Quantity tier. Ideal for distributing physical price sheets to field sales agents.
 
-### Sub-Module 8: Pricing Insights (`/admin/pricing/insights`)
+### Sub-Module 8: Pricing Insights (`/admin/reports/pricing-insights`)
 - Executive analytics dashboard displaying:
   - Average realized gross margin across all orders.
   - Total revenue surrendered to promotional discounts and coupon codes.

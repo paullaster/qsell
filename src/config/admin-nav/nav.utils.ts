@@ -18,6 +18,13 @@ function holds(access: AdminNavAccess, permission: AdminNavItem['permission']): 
   return needed.some((key) => access.permissions.includes(key));
 }
 
+/** Whether the user holds the item's permission and, where it lists several, every one of them. */
+function holdsItem(access: AdminNavAccess, item: AdminNavItem): boolean {
+  if (!holds(access, item.permission)) return false;
+  if (item.permissionAll === undefined || access.superAdmin) return true;
+  return item.permissionAll.every((key) => access.permissions.includes(key));
+}
+
 /**
  * Keep only what this user may open. Fails closed: a screen with no permission
  * is hidden, and a section is hidden when none of its sub links remain.
@@ -30,7 +37,7 @@ export function filterAdminNavByAccess(
   const result: AdminNavItem[] = [];
   for (const item of items) {
     const isSection = (item.subLinks?.length ?? 0) > 0;
-    if (item.permission !== undefined && !holds(allowed, item.permission)) continue;
+    if (item.permission !== undefined && !holdsItem(allowed, item)) continue;
     if (isSection) {
       const subLinks = filterAdminNavByAccess(item.subLinks ?? [], allowed);
       if (subLinks.length === 0) continue;

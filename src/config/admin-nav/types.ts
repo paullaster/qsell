@@ -54,7 +54,8 @@ export type AdminNavIconName =
   | 'Mail'
   | 'Truck'
   | 'MapPin'
-  | 'Route';
+  | 'Route'
+  | 'BarChart3';
 
 export interface AdminNavItem {
   /** Stable unique id across the whole tree */
@@ -80,6 +81,11 @@ export interface AdminNavItem {
    * A screen with no permission is never shown.
    */
   permission?: PermissionKey | readonly PermissionKey[];
+  /**
+   * Needs every one of these as well (a report that needs several permissions). `permission` still decides the lists that
+   * apply; this narrows it, so the menu never shows a screen that would answer "not found".
+   */
+  permissionAll?: readonly PermissionKey[];
   /** Nested navigation (depth capped at ADMIN_NAV_MAX_DEPTH) */
   subLinks?: AdminNavItem[];
 }

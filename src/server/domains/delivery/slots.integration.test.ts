@@ -509,7 +509,7 @@ describe.skipIf(!has(url))('delivery slots (database)', () => {
       const mineSent = fake.sent.filter((x) => x.endpoint === mine.endpoint);
       expect(mineSent).toHaveLength(1);
       expect(mineSent[0]?.title).toMatch(/^Delivery DLV-.* is at risk$/);
-      expect(mineSent[0]?.url).toBe('/admin/delivery/late');
+      expect(mineSent[0]?.url).toBe('/admin/reports/late-deliveries');
       expect(`${mineSent[0]?.title ?? ""} ${mineSent[0]?.body ?? ""}`).not.toMatch(/0700|Test Rd|Wanjiru|@/i);
       expect(await pushesOf(a)).toEqual(['at_risk:staff:sent']);
       await push.flush(500);
@@ -967,7 +967,7 @@ describe.skipIf(!has(url))('delivery slots (database)', () => {
       const mine = mail.sent.filter((m) => m.to === 'flush-one@shop.test');
       expect(mine).toHaveLength(1);
       expect(mine[0]?.subject).toMatch(/^At risk: delivery DLV-/);
-      expect(mine[0]?.text).toContain('/admin/delivery/late');
+      expect(mine[0]?.text).toContain('/admin/reports/late-deliveries');
       expect(mine[0]?.text).not.toMatch(/0700|street|Test Rd/i);
       expect(await noticesOf(a)).toEqual(['at_risk:flush-one@shop.test:sent']);
       expect((await c.deliverySla.overview(companyId, now)).find((l) => l.deliveryId === a)?.mails).toEqual({ sent: 1, waiting: 0, failed: 0 });

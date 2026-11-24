@@ -67,10 +67,13 @@ export async function placePayOnDeliveryOrder(page: Page): Promise<string> {
 export async function openOrder(page: Page, orderNumber: string): Promise<void> {
   await open(page, '/admin/orders', /Web Shop Orders/);
   await page.getByLabel('Search orders').fill(orderNumber);
-  const manage = page.getByRole('button', { name: /Manage/ }).first();
-  await expect(manage).toBeVisible({ timeout: 60_000 });
-  await manage.click();
-  await expect(page.getByRole('dialog')).toBeVisible({ timeout: 30_000 });
+  const orderLink = page.getByRole('link', { name: `Open order ${orderNumber}` });
+  await expect(orderLink).toBeVisible({ timeout: 60_000 });
+  // A press before the page has hydrated is lost, so it is repeated until the order opens over the list; once the address has changed the press worked and only the window is awaited.
+  await expect(async () => {
+    if (!page.url().includes('/admin/orders/view/')) await orderLink.click({ timeout: 5_000 });
+    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 20_000 });
+  }).toPass({ timeout: 120_000 });
 }
 
 /** Presses a step and waits for the delivery to say it is done. */

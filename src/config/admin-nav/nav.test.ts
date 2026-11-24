@@ -31,8 +31,19 @@ describe('the admin sidebar', () => {
     const parent = all.find((x) => x.item.id === 'settings-sales')?.item;
     expect(where('settings-sales')).toBe('settings');
     expect(parent?.href).toBe('/admin/settings/sales');
-    expect(parent?.subLinks?.map((x) => x.id)).toEqual(['settings-sales-customer', 'settings-sales-cash-sales', 'settings-selling-documents', 'settings-registers', 'settings-partial-billing', 'settings-offline-selling']);
-    for (const [id, name] of [['settings-registers', 'registers'], ['settings-partial-billing', 'partial-billing'], ['settings-offline-selling', 'offline-selling']] as const) {
+    expect(parent?.subLinks?.map((x) => x.id)).toEqual([
+      'settings-sales-customer',
+      'settings-sales-cash-sales',
+      'settings-selling-documents',
+      'settings-registers',
+      'settings-partial-billing',
+      'settings-offline-selling',
+    ]);
+    for (const [id, name] of [
+      ['settings-registers', 'registers'],
+      ['settings-partial-billing', 'partial-billing'],
+      ['settings-offline-selling', 'offline-selling'],
+    ] as const) {
       expect(where(id)).toBe('settings/settings-sales');
       expect(all.find((x) => x.item.id === id)?.item.href).toBe(`/admin/settings/sales/${name}`);
     }
@@ -58,7 +69,6 @@ describe('the admin sidebar', () => {
       'pricing-loyalty',
       'pricing-gift-cards',
       'pricing-book',
-      'pricing-insights',
       'pricing-floors',
       'pricing-limits',
       'pricing-check',
@@ -66,6 +76,31 @@ describe('the admin sidebar', () => {
     ])
       expect(where(id)).toBe('sales/pricing');
     expect(own).toContain('pricing-groups');
+  });
+
+  it('keeps every report in the Reports module, under the module it belongs to, and nowhere else', () => {
+    expect(where('report-trial-balance')).toBe('reports/reports-module-finance');
+    expect(where('report-pricing-insights')).toBe('reports/reports-module-sales');
+    expect(where('report-vendor-scorecards')).toBe('reports/reports-module-vendors');
+    expect(where('report-late-deliveries')).toBe('reports/reports-module-delivery');
+    expect(where('report-customer-analytics')).toBe('reports/reports-module-customers');
+    // The screens they were on before are gone from their old modules.
+    const old = [
+      '/admin/finance/trial-balance',
+      '/admin/finance/receivables/ageing',
+      '/admin/vendors/reports',
+      '/admin/vendors/scorecards',
+      '/admin/delivery/reports',
+      '/admin/delivery/performance',
+      '/admin/delivery/late',
+      '/admin/pricing/insights',
+      '/admin/analytics',
+    ];
+    for (const href of old) expect(all.some((x) => x.item.href === href)).toBe(false);
+    // Every report link sits under /admin/reports.
+    for (const x of all.filter((y) => y.item.id.startsWith('report-'))) {
+      expect(x.item.href.startsWith('/admin/reports/')).toBe(true);
+    }
   });
 
   it('puts customer groups with Customers, and kits and product groups with Products and Inventory', () => {
@@ -132,6 +167,8 @@ describe('who sees what in the admin sidebar', () => {
 
   it('is not disabled unless the config says so, and every screen names its permission', () => {
     expect(all.every((x) => x.item.disabled === false)).toBe(true);
-    expect(all.filter((x) => (x.item.subLinks ?? []).length === 0 && x.item.permission === undefined)).toEqual([]);
+    expect(
+      all.filter((x) => (x.item.subLinks ?? []).length === 0 && x.item.permission === undefined),
+    ).toEqual([]);
   });
 });

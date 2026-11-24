@@ -1,32 +1,51 @@
 import Link from 'next/link';
-import { AlertTriangle, ArrowDownRight, ArrowUpRight, Minus, OctagonAlert } from 'lucide-react';
+import { AlertTriangle, ArrowRight } from 'lucide-react';
 import type { Comparison } from '@/server/domains/reports/types';
+import { Delta as KitDelta, Kpi as KitKpi } from '@/components/reports/kit/Hero';
+import { EmptyPanel, FailedPanel, Panel } from '@/components/reports/kit/Panel';
+
+/**
+ * The overview's building blocks, now drawn by the shared report kit (`components/reports/kit`). These thin wrappers keep the
+ * overview's own call sites simple: they translate the overview's data shapes into the kit's, and add nothing of their own.
+ */
 
 export function Card({
   title,
   definition,
   children,
   id,
+  more,
 }: {
   title: string;
+  /** Where the full report for this panel is: the same period, comparison and branch carry over. */
+  more?: { href: string; label: string };
   /** One plain sentence saying exactly what the numbers mean. */
   definition?: string;
   children: React.ReactNode;
   id: string;
 }) {
   return (
-    <section
-      aria-labelledby={id}
-      className="min-w-0 space-y-4 rounded-xl border border-line bg-surface-raised p-4 sm:p-5"
+    <Panel
+      id={id}
+      title={title}
+      {...(definition === undefined ? {} : { definition })}
+      {...(more === undefined ? {} : { actions: <MoreLink more={more} /> })}
     >
-      <div>
-        <h2 id={id} className="text-sm font-bold text-fg-strong">
-          {title}
-        </h2>
-        {definition ? <p className="mt-0.5 text-xs text-fg-muted">{definition}</p> : null}
-      </div>
       {children}
-    </section>
+    </Panel>
+  );
+}
+
+/** The "see the full report" link on a panel or a list. */
+export function MoreLink({ more }: { more: { href: string; label: string } }) {
+  return (
+    <Link
+      href={more.href}
+      className="inline-flex min-h-10 items-center gap-1 rounded-lg px-2 text-xs font-semibold text-indigo-700 hover:bg-hover hover:underline focus-visible:outline-2 focus-visible:outline-indigo-500"
+    >
+      {more.label}
+      <ArrowRight className="size-3.5" aria-hidden />
+    </Link>
   );
 }
 
@@ -40,55 +59,13 @@ export function Delta({
   previousLabel: string;
   upIsGood?: boolean;
 }) {
-  if (value.changePct === null) {
-    return (
-      <p className="flex items-center gap-1 text-xs text-fg-subtle">
-        <Minus className="h-3.5 w-3.5" aria-hidden="true" />
-        Nothing to compare with in {previousLabel}
-      </p>
-    );
-  }
-  const up = value.changePct > 0;
-  const flat = value.changePct === 0;
-  const good = flat ? null : up === upIsGood;
-  const Icon = flat ? Minus : up ? ArrowUpRight : ArrowDownRight;
-  const tone = flat
-    ? 'text-fg-muted'
-    : good
-      ? 'text-emerald-700 dark:text-emerald-400'
-      : 'text-red-700 dark:text-red-400';
-  const words = flat ? 'No change' : `${up ? 'Up' : 'Down'} ${Math.abs(value.changePct)}%`;
   return (
-    <p className={`flex flex-wrap items-center gap-x-1 text-xs ${tone}`}>
-      <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-      <span className="font-semibold">{words}</span>
-      <span className="text-fg-subtle">vs {previousLabel}</span>
-    </p>
-  );
-}
-
-/** A tiny trend line, drawn at the full width of its tile. Decorative: the numbers carry the meaning. */
-export function Sparkline({ values }: { values: number[] }) {
-  if (values.length < 2 || values.every((v) => v === 0)) return null;
-  const max = Math.max(...values);
-  const pts = values.map((v, i) => `${i},${24 - (v / max) * 22}`).join(' ');
-  return (
-    <svg
-      viewBox={`0 0 ${values.length - 1} 24`}
-      preserveAspectRatio="none"
-      className="h-6 w-full text-indigo-500"
-      aria-hidden="true"
-    >
-      <polyline
-        points={pts}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        vectorEffect="non-scaling-stroke"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
-    </svg>
+    <KitDelta
+      current={value.current}
+      previous={value.previous}
+      basis={previousLabel}
+      upIsGood={upIsGood}
+    />
   );
 }
 
@@ -109,37 +86,24 @@ export function Kpi({
   children?: React.ReactNode;
 }) {
   return (
-    <div className="min-w-0 space-y-1 rounded-lg border border-line bg-surface p-3.5">
-      <p className="text-[11px] font-semibold tracking-wide text-fg-subtle uppercase">{label}</p>
-      <p className="truncate text-xl font-bold text-fg-strong sm:text-2xl" title={fullValue}>
-        {value}
-        {fullValue && fullValue !== value ? <span className="sr-only"> ({fullValue})</span> : null}
-      </p>
+    <KitKpi
+      label={label}
+      value={value}
+      {...(fullValue === undefined ? {} : { fullValue })}
+      {...(note === undefined ? {} : { note })}
+      {...(spark === undefined ? {} : { trend: spark })}
+    >
       {children}
-      {spark ? <Sparkline values={spark} /> : null}
-      {note ? <p className="text-[11px] text-fg-subtle">{note}</p> : null}
-    </div>
+    </KitKpi>
   );
 }
 
 export function EmptyNote({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="rounded-lg border border-dashed border-line px-3 py-4 text-center text-sm text-fg-muted">
-      {children}
-    </p>
-  );
+  return <EmptyPanel>{children}</EmptyPanel>;
 }
 
 export function SectionFailed({ name }: { name: string }) {
-  return (
-    <p
-      role="alert"
-      className="flex items-start gap-2 rounded-lg border border-red-800 bg-red-50 px-3 py-3 text-sm text-red-800"
-    >
-      <OctagonAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-      <span>{name} could not be loaded just now. Refresh the page to try again.</span>
-    </p>
-  );
+  return <FailedPanel name={name} />;
 }
 
 export function AttentionList({

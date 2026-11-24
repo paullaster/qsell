@@ -27,7 +27,7 @@ test.describe('fuel and vehicle costs', () => {
     await noInnerHorizontalScroll(page);
 
     // The report counts it against delivery.
-    await open(page, '/admin/delivery/reports', 'Delivery report');
+    await open(page, '/admin/reports/delivery-report', 'Delivery report');
     await expect(page.getByRole('region', { name: 'Margin' })).toContainText(/fuel \d/, { timeout: 30_000 });
 
     // A mistake is taken back with a reason; the entry stays.
@@ -68,7 +68,7 @@ test.describe('fuel and vehicle costs', () => {
     await noHorizontalScroll(page);
 
     // The report adds the vehicle's costs up; with nothing delivered it has no cost per delivery.
-    await open(page, '/admin/delivery/reports', 'Delivery report');
+    await open(page, '/admin/reports/delivery-report', 'Delivery report');
     const byVehicle = page.getByRole('region', { name: 'By vehicle' });
     const line = byVehicle.getByRole('listitem').filter({ hasText: vehicle });
     await expect(line).toContainText('KSh 777.00 (fuel 777.00, repairs 0.00, other 0.00)', { timeout: 30_000 });

@@ -54,7 +54,7 @@ test.describe('ledger entries, periods and registers', () => {
   test('postings and the trial balance open', async ({ page }) => {
     await open(page, '/admin/finance/registers', /Postings/);
     await expect(page.locator('select')).toHaveCount(0);
-    await open(page, '/admin/finance/trial-balance', 'Trial balance');
+    await open(page, '/admin/reports/trial-balance', 'Trial balance');
     await expect(page.getByRole('status').filter({ hasText: /balance/i }).first()).toBeVisible();
     await noHorizontalScroll(page);
   });

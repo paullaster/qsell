@@ -21,9 +21,9 @@ test.describe('opening an order', () => {
     const href = (await open.getAttribute('href')) ?? '';
     expect(href).toMatch(/^\/admin\/orders\/view\/[\w-]+$/);
     await expect(async () => {
-      await open.click();
-      await expect(page.getByRole('dialog', { name: `Sales order ${number}` })).toBeVisible({ timeout: 4000 });
-    }).toPass({ timeout: 60_000 });
+      if (!page.url().includes('/admin/orders/view/')) await open.click();
+      await expect(page.getByRole('dialog', { name: `Sales order ${number}` })).toBeVisible({ timeout: 20_000 });
+    }).toPass({ timeout: 120_000 });
     const dialog = page.getByRole('dialog', { name: `Sales order ${number}` });
 
     // What matters is on top: who, when, how much and where it stands; the parts of the order are named and one press away.
@@ -74,9 +74,9 @@ test.describe('opening an order', () => {
     const open = page.locator('tr, li, article').filter({ hasText: number }).getByRole('link', { name: /Open order/ }).first();
     await expect(open).toBeVisible({ timeout: 60_000 });
     await expect(async () => {
-      await open.click();
-      await expect(page.getByRole('dialog', { name: new RegExp(number) })).toBeVisible({ timeout: 4000 });
-    }).toPass({ timeout: 60_000 });
+      if (!page.url().includes('/admin/orders/view/')) await open.click();
+      await expect(page.getByRole('dialog', { name: new RegExp(number) })).toBeVisible({ timeout: 20_000 });
+    }).toPass({ timeout: 120_000 });
     await expect(page.getByRole('dialog', { name: new RegExp(number) })).toContainText('Web shop order');
     await page.getByRole('dialog').getByRole('button', { name: 'Close' }).click();
     await expect(page).toHaveURL(/\/admin\/orders$/);

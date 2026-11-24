@@ -33,6 +33,8 @@ const SEED_ROLES: SeedRole[] = [
     grants: [
       ...READ_PERMISSIONS,
       'reports:all_branches',
+      'reports:export',
+      'reports:view_audit',
       'orders:create',
       'orders:update',
       'orders:approve',
