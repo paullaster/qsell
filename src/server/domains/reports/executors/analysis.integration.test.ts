@@ -118,7 +118,8 @@ describe.skipIf(!has(url))('sales, stock and collections reports (database)', ()
     await product('flour', `Flour ${tag}`, {
       stockQuantity: 40,
       lowStockThreshold: 5,
-      costPrice: '10',
+      // Costly enough to rank first: these reports keep the 500 dearest rows, and other test files fill the shared database.
+      costPrice: '1000000',
     });
     await product('svc', `Service ${tag}`, {
       inventoryKind: 'service',
@@ -358,7 +359,7 @@ describe.skipIf(!has(url))('sales, stock and collections reports (database)', ()
       const r = await run('slow-stock');
       expect(labels(r)).toContain(`Flour ${tag}`);
       expect(labels(r)).not.toContain(`Soap ${tag}`);
-      expect(cell(r, `Flour ${tag}`, 'Cash tied up (KES)')).toBe(400);
+      expect(cell(r, `Flour ${tag}`, 'Cash tied up (KES)')).toBe(40_000_000);
       expect(cell(r, `Flour ${tag}`, 'Last sold')).toBe('Never');
     });
 
@@ -368,7 +369,7 @@ describe.skipIf(!has(url))('sales, stock and collections reports (database)', ()
       expect(Math.round(((listed ?? 0) + (missing ?? 0)) * 100)).toBe(
         Math.round((overview ?? 0) * 100),
       );
-      expect(cell(r, `Flour ${tag}`, 'Stock value (KES)')).toBe(400);
+      expect(cell(r, `Flour ${tag}`, 'Stock value (KES)')).toBe(40_000_000);
       expect(labels(r)).not.toContain(`Service ${tag}`);
     });
   });

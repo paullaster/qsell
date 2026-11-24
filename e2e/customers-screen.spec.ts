@@ -39,9 +39,9 @@ test.describe('customers screen', () => {
     );
     // A click before the page has hydrated is lost, so it is repeated until the page has moved.
     await expect(async () => {
-      await page.getByRole('link', { name: /^List/ }).last().click();
-      await expect(page).toHaveURL(/\/admin\/customers\/list$/, { timeout: 3_000 });
-    }).toPass({ timeout: 30_000 });
+      if (!page.url().endsWith('/admin/customers/list')) await page.getByRole('link', { name: /^List/ }).last().click({ timeout: 5_000 });
+      await expect(page).toHaveURL(/\/admin\/customers\/list$/, { timeout: 10_000 });
+    }).toPass({ timeout: 60_000 });
     await expect(page.getByRole('heading', { name: 'Customers', level: 2 })).toBeVisible();
   });
 
@@ -50,8 +50,8 @@ test.describe('customers screen', () => {
     await openCustomers(page);
     await page.getByLabel('Search customers').fill(who.number);
     await expect(async () => {
-      await page.getByRole('link', { name: `Open ${who.name}` }).click();
-      await expect(page).toHaveURL(/\/admin\/customers\/(?!list$)[^/]+$/, { timeout: 4_000 });
+      if (/\/admin\/customers\/(list)?$/.test(page.url())) await page.getByRole('link', { name: `Open ${who.name}` }).click({ timeout: 5_000 });
+      await expect(page).toHaveURL(/\/admin\/customers\/(?!list$)[^/]+$/, { timeout: 10_000 });
     }).toPass({ timeout: 60_000 });
     await expect(page.getByRole('heading', { name: 'Statement of Account' })).toBeVisible({ timeout: 60_000 });
 
@@ -87,8 +87,8 @@ test.describe('customers screen', () => {
     await page.getByLabel('Search customers').fill('E2E001');
     // A click before the page has hydrated is lost, so it is repeated until the page has moved.
     await expect(async () => {
-      await page.getByRole('link', { name: 'Open Alice Cash' }).click();
-      await expect(page).toHaveURL(/\/admin\/customers\/(?!list$)[^/]+$/, { timeout: 4_000 });
+      if (/\/admin\/customers\/(list)?$/.test(page.url())) await page.getByRole('link', { name: 'Open Alice Cash' }).click({ timeout: 5_000 });
+      await expect(page).toHaveURL(/\/admin\/customers\/(?!list$)[^/]+$/, { timeout: 10_000 });
     }).toPass({ timeout: 60_000 });
     await expect(page.getByRole('heading', { name: 'Statement of Account' })).toBeVisible({ timeout: 60_000 });
     // No dates chosen means every transaction; the dates stay what the person chose and do not move as the list scrolls.
@@ -257,9 +257,9 @@ test.describe('customers screen', () => {
     await expect(page.getByRole('heading', { name: 'Customer information' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Statement and transactions' })).toBeVisible();
     await expect(async () => {
-      await page.getByRole('link', { name: 'Edit customer' }).click();
-      await expect(page).toHaveURL(/\/admin\/customers\/[^/]+\/edit$/, { timeout: 3_000 });
-    }).toPass({ timeout: 30_000 });
+      if (!page.url().endsWith('/edit')) await page.getByRole('link', { name: 'Edit customer' }).click({ timeout: 5_000 });
+      await expect(page).toHaveURL(/\/admin\/customers\/[^/]+\/edit$/, { timeout: 10_000 });
+    }).toPass({ timeout: 60_000 });
     const again = page.getByRole('form', { name: 'Customer card' });
     await expect(again.getByLabel('Credit limit')).toHaveValue('750.00', { timeout: 30_000 });
     await expect(again.getByRole('combobox', { name: 'Blocked' })).toHaveValue(/invoiced/i);
