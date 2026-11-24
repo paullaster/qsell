@@ -56,6 +56,8 @@ test.describe('new customer from a picker', () => {
     await expect(async () => {
       await form.getByLabel('Customer name').fill(`${name} again`);
       await form.getByLabel('Email').fill(`WALKIN-${stamp.toLowerCase()}@example.test`);
+      // A customer made here is on account, and a credit customer needs a limit before the email is looked at.
+      await form.getByLabel('Credit limit').fill('1500');
       await form.getByRole('button', { name: 'Create customer' }).click();
       await expect(form.getByRole('alert')).toContainText(/already exists/, { timeout: 5000 });
     }).toPass({ timeout: 60_000 });
