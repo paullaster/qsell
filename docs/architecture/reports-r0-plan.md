@@ -73,7 +73,7 @@ Golden guarantee: the existing `overview.integration.test.ts` (453 lines) runs u
 
 ### WP5. Export service and audit (L)
 
-Migration `drizzle/0208_report_audit.sql` (generated with `pnpm db:generate --name report_audit`, hand-reviewed): table `report_audit` (`id bigint generated always as identity`, `company_id`, `user_id`, `report_code`, `action` ('run'|'export'), `params jsonb` (typed parameters only, no personal data), `format`, `row_count`, `truncated`, `content_hash`, `definitions_version`, `correlation_id`, `occurred_at default now()`), append-only trigger (no update, no delete) as the decision log, indexes `(company_id, occurred_at)` and `(company_id, report_code, occurred_at)`. Schema edit in `schema.ts` with the migration, snapshot and journal committed together; no `db:push`.
+Migration `drizzle/0211_report_audit.sql` (generated with `pnpm db:generate --name report_audit`, hand-reviewed): table `report_audit` (`id bigint generated always as identity`, `company_id`, `user_id`, `report_code`, `action` ('run'|'export'), `params jsonb` (typed parameters only, no personal data), `format`, `row_count`, `truncated`, `content_hash`, `definitions_version`, `correlation_id`, `occurred_at default now()`), append-only trigger (no update, no delete) as the decision log, indexes `(company_id, occurred_at)` and `(company_id, report_code, occurred_at)`. Schema edit in `schema.ts` with the migration, snapshot and journal committed together; no `db:push`.
 
 Files (new):
 - `.../export/sanitize.ts` (neutralise cells starting `= + - @ tab CR`, one function, used by CSV, XLSX and PDF; the refund-file code calls it instead of its own copy; tests with the injection strings).
@@ -158,14 +158,14 @@ The Business Overview screen is rebuilt from these parts with the **same content
 1. **Business Overview stays at `/admin`** as the landing screen, also listed in the Reports hub (recommended), rather than moving under Reports.
 2. **R-0 registers legacy reports by adapter** and runs only three through the runner (recommended), rather than rewriting all of them now.
 3. **The new keys** are `reports:read`, `reports:export` and `reports:view_audit`; existing report keys keep their meaning and no role gains access it did not have, except the Admin role on new installs.
-4. **Favourites** use the existing user preference mechanism if there is one; otherwise one small table in migration 0208 (checked in WP7).
+4. **Favourites** use the existing user preference mechanism if there is one; otherwise one small table in migration 0211 (checked in WP7).
 5. **Customer Analytics** is registered as legacy and not rebuilt here.
 
 ## 8. As built (R-0)
 
 What was delivered, and where it differs from the plan above.
 
-**Delivered.** Message catalogue and locale formatting (WP1); measure catalogue with 19 measures (WP1); report registry with 20 legacy reports adapted and the Business Overview built in (WP2); `ReportRunner` as the single door with permission-before-read, scope, cache keyed by permission set, as-of metadata, timeout and optional audit (WP3); three executors (overview, receivables ageing, payables ageing) with a golden test proving the runner returns what the overview service returned before (WP3, WP4); export to CSV, Excel and PDF with formula neutralisation, SHA-256 fingerprint and an append-only audit table, migration 0208 (WP5); design tokens for data colours, an in-house SVG chart kit, the report kit (hero, panel, frame, filter bar, table, palette, export buttons), the Reports page, report activity page, style guide and the rebuilt Business Overview (WP6, WP7); implementor guide chapter 15 and the platform SEO entry (WP8).
+**Delivered.** Message catalogue and locale formatting (WP1); measure catalogue with 19 measures (WP1); report registry with 20 legacy reports adapted and the Business Overview built in (WP2); `ReportRunner` as the single door with permission-before-read, scope, cache keyed by permission set, as-of metadata, timeout and optional audit (WP3); three executors (overview, receivables ageing, payables ageing) with a golden test proving the runner returns what the overview service returned before (WP3, WP4); export to CSV, Excel and PDF with formula neutralisation, SHA-256 fingerprint and an append-only audit table, migration 0211 (WP5); design tokens for data colours, an in-house SVG chart kit, the report kit (hero, panel, frame, filter bar, table, palette, export buttons), the Reports page, report activity page, style guide and the rebuilt Business Overview (WP6, WP7); implementor guide chapter 15 and the platform SEO entry (WP8).
 
 **Differences from the plan.**
 1. **Adapter first.** Legacy reports are registered with their real permissions and links and are not rewritten; 17 of the 20 are marked `catalogue: 'pending'` until they are moved onto catalogue measures.

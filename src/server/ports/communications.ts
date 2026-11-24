@@ -29,7 +29,6 @@ export interface CompanyProfile {
   documentLayouts?: DocumentLayouts;
   /** Legacy invoice-only note retained for compatibility with older integrations. */
   invoiceFooterNote?: string | null;
-  invoicePrefix: string;
   logoUrl?: string | null;
   primaryColor: string;
   accentColor: string;

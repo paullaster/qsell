@@ -42,9 +42,13 @@ const nextConfig: NextConfig = {
       { protocol: 'http', hostname: '**' },
     ],
   },
-  // Reports all live under /admin/reports. The addresses they had in other modules still work.
+  // Settings that moved under Sales, and reports that moved under /admin/reports, keep working at their old addresses
+  // (bookmarks, links in emails and notes).
   redirects() {
-    const moved: [string, string][] = [
+    const settings: [string, string][] = ['registers', 'offline-selling', 'partial-billing'].map(
+      (name) => [`/admin/settings/${name}`, `/admin/settings/sales/${name}`],
+    );
+    const reports: [string, string][] = [
       ['/admin/finance/trial-balance', '/admin/reports/trial-balance'],
       ['/admin/finance/receivables/ageing', '/admin/reports/receivables-ageing'],
       ['/admin/vendors/reports', '/admin/reports/vendor-reports'],
@@ -55,7 +59,11 @@ const nextConfig: NextConfig = {
       ['/admin/pricing/insights', '/admin/reports/pricing-insights'],
       ['/admin/analytics', '/admin/reports/customer-analytics'],
     ];
-    return moved.map(([source, destination]) => ({ source, destination, permanent: true }));
+    return [...settings, ...reports].map(([source, destination]) => ({
+      source,
+      destination,
+      permanent: true,
+    }));
   },
   headers() {
     return [

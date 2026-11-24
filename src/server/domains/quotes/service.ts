@@ -48,6 +48,9 @@ import { CLOSED_QUOTE_STATUSES, isQuoteExpired } from './expiry';
 import type { QuoteListRequest } from './quote-list';
 import type { TemplateListRequest } from './template-list';
 import { mergeLinesForOrder } from './order-lines';
+import { conversionKey, type QuoteTarget } from '@/lib/quote-conversion';
+import { sharedStateOf, type SharedQuoteState } from '@/lib/shared-quote';
+import { checkAcceptance, DEFAULT_ACCEPTANCE, readAcceptance, type AcceptanceOutcome, type AcceptanceSettings } from '@/lib/quote-acceptance';
 import { quotePdfItems } from './pdf-items';
 import { templateDraftFromQuote, type TemplateDraft } from './template-from-quote';
 import type { PriceResult } from '@/server/domains/pricing/domain/types';
@@ -207,6 +210,8 @@ export interface SalesQuote extends SalesQuoteRow {
   expired: boolean;
   /** The number of the order this quote became, once it has. */
   convertedOrderNumber?: string | null;
+  /** What it became, in words: Sales order, Sales invoice, Credit sale or Cash sale. */
+  convertedAs?: string | null;
   createdByName: string | null;
   sentByName: string | null;
   lines: (typeof salesQuoteLines.$inferSelect)[];
@@ -299,6 +304,21 @@ function nameOf(names: Map<string, string>, id: string | null): string | null {
   return id === null ? null : (names.get(id) ?? null);
 }
 
+/** What the person enters to take a cash sale: how the customer pays (the same rows as at the till). */
+export interface QuoteCashPayment {
+  tenders: { methodId: string; amount: number; reference: string }[];
+}
+
+/** What a conversion made, for the screen: the order, its tax invoice (or till receipt) and, for a cash sale, what was taken. */
+export interface QuoteConversion {
+  target: QuoteTarget;
+  orderId: string;
+  orderNumber: string;
+  invoiceNumber: string | null;
+  waitingForApproval: boolean;
+  receipt: { total: number; changeDue: number; tenders: { label: string; applied: number }[]; warning?: string } | null;
+}
+
 export class SalesQuoteService {
   private async companyId() {
     return (await getContainer().companySettings.ensureSeeded()).id;
@@ -316,10 +336,27 @@ export class SalesQuoteService {
         companyId: resolvedCompanyId,
         minimumGrossMarginPercent: '0',
         nextQuoteNumber: 1,
+        ...DEFAULT_ACCEPTANCE,
         updatedBy: null,
         updatedAt: new Date(),
       }
     );
+  }
+
+  /** What happens when a customer accepts a quote, and how staff are told. */
+  async getAcceptance(companyId?: string): Promise<AcceptanceSettings> {
+    return readAcceptance(await this.getSettings(companyId));
+  }
+
+  async updateAcceptance(userId: string, raw: unknown): Promise<AcceptanceSettings> {
+    const checked = checkAcceptance(raw);
+    if (!checked.ok) throw new Error(checked.error);
+    const companyId = await this.companyId();
+    await drizzleDb
+      .insert(salesQuoteSettings)
+      .values({ companyId, ...checked.settings, updatedBy: userId })
+      .onConflictDoUpdate({ target: salesQuoteSettings.companyId, set: { ...checked.settings, updatedBy: userId, updatedAt: new Date() } });
+    return checked.settings;
   }
 
   async updateSettings(userId: string, minimumGrossMarginPercent: number) {
@@ -830,10 +867,11 @@ export class SalesQuoteService {
         .orderBy(desc(salesQuoteEvents.createdAt)),
     ]);
     const names = await staffNames([quote.createdBy, quote.sentBy]);
-    const [made] = quote.convertedOrderId === null ? [] : await drizzleDb.select({ number: orders.orderNumber }).from(orders).where(eq(orders.id, quote.convertedOrderId)).limit(1);
+    const [made] = quote.convertedOrderId === null ? [] : await drizzleDb.select({ number: orders.orderNumber, module: orders.salesModule }).from(orders).where(eq(orders.id, quote.convertedOrderId)).limit(1);
     return {
       ...quote,
       convertedOrderNumber: made?.number ?? null,
+      convertedAs: made === undefined ? null : ({ sales_invoice: 'Sales invoice', credit_sale: 'Credit sale', pos_cash_sale: 'Cash sale' } as Record<string, string>)[made.module] ?? 'Sales order',
       expired: isQuoteExpired(quote, new Date()),
       createdByName: nameOf(names, quote.createdBy),
       sentByName: nameOf(names, quote.sentBy),
@@ -1749,19 +1787,166 @@ export class SalesQuoteService {
     };
     await drizzleDb.update(salesQuotes).set(patch).where(eq(salesQuotes.id, id));
     await this.event(id, status, userId, {});
-    if (status === 'accepted') {
-      try {
-        await this.convertToOrder(userId, id);
-      } catch (error) {
-        await this.event(id, 'order_conversion_failed', userId, {
-          error: error instanceof Error ? error.message : 'Order conversion failed',
-        });
-      }
-    }
+    // Marked accepted by a person: what it becomes follows the company's setting; nobody is told, as they did it themselves.
+    if (status === 'accepted') await this.afterAcceptance(id, userId, { notify: false });
     return this.get(id);
   }
 
-  async convertToOrder(userId: string, id: string) {
+  /** The company's settings for what a quote becomes. A sales invoice is made with its tax invoice, because that is what it is. */
+  private async sellingFor(target: 'sales_order' | 'sales_invoice' | 'credit_sale') {
+    const settings = await getContainer().sellingSettings.get((await getContainer().companySettings.ensureSeeded()).id, target);
+    return target === 'sales_invoice' ? { ...settings, invoice: 'with_document' as const } : settings;
+  }
+
+  /**
+   * Converts a quote into the document the person chose. A quote that is only sent is accepted on the customer's behalf first (a customer
+   * who says yes on the phone), which is what marking it accepted does. A cash sale is taken in the person's open shift with the payment
+   * they enter; the others are placed as the company's settings for them say.
+   */
+  async convert(userId: string, id: string, target: QuoteTarget, payment?: QuoteCashPayment): Promise<QuoteConversion> {
+    const quote = await this.get(id);
+    if (!quote) throw new Error('Quote not found.');
+    if (quote.convertedOrderId === null && quote.status === 'sent') {
+      const [accepted] = await drizzleDb
+        .update(salesQuotes)
+        .set({ status: 'accepted', acceptedAt: new Date(), updatedAt: new Date() })
+        .where(and(eq(salesQuotes.id, id), eq(salesQuotes.status, 'sent')))
+        .returning({ id: salesQuotes.id });
+      if (accepted !== undefined) await this.event(id, 'accepted', userId, { source: 'staff_conversion', target });
+    }
+    const company = await getContainer().companySettings.ensureSeeded();
+    if (target === 'cash_sale') return await this.convertToCashSale(userId, id, company.id, payment);
+    const order = await this.convertToOrder(userId, id, target);
+    if (!order) throw new Error('The order could not be found after it was made.');
+    const docs = await getContainer().orderDocuments.of(company.id, order.id);
+    return {
+      target,
+      orderId: order.id,
+      orderNumber: order.orderNumber,
+      invoiceNumber: docs?.invoices.find((i) => i.type === 'tax_invoice')?.number ?? null,
+      waitingForApproval: order.approvalStatus === 'pending',
+      receipt: null,
+    };
+  }
+
+  /** The cash sale a quote becomes: paid now, in the person's open shift, at the quote's prices. The same quote always finds the same sale, so a retry never sells twice. */
+  private async convertToCashSale(userId: string, id: string, companyId: string, payment: QuoteCashPayment | undefined): Promise<QuoteConversion> {
+    if (payment === undefined || payment.tenders.length === 0) throw new Error('Choose how the customer pays.');
+    let quote = await this.get(id);
+    if (!quote) throw new Error('Quote not found.');
+    if (quote.convertedOrderId !== null) {
+      const done = await getContainer().orders.getById(quote.convertedOrderId);
+      if (done) return { target: 'cash_sale', orderId: done.id, orderNumber: done.orderNumber, invoiceNumber: null, waitingForApproval: false, receipt: null };
+    }
+    if (quote.status === 'converting') {
+      if (Date.now() - quote.updatedAt.getTime() < 10 * 60 * 1000) throw new Error('This quote is already being converted. Refresh the quote in a few minutes.');
+      await drizzleDb.update(salesQuotes).set({ status: 'accepted', updatedAt: new Date() }).where(and(eq(salesQuotes.id, id), eq(salesQuotes.status, 'converting')));
+      quote = (await this.get(id))!;
+    }
+    if (quote.status !== 'accepted') throw new Error('Only accepted quotes can be converted.');
+    if (quote.validUntil && quote.validUntil < new Date()) throw new Error('This quote has expired.');
+    if (num(quote.shippingFee) > 0) throw new Error('This quote includes a delivery charge. A cash sale is taken at the counter with no delivery.');
+    const { storedLines, quotedItems, quotedTotals } = await this.orderInputsOf(quote);
+    const [claimed] = await drizzleDb
+      .update(salesQuotes)
+      .set({ status: 'converting', updatedAt: new Date() })
+      .where(and(eq(salesQuotes.id, id), eq(salesQuotes.status, 'accepted'), sql`${salesQuotes.convertedOrderId} IS NULL`))
+      .returning({ id: salesQuotes.id });
+    if (!claimed) throw new Error('The quote is already being processed. Refresh to see its latest status.');
+    try {
+      const c = getContainer();
+      const who = { userId, branchId: await c.salesOrders.branchOf(userId) };
+      const result = await c.cashSales.complete(companyId, who, {
+        customerId: quote.customerId,
+        lines: storedLines,
+        tenders: payment.tenders,
+        saleKey: conversionKey(id, (text) => createHash('sha256').update(text).digest('hex')),
+        fromQuote: { quoteId: id, quotedItems, quotedTotals },
+      });
+      if (!result.ok) {
+        // The sale was rung up but not paid: the same button finds it again and finishes the payment, once.
+        if (result.unfinished !== undefined) throw new Error('The sale was rung up but its payment could not be recorded just now. Press the button again to finish it: nothing will be counted twice.');
+        throw new Error(result.error);
+      }
+      await drizzleDb.update(salesQuotes).set({ status: 'converted', convertedOrderId: result.sale.orderId, updatedAt: new Date() }).where(eq(salesQuotes.id, id));
+      await this.event(id, 'converted', userId, { orderId: result.sale.orderId, orderNumber: result.sale.orderNumber, target: 'cash_sale', receipt: result.sale.receiptNumber });
+      return { target: 'cash_sale', orderId: result.sale.orderId, orderNumber: result.sale.orderNumber, invoiceNumber: result.sale.receiptNumber, waitingForApproval: false, receipt: { total: result.sale.total, changeDue: result.sale.changeDue, tenders: result.sale.tenders.map((t) => ({ label: t.label, applied: t.applied })), ...(result.sale.warning === undefined ? {} : { warning: result.sale.warning }) } };
+    } catch (error) {
+      await drizzleDb.update(salesQuotes).set({ status: 'accepted', updatedAt: new Date() }).where(and(eq(salesQuotes.id, id), eq(salesQuotes.status, 'converting')));
+      throw error;
+    }
+  }
+
+  /**
+   * What a conversion works from: the quote's lines merged for an order, the package choices found again (a part the package no longer
+   * offers stops the conversion and is named), the quoted prices that stand, and the same lines as a counter sale reads them.
+   */
+  private async orderInputsOf(quote: SalesQuote) {
+    // A product quoted as a kit that has stopped being one would be sold as an ordinary product from its own stock. Refuse.
+    const kitLines = quote.lines.filter((line) => line.priceTrace?.quotedAsKit !== undefined);
+    if (kitLines.length > 0) {
+      const now = await getContainer().kits.forProducts(
+        (await getContainer().companySettings.ensureSeeded()).id,
+        kitLines.flatMap((line) => (line.productId === null ? [] : [line.productId])),
+        { fresh: true },
+      );
+      const gone = kitLines.find((line) => line.productId === null || !now.has(line.productId));
+      if (gone !== undefined)
+        throw new Error(`${gone.description} was a kit when this quote was made and is not one now. Please make the quote again.`);
+    }
+    const orderLines = mergeLinesForOrder(quote.lines);
+    // Package lines: the quote's choices and price stand, found again by slot name and part. A part the package no longer offers stops
+    // the conversion and is named, so the quote can be changed.
+    const packageLines = orderLines.flatMap((line, index) => (line.priceTrace?.quotedAsPackage === undefined || line.productId === null ? [] : [{ index, productId: line.productId, stored: line.priceTrace.quotedAsPackage.picks, note: line.priceTrace.quotedAsPackage.note ?? '' }]));
+    const resolved = await getContainer().packageOrders.resolve((await getContainer().companySettings.ensureSeeded()).id, packageLines);
+    if (!resolved.ok) throw new Error(resolved.error);
+    const items = orderLines.map((line, index) => {
+      const at = packageLines.findIndex((p) => p.index === index);
+      const picks = at < 0 ? undefined : resolved.picks[at];
+      return {
+        productId: line.productId ?? '',
+        quantity: num(line.quantity),
+        ...(picks === undefined ? {} : { package: { picks, ...(packageLines[at]?.note === undefined || packageLines[at]?.note === '' ? {} : { note: packageLines[at]?.note }) } }),
+      };
+    });
+    if (items.some((line) => !line.productId))
+      throw new Error('A quoted product was removed from the catalog and cannot be converted.');
+    const quotedItems = orderLines.map((line) => ({
+          productId: line.productId!,
+          quantity: num(line.quantity),
+          productName: line.description,
+          sku: line.sku,
+          lineAmount: num(line.lineAmount),
+          taxRate: num(line.taxRate),
+          isTaxInclusive: line.isTaxInclusive,
+          priceTrace: line.priceTrace ?? null,
+          isGift: line.isGift,
+          unitId: line.unitId,
+          unitCode: line.unitCode,
+          enteredQuantity: line.enteredQuantity,
+          qtyPerUnit: line.qtyPerUnit,
+          enteredUnitPrice: line.enteredUnitPrice === null ? null : Number(line.enteredUnitPrice),
+        }));
+    const quotedTotals = {
+          subtotal: num(quote.subtotal),
+          tax: num(quote.taxAmount),
+          shippingFee: num(quote.shippingFee),
+          totalAmount: num(quote.totalAmount),
+        };
+    // The same lines as a counter sale reads them: the choices as the quote stored them, found again by the sale itself.
+    const storedLines = orderLines.map((line, index) => {
+      const at = packageLines.findIndex((p) => p.index === index);
+      const entry = at < 0 ? undefined : packageLines[at];
+      return { productId: line.productId ?? '', quantity: num(line.quantity), ...(entry === undefined ? {} : { package: { picks: entry.stored, note: entry.note } }) };
+    });
+    return { orderLines, items, quotedItems, quotedTotals, storedLines };
+  }
+
+  /**
+   * Makes the sales order, sales invoice or credit sale a quote becomes. The quote's own prices stand; the document then behaves as the
+   * company's settings for its kind say (stock, credit, approval, when the tax invoice is made), as if staff had entered it.
+   */
+  async convertToOrder(userId: string, id: string, target: 'sales_order' | 'sales_invoice' | 'credit_sale' = 'sales_order') {
     let quote = await this.get(id);
     if (!quote) throw new Error('Quote not found.');
     if (quote.convertedOrderId) return getContainer().orders.getById(quote.convertedOrderId);
@@ -1803,35 +1988,7 @@ export class SalesQuoteService {
     if (!address.street || !address.city || !address.countyOrState || !address.country) {
       throw new Error('Add a complete delivery address to the quote before converting it.');
     }
-    // A product quoted as a kit that has stopped being one would be sold as an ordinary product from its own stock. Refuse.
-    const kitLines = quote.lines.filter((line) => line.priceTrace?.quotedAsKit !== undefined);
-    if (kitLines.length > 0) {
-      const now = await getContainer().kits.forProducts(
-        (await getContainer().companySettings.ensureSeeded()).id,
-        kitLines.flatMap((line) => (line.productId === null ? [] : [line.productId])),
-        { fresh: true },
-      );
-      const gone = kitLines.find((line) => line.productId === null || !now.has(line.productId));
-      if (gone !== undefined)
-        throw new Error(`${gone.description} was a kit when this quote was made and is not one now. Please make the quote again.`);
-    }
-    const orderLines = mergeLinesForOrder(quote.lines);
-    // Package lines: the quote's choices and price stand, found again by slot name and part. A part the package no longer offers stops
-    // the conversion and is named, so the quote can be changed.
-    const packageLines = orderLines.flatMap((line, index) => (line.priceTrace?.quotedAsPackage === undefined || line.productId === null ? [] : [{ index, productId: line.productId, stored: line.priceTrace.quotedAsPackage.picks, note: line.priceTrace.quotedAsPackage.note ?? '' }]));
-    const resolved = await getContainer().packageOrders.resolve((await getContainer().companySettings.ensureSeeded()).id, packageLines);
-    if (!resolved.ok) throw new Error(resolved.error);
-    const items = orderLines.map((line, index) => {
-      const at = packageLines.findIndex((p) => p.index === index);
-      const picks = at < 0 ? undefined : resolved.picks[at];
-      return {
-        productId: line.productId ?? '',
-        quantity: num(line.quantity),
-        ...(picks === undefined ? {} : { package: { picks, ...(packageLines[at]?.note === undefined || packageLines[at]?.note === '' ? {} : { note: packageLines[at]?.note }) } }),
-      };
-    });
-    if (items.some((line) => !line.productId))
-      throw new Error('A quoted product was removed from the catalog and cannot be converted.');
+    const { items, quotedItems, quotedTotals } = await this.orderInputsOf(quote);
     const [claimed] = await drizzleDb
       .update(salesQuotes)
       .set({ status: 'converting', updatedAt: new Date() })
@@ -1851,12 +2008,12 @@ export class SalesQuoteService {
         orderId,
         // The order is numbered by the sales order series, once: its id is fixed, so a retried
         // conversion gets the same number back.
-        // A quote only ever has a proforma; signing starts once it is a sales order.
-        salesModule: 'sales_order',
+        // A quote only ever has a proforma; signing starts once it is a sales order (or, when chosen, a sales invoice).
+        salesModule: target === 'sales_invoice' ? 'sales_invoice' : 'sales_order',
         // The order keeps the quote it came from, so it can show where it started.
         sourceQuoteId: id,
         // How a sales order behaves for the company (credit check, credit days, approval): the same as one entered by staff.
-        selling: await getContainer().sellingSettings.get((await getContainer().companySettings.ensureSeeded()).id, 'sales_order'),
+        selling: await this.sellingFor(target),
         // Staff placing it: approvals (if configured) are asked on their behalf.
         requestedBy: userId,
         userId: quote.customerId,
@@ -1873,30 +2030,11 @@ export class SalesQuoteService {
         },
         items,
         ...(quote.neededOn === null ? {} : { fulfilmentDate: quote.neededOn }),
-        quotedItems: orderLines.map((line) => ({
-          productId: line.productId!,
-          quantity: num(line.quantity),
-          productName: line.description,
-          sku: line.sku,
-          lineAmount: num(line.lineAmount),
-          taxRate: num(line.taxRate),
-          isTaxInclusive: line.isTaxInclusive,
-          priceTrace: line.priceTrace ?? null,
-          isGift: line.isGift,
-          unitId: line.unitId,
-          unitCode: line.unitCode,
-          enteredQuantity: line.enteredQuantity,
-          qtyPerUnit: line.qtyPerUnit,
-          enteredUnitPrice: line.enteredUnitPrice === null ? null : Number(line.enteredUnitPrice),
-        })),
-        quotedTotals: {
-          subtotal: num(quote.subtotal),
-          tax: num(quote.taxAmount),
-          shippingFee: num(quote.shippingFee),
-          totalAmount: num(quote.totalAmount),
-        },
+        quotedItems,
+        quotedTotals,
         currency: quote.currency as 'KES' | 'USD',
-        paymentMethod: quote.paymentMethod as PaymentProvider,
+        // A credit sale is on the customer's account; the others keep how the quote said they would pay.
+        paymentMethod: target === 'credit_sale' ? 'on_account' : (quote.paymentMethod as PaymentProvider),
         // The quote's price stands. What its discounts used is recorded against the order.
         discountApplications:
           (quote.discounts as { applications?: RuleApplication[] } | null)?.applications ?? [],
@@ -1911,6 +2049,7 @@ export class SalesQuoteService {
       await this.event(id, 'converted', userId, {
         orderId: result.order.id,
         orderNumber: result.order.orderNumber,
+        target,
       });
       return result.order;
     } catch (error) {
@@ -2064,22 +2203,29 @@ export class SalesQuoteService {
     });
   }
 
+  /**
+   * The quote a shared link points to, in whatever state it is: open for an answer, answered, expired or no longer available. A link that
+   * has been used must still open (a customer who has just accepted, or who opens the email again, is told what became of it, not shown
+   * a missing page); only an address that is not a quote link at all is missing.
+   */
   async getShared(token: string) {
     if (!/^[a-f0-9]{64}$/i.test(token)) return null;
     const [quote] = await drizzleDb
       .select()
       .from(salesQuotes)
-      .where(and(eq(salesQuotes.shareTokenHash, tokenHash(token)), eq(salesQuotes.status, 'sent')))
+      .where(eq(salesQuotes.shareTokenHash, tokenHash(token)))
       .limit(1);
     if (!quote) return null;
-    if (quote.validUntil && quote.validUntil < new Date()) {
+    let status = quote.status;
+    if (status === 'sent' && quote.validUntil && quote.validUntil < new Date()) {
       await drizzleDb
         .update(salesQuotes)
         .set({ status: 'expired', updatedAt: new Date() })
         .where(and(eq(salesQuotes.id, quote.id), eq(salesQuotes.status, 'sent')));
       await this.event(quote.id, 'expired', null, { reason: 'valid_until_elapsed' });
-      return null;
+      status = 'expired';
     }
+    const state = sharedStateOf(status);
     const rawLines = await drizzleDb
       .select({
         sectionId: salesQuoteLines.sectionId,
@@ -2114,7 +2260,10 @@ export class SalesQuoteService {
     const contacts = await this.contactsOf(quote);
     return {
       quoteNumber: quote.quoteNumber,
-      status: quote.status,
+      status,
+      /** What the page shows: waiting for an answer, accepted, declined, expired, or no longer available. */
+      state,
+      respondedAt: ({ accepted: quote.acceptedAt, rejected: quote.rejectedAt } as Partial<Record<SharedQuoteState, Date | null>>)[state] ?? null,
       customerName: quote.customerName,
       showBillingAddress: quote.showBillingAddress,
       billingAddress: quote.billingAddress,
@@ -2140,6 +2289,49 @@ export class SalesQuoteService {
         logoUrl: company.logoUrl,
       },
     };
+  }
+
+  /**
+   * After a quote is accepted: what the company chose happens (nothing, or a sales order, sales invoice or credit sale), and, when a
+   * customer did it, the staff concerned are told how it went. A conversion that cannot be made never undoes the acceptance: the quote
+   * stays accepted, the reason is in its history and in the notice, and a person converts it. Nothing here can fail the acceptance.
+   */
+  private async afterAcceptance(id: string, actor: string, options: { notify: boolean }): Promise<void> {
+    const company = await getContainer().companySettings.ensureSeeded();
+    const settings = await this.getAcceptance(company.id);
+    let outcome: AcceptanceOutcome = { kind: 'waiting' };
+    if (settings.onAcceptance !== 'notify') {
+      const target = settings.onAcceptance;
+      try {
+        const order = await this.convertToOrder(actor, id, target);
+        const docs = order === null ? null : await getContainer().orderDocuments.of(company.id, order.id);
+        outcome = { kind: 'converted', target, number: order?.orderNumber ?? '', invoiceNumber: docs?.invoices.find((i) => i.type === 'tax_invoice')?.number ?? null, waitingForApproval: order?.approvalStatus === 'pending' };
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : 'Order conversion failed';
+        await this.event(id, 'order_conversion_failed', actor === 'customer_acceptance' ? null : actor, { error: reason, target });
+        outcome = { kind: 'failed', target, reason };
+      }
+    }
+    if (!options.notify) return;
+    try {
+      const quote = await this.get(id);
+      if (!quote) return;
+      const profile = await getContainer().companySettings.getProfile();
+      const base = company.publicBaseUrl?.replace(/\/$/, '') ?? process.env.APP_URL?.replace(/\/$/, '') ?? process.env.NEXTAUTH_URL?.replace(/\/$/, '') ?? '';
+      const results = await getContainer().quoteNotices.send({
+        companyId: company.id,
+        ownerUserId: quote.createdBy,
+        senderUserId: quote.sentBy,
+        customerEmail: quote.customerEmail,
+        settings,
+        sender: { name: profile.tradingName, address: profile.email },
+        facts: { quoteNumber: quote.quoteNumber, customerName: quote.customerName, total: String(quote.totalAmount), currency: quote.currency, shop: profile.tradingName, path: '/admin/quotes', link: base === '' ? '' : `${base}/admin/quotes`, outcome },
+      });
+      await this.event(id, 'staff_notified', null, { channels: results });
+    } catch (error) {
+      console.error('[quotes] staff were not told that a quote was accepted', id, error);
+      await this.event(id, 'staff_notified', null, { channels: [], error: 'The staff could not be told.' }).catch(() => undefined);
+    }
   }
 
   async respondShared(token: string, accepted: boolean) {
@@ -2171,15 +2363,7 @@ export class SalesQuoteService {
       .returning({ id: salesQuotes.id });
     if (!updated) throw new Error('This quote has already received a response.');
     await this.event(quote.id, nextStatus, null, { source: 'customer_share_link' });
-    if (accepted) {
-      try {
-        await this.convertToOrder('customer_acceptance', quote.id);
-      } catch (error) {
-        await this.event(quote.id, 'order_conversion_failed', null, {
-          error: error instanceof Error ? error.message : 'Order conversion failed',
-        });
-      }
-    }
+    if (accepted) await this.afterAcceptance(quote.id, 'customer_acceptance', { notify: true });
     return nextStatus;
   }
 

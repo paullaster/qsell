@@ -5,7 +5,7 @@ import { buildReceiptDocument, receiptFileName } from './receipt-document';
 
 const company: CompanyProfile = {
   legalName: 'Acme Ltd', tradingName: 'Acme', email: 'a@acme.test', phone: '0700', streetAddress: '1 Road', city: 'Nairobi',
-  countyOrState: 'Nairobi', postalCode: '00100', country: 'Kenya', kraPin: 'P000', invoicePrefix: 'INV', primaryColor: '#111827', accentColor: '#4F46E5',
+  countyOrState: 'Nairobi', postalCode: '00100', country: 'Kenya', kraPin: 'P000', primaryColor: '#111827', accentColor: '#4F46E5',
 };
 
 const detail = (over: Record<string, unknown> = {}, apps: { document_no: string; amount: string; undone: boolean; ref?: unknown }[] = []) =>

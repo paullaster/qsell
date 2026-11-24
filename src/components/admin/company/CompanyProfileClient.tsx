@@ -130,11 +130,10 @@ function ProfileScreen({ initial }: { initial: ProfileView }) {
             label="KRA PIN"
             value={form.kraPin}
             onChange={set('kraPin')}
-            required
             mono
             placeholder="P051234567Z"
             maxLength={11}
-            hint="A letter (A or P), nine digits and a letter."
+            hint="Optional for now: you can add it later. A letter (A or P), nine digits and a letter."
           />
           <TextField
             label="VAT number"
@@ -147,15 +146,6 @@ function ProfileScreen({ initial }: { initial: ProfileView }) {
             value={form.registrationNumber}
             onChange={set('registrationNumber')}
             maxLength={40}
-          />
-          <TextField
-            label="Invoice prefix"
-            value={form.invoicePrefix}
-            onChange={set('invoicePrefix')}
-            required
-            mono
-            placeholder="INV"
-            maxLength={10}
           />
         </div>
       </Section>

@@ -113,6 +113,6 @@ export async function saveOfflineSellingAction(raw: unknown, reason: unknown) {
       await c.offlineSales.saveSettings(companyId, { type: 'user', id: userId }, { enabled: input.enabled, limits: { maxPerShift: limits.maxPerShift, maxHours: limits.maxHours } }, reasonOf(reason));
       return await c.offlineSales.settings(companyId);
     },
-    { paths: ['/admin/settings/offline-selling', '/admin/cash-sales'], friendly },
+    { paths: ['/admin/settings/sales/offline-selling', '/admin/cash-sales'], friendly },
   );
 }

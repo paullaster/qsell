@@ -39,10 +39,8 @@ import { AdminReconciliation } from './AdminReconciliation';
 import { AdminAnalytics } from './AdminAnalytics';
 import { AdminProductModal } from './AdminProductModal';
 import { SkeletonMetrics, SkeletonTable } from '@/components/ui/Skeletons';
-import { getCompanySettingsAction } from '@/server/domains/company/actions';
 
 /** This older combined view has no product shortcut; the orders page has its own. */
-const NO_PRODUCT_EDIT = Promise.resolve(false);
 
 export type AdminTab =
   | 'dashboard'
@@ -90,7 +88,6 @@ export function AdminView({
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
   const [productToEdit, setProductToEdit] = useState<Product | null>(null);
   const [productToDuplicate, setProductToDuplicate] = useState<Product | null>(null);
-  const [companyPromise] = useState(() => getCompanySettingsAction());
 
   // We can safely read categories & taxes via Suspense inside the modal or pass an empty fallback
   const [cachedCategories, setCachedCategories] = useState<Category[]>([]);
@@ -222,7 +219,7 @@ export function AdminView({
 
       {activeTab === 'orders' && (
         <Suspense fallback={<SkeletonTable />}>
-          <AdminOrders firstPage={ordersPromise} companyPromise={companyPromise} canEditProductsPromise={NO_PRODUCT_EDIT} />
+          <AdminOrders firstPage={ordersPromise} />
         </Suspense>
       )}
 

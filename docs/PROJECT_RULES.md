@@ -36,6 +36,7 @@ Never downgrade these to suit another package: adapt the other package or the co
 7. **Reusable**: extend existing components instead of copying (`ChoicePicker`, `LookupAutocomplete`, `usePagedList`, `InlineConfirm`, `screen-kit`, `RouteModal`).
 8. **Accessible**: labelled controls, dialog roles with focus management and Escape, `role="alert"` / `aria-live`, keyboard operable, WCAG AA contrast.
 9. **SEO** (see section 10): public pages have metadata, semantic headings and landmarks; admin stays noindex.
+10. **Premium, friendly UI** (see section 13): every screen is built to compete with the best and friendliest interfaces the world has known.
 
 ## 3. Architecture
 
@@ -123,8 +124,18 @@ Every module, sub-module, screen, and workflow in the application must have comp
    - Implementor Checklist & Go-Live Verification (verification steps, common client pitfalls, test transactions).
 4. **Permanent definition of done**: A feature or screen change is incomplete until its corresponding implementor guide in `docs/implementor-guide/` has been updated and verified against the live navigation tree.
 
+## 13. Premium, friendly UI (permanent)
 
-## 13. Nothing here may look or read as machine-made (permanent)
+Every user interface built on this project, for every screen, component, state, message, print and download, must be **premium and must compete with the best and friendliest interfaces the world has ever known** (the standard set by the best consumer and business products, not by the average admin tool). This applies to every person, agent and tool that ever works here, with no exception for "internal" or "admin" screens, and a screen that falls short is not finished.
+
+1. **Friendly first.** A person can tell what a screen is for, what to do next and what just happened without help. Plain words (Kenyan English), one obvious primary action, sensible defaults, forgiving input (no lost work, clear undo or confirm), and an empty, loading, error and success state that each say something useful and kind.
+2. **Premium craft.** Consistent spacing, type scale, colour and iconography from the shared tokens and components; considered alignment and hierarchy; smooth, quiet motion that respects reduced-motion; fast, with no layout jumps; light and dark themes both polished; nothing that looks unfinished, cramped, cluttered or default-styled.
+3. **Everyone can use it.** The accessibility and responsive rules of section 2 are part of "premium", not an extra: 390px phones to wide desktops, touch and keyboard, screen readers, WCAG AA contrast, 40px touch targets.
+4. **Documents and prints too.** Receipts, reports, PDFs, certificates, emails and share cards are held to the same standard: clean layout, correct paper size, readable on screen and on paper.
+5. **Compare before you ship.** Think of the best product in that area (for example a modern point-of-sale, banking or checkout flow) and meet or exceed its clarity and polish. Reuse and extend the shared building blocks so the whole product feels like one designed system; do not ship a one-off look.
+6. **Check it with your eyes.** Look at the screen at phone and desktop width, in both themes and in its empty, loading and error states, before calling it done. Say plainly in the hand-over what you looked at.
+
+## 14. Nothing here may look or read as machine-made (permanent)
 
 Everything on this project, screens, words, documents, tests and commit messages, must read as if a careful person wrote it for another person. There is no AI-looking filler, ever. This applies to every person and every agent, whichever tool or model they run on.
 

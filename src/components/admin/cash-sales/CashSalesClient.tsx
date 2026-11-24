@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, use, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { LogOut, Receipt as ReceiptIcon } from 'lucide-react';
 import { finishReturnAction, cashSaleReceiptAction, cashSalesMoreAction, cashSalePackageBuilderAction, cashSalesScreenAction, completeCashSaleAction, priceCashSaleAction, type CashSalesScreen, type SaleRow } from '@/server/domains/selling/cash-sales/cash-sale-actions';
@@ -15,13 +15,13 @@ import { CartPane, type Priced } from './till/CartPane';
 import { HeldDialog } from './till/HeldDialog';
 import { PayDialog } from './till/PayDialog';
 import { ProductPane } from './till/ProductPane';
-import { SaleDone } from './till/SaleDone';
+import { ReceiptPrinter, SaleDone } from './till/SaleDone';
 import { Modal } from '@/components/ui/Modal';
 import { Chip, LoadFailed, PageHeader, PageSkeleton, buttonClass, cardClass } from '@/components/ui/screen-kit';
 import { useDebouncedValue } from '@/components/ui/useDebouncedValue';
 import { useMediaQuery } from '@/components/ui/useMediaQuery';
 import { QuotePackageDialog, type PackageDialogSource } from '@/components/admin/quotes/QuotePackageDialog';
-import { addToCart, removeLine, setPrice, setQuantity, stepLine, totalShown, unitCount, type Cart } from '@/lib/till/cart';
+import { addToCart, removeLine, setDiscount, setPrice, setQuantity, stepLine, totalShown, unitCount, type Cart } from '@/lib/till/cart';
 import { kes } from '@/lib/till/tile-style';
 import type { Choice } from '@/lib/payment-options';
 
@@ -72,6 +72,8 @@ function Counter({ initial }: { initial: CashSalesScreen }) {
   const [heldProblem, setHeldProblem] = useState<string | null>(null);
   const [held, setHeld] = useState<HeldSaleRow[]>([]);
   const [receipt, setReceipt] = useState<SaleSummary | null>(null);
+  const [reprint, setReprint] = useState<SaleSummary | null>(null);
+  const reprinted = useCallback(() => setReprint(null), []);
   const [showSales, setShowSales] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
   const [returning, setReturning] = useState<string | null>(null);
@@ -98,7 +100,7 @@ function Counter({ initial }: { initial: CashSalesScreen }) {
     };
   }, [canSell]);
 
-  const payload = { customerId: customer?.id ?? '', lines: cart.map((l) => ({ productId: l.productId, quantity: l.quantity, ...(l.price === undefined ? {} : { unitPrice: l.price }), ...(l.package === undefined ? {} : { package: { picks: l.package.picks, note: l.package.note } }) })) };
+  const payload = { customerId: customer?.id ?? '', lines: cart.map((l) => ({ productId: l.productId, quantity: l.quantity, ...(l.price === undefined ? {} : { unitPrice: l.price }), ...(l.discount === undefined ? {} : { discount: l.discount }), ...(l.package === undefined ? {} : { package: { picks: l.package.picks, note: l.package.note } }) })) };
   const asked = cart.length > 0 ? JSON.stringify(payload) : '';
   const wanted = useDebouncedValue(asked, 300);
   useEffect(() => {
@@ -185,7 +187,7 @@ function Counter({ initial }: { initial: CashSalesScreen }) {
       return;
     }
     setHeld((h) => h.filter((x) => x.id !== id));
-    setCart(r.data.lines.reduce<Cart>((acc, l) => addToCart(acc, { productId: l.productId, name: l.name, listPrice: null, imageUrl: '', ...(l.unitPrice === undefined ? {} : { price: l.unitPrice }), ...(l.package === undefined ? {} : { package: { picks: l.package.picks, note: l.package.note } }), quantity: l.quantity }, nextKey()), []));
+    setCart(r.data.lines.reduce<Cart>((acc, l) => addToCart(acc, { productId: l.productId, name: l.name, listPrice: null, imageUrl: '', ...(l.unitPrice === undefined ? {} : { price: l.unitPrice }), ...(l.discount === undefined ? {} : { discount: l.discount }), ...(l.package === undefined ? {} : { package: { picks: l.package.picks, note: l.package.note } }), quantity: l.quantity }, nextKey()), []));
     setSaleKey(crypto.randomUUID());
     setHolding(false);
   };
@@ -203,7 +205,7 @@ function Counter({ initial }: { initial: CashSalesScreen }) {
   };
   const showReceipt = async (orderId: string) => {
     const r = await cashSaleReceiptAction(orderId);
-    if (r.ok && r.data !== null) setReceipt(r.data);
+    if (r.ok && r.data !== null) setReprint(r.data);
     else setProblem(r.ok ? 'That receipt could not be found.' : r.error);
   };
 
@@ -232,6 +234,8 @@ function Counter({ initial }: { initial: CashSalesScreen }) {
       onQuantity={(key, q) => setCart((c) => setQuantity(c, key, q))}
       canPrice={data.canPrice}
       onPrice={(key, price) => setCart((c) => setPrice(c, key, price))}
+      canDiscount={data.canDiscount}
+      onDiscount={(key, discount) => setCart((c) => setDiscount(c, key, discount))}
       onRemove={(key) => setCart((c) => removeLine(c, key))}
       onCustomer={setCustomer}
       onHold={() => void hold()}
@@ -274,7 +278,8 @@ function Counter({ initial }: { initial: CashSalesScreen }) {
         {canSell && !desktop && cartOpen ? <Modal title="The sale" onClose={() => setCartOpen(false)}><div className="flex max-h-[70dvh] flex-col overflow-hidden rounded-xl border border-line">{cartPane}</div></Modal> : null}
         {canSell && paying && priced !== null && start !== null ? <PayDialog total={priced.total} methods={start.methods} busy={busy} problem={problem} unfinished={unfinished} onPay={(t) => void complete(t)} onClose={() => { if (!busy) setPaying(false); }} /> : null}
         {holding ? <HeldDialog rows={held} busy={busy} problem={heldProblem} onRecall={(id) => void recall(id)} onDiscard={(id) => void giveUp(id)} onClose={() => setHolding(false)} /> : null}
-        {receipt === null ? null : <SaleDone sale={receipt} shopName={data.shopName} onClose={() => { setReceipt(null); searchRef.current?.focus(); }} />}
+        {receipt === null ? null : <SaleDone sale={receipt} shopName={data.shopName} receiptDiscount={data.receiptDiscount} onClose={() => { setReceipt(null); searchRef.current?.focus(); }} />}
+        {reprint === null ? null : <ReceiptPrinter sale={reprint} shopName={data.shopName} receiptDiscount={data.receiptDiscount} onDone={reprinted} />}
         {showSales ? <Modal title="Sales" wide onClose={() => setShowSales(false)}><div className="space-y-4">{salesBlock}</div></Modal> : null}
         {choosingPackage === null ? null : <QuotePackageDialog money={money} from={PACKAGES} editing={{ productId: choosingPackage, servings: 1, picks: [] }} onClose={() => setChoosingPackage(null)} onChosen={(chosen) => { setCart((c) => addToCart(c, { productId: chosen.productId, name: chosen.summary, listPrice: null, imageUrl: '', quantity: chosen.servings, package: { picks: chosen.picks, note: chosen.note } }, nextKey())); setChoosingPackage(null); }} />}
       </div>

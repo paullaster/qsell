@@ -23,7 +23,7 @@ test.describe('cash sales at the counter', () => {
     const productName = makeProduct(tag);
 
     // A till, then no sale without a shift.
-    await gotoAdmin(page, '/admin/settings/registers', 'Registers');
+    await gotoAdmin(page, '/admin/settings/sales/registers', 'Registers');
     await expect(async () => {
       await page.getByRole('button', { name: 'Add a till' }).click();
       await expect(page.getByRole('form', { name: 'Add a till' })).toBeVisible({ timeout: 3000 });
@@ -92,6 +92,15 @@ test.describe('cash sales at the counter', () => {
     await openCart(page);
     await expect(page.getByTestId('sale-empty')).toBeVisible();
     await closeCart(page);
+
+    // Receipt from the sales list goes straight to the printer: no "Sale complete" window opens on top of the list.
+    await page.evaluate(() => { (window as unknown as { printed: number }).printed = 0; window.print = () => { (window as unknown as { printed: number }).printed += 1; }; });
+    await page.getByTestId('sale-row').first().getByRole('button', { name: /^Receipt for/ }).click();
+    await expect(page.getByTestId('receipt-print')).toHaveCount(1, { timeout: 30_000 });
+    expect(await page.evaluate(() => (window as unknown as { printed: number }).printed)).toBe(1);
+    await expect(page.getByTestId('receipt')).toHaveCount(0);
+    await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+    await expect(page.getByTestId('receipt-print')).toHaveCount(0);
 
     // A return: one of the two comes back, goes back into stock, and the cash is handed back from the shift.
     await page.getByTestId('sale-row').first().getByRole('button', { name: /Return goods from/ }).click();

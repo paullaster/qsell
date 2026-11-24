@@ -7,7 +7,7 @@ import type * as ServiceModule from './report-audit-service';
 import { has } from '@/lib/values';
 
 /**
- * The report audit against a real database built from the migrations (including 0208):
+ * The report audit against a real database built from the migrations (including 0211):
  *   TEST_DATABASE_URL=postgres://... pnpm test
  * Each run uses its own report code, so rows from other runs in a shared database never change what is counted.
  */

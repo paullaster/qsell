@@ -70,7 +70,7 @@ async function trackOrder(page: Page, orderNumber: string, email: string): Promi
 async function openOrder(page: Page, orderNumber: string): Promise<void> {
   await open(page, '/admin/orders', /Web Shop Orders/);
   await page.getByLabel('Search orders').fill(orderNumber);
-  const manage = page.getByRole('button', { name: /Manage/ }).first();
+  const manage = page.getByRole('link', { name: /Open order/ }).first();
   await expect(manage).toBeVisible({ timeout: 60_000 });
   // The list can be drawn before its buttons are wired up, and a click in that moment does nothing.
   await clickUntilVisible(manage, page.getByRole('dialog'));
@@ -163,7 +163,7 @@ test.describe('collecting an order from a branch', () => {
       const find = async (): Promise<ReturnType<Page['locator']>> => {
         await open(page, '/admin/orders', /Web Shop Orders/);
         await page.getByLabel('Search orders').fill(orderNumber);
-        const row = page.locator('tr, li').filter({ hasText: orderNumber }).filter({ has: page.getByRole('button', { name: /Manage/ }) }).first();
+        const row = page.locator('tr, li').filter({ hasText: orderNumber }).filter({ has: page.getByRole('link', { name: /Open order/ }) }).first();
         await expect(row).toBeVisible({ timeout: 60_000 });
         return row;
       };
@@ -196,7 +196,7 @@ test.describe('collecting an order from a branch', () => {
       await find();
       // The list can be narrowed to what has waited long enough: three days is kept at "3 or more", dropped at "7 or more".
       const wait = page.getByRole('combobox', { name: 'Waiting at the counter' });
-      const orderRow = () => page.locator('tr, li').filter({ hasText: orderNumber }).filter({ has: page.getByRole('button', { name: /Manage/ }) });
+      const orderRow = () => page.locator('tr, li').filter({ hasText: orderNumber }).filter({ has: page.getByRole('link', { name: /Open order/ }) });
       await clickUntilVisible(wait, page.getByRole('option', { name: 'At the counter 3 days or more' }));
       await page.getByRole('option', { name: 'At the counter 3 days or more' }).click();
       await expect(orderRow().first()).toBeVisible({ timeout: 30_000 });
@@ -223,7 +223,7 @@ test.describe('collecting an order from a branch', () => {
       deliveryTool('cancel-order', orderNumber);
       await open(page, '/admin/orders', /Web Shop Orders/);
       await page.getByLabel('Search orders').fill(orderNumber);
-      const row = page.locator('tr, li').filter({ hasText: orderNumber }).filter({ has: page.getByRole('button', { name: /Manage/ }) }).first();
+      const row = page.locator('tr, li').filter({ hasText: orderNumber }).filter({ has: page.getByRole('link', { name: /Open order/ }) }).first();
       await expect(row).toBeVisible({ timeout: 60_000 });
       await expect(row).not.toContainText('At counter');
       await openOrder(page, orderNumber);

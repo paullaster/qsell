@@ -6,6 +6,7 @@ import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { PlaceExtra, SalesOrderService } from '../sales-order-service';
 import type { SalesOrderLineInput } from '../domain/sales-order-input';
 import type { ShiftService } from '../shifts/shift-service';
+import { lineDiscount } from './till-rules';
 import { planTenders, TENDER_KINDS, type TenderKind, type TenderPlan, type TenderRequest } from './tender-rules';
 
 export class CashSaleError extends Error {}
@@ -19,6 +20,8 @@ export interface CashSaleInput {
   saleKey: string;
   /** A sale rung up offline: the prices the customer paid (accepted as they are), and that it was sold already. */
   offline?: { quotedItems: NonNullable<PlaceExtra['quotedItems']>; quotedTotals: NonNullable<PlaceExtra['quotedTotals']> };
+  /** A sale made from a quote: the quote's prices stand and the order keeps the quote it came from. */
+  fromQuote?: { quoteId: string; quotedItems: NonNullable<PlaceExtra['quotedItems']>; quotedTotals: NonNullable<PlaceExtra['quotedTotals']> };
 }
 
 export interface SaleSummary {
@@ -31,7 +34,10 @@ export interface SaleSummary {
   customerName: string;
   /** When the sale was made (ISO), and what was sold: the lines of the printed receipt. */
   at: string;
-  lines: { name: string; quantity: number; unitPrice: number; total: number }[];
+  /** Each line as charged, and what it was discounted by (0 when it was not): a discount typed at the counter or one a rule gave. */
+  lines: { name: string; quantity: number; unitPrice: number; total: number; discount: number }[];
+  /** What the whole sale was discounted by (the lines' discounts added up; 0 when there was none). */
+  discount: number;
   tenders: { label: string; kind: TenderKind; applied: number; handedOver: number | null; reference: string | null }[];
   /** Set when the sale is paid but something after that could not be finished (the books are posted again by the next attempt). */
   warning?: string;
@@ -144,6 +150,7 @@ export class CashSaleService {
         shiftId: shift.shiftId,
         idempotencyKey: input.saleKey,
         ...(input.offline === undefined ? {} : { quotedItems: input.offline.quotedItems, quotedTotals: input.offline.quotedTotals, skipOfferedCheck: true }),
+        ...(input.fromQuote === undefined ? {} : { quotedItems: input.fromQuote.quotedItems, quotedTotals: input.fromQuote.quotedTotals, skipOfferedCheck: true, sourceQuoteId: input.fromQuote.quoteId }),
         // The payment is checked against the priced total before anything is held or saved: a short payment never makes an unpaid sale.
         checkTotal: (totals) => {
           const worked = planTenders(totals.totalAmount, requests);
@@ -213,7 +220,8 @@ export class CashSaleService {
     const tenders = await this.db.select().from(orderTenders).where(and(eq(orderTenders.orderId, orderId), eq(orderTenders.kind, 'payment_method'))).orderBy(orderTenders.createdAt);
     const names = label === undefined && tenders.length > 0 ? await this.db.select({ id: paymentMethods.id, name: paymentMethods.name }).from(paymentMethods).where(inArray(paymentMethods.id, tenders.map((t) => t.reference))) : [];
     const nameOf = (id: string) => label?.(id) ?? names.find((n) => n.id === id)?.name ?? 'Payment';
-    const items = await this.db.select({ name: orderItems.productName, quantity: orderItems.quantity, unitPrice: orderItems.unitPrice, total: orderItems.totalPrice }).from(orderItems).where(eq(orderItems.orderId, orderId)).orderBy(orderItems.id);
+    const items = await this.db.select({ name: orderItems.productName, quantity: orderItems.quantity, unitPrice: orderItems.unitPrice, total: orderItems.totalPrice, trace: orderItems.priceTrace }).from(orderItems).where(eq(orderItems.orderId, orderId)).orderBy(orderItems.id);
+    const lines = items.map((i) => ({ name: i.name, quantity: i.quantity, unitPrice: Number(i.unitPrice), total: Number(i.total), discount: lineDiscount(i.quantity, Number(i.total), i.trace) }));
     const [receipt] = await this.db.select({ number: invoiceDocuments.invoiceNumber }).from(invoiceDocuments).where(and(eq(invoiceDocuments.orderId, orderId), eq(invoiceDocuments.documentType, 'tax_invoice'))).limit(1);
     return {
       orderId,
@@ -223,7 +231,8 @@ export class CashSaleService {
       changeDue: tenders.reduce((n, t) => n + Number(t.changeDue ?? 0), 0),
       customerName: order.customerName,
       at: order.createdAt.toISOString(),
-      lines: items.map((i) => ({ name: i.name, quantity: i.quantity, unitPrice: Number(i.unitPrice), total: Number(i.total) })),
+      lines: lines.map(({ name, quantity, unitPrice, total, discount }) => ({ name, quantity, unitPrice, total, discount })),
+      discount: Math.round(lines.reduce((n, l) => n + l.discount, 0) * 100) / 100,
       // The exact ways first, the cash (which covers the rest and gives change) last: the order they are read out at the till.
       tenders: [...tenders].sort((x, y) => TENDER_ORDER.indexOf((x.methodKind ?? 'cash') as TenderKind) - TENDER_ORDER.indexOf((y.methodKind ?? 'cash') as TenderKind)).map((t) => ({ label: nameOf(t.reference), kind: t.methodKind as TenderKind, applied: Number(t.amount), handedOver: t.handedOver === null ? null : Number(t.handedOver), reference: t.externalReference })),
     };

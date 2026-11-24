@@ -6,7 +6,7 @@ import { runSetting } from '@/server/domains/settings/action-runner';
 import { HeldSaleError, type HeldSaleRow, type RecalledSale } from './held-sale-service';
 import { TillSettingsError } from './till-settings-service';
 import type { CounterCategory, CounterTile } from './counter-catalogue-service';
-import type { TillMode } from './till-rules';
+import type { ReceiptDiscount, TillMode } from './till-rules';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -105,6 +105,7 @@ export async function discardHeldSaleAction(id: unknown): Promise<Result<true>> 
 
 export interface TillSettingsView {
   tillMode: TillMode;
+  receiptDiscount: ReceiptDiscount;
   updatedAt: string | null;
 }
 
@@ -113,13 +114,13 @@ const friendly = (error: unknown): string | null => (error instanceof TillSettin
 export async function tillSettingsScreenAction() {
   return await runSetting('selling_settings:manage', async ({ companyId }): Promise<TillSettingsView> => {
     const s = await getContainer().tillSettings.get(companyId);
-    return { tillMode: s.tillMode, updatedAt: s.updatedAt };
+    return { tillMode: s.tillMode, receiptDiscount: s.receiptDiscount, updatedAt: s.updatedAt };
   }, { friendly });
 }
 
 export async function saveTillSettingsAction(raw: unknown) {
   return await runSetting('selling_settings:manage', async ({ companyId, userId }): Promise<TillSettingsView> => {
     const saved = await getContainer().tillSettings.save(companyId, userId, raw);
-    return { tillMode: saved.tillMode, updatedAt: new Date().toISOString() };
+    return { tillMode: saved.tillMode, receiptDiscount: saved.receiptDiscount, updatedAt: new Date().toISOString() };
   }, { paths: ['/admin/settings/sales/cash-sales', '/admin/cash-sales'], friendly });
 }

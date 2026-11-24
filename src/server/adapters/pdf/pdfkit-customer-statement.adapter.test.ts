@@ -14,7 +14,6 @@ const company: CompanyProfile = {
   postalCode: '00100',
   country: 'Kenya',
   kraPin: 'P000000000X',
-  invoicePrefix: 'INV',
   primaryColor: '#111827',
   accentColor: '#4F46E5',
 };
@@ -22,6 +21,16 @@ const company: CompanyProfile = {
 const statement: StatementDownload = {
   customerName: 'Test Customer',
   customerNumber: 'CUS-001',
+  customerKraPin: 'A123456789Z',
+  customerAddress: ['1 Market Road', 'Nairobi, Nairobi, 00100', 'Kenya'],
+  paymentTerms: 'Credit (on account), 30 days',
+  creditLimit: '5000.00',
+  currency: 'KES',
+  statementDate: '2026-09-30',
+  ageing: [
+    { label: 'Not yet due', amount: '100.00', count: 1 },
+    { label: '1–30 days', amount: '200.00', count: 2 },
+  ],
   from: '2026-09-01',
   to: '2026-09-30',
   openingBalance: '100.00',

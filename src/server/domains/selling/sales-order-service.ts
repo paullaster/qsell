@@ -58,6 +58,8 @@ export interface PlaceExtra {
   quotedItems?: Parameters<typeof OrderWriteService.createOrder>[0]['quotedItems'];
   quotedTotals?: Parameters<typeof OrderWriteService.createOrder>[0]['quotedTotals'];
   skipOfferedCheck?: boolean;
+  /** The quote this order came from: the order keeps it, and the quote's own prices stand. */
+  sourceQuoteId?: string;
 }
 
 /** Sales orders taken by staff: placing one (through the order writer, with the company's settings for the kind), the customer's credit position, and the list. */
@@ -118,7 +120,7 @@ export class SalesOrderService {
         items: input.lines.map((line, index) => {
           const at = packageLines.findIndex((p) => p.index === index);
           const picks = at < 0 ? undefined : resolved.picks[at];
-          return { productId: line.productId, quantity: line.quantity, ...(kind === 'pos_cash_sale' && line.unitPrice !== undefined && picks === undefined ? { priceOverride: line.unitPrice } : {}), ...(picks === undefined ? {} : { package: { picks, ...(line.package?.note === undefined || line.package.note === '' ? {} : { note: line.package.note }) } }) };
+          return { productId: line.productId, quantity: line.quantity, ...(line.unitPrice !== undefined && picks === undefined ? { priceOverride: line.unitPrice } : {}), ...(line.discount !== undefined && picks === undefined ? { manualDiscount: line.discount } : {}), ...(picks === undefined ? {} : { package: { picks, ...(line.package?.note === undefined || line.package.note === '' ? {} : { note: line.package.note }) } }) };
         }),
         currency: 'KES',
         // How they are expected to pay is a label: money is received by receipt, and a customer's credit comes from their account, not from this.

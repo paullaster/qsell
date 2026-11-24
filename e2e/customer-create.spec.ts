@@ -32,7 +32,10 @@ test.describe('new customer from a picker', () => {
     await expect(dialog.getByRole('alert')).toContainText(/KRA PIN/);
     await dialog.getByLabel('Buyer KRA PIN').fill('a123456789z');
 
-    // Credit terms appear only for a credit customer.
+    // A customer made here is on account unless someone picks cash; the credit terms show only for credit.
+    await expect(dialog.getByRole('combobox', { name: 'Account type' })).toHaveValue(/Credit \(pays later\)/);
+    await expect(dialog.getByLabel('Credit limit')).toBeVisible();
+    await pick(page, dialog.getByRole('combobox', { name: 'Account type' }), 'Cash', /Cash \(pays at once\)/);
     await expect(dialog.getByLabel('Credit limit')).toHaveCount(0);
     await pick(page, dialog.getByRole('combobox', { name: 'Account type' }), 'Credit', /Credit \(pays later\)/);
     await expect(dialog.getByLabel('Credit limit')).toBeVisible();

@@ -25,7 +25,7 @@ async function readyToPay(page: Page, productName: string): Promise<void> {
 async function openOrder(page: Page, orderNumber: string): Promise<void> {
   await open(page, '/admin/orders', /Web Shop Orders/);
   await page.getByLabel('Search orders').fill(orderNumber);
-  const manage = page.getByRole('button', { name: /Manage/ }).first();
+  const manage = page.getByRole('link', { name: /Open order/ }).first();
   await expect(manage).toBeVisible({ timeout: 60_000 });
   // The button is drawn by the server before the page can act on a press, so a press that comes too early is lost: press until the dialog opens.
   await clickUntilVisible(manage, page.getByRole('dialog'));

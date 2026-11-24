@@ -11,8 +11,15 @@ export interface CartLine {
   listPrice: number | null;
   /** A price typed for one unit by someone who may change prices; the server checks it again (floors, their limit) and prices the sale with it. */
   price?: number;
+  /** A discount typed for the line by someone who may offer one: a percentage, or an amount off each unit. The server checks the permission, the company's setting for the branch, the floors and their limit again. */
+  discount?: LineDiscount;
   imageUrl: string;
   package?: { picks: unknown[]; note: string };
+}
+
+export interface LineDiscount {
+  kind: 'percent' | 'amount';
+  value: number;
 }
 
 export type Cart = readonly CartLine[];
@@ -53,6 +60,29 @@ export function setPrice(cart: Cart, key: string, price: number | null): Cart {
     const { price: _was, ...rest } = l;
     return price === null || !Number.isFinite(price) || price <= 0 ? rest : { ...rest, price: Math.round(price * 100) / 100 };
   });
+}
+
+/** What a typed discount is worth, read for real: a percentage above 0 and under 100, or an amount above 0, to the cent. Null when it is neither. */
+export function readDiscount(kind: LineDiscount['kind'], value: number): LineDiscount | null {
+  if (!Number.isFinite(value)) return null;
+  const cents = Math.round(value * 100) / 100;
+  if (cents <= 0) return null;
+  if (kind === 'percent' && cents >= 100) return null;
+  return { kind, value: cents };
+}
+
+/** Sets the discount on one line, or clears it (null) so the price stands as it was. */
+export function setDiscount(cart: Cart, key: string, discount: LineDiscount | null): Cart {
+  return cart.map((l) => {
+    if (l.key !== key) return l;
+    const { discount: _was, ...rest } = l;
+    return discount === null ? rest : { ...rest, discount };
+  });
+}
+
+/** "10% off" or "KES 50.00 off each". */
+export function discountWords(discount: LineDiscount): string {
+  return discount.kind === 'percent' ? `${String(discount.value)}% off` : `${kes(discount.value)} off each`;
 }
 
 export function removeLine(cart: Cart, key: string): Cart {

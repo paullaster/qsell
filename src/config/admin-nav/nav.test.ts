@@ -27,7 +27,7 @@ describe('the admin sidebar', () => {
     expect(item?.item.href).toBe('/admin/orders');
   });
 
-  it('puts customer credit, cash sales and selling documents under Settings > Sales', () => {
+  it('puts customer credit, cash sales, selling documents, registers, partial billing and offline selling under Settings > Sales', () => {
     const parent = all.find((x) => x.item.id === 'settings-sales')?.item;
     expect(where('settings-sales')).toBe('settings');
     expect(parent?.href).toBe('/admin/settings/sales');
@@ -35,7 +35,18 @@ describe('the admin sidebar', () => {
       'settings-sales-customer',
       'settings-sales-cash-sales',
       'settings-selling-documents',
+      'settings-registers',
+      'settings-partial-billing',
+      'settings-offline-selling',
     ]);
+    for (const [id, name] of [
+      ['settings-registers', 'registers'],
+      ['settings-partial-billing', 'partial-billing'],
+      ['settings-offline-selling', 'offline-selling'],
+    ] as const) {
+      expect(where(id)).toBe('settings/settings-sales');
+      expect(all.find((x) => x.item.id === id)?.item.href).toBe(`/admin/settings/sales/${name}`);
+    }
     expect(where('settings-selling-documents')).toBe('settings/settings-sales');
   });
 

@@ -114,7 +114,7 @@ export const companySettings = pgTable(
     country: text('country').notNull().default('Kenya'),
     locationLabel: text('location_label'),
     tagline: text('tagline'),
-    kraPin: text('kra_pin').notNull(),
+    kraPin: text('kra_pin').notNull().default(''),
     vatNumber: text('vat_number'),
     registrationNumber: text('registration_number'),
     bankName: text('bank_name'),
@@ -122,7 +122,6 @@ export const companySettings = pgTable(
     bankAccountNumber: text('bank_account_number'),
     bankBranch: text('bank_branch'),
     invoiceFooterNote: text('invoice_footer_note'),
-    invoicePrefix: text('invoice_prefix').notNull().default('INV'),
     logoUrl: text('logo_url'),
     primaryColor: text('primary_color').notNull().default('#111827'),
     accentColor: text('accent_color').notNull().default('#4F46E5'),
@@ -4961,10 +4960,15 @@ export const cashSaleSettings = pgTable(
   {
     companyId: uuid('company_id').primaryKey().references(() => companySettings.id, { onDelete: 'cascade' }),
     tillMode: text('till_mode').notNull().default('admin'),
+    /** What a receipt says about discounts: nothing (the price charged), one total near the end, or the discount under each item. */
+    receiptDiscount: text('receipt_discount').notNull().default('hidden'),
     updatedBy: text('updated_by').notNull().default(''),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [check('cash_sale_settings_mode_chk', sql`${t.tillMode} IN ('admin','fullscreen')`)],
+  (t) => [
+    check('cash_sale_settings_mode_chk', sql`${t.tillMode} IN ('admin','fullscreen')`),
+    check('cash_sale_settings_receipt_discount_chk', sql`${t.receiptDiscount} IN ('hidden','total','per_item')`),
+  ],
 );
 
 /** A sale set aside at the counter while the next customer is served, kept with the shift and the person: held, then recalled (once) or given up. Never a sale: nothing is priced, held or paid until it is completed. */
@@ -5120,9 +5124,18 @@ export const salesQuoteSettings = pgTable('sales_quote_settings', {
     .notNull()
     .default('0'),
   nextQuoteNumber: integer('next_quote_number').notNull().default(1),
+  /**
+   * What happens when a customer accepts a quote from their link: only tell staff (`notify`), or also make a sales order, a sales invoice
+   * or a credit sale. Sales orders are what always happened, so that stays the default.
+   */
+  onAcceptance: text('on_acceptance').notNull().default('sales_order'),
+  /** How staff are told that a customer accepted: by email (to the people chosen in Email routing), by text message, and by a browser alert. */
+  notifyEmail: boolean('notify_email').notNull().default(true),
+  notifySms: boolean('notify_sms').notNull().default(false),
+  notifyPush: boolean('notify_push').notNull().default(true),
   updatedBy: text('updated_by'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [check('sales_quote_settings_acceptance_chk', sql`${t.onAcceptance} IN ('notify', 'sales_order', 'sales_invoice', 'credit_sale')`)]);
 
 /** Reusable quote defaults; product prices can either refresh or be fixed. */
 export const salesQuoteTemplates = pgTable(

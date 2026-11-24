@@ -1,5 +1,5 @@
 {
-  "id": "6db0fd28-0416-4f47-835c-c2e0a320739a",
+  "id": "c9ccbd4e-ed9f-4c7d-8cde-336aec14f75a",
   "prevId": "369e2736-c692-4a07-9cca-16baeafde456",
   "version": "7",
   "dialect": "postgresql",
@@ -5216,6 +5216,13 @@
           "notNull": true,
           "default": "'admin'"
         },
+        "receipt_discount": {
+          "name": "receipt_discount",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'hidden'"
+        },
         "updated_by": {
           "name": "updated_by",
           "type": "text",
@@ -5254,6 +5261,10 @@
         "cash_sale_settings_mode_chk": {
           "name": "cash_sale_settings_mode_chk",
           "value": "\"cash_sale_settings\".\"till_mode\" IN ('admin','fullscreen')"
+        },
+        "cash_sale_settings_receipt_discount_chk": {
+          "name": "cash_sale_settings_receipt_discount_chk",
+          "value": "\"cash_sale_settings\".\"receipt_discount\" IN ('hidden','total','per_item')"
         }
       },
       "isRLSEnabled": false
@@ -42552,208 +42563,6 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.report_audit": {
-      "name": "report_audit",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "bigint",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "type": "always",
-            "name": "report_audit_id_seq",
-            "schema": "public",
-            "increment": "1",
-            "startWith": "1",
-            "minValue": "1",
-            "maxValue": "9223372036854775807",
-            "cache": "1",
-            "cycle": false
-          }
-        },
-        "company_id": {
-          "name": "company_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "report_code": {
-          "name": "report_code",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "action": {
-          "name": "action",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "params": {
-          "name": "params",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'{}'::jsonb"
-        },
-        "format": {
-          "name": "format",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "row_count": {
-          "name": "row_count",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "truncated": {
-          "name": "truncated",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "content_hash": {
-          "name": "content_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "definitions_version": {
-          "name": "definitions_version",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "occurred_at": {
-          "name": "occurred_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "report_audit_company_time_idx": {
-          "name": "report_audit_company_time_idx",
-          "columns": [
-            {
-              "expression": "company_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "occurred_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "report_audit_report_time_idx": {
-          "name": "report_audit_report_time_idx",
-          "columns": [
-            {
-              "expression": "company_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "report_code",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "occurred_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "report_audit_user_time_idx": {
-          "name": "report_audit_user_time_idx",
-          "columns": [
-            {
-              "expression": "company_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "occurred_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "report_audit_company_id_company_settings_id_fk": {
-          "name": "report_audit_company_id_company_settings_id_fk",
-          "tableFrom": "report_audit",
-          "tableTo": "company_settings",
-          "columnsFrom": [
-            "company_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "report_audit_action_chk": {
-          "name": "report_audit_action_chk",
-          "value": "\"report_audit\".\"action\" in ('run', 'export')"
-        },
-        "report_audit_format_chk": {
-          "name": "report_audit_format_chk",
-          "value": "\"report_audit\".\"format\" is null or \"report_audit\".\"format\" in ('csv', 'xlsx', 'pdf')"
-        },
-        "report_audit_export_chk": {
-          "name": "report_audit_export_chk",
-          "value": "\"report_audit\".\"action\" <> 'export' or (\"report_audit\".\"format\" is not null and \"report_audit\".\"content_hash\" is not null)"
-        }
-      },
       "isRLSEnabled": false
     },
     "public.return_receipt_confirmations": {
