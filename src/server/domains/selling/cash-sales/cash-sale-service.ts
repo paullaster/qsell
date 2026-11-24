@@ -220,7 +220,7 @@ export class CashSaleService {
     const tenders = await this.db.select().from(orderTenders).where(and(eq(orderTenders.orderId, orderId), eq(orderTenders.kind, 'payment_method'))).orderBy(orderTenders.createdAt);
     const names = label === undefined && tenders.length > 0 ? await this.db.select({ id: paymentMethods.id, name: paymentMethods.name }).from(paymentMethods).where(inArray(paymentMethods.id, tenders.map((t) => t.reference))) : [];
     const nameOf = (id: string) => label?.(id) ?? names.find((n) => n.id === id)?.name ?? 'Payment';
-    const items = await this.db.select({ name: orderItems.productName, quantity: orderItems.quantity, unitPrice: orderItems.unitPrice, total: orderItems.totalPrice, trace: orderItems.priceTrace }).from(orderItems).where(eq(orderItems.orderId, orderId)).orderBy(orderItems.id);
+    const items = await this.db.select({ name: orderItems.productName, quantity: orderItems.quantity, unitPrice: orderItems.unitPrice, total: orderItems.totalPrice, trace: orderItems.priceTrace }).from(orderItems).where(eq(orderItems.orderId, orderId)).orderBy(sql`${orderItems}.ctid`);
     const lines = items.map((i) => ({ name: i.name, quantity: i.quantity, unitPrice: Number(i.unitPrice), total: Number(i.total), discount: lineDiscount(i.quantity, Number(i.total), i.trace) }));
     const [receipt] = await this.db.select({ number: invoiceDocuments.invoiceNumber }).from(invoiceDocuments).where(and(eq(invoiceDocuments.orderId, orderId), eq(invoiceDocuments.documentType, 'tax_invoice'))).limit(1);
     return {
