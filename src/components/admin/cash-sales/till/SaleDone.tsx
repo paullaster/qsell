@@ -1,7 +1,8 @@
 'use client';
 
 import { CheckCircle2 } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
+import { printOnce } from '@/lib/till/print-once';
 import { createPortal } from 'react-dom';
 import { useWhen } from '@/components/business-time';
 import { Modal } from '@/components/ui/Modal';
@@ -59,15 +60,16 @@ const RECEIPT_CSS = `
   .receipt-print .big { font-size: 14px; font-weight: 700; }
 }`;
 
+const askOnce = printOnce();
+
 /** A finished sale's slip straight to the printer, with no window in between (the Receipt button of the sales list). */
 export function ReceiptPrinter({ sale, shopName, receiptDiscount, onDone }: { sale: SaleSummary; shopName: string; receiptDiscount: ReceiptDiscount; onDone: () => void }) {
-  const asked = useRef(false);
   useEffect(() => {
     window.addEventListener('afterprint', onDone, { once: true });
-    // React runs an effect twice in development; the printer is asked once.
-    if (!asked.current) { asked.current = true; window.print(); }
+    // The printer is asked once for this sale, even if React mounts this twice (development, a recompile, a parent re-render).
+    askOnce(sale, () => window.print());
     return () => window.removeEventListener('afterprint', onDone);
-  }, [onDone]);
+  }, [sale, onDone]);
   return <PrintedReceipt sale={sale} shopName={shopName} receiptDiscount={receiptDiscount} />;
 }
 
