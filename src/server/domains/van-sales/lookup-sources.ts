@@ -220,6 +220,7 @@ export const VAN_SALES_LOOKUP_SOURCES: LookupSource[] = [
   vansInUse('van-plan-vans', 'van_sales:plan'),
   repsSelling('van-plan-reps', 'van_sales:plan'),
   customersFor('van-plan-customers', 'van_sales:plan', 'day'),
+  customersFor('van-rep-customers', 'van_sales:sell', 'day'),
   productsFor('van-plan-products', 'van_sales:plan'),
   loadSources,
 ];

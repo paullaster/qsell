@@ -8,6 +8,7 @@ import { VanSalesError } from './errors';
 import type { RepView } from './reps';
 import type { DayDetail, DayView } from './days';
 import type { LoadView, OnVanRow, Suggestion } from './loads';
+import { goOutProblem } from '@/lib/van-sales/run';
 import type { ParView, RouteView, StopView } from './routes';
 import type { VanView } from './vans';
 import { VAN_SALES_DEFAULTS, type VanSalesSettings } from '@/lib/van-sales/settings';
@@ -282,6 +283,10 @@ export interface DayScreen {
   /** The person looking is the day's own rep. */
   isRep: boolean;
   maySell: boolean;
+  /** What stops the day going out now, in words; null when it can. */
+  outProblem: string | null;
+  /** The company lets reps add a customer on the road. */
+  offRouteAllowed: boolean;
 }
 
 async function dayScreen(companyId: string, id: string, userId: string): Promise<DayScreen> {
@@ -292,7 +297,9 @@ async function dayScreen(companyId: string, id: string, userId: string): Promise
   const [loads, onVan, canPlan, maySell, rep] = await Promise.all([c.vanLoads.list(companyId, id), c.vanLoads.onVan(companyId, id), canPermission('van_sales:plan'), canPermission('van_sales:sell'), c.salesReps.get(companyId, day.repId)]);
   const wantsLoad = canPlan && day.vanId !== null && (day.status === 'out' || ((day.status === 'planned' || day.status === 'loading') && !loads.some((l) => l.kind === 'load' && l.cancelledAt === null)));
   const suggestion = wantsLoad ? await c.vanLoads.suggest(companyId, id) : null;
-  return { detail, canPlan, loads, onVan, suggestion, isRep: rep.userId === userId, maySell };
+  const settings = await c.vanSalesSettings.current(companyId);
+  const loadSigned = loads.some((l) => l.kind === 'load' && l.cancelledAt === null && l.signedAt !== null);
+  return { detail, canPlan, loads, onVan, suggestion, isRep: rep.userId === userId, maySell, outProblem: goOutProblem({ status: day.status, mode: day.mode, loadSigned }), offRouteAllowed: settings.offRoute === 'allow' };
 }
 
 export async function dayScreenAction(id: unknown) {
@@ -371,4 +378,49 @@ export async function signLoadAction(raw: unknown) {
     },
     { paths: PATHS, friendly },
   );
+}
+
+// ── Running the day (the rep's own) ──────────────────────────────────────
+
+/** Runs one step of the rep's own day: who may is decided by the service from who is signed in. */
+const runDay = async (id: unknown, step: (c: ReturnType<typeof getContainer>, companyId: string, actor: { type: 'user'; id: string }, dayId: string, maySell: boolean) => Promise<unknown>) =>
+  await runSetting(
+    'van_sales:read',
+    async ({ companyId, userId }): Promise<DayScreen> => {
+      const dayId = typeof id === 'string' ? id : '';
+      await step(getContainer(), companyId, { type: 'user', id: userId }, dayId, await canPermission('van_sales:sell'));
+      return await dayScreen(companyId, dayId, userId);
+    },
+    { paths: PATHS, friendly },
+  );
+
+/** The rep sends the day out, counting the float into the van's till. */
+export async function sendOutAction(raw: unknown) {
+  const i = obj(raw);
+  return await runDay(i.dayId, async (c, companyId, actor, dayId, maySell) => await c.vanRun.sendOut(companyId, actor, dayId, i, maySell));
+}
+
+export async function arriveAction(raw: unknown) {
+  const i = obj(raw);
+  return await runDay(i.dayId, async (c, companyId, actor, dayId, maySell) => await c.vanRun.arrive(companyId, actor, dayId, text(i.id) ?? '', i, maySell));
+}
+
+export async function finishVisitAction(raw: unknown) {
+  const i = obj(raw);
+  return await runDay(i.dayId, async (c, companyId, actor, dayId, maySell) => await c.vanRun.finish(companyId, actor, dayId, text(i.id) ?? '', i, maySell));
+}
+
+export async function skipVisitAction(raw: unknown) {
+  const i = obj(raw);
+  return await runDay(i.dayId, async (c, companyId, actor, dayId, maySell) => await c.vanRun.skip(companyId, actor, dayId, text(i.id) ?? '', i.reason, maySell));
+}
+
+export async function closedShopAction(raw: unknown) {
+  const i = obj(raw);
+  return await runDay(i.dayId, async (c, companyId, actor, dayId, maySell) => await c.vanRun.closedShop(companyId, actor, dayId, text(i.id) ?? '', i.reason, maySell));
+}
+
+export async function addOnRouteAction(raw: unknown) {
+  const i = obj(raw);
+  return await runDay(i.dayId, async (c, companyId, actor, dayId, maySell) => await c.vanRun.addOnRoute(companyId, actor, dayId, i.customerId, maySell));
 }

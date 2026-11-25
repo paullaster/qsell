@@ -1527,6 +1527,13 @@
       "when": 1795581868406,
       "tag": "0217_van_loads",
       "breakpoints": true
+    },
+    {
+      "idx": 218,
+      "version": "7",
+      "when": 1795597568759,
+      "tag": "0218_van_visit_position",
+      "breakpoints": true
     }
   ]
 }

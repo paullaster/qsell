@@ -1,6 +1,6 @@
 # Guide 16: Van Sales & Pre-Sales (`/admin/settings/sales/van-sales`, and the Van sales screens under Sales)
 
-> **What is built so far.** This guide describes what a company can use today: **the Van sales settings screen** (which of the two modes are on, and the rules every van day follows), **Vans**, **Sales reps** and **Routes** (set up who sells, from what, and to whom), **Van days** (planning a day from a route and a date) and **Loading** (making up a load, sending it and signing for it). Selling, loading, selling, collections, the day-end count, the rep phone app, offline selling and reports are built one slice at a time; each adds its screens to this guide in the same change. The full plan is in `docs/architecture/van-sales.md`. Nothing here is switched on for a company until its administrator switches it on.
+> **What is built so far.** This guide describes what a company can use today: **the Van sales settings screen** (which of the two modes are on, and the rules every van day follows), **Vans**, **Sales reps** and **Routes** (set up who sells, from what, and to whom), **Van days** (planning a day from a route and a date) **Loading** (making up a load, sending it and signing for it) and **Running the day** (the rep sends the day out and works the visits). Selling, loading, selling, collections, the day-end count, the rep phone app, offline selling and reports are built one slice at a time; each adds its screens to this guide in the same change. The full plan is in `docs/architecture/van-sales.md`. Nothing here is switched on for a company until its administrator switches it on.
 
 ## 1. Executive Overview & Commercial Value Proposition
 
@@ -37,7 +37,7 @@ Shrinkage visible per van, per rep and per day; fewer disputed shortages; cash d
 
 **Upstream:** products and prices, customers and credit, stock locations, registers and payment methods. **Downstream:** the till's shifts and Z reports, the sales ledger and receipts with KRA signing, stock movements and the books' stock value, delivery runs for pre-sold orders, and customer statements for credit sold and money collected.
 
-**Sub-modules (built as slices):** Settings (built), Vans (built), Sales reps (built), Routes (built), Van days and Loading (built) and the load planner, the rep's phone app, Day-end count and reconciliation, Offline selling for reps, Reports.
+**Sub-modules (built as slices):** Settings (built), Vans (built), Sales reps (built), Routes (built), Van days, Loading and Running the day (built) and the load planner, the rep's phone app, Day-end count and reconciliation, Offline selling for reps, Reports.
 
 ## 4. Interface-by-Interface Walkthrough
 
@@ -102,6 +102,10 @@ Below the visits, for a day that has a van (a day that only takes orders has non
 1. **Make up the load** (or **Make up a top-up** once the day is out). Shown to people with *Van sales: plan* while the day has no load that is still wanted. **Load from** chooses the warehouse or store (the day's own branch first). The list below is what the route's usual stock suggests: for each product the usual quantity, what is already on the van, what the warehouse has that is not promised to a customer, and how much is **short** when the warehouse cannot give it all. Each line has a quantity to change and **Take off**; **Add a product** adds one that is not in the usual stock. **Ask for the load** makes it up.
 2. **Loads.** Each load or top-up shows its number, where it has got to (*Asked for*, *Approved*, *On its way to the van*, *Partly signed for*, *Signed for*, *Cancelled*), where it is from, what was asked, sent and signed for on each line, and who signed and when. The buttons offered are only the next step: **Approve** (where the company wants a second person to), **Send it**, **Sign for the load**, **Call it off**.
 3. **On the van now.** What the van holds, from the stock records, with anything already promised.
+
+### Running the day, on a van day's page (the rep's own)
+1. **Send the day out.** Shown while the day is planned or being loaded. It says **Ready to go** or **Not ready** and why (for a day with a van: *The van has no stock yet. Make up the load, send it and sign for it before the day goes out.*). The rep counts the **cash into the van's till** (the float, nothing is allowed) and presses **Send the day out**. Anyone else sees where it stands and who sends it out.
+2. **Visits, once the day is out.** For each customer the rep has **Arrive** (the phone says where it is), then **Finish: no sale** (asks why), or **Skip** (asks why) for a customer not to be visited today, or **Shop closed** (asks once) if the shop is found shut. A customer can be added on the road (**Add a customer**) where the company allows it. Each visit shows when the rep arrived and how far from the shop, how it ended and why.
 
 ## 5. Granular Field-by-Field Reference
 
@@ -180,6 +184,10 @@ Below the visits, for a day that has a van (a day that only takes orders has non
 
 **Make up the load:** *Load from* (a warehouse or store in use), then one line for each product with a **quantity to load** (more than nothing, in the product's own unit) and, if wanted, products added by hand. **Call it off** and **Sign for the load** each take what is described in the steps below.
 
+**Send the day out:** *Cash counted into the van's till (KES)*: nothing or more, to two decimals. A day that only takes orders has no till and no float.
+
+**Reasons** for finishing a visit with no sale and for skipping a customer: 3 to 300 characters, kept with the visit and in the day's history.
+
 **Permissions for the whole module** (granted in Users & Roles, [Guide 07](07-users-roles-and-access-governance.md)):
 
 | Permission | Allows | Held by default |
@@ -255,6 +263,16 @@ Below the visits, for a day that has a van (a day that only takes orders has non
 
 **A top-up.** While the day is out on the route, the planner makes up a top-up in the same way (**Make up a top-up**), and it is sent and signed for like a load. A day may have several.
 
+**Send the day out (the rep).** Once the load is signed for, count the cash into the till and **Send the day out**. This opens a shift on the van's till with that float, ties it to the day, and moves the day to *Out on the route*. A day that only takes orders goes out with no float.
+
+**Arrive.** At a customer, **Arrive**. The phone is asked where it is; the time, the position and how far it is from the customer's map pin (where the customer has one) are kept. Depending on the company's setting the distance is only recorded, or the rep must be within the set distance to start the visit (*You are 340 m from the shop. Get within 200 m to start the visit.*). One visit is under way at a time.
+
+**Finish with no sale.** **Finish: no sale**, type why, **Finish the visit**.
+
+**Skip or shop closed.** **Skip** a customer who will not be visited today, with a reason. **Shop closed** (confirmed once) ends a visit where the shop was found shut, whether or not the rep had arrived.
+
+**Add a customer on the road.** **Add a customer**, search, **Add to the visits**. Refused when the company lets reps visit only the customers on the route.
+
 **Two people at once.** Every change is checked against the version on screen; if someone else saved first the change is refused with *Someone else changed this van (or sales rep)… Reload the page to see the latest.*
 
 **Every change** is in the decision log with the old and new values, the person, the time and the reason.
@@ -291,6 +309,12 @@ Below the visits, for a day that has a van (a day that only takes orders has non
 - **Signing is the rep's.** Anyone else needs *Van sales: plan* and a typed reason, and it is recorded as signed on the rep's behalf.
 - **A day with stock loaded cannot be cancelled** while a load has not left the warehouse (call it off first), while one is on its way (sign for it or settle it), or while its stock is on the van (bring it back to the warehouse with a transfer from the van under *Stock › Transfers*).
 - **Van stock is for the van's reps.** No shop, quote or warehouse order can take it.
+- **A rep runs only their own day.** Sending out and every visit step are refused for anyone else, in words, because the stock and the cash are in the rep's care. The office plans and loads; the rep runs.
+- **A day goes out only after its load is signed for** (a day that only takes orders needs none), while its mode is switched on, and for a rep who is selling.
+- **The float opens the van's till shift.** A shift the rep already opened on the van's till for this day is used again (so a retry never opens a second); another person's shift on that till, or a shift of the rep's own elsewhere, is refused in words.
+- **Once the day is out the office cannot rearrange the visits**, and the day cannot be cancelled: it runs its course.
+- **A visit moves one way:** to visit, at the customer, done, with *skipped* and *shop closed* as other ends. A visit with no sale always has its reason.
+- **The phone's own time is kept beside the server's** and never used to order anything.
 - Every add, change, stop, pause, end and resume is in the decision log with the person, the time and the reason typed.
 - The database itself refuses a stopped van, route, or a paused or ended rep with no reason, a pre-sell route with a van, a visit with no day or one visited every 3 weeks, a discount over 100%, a negative credit or cash limit, and a mode other than van sell or pre-sell.
 - A reason is required for every change, so an auditor can see why a rule was relaxed.
@@ -321,4 +345,8 @@ Below the visits, for a day that has a van (a day that only takes orders has non
 - [ ] Verify: ask for, send and sign for a load; the warehouse falls when it is sent and the van's stock rises when it is signed for.
 - [ ] Verify: the office signing for a rep is refused without a reason and shows as signed on their behalf.
 - [ ] Verify: a day with stock on its van cannot be cancelled until the stock is brought back.
-- **Common pitfalls:** loading before stock by location is switched on (the screen says so); signing a load that was never sent; expecting stock to be on the van when the load was only asked for; planning a day before the route has customers due that date (the screen says none is due); planning a day for the usual rep who is already on another route that date (refused); giving two routes the same code or name (refused); starting a fortnightly customer's visits in the wrong week (the date sets which weeks count); naming two vans alike (refused); putting a vehicle behind two vans (refused); switching on *require* with a very small distance, which blocks reps in town centres; leaving the approval limit at 0, which sends every small shortage to a second person.
+- [ ] Verify: the rep (not the office) can send the day out, and the office is refused with the rep's name.
+- [ ] Verify: sending out opens a shift on the van's till with the counted float (see *Shifts*).
+- [ ] Verify: a visit with no sale cannot be finished without a reason; one visit is under way at a time.
+- [ ] Decide with the owner whether reps must be near a customer to start a visit (Settings › Sales › Van sales), and set customers' map pins if so.
+- **Common pitfalls:** asking the office to send a day out for the rep (refused: the rep does it); requiring the rep to be near a customer who has no map pin (the visit starts and the distance is not known); loading before stock by location is switched on (the screen says so); signing a load that was never sent; expecting stock to be on the van when the load was only asked for; planning a day before the route has customers due that date (the screen says none is due); planning a day for the usual rep who is already on another route that date (refused); giving two routes the same code or name (refused); starting a fortnightly customer's visits in the wrong week (the date sets which weeks count); naming two vans alike (refused); putting a vehicle behind two vans (refused); switching on *require* with a very small distance, which blocks reps in town centres; leaving the approval limit at 0, which sends every small shortage to a second person.

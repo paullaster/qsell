@@ -5200,6 +5200,12 @@ export const vanVisits = pgTable(
     noSaleReason: text('no_sale_reason'),
     arrivedAt: timestamp('arrived_at', { withTimezone: true }),
     departedAt: timestamp('departed_at', { withTimezone: true }),
+    /** The time on the rep's phone when they arrived, kept beside the server's and never used to order anything. */
+    deviceArrivedAt: timestamp('device_arrived_at', { withTimezone: true }),
+    /** Where the phone said it was on arrival, and how far that was from the customer's map pin (metres; none when either is not known). */
+    arrivedLatitude: numeric('arrived_latitude', { precision: 9, scale: 6 }),
+    arrivedLongitude: numeric('arrived_longitude', { precision: 9, scale: 6 }),
+    arrivedDistanceM: integer('arrived_distance_m'),
     version: integer('version').notNull().default(1),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -5211,6 +5217,10 @@ export const vanVisits = pgTable(
     check('van_visits_status_chk', sql`${t.status} IN ('planned','arrived','done','skipped','closed_shop')`),
     check('van_visits_outcome_chk', sql`${t.outcome} IS NULL OR ${t.outcome} IN ('sold','order_taken','sold_and_ordered','collected_only','no_sale')`),
     check('van_visits_sequence_chk', sql`${t.sequence} > 0`),
+    check('van_visits_position_chk', sql`(${t.arrivedLatitude} IS NULL) = (${t.arrivedLongitude} IS NULL)`),
+    check('van_visits_distance_chk', sql`${t.arrivedDistanceM} IS NULL OR ${t.arrivedDistanceM} >= 0`),
+    // A visit with no sale ends with its reason.
+    check('van_visits_no_sale_chk', sql`${t.outcome} IS DISTINCT FROM 'no_sale' OR (${t.noSaleReason} IS NOT NULL AND length(btrim(${t.noSaleReason})) > 0)`),
   ],
 );
 

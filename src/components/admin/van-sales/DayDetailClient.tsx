@@ -9,6 +9,7 @@ import { ROUTE_MODE_WORDS } from '@/lib/van-sales/settings';
 import { WhyPanel } from './WhyPanel';
 import type { DayCall } from './day/call';
 import { HistoryPanel } from './day/HistoryPanel';
+import { RunPanel } from './day/RunPanel';
 import { LoadPanel } from './day/LoadPanel';
 import { VisitsPanel } from './day/VisitsPanel';
 
@@ -60,6 +61,7 @@ function Body({ initial }: { initial: DayScreen }) {
         {mayCancel && !cancelling ? <button type="button" className={buttonClass} onClick={() => setCancelling(true)}>Cancel this day</button> : null}
         {cancelling ? <WhyPanel label={`Cancel ${day.number}`} action="Cancel the day" busy={busy} onCancel={() => setCancelling(false)} onConfirm={(reason) => void cancel(reason)} /> : null}
       </section>
+      <RunPanel screen={screen} run={run} />
       <VisitsPanel screen={screen} run={run} />
       <LoadPanel screen={screen} run={run} />
       <HistoryPanel events={events} />

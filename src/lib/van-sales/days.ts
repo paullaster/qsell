@@ -23,7 +23,8 @@ export const DAY_STATUS_WORDS: Record<DayStatus, string> = {
 
 /** What each state can move to. A day is cancelled only before it goes out; once out it can only run its course. */
 export const DAY_MOVES: Record<DayStatus, readonly DayStatus[]> = {
-  planned: ['loading', 'cancelled'],
+  // A day that only takes orders has nothing to load and goes straight out; a day with a van goes out after loading (the service checks).
+  planned: ['loading', 'out', 'cancelled'],
   loading: ['out', 'cancelled'],
   out: ['returning'],
   returning: ['reconciling'],
@@ -43,6 +44,12 @@ export const readDayStatus = (value: unknown): DayStatus | null => DAY_STATUSES.
 
 export const VISIT_STATUSES = ['planned', 'arrived', 'done', 'skipped', 'closed_shop'] as const;
 export type VisitStatus = (typeof VISIT_STATUSES)[number];
+/** A visit's state from what is stored (anything unknown is a visit still to make). */
+export const readVisitStatus = (value: string): VisitStatus => VISIT_STATUSES.find((s) => s === value) ?? 'planned';
+
+/** How a finished visit is told to the rep who tries to change it. */
+export const VISIT_OVER_WORDS: Partial<Record<VisitStatus, string>> = { done: 'finished', skipped: 'skipped', closed_shop: 'marked shut' };
+
 export const VISIT_STATUS_WORDS: Record<VisitStatus, string> = { planned: 'To visit', arrived: 'At the customer', done: 'Done', skipped: 'Skipped', closed_shop: 'Shop closed' };
 
 /** The things that happen to a day, in the words the history shows. */
@@ -58,6 +65,12 @@ export const DAY_EVENT_WORDS: Record<string, string> = {
   'day.load_shipped': 'The load left the warehouse',
   'day.load_signed': 'The load was signed for',
   'day.load_cancelled': 'The load was called off',
+  'day.out': 'The day went out on the route',
+  'day.visit_added_on_route': 'The rep added a customer on the road',
+  'visit.arrived': 'The rep arrived at a customer',
+  'visit.done': 'A visit was finished',
+  'visit.skipped': 'A visit was skipped',
+  'visit.closed_shop': 'The shop was found closed',
 };
 
 /** The modes a rep lacks for a route, in words; empty when the rep does everything the route needs. */

@@ -3,6 +3,8 @@
  *   tsx e2e/support/van-fixtures.ts customer <tag> <n>   n customers with a phone and a town, printed as their names (a person makes these under Customers)
  *   tsx e2e/support/van-fixtures.ts product <tag>        a product kept in stock, counted in whole pieces, printed with its name (made under Products)
  *   tsx e2e/support/van-fixtures.ts par <route name> <product id> <quantity>  sets the usual stock of a route's van to one product (set under Routes)
+ *   tsx e2e/support/van-fixtures.ts day-route <tag> [admin]  ... with `admin`, the rep is the e2e admin account itself, so the browser can run the day as the rep
+ *   tsx e2e/support/van-fixtures.ts reset-rep <any>      cancels the open days of the e2e admin as a rep and closes its open shifts, so the next test starts clean
  *   tsx e2e/support/van-fixtures.ts day-route <tag>      a route ready to plan a day on: both modes on, a van, a rep, and three customers visited every Monday; printed with their names (set up under Van sales)
  */
 import { execFileSync } from 'node:child_process';
@@ -33,7 +35,36 @@ async function product(tag: string): Promise<Record<string, string>> {
   return { name };
 }
 
-async function dayRoute(tag: string): Promise<Record<string, string>> {
+async function adminRep(): Promise<{ id: string; name: string }> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { salesReps, users } = await import('@/server/db/drizzle/schema');
+  const { eq } = await import('drizzle-orm');
+  const { getContainer } = await import('@/server/di/container');
+  const { E2E_ADMIN_EMAIL } = await import('./constants');
+  const c = getContainer();
+  const company = await c.companySettings.ensureSeeded();
+  const [admin] = await db.select({ id: users.id, name: users.name }).from(users).where(eq(users.email, E2E_ADMIN_EMAIL));
+  if (admin === undefined) throw new Error('e2e fixture: the e2e admin does not exist');
+  const [have] = await db.select({ id: salesReps.id, name: salesReps.name }).from(salesReps).where(eq(salesReps.userId, admin.id));
+  if (have !== undefined) return have;
+  const made = await c.salesReps.create(company.id, { type: 'user', id: 'e2e' }, { userId: admin.id, phone: '', homeBranchId: null, modes: ['van_sell', 'pre_sell'], limits: { maxDiscountPercent: 5, maxCreditPerDay: 0, mayOverridePrice: false, maySellOnCredit: false } });
+  return { id: made.id, name: made.name };
+}
+
+async function resetRep(): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { salesReps, shifts, users, vanDays } = await import('@/server/db/drizzle/schema');
+  const { and, eq, inArray } = await import('drizzle-orm');
+  const { E2E_ADMIN_EMAIL } = await import('./constants');
+  const [admin] = await db.select({ id: users.id }).from(users).where(eq(users.email, E2E_ADMIN_EMAIL));
+  if (admin === undefined) return { reset: 'no admin' };
+  const [rep] = await db.select({ id: salesReps.id }).from(salesReps).where(eq(salesReps.userId, admin.id));
+  if (rep !== undefined) await db.update(vanDays).set({ status: 'cancelled', statusReason: 'Cleared by the e2e fixture' }).where(and(eq(vanDays.repId, rep.id), inArray(vanDays.status, ['planned', 'loading', 'out', 'returning', 'reconciling'])));
+  await db.update(shifts).set({ status: 'closed', closedAt: new Date(), closedBy: 'e2e', declaredCash: '0', zNumber: `Z-E2E-${String(Date.now())}` }).where(and(eq(shifts.openedBy, admin.id), inArray(shifts.status, ['open', 'closing'])));
+  return { reset: 'done' };
+}
+
+async function dayRoute(tag: string, asAdmin = false): Promise<Record<string, string>> {
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
   const { customers: table } = await import('@/server/db/drizzle/schema');
   const { getContainer } = await import('@/server/di/container');
@@ -45,10 +76,14 @@ async function dayRoute(tag: string): Promise<Record<string, string>> {
   if (!now.settings.vanSell || !now.settings.preSell) await c.vanSalesSettings.save(company.id, actor, { ...now.settings, vanSell: true, preSell: true }, now.version, { code: 'POLICY_CHANGE' });
   const branch = await c.branches.getDefault(company.id);
   if (branch === null) throw new Error('e2e fixture: the company has no branch');
-  const email = `e2e-dayrep-${tag}@example.test`.toLowerCase();
-  const repName = `Day Rep ${tag}`;
-  const person = await c.usersAdmin.createUser({ email, password: 'E2eRider-Passw0rd-3', name: repName, phone: '0711000333', role: 'super_admin' });
-  await c.salesReps.create(company.id, actor, { userId: person.id, phone: '', homeBranchId: null, modes: ['van_sell', 'pre_sell'], limits: { maxDiscountPercent: 0, maxCreditPerDay: 0, mayOverridePrice: false, maySellOnCredit: false } });
+  let repName = `Day Rep ${tag}`;
+  if (asAdmin) {
+    repName = (await adminRep()).name;
+  } else {
+    const email = `e2e-dayrep-${tag}@example.test`.toLowerCase();
+    const person = await c.usersAdmin.createUser({ email, password: 'E2eRider-Passw0rd-3', name: repName, phone: '0711000333', role: 'super_admin' });
+    await c.salesReps.create(company.id, actor, { userId: person.id, phone: '', homeBranchId: null, modes: ['van_sell', 'pre_sell'], limits: { maxDiscountPercent: 0, maxCreditPerDay: 0, mayOverridePrice: false, maySellOnCredit: false } });
+  }
   const vanName = `Day van ${tag}`;
   const van = await c.vans.create(company.id, actor, { name: vanName, branchId: branch.id, vehicleId: null, cashAccountId: null, maxCash: null });
   const routeName = `Day route ${tag}`;
@@ -78,9 +113,10 @@ async function main(): Promise<void> {
   let result: Record<string, string> | null = null;
   if (command === 'customer' && tag !== undefined) result = await customers(tag, Number(count ?? '1'));
   if (command === 'product' && tag !== undefined) result = await product(tag);
-  if (command === 'day-route' && tag !== undefined) result = await dayRoute(tag);
+  if (command === 'day-route' && tag !== undefined) result = await dayRoute(tag, count === 'admin');
+  if (command === 'reset-rep') result = await resetRep();
   if (command === 'par' && tag !== undefined && count !== undefined && third !== undefined) result = await par(tag, count, third);
-  if (result === null) throw new Error('usage: van-fixtures customer <tag> <n> | product <tag> | day-route <tag> | par <route name> <product id> <quantity>');
+  if (result === null) throw new Error('usage: van-fixtures customer <tag> <n> | product <tag> | day-route <tag> [admin] | reset-rep <any> | par <route name> <product id> <quantity>');
   process.stdout.write(`FIXTURE ${JSON.stringify(result)}\n`);
 }
 

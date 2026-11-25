@@ -5,7 +5,7 @@ import type { Actor } from '@/server/kernel/context';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { NumberSeriesService } from '@/server/kernel/numbering/service';
 import { businessDate } from '@/server/kernel/numbering/business-date';
-import { canArrangeVisits, canMoveDay, DAY_EVENT_WORDS, DAY_STATUS_WORDS, modesLacking, readDayStatus, readPlan, type DayStatus, type VisitStatus } from '@/lib/van-sales/days';
+import { canArrangeVisits, canMoveDay, DAY_EVENT_WORDS, DAY_STATUS_WORDS, modesLacking, readDayStatus, readPlan, readVisitStatus, type DayStatus, type VisitStatus } from '@/lib/van-sales/days';
 import { isId, readReason } from '@/lib/van-sales/people';
 import { movedOrder } from '@/lib/van-sales/routes';
 import { routeModeProblem, type RouteMode } from '@/lib/van-sales/settings';
@@ -53,6 +53,12 @@ export interface VisitView {
   /** From the route's stop, or added to this day by hand. */
   fromRoute: boolean;
   note: string | null;
+  outcome: string | null;
+  noSaleReason: string | null;
+  arrivedAt: string | null;
+  departedAt: string | null;
+  /** How far from the customer's pin the rep was on arrival (metres), when both are known. */
+  distanceM: number | null;
   version: number;
 }
 
@@ -80,7 +86,6 @@ export interface DayPageInput extends PageInput {
 
 const OPEN: DayStatus[] = ['planned', 'loading', 'out', 'returning', 'reconciling'];
 const modeOf = (value: string): RouteMode => (value === 'van_sell' || value === 'pre_sell' ? value : 'both');
-const visitStatusOf = (value: string): VisitStatus => (value === 'arrived' || value === 'done' || value === 'skipped' || value === 'closed_shop' ? value : 'planned');
 
 const TAKEN: Record<string, string> = {
   van_days_rep_date_uidx: 'That rep already has a day on that date.',
@@ -205,9 +210,14 @@ export class VanDayService {
       customerPlace: r.city,
       customerWarning: customerWarning(r),
       sequence: r.v.sequence,
-      status: visitStatusOf(r.v.status),
+      status: readVisitStatus(r.v.status),
       fromRoute: r.v.stopId !== null,
       note: r.note,
+      outcome: r.v.outcome,
+      noSaleReason: r.v.noSaleReason,
+      arrivedAt: r.v.arrivedAt?.toISOString() ?? null,
+      departedAt: r.v.departedAt?.toISOString() ?? null,
+      distanceM: r.v.arrivedDistanceM,
       version: r.v.version,
     }));
   }

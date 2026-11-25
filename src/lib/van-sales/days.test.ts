@@ -5,7 +5,7 @@ const id = (n: number): string => `00000000-0000-4000-8000-${String(n).padStart(
 
 describe('the life of a van day', () => {
   it('goes planned, being loaded, out, back, counted, closed, and is cancelled only before it goes out', () => {
-    expect(DAY_MOVES.planned).toEqual(['loading', 'cancelled']);
+    expect(DAY_MOVES.planned).toEqual(['loading', 'out', 'cancelled']);
     expect(DAY_MOVES.loading).toEqual(['out', 'cancelled']);
     expect(DAY_MOVES.out).toEqual(['returning']);
     expect(DAY_MOVES.returning).toEqual(['reconciling']);
@@ -16,7 +16,7 @@ describe('the life of a van day', () => {
   it('allows only the moves in the table, never backwards and never a skip', () => {
     for (const from of DAY_STATUSES) for (const to of DAY_STATUSES) expect(canMoveDay(from, to), `${from} to ${to}`).toBe(DAY_MOVES[from].includes(to));
     expect(canMoveDay('out', 'cancelled')).toBe(false);
-    expect(canMoveDay('planned', 'out')).toBe(false);
+    expect(canMoveDay('planned', 'returning')).toBe(false);
     expect(canMoveDay('closed', 'planned')).toBe(false);
   });
   it('holds the rep and van until it is closed or cancelled', () => {
@@ -28,7 +28,7 @@ describe('the life of a van day', () => {
   it('has words for every state, visit state and history entry, and reads a state back', () => {
     for (const s of DAY_STATUSES) expect(DAY_STATUS_WORDS[s].length).toBeGreaterThan(3);
     for (const s of VISIT_STATUSES) expect(VISIT_STATUS_WORDS[s].length).toBeGreaterThan(3);
-    for (const [k, v] of Object.entries(DAY_EVENT_WORDS)) expect(`${k}: ${v}`).toMatch(/^day\.[a-z_]+: [A-Z]/);
+    for (const [k, v] of Object.entries(DAY_EVENT_WORDS)) expect(`${k}: ${v}`).toMatch(/^(day|visit)\.[a-z_]+: [A-Z]/);
     expect(readDayStatus('out')).toBe('out');
     expect(readDayStatus('gone')).toBeNull();
     expect(readDayStatus(7)).toBeNull();
