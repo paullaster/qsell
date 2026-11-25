@@ -1,6 +1,6 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { vanSalesSettings } from '@/server/db/drizzle/schema';
+import { salesRoutes, vanSalesSettings } from '@/server/db/drizzle/schema';
 import type { Actor } from '@/server/kernel/context';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { ReasonCodes, ReasonInput } from '@/server/kernel/reason-codes/service';
@@ -64,6 +64,12 @@ export class VanSalesSettingsService {
       const [before] = await tx.select().from(vanSalesSettings).where(eq(vanSalesSettings.companyId, companyId)).limit(1).for('update');
       const current = before?.version ?? 0;
       if (current !== expectedVersion) throw new VanSalesError('Someone else changed these settings while you were looking at them. Reload the page to see the latest and make your change again.');
+      // A mode cannot be switched off while a route in use needs it: those routes are changed or stopped first.
+      for (const [on, modes, words] of [[next.vanSell, ['van_sell', 'both'], 'van selling'], [next.preSell, ['pre_sell', 'both'], 'pre-selling']] as const) {
+        if (on) continue;
+        const used = await tx.select({ name: salesRoutes.name }).from(salesRoutes).where(and(eq(salesRoutes.companyId, companyId), eq(salesRoutes.status, 'active'), inArray(salesRoutes.mode, [...modes]))).limit(3);
+        if (used.length > 0) throw new VanSalesError(`${words.charAt(0).toUpperCase()}${words.slice(1)} cannot be switched off while routes in use need it (${used.map((r) => r.name).join(', ')}). Change or stop those routes first.`);
+      }
       const values = {
         vanSell: next.vanSell,
         preSell: next.preSell,

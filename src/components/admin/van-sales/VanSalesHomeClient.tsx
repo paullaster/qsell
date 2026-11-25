@@ -11,7 +11,7 @@ type Loaded = Awaited<ReturnType<typeof vanSalesOverviewAction>>;
 export function VanSalesHomeClient({ firstPromise }: { firstPromise: ReturnType<typeof vanSalesOverviewAction> }) {
   const res: Loaded = use(firstPromise);
   if (!res.ok) return <LoadFailed error={res.error} />;
-  const { settings, vans, reps, canSettings } = res.data;
+  const { settings, vans, reps, routes, canSettings } = res.data;
   const on = vanSalesOn(settings);
   return (
     <div className="max-w-4xl space-y-5">
@@ -30,6 +30,11 @@ export function VanSalesHomeClient({ firstPromise }: { firstPromise: ReturnType<
         </section>
       )}
       <div className="grid gap-4 sm:grid-cols-2">
+        <section className={`${cardClass} space-y-3`} aria-label="Routes">
+          <h2 className="text-base font-bold text-fg-strong">Routes</h2>
+          <p className="text-sm text-fg-muted">{routes.active === 0 ? 'No route in use yet.' : `${String(routes.active)} in use`}{routes.stopped > 0 ? `, ${String(routes.stopped)} stopped` : ''}.</p>
+          <Link href="/admin/van-sales/routes" className={buttonClass}>Open routes</Link>
+        </section>
         <section className={`${cardClass} space-y-3`} aria-label="Vans">
           <h2 className="text-base font-bold text-fg-strong">Vans</h2>
           <p className="text-sm text-fg-muted">{vans.active === 0 ? 'No van in use yet.' : `${String(vans.active)} in use`}{vans.stopped > 0 ? `, ${String(vans.stopped)} stopped` : ''}.</p>

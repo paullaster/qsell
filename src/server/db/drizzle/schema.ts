@@ -5059,6 +5059,87 @@ export const salesReps = pgTable(
   ],
 );
 
+/**
+ * A route: a named round of customers (docs/architecture/van-sales.md §4.2), for van sell, pre-sell or both, with the van and rep it
+ * usually has. Stopped, never deleted, so the days that ran on it keep it.
+ */
+export const salesRoutes = pgTable(
+  'sales_routes',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    branchId: uuid('branch_id').notNull().references(() => branches.id, { onDelete: 'restrict' }),
+    mode: text('mode').notNull(),
+    defaultVanId: uuid('default_van_id').references(() => vans.id, { onDelete: 'restrict' }),
+    defaultRepId: uuid('default_rep_id').references(() => salesReps.id, { onDelete: 'restrict' }),
+    status: text('status').notNull().default('active'),
+    statusReason: text('status_reason'),
+    version: integer('version').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('sales_routes_company_code_uidx').on(t.companyId, sql`lower(${t.code})`),
+    uniqueIndex('sales_routes_company_name_uidx').on(t.companyId, sql`lower(${t.name})`),
+    index('sales_routes_company_status_idx').on(t.companyId, t.status, t.name),
+    index('sales_routes_van_idx').on(t.defaultVanId),
+    index('sales_routes_rep_idx').on(t.defaultRepId),
+    check('sales_routes_mode_chk', sql`${t.mode} IN ('van_sell','pre_sell','both')`),
+    check('sales_routes_status_chk', sql`${t.status} IN ('active','stopped')`),
+    check('sales_routes_stopped_reason_chk', sql`${t.status} = 'active' OR (${t.statusReason} IS NOT NULL AND length(btrim(${t.statusReason})) > 0)`),
+    // A route that only takes orders has no van to sell from.
+    check('sales_routes_pre_sell_van_chk', sql`${t.mode} <> 'pre_sell' OR ${t.defaultVanId} IS NULL`),
+  ],
+);
+
+/**
+ * One customer on a route: the weekdays they are visited (a mask, Monday the lowest bit), how often (every 1, 2 or 4 weeks, counted from
+ * the week of the start date) and their place in the round. Taken off the route, never deleted, so a past visit keeps its stop.
+ */
+export const routeStops = pgTable(
+  'route_stops',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    routeId: uuid('route_id').notNull().references(() => salesRoutes.id, { onDelete: 'restrict' }),
+    customerId: uuid('customer_id').notNull().references(() => customers.id, { onDelete: 'restrict' }),
+    sequence: integer('sequence').notNull(),
+    visitDays: smallint('visit_days').notNull(),
+    everyWeeks: smallint('every_weeks').notNull(),
+    anchorDate: date('anchor_date').notNull(),
+    note: text('note'),
+    active: boolean('active').notNull().default(true),
+    version: integer('version').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // A customer is on a route once at a time.
+    uniqueIndex('route_stops_route_customer_uidx').on(t.routeId, t.customerId).where(sql`${t.active}`),
+    index('route_stops_route_idx').on(t.routeId, t.active, t.sequence, t.id),
+    index('route_stops_customer_idx').on(t.customerId),
+    check('route_stops_days_chk', sql`${t.visitDays} BETWEEN 1 AND 127`),
+    check('route_stops_every_chk', sql`${t.everyWeeks} IN (1,2,4)`),
+    check('route_stops_sequence_chk', sql`${t.sequence} > 0`),
+  ],
+);
+
+/** What a route's van should start the day with: one quantity per product, in the product's base unit. */
+export const routeParLevels = pgTable(
+  'route_par_levels',
+  {
+    routeId: uuid('route_id').notNull().references(() => salesRoutes.id, { onDelete: 'restrict' }),
+    productId: text('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    quantity: quantity('quantity').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.routeId, t.productId] }), index('route_par_product_idx').on(t.productId), check('route_par_quantity_chk', sql`${t.quantity} > 0`)],
+);
+
 /** How the counter looks: inside the admin page (default) or as a full-screen till. A preference of the company, not a control. */
 export const cashSaleSettings = pgTable(
   'cash_sale_settings',

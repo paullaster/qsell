@@ -1,6 +1,7 @@
-import { and, eq, sql } from 'drizzle-orm';
-import { bankAccounts, branches, deliveryVehicles, salesReps, users } from '@/server/db/drizzle/schema';
-import { acceptFilters, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
+import { and, eq, isNull, sql, type SQL } from 'drizzle-orm';
+import { bankAccounts, branches, customers, deliveryVehicles, products, salesReps, users, vans } from '@/server/db/drizzle/schema';
+import { LookupFilterError, acceptFilters, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
+import { isId } from '@/lib/van-sales/people';
 import { STAFF_SQL } from './reps';
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '');
@@ -82,4 +83,86 @@ const staffToSell = tableSource({
   toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.email), badge: null }),
 });
 
-export const VAN_SALES_LOOKUP_SOURCES: LookupSource[] = [branchesToChoose, cashAccounts, freeVehicles, staffToSell];
+/** The one filter these lists take: the id of a record (a route or a branch), checked here before it reaches a query. */
+const idFilter = (filters: Record<string, string>, name: string): string | null => {
+  const { [name]: value, ...rest } = filters;
+  if (Object.keys(rest).length > 0) throw new LookupFilterError('Unsupported filter.');
+  if (value === undefined) return null;
+  if (!isId(value)) throw new LookupFilterError('That is not a valid choice.');
+  return value;
+};
+
+/** Vans in use, for a route's usual van; with the filter `branch`, only the vans of that branch. */
+const vansInUse = tableSource({
+  key: 'van-vans',
+  permission: 'van_sales:manage',
+  table: vans,
+  id: vans.id,
+  label: vans.name,
+  searchColumns: [vans.name],
+  select: { branchId: vans.branchId },
+  scope: ({ companyId, filters }) => {
+    const branch = idFilter(filters, 'branch');
+    const conditions: SQL[] = [eq(vans.companyId, companyId), eq(vans.status, 'active')];
+    if (branch !== null) conditions.push(eq(vans.branchId, branch));
+    return [and(...conditions) ?? sql`false`];
+  },
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: null, badge: null }),
+});
+
+/** Sales reps who are selling, for a route's usual rep. */
+const repsSelling = tableSource({
+  key: 'van-reps',
+  permission: 'van_sales:manage',
+  table: salesReps,
+  id: salesReps.id,
+  label: salesReps.name,
+  searchColumns: [salesReps.name, salesReps.phone],
+  select: { phone: salesReps.phone },
+  scope: ({ companyId, filters }) => {
+    acceptFilters(filters, {});
+    return [and(eq(salesReps.companyId, companyId), eq(salesReps.status, 'active')) ?? sql`false`];
+  },
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.phone) === '' ? null : text(row.phone), badge: null }),
+});
+
+/** Customers who can be put on a route: in use, not the walk-in customer; with the filter `route`, not already on it. */
+const customersForRoute = tableSource({
+  key: 'van-customers',
+  permission: 'van_sales:manage',
+  table: customers,
+  id: customers.id,
+  label: customers.name,
+  searchColumns: [customers.name, customers.phone, customers.number, customers.email],
+  select: { city: customers.city, phone: customers.phone },
+  scope: ({ companyId, filters }) => {
+    const route = idFilter(filters, 'route');
+    const conditions: SQL[] = [eq(customers.companyId, companyId), eq(customers.isActive, true), eq(customers.isWalkIn, false)];
+    if (route !== null) conditions.push(sql`NOT EXISTS (SELECT 1 FROM route_stops s WHERE s.route_id = ${route}::uuid AND s.customer_id = ${customers.id} AND s.active)`);
+    return [and(...conditions) ?? sql`false`];
+  },
+  toOption: (row) => {
+    const place = [text(row.city), text(row.phone)].filter((x) => x !== '').join(' · ');
+    return { id: text(row.id), label: text(row.label), description: place === '' ? null : place, badge: null };
+  },
+});
+
+/** Products a van can carry (kept in stock); with the filter `route`, not already on that route's usual stock. */
+const productsForVan = tableSource({
+  key: 'van-products',
+  permission: 'van_sales:manage',
+  table: products,
+  id: products.id,
+  label: products.name,
+  searchColumns: [products.name, products.sku, products.stockCode],
+  select: { sku: products.sku },
+  scope: ({ filters }) => {
+    const route = idFilter(filters, 'route');
+    const conditions: SQL[] = [isNull(products.deletedAt), eq(products.inventoryKind, 'inventory')];
+    if (route !== null) conditions.push(sql`NOT EXISTS (SELECT 1 FROM route_par_levels p WHERE p.route_id = ${route}::uuid AND p.product_id = ${products.id})`);
+    return [and(...conditions) ?? isNull(products.deletedAt)];
+  },
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.sku) === '' ? null : text(row.sku), badge: null }),
+});
+
+export const VAN_SALES_LOOKUP_SOURCES: LookupSource[] = [branchesToChoose, cashAccounts, freeVehicles, staffToSell, vansInUse, repsSelling, customersForRoute, productsForVan];

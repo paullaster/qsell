@@ -33,6 +33,7 @@ import { OfflineSaleService } from '@/server/domains/selling/offline/offline-sal
 import { VanSalesSettingsService } from '@/server/domains/van-sales/settings-service';
 import { VanService } from '@/server/domains/van-sales/vans';
 import { RepService } from '@/server/domains/van-sales/reps';
+import { RouteService } from '@/server/domains/van-sales/routes';
 import { PartialBillingService } from '@/server/domains/selling/partial-billing-service';
 import { CashSaleService } from '@/server/domains/selling/cash-sales/cash-sale-service';
 import { ShiftService } from '@/server/domains/selling/shifts/shift-service';
@@ -431,6 +432,7 @@ export interface AppContainer {
   vanSalesSettings: VanSalesSettingsService;
   vans: VanService;
   salesReps: RepService;
+  salesRoutes: RouteService;
   tillSettings: TillSettingsService;
   heldSales: HeldSaleService;
   counterCatalogue: CounterCatalogueService;
@@ -698,6 +700,7 @@ export function getContainer(): AppContainer {
   const vanSalesSettings = new VanSalesSettingsService(drizzleDb, decisionLog, reasonCodes);
   const vans = new VanService(drizzleDb, decisionLog);
   const salesReps = new RepService(drizzleDb, decisionLog);
+  const salesRoutes = new RouteService(drizzleDb, decisionLog, vanSalesSettings);
   const preparation = new PreparationService(drizzleDb);
   const packageGroups = new PackageGroupService(drizzleDb, packageShop, packageOrders);
   const packageQuoteRequests = new PackageQuoteRequestService(drizzleDb, packageShop, packageOrders);
@@ -888,6 +891,7 @@ export function getContainer(): AppContainer {
     vanSalesSettings,
     vans,
     salesReps,
+    salesRoutes,
     tillSettings,
     heldSales,
     counterCatalogue,

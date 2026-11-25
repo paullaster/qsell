@@ -1,6 +1,6 @@
 import { and, asc, eq, ilike, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { bankAccounts, branches, deliveryVehicles, registers, shifts, stockBalances, stockLocations, vans } from '@/server/db/drizzle/schema';
+import { bankAccounts, branches, deliveryVehicles, registers, salesRoutes, shifts, stockBalances, stockLocations, vans } from '@/server/db/drizzle/schema';
 import type { Actor } from '@/server/kernel/context';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { locationCodeFor, readReason, readVan, type VanInput, isId } from '@/lib/van-sales/people';
@@ -219,6 +219,8 @@ export class VanService {
           if ((held?.n ?? 0) > 0) throw new VanSalesError(`This van still holds or has promised stock of ${String(held?.n ?? 0)} product${held?.n === 1 ? '' : 's'}. Unload it to the warehouse first.`);
           const [open] = await tx.select({ id: shifts.id }).from(shifts).where(and(eq(shifts.registerId, row.registerId), sql`${shifts.status} IN ('open','closing')`)).limit(1);
           if (open !== undefined) throw new VanSalesError('The van\'s till has a shift open. Close it before stopping the van.');
+          const [route] = await tx.select({ name: salesRoutes.name }).from(salesRoutes).where(and(eq(salesRoutes.defaultVanId, row.id), eq(salesRoutes.status, 'active'))).limit(1);
+          if (route !== undefined) throw new VanSalesError(`This van is the usual van of the route ${route.name}. Choose another van for that route first.`);
         } else {
           await this.checkParts(tx, companyId, { branchId: row.branchId, vehicleId: row.vehicleId, cashAccountId: null }, row.id);
         }

@@ -175,6 +175,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
             permission: 'van_sales:read',
           },
           {
+            id: 'van-sales-routes',
+            title: 'Routes',
+            name: 'van-sales-routes',
+            href: '/admin/van-sales/routes',
+            description: 'The rounds of customers: who is visited, on which days, in what order, and the stock the van starts with',
+            icon: 'MapPin',
+            permission: 'van_sales:read',
+          },
+          {
             id: 'van-sales-reps',
             title: 'Sales reps',
             name: 'van-sales-reps',

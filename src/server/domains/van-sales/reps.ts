@@ -1,6 +1,6 @@
 import { and, asc, eq, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, salesReps, users } from '@/server/db/drizzle/schema';
+import { branches, salesReps, salesRoutes, users } from '@/server/db/drizzle/schema';
 import type { Actor } from '@/server/kernel/context';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { isId, readReason, readRep, REP_STATUSES, type RepMode, type RepStatus } from '@/lib/van-sales/people';
@@ -188,6 +188,10 @@ export class RepService {
     await this.db.transaction(async (tx) => {
       const row = await this.locked(tx, companyId, id, input.expectedVersion);
       if (row.status === status) throw new VanSalesError(`This sales rep is already ${status === 'active' ? 'selling' : status}.`);
+      if (status === 'ended') {
+        const [route] = await tx.select({ name: salesRoutes.name }).from(salesRoutes).where(and(eq(salesRoutes.defaultRepId, row.id), eq(salesRoutes.status, 'active'))).limit(1);
+        if (route !== undefined) throw new VanSalesError(`${row.name} is the usual rep of the route ${route.name}. Choose another rep for that route first.`);
+      }
       if (status === 'active') {
         const [person] = await tx.select({ id: users.id }).from(users).where(and(eq(users.id, row.userId), eq(users.status, 'active'), eq(users.isActive, true), STAFF_SQL)).limit(1);
         if (person === undefined) throw new VanSalesError('Their account is not in use, so they cannot sell. Switch the account on in Users first.');
