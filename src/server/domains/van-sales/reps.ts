@@ -6,6 +6,7 @@ import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { isId, readReason, readRep, REP_STATUSES, type RepMode, type RepStatus } from '@/lib/van-sales/people';
 import { afterCursor, matching, PAGE_SIZE, pageOf, searchText, type PageInput } from '@/server/domains/settings/paging';
 import { constraintOf, VanSalesError } from './errors';
+import { openDayOf, openDayWords } from './open-days';
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
@@ -188,6 +189,10 @@ export class RepService {
     await this.db.transaction(async (tx) => {
       const row = await this.locked(tx, companyId, id, input.expectedVersion);
       if (row.status === status) throw new VanSalesError(`This sales rep is already ${status === 'active' ? 'selling' : status}.`);
+      if (status !== 'active') {
+        const day = await openDayOf(tx, companyId, { repId: row.id });
+        if (day !== null) throw new VanSalesError(openDayWords(row.name, day));
+      }
       if (status === 'ended') {
         const [route] = await tx.select({ name: salesRoutes.name }).from(salesRoutes).where(and(eq(salesRoutes.defaultRepId, row.id), eq(salesRoutes.status, 'active'))).limit(1);
         if (route !== undefined) throw new VanSalesError(`${row.name} is the usual rep of the route ${route.name}. Choose another rep for that route first.`);

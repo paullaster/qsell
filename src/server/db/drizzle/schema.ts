@@ -5140,6 +5140,104 @@ export const routeParLevels = pgTable(
   (t) => [primaryKey({ columns: [t.routeId, t.productId] }), index('route_par_product_idx').on(t.productId), check('route_par_quantity_chk', sql`${t.quantity} > 0`)],
 );
 
+/**
+ * A van day: one rep's one outing on one route on one date (docs/architecture/van-sales.md §4.3). It holds the rep and the van for that date, and
+ * its life is planned, being loaded, out, back, counted, closed (or cancelled before it goes out). Never deleted.
+ */
+export const vanDays = pgTable(
+  'van_days',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    number: text('number').notNull(),
+    routeId: uuid('route_id').notNull().references(() => salesRoutes.id, { onDelete: 'restrict' }),
+    branchId: uuid('branch_id').notNull().references(() => branches.id, { onDelete: 'restrict' }),
+    repId: uuid('rep_id').notNull().references(() => salesReps.id, { onDelete: 'restrict' }),
+    /** The van that sells; none for a day that only takes orders. */
+    vanId: uuid('van_id').references(() => vans.id, { onDelete: 'restrict' }),
+    dayDate: date('day_date').notNull(),
+    mode: text('mode').notNull(),
+    status: text('status').notNull().default('planned'),
+    statusReason: text('status_reason'),
+    /** The till shift the van sells in; set when the day goes out. */
+    shiftId: uuid('shift_id').references(() => shifts.id, { onDelete: 'restrict' }),
+    version: integer('version').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('van_days_company_number_uidx').on(t.companyId, t.number),
+    // A rep, a van and a route have one day on a date (a cancelled day gives them back).
+    uniqueIndex('van_days_rep_date_uidx').on(t.repId, t.dayDate).where(sql`${t.status} <> 'cancelled'`),
+    uniqueIndex('van_days_van_date_uidx').on(t.vanId, t.dayDate).where(sql`${t.vanId} IS NOT NULL AND ${t.status} <> 'cancelled'`),
+    uniqueIndex('van_days_route_date_uidx').on(t.routeId, t.dayDate).where(sql`${t.status} <> 'cancelled'`),
+    index('van_days_company_date_idx').on(t.companyId, t.dayDate, t.id),
+    index('van_days_route_idx').on(t.routeId, t.status),
+    index('van_days_rep_idx').on(t.repId, t.status),
+    index('van_days_van_idx').on(t.vanId, t.status),
+    check('van_days_status_chk', sql`${t.status} IN ('planned','loading','out','returning','reconciling','closed','cancelled')`),
+    check('van_days_mode_chk', sql`${t.mode} IN ('van_sell','pre_sell','both')`),
+    check('van_days_cancelled_reason_chk', sql`${t.status} <> 'cancelled' OR (${t.statusReason} IS NOT NULL AND length(btrim(${t.statusReason})) > 0)`),
+    // A day that sells from a van has one; a day that only takes orders has none.
+    check('van_days_van_chk', sql`(${t.mode} = 'pre_sell' AND ${t.vanId} IS NULL) OR (${t.mode} <> 'pre_sell' AND ${t.vanId} IS NOT NULL)`),
+  ],
+);
+
+/** One call on one customer in a van day: copied from the route's due stops when the day is planned, then its time and result. */
+export const vanVisits = pgTable(
+  'van_visits',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    dayId: uuid('day_id').notNull().references(() => vanDays.id, { onDelete: 'restrict' }),
+    customerId: uuid('customer_id').notNull().references(() => customers.id, { onDelete: 'restrict' }),
+    /** The route stop it came from; none for a customer added to the day by hand. */
+    stopId: uuid('stop_id').references(() => routeStops.id, { onDelete: 'restrict' }),
+    sequence: integer('sequence').notNull(),
+    status: text('status').notNull().default('planned'),
+    outcome: text('outcome'),
+    noSaleReason: text('no_sale_reason'),
+    arrivedAt: timestamp('arrived_at', { withTimezone: true }),
+    departedAt: timestamp('departed_at', { withTimezone: true }),
+    version: integer('version').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('van_visits_day_customer_uidx').on(t.dayId, t.customerId),
+    index('van_visits_day_idx').on(t.dayId, t.sequence, t.id),
+    index('van_visits_customer_idx').on(t.customerId, t.createdAt),
+    check('van_visits_status_chk', sql`${t.status} IN ('planned','arrived','done','skipped','closed_shop')`),
+    check('van_visits_outcome_chk', sql`${t.outcome} IS NULL OR ${t.outcome} IN ('sold','order_taken','sold_and_ordered','collected_only','no_sale')`),
+    check('van_visits_sequence_chk', sql`${t.sequence} > 0`),
+  ],
+);
+
+/**
+ * What happened to a van day, in order, each with its server time, who did it and why: append-only (a database trigger refuses any change
+ * or delete). The day's status is a projection of this.
+ */
+export const vanDayEvents = pgTable(
+  'van_day_events',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    dayId: uuid('day_id').notNull().references(() => vanDays.id, { onDelete: 'restrict' }),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().default(sql`clock_timestamp()`),
+    action: text('action').notNull(),
+    actorType: text('actor_type').notNull().default('user'),
+    actorId: text('actor_id'),
+    fromStatus: text('from_status'),
+    toStatus: text('to_status'),
+    reason: text('reason'),
+    /** The time on the rep's phone, kept beside the server's and never used to order anything. */
+    deviceTime: timestamp('device_time', { withTimezone: true }),
+    detail: jsonb('detail').$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  },
+  (t) => [index('van_day_events_day_idx').on(t.dayId, t.id)],
+);
+
 /** How the counter looks: inside the admin page (default) or as a full-screen till. A preference of the company, not a control. */
 export const cashSaleSettings = pgTable(
   'cash_sale_settings',

@@ -175,6 +175,15 @@ export const ADMIN_NAV: AdminNavItem[] = [
             permission: 'van_sales:read',
           },
           {
+            id: 'van-sales-days',
+            title: 'Van days',
+            name: 'van-sales-days',
+            href: '/admin/van-sales/days',
+            description: 'Plan a day for a route and a date, see the customers to visit, and follow what happens to it',
+            icon: 'CalendarClock',
+            permission: 'van_sales:read',
+          },
+          {
             id: 'van-sales-routes',
             title: 'Routes',
             name: 'van-sales-routes',

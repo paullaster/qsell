@@ -34,6 +34,7 @@ import { VanSalesSettingsService } from '@/server/domains/van-sales/settings-ser
 import { VanService } from '@/server/domains/van-sales/vans';
 import { RepService } from '@/server/domains/van-sales/reps';
 import { RouteService } from '@/server/domains/van-sales/routes';
+import { VanDayService } from '@/server/domains/van-sales/days';
 import { PartialBillingService } from '@/server/domains/selling/partial-billing-service';
 import { CashSaleService } from '@/server/domains/selling/cash-sales/cash-sale-service';
 import { ShiftService } from '@/server/domains/selling/shifts/shift-service';
@@ -433,6 +434,7 @@ export interface AppContainer {
   vans: VanService;
   salesReps: RepService;
   salesRoutes: RouteService;
+  vanDays: VanDayService;
   tillSettings: TillSettingsService;
   heldSales: HeldSaleService;
   counterCatalogue: CounterCatalogueService;
@@ -701,6 +703,7 @@ export function getContainer(): AppContainer {
   const vans = new VanService(drizzleDb, decisionLog);
   const salesReps = new RepService(drizzleDb, decisionLog);
   const salesRoutes = new RouteService(drizzleDb, decisionLog, vanSalesSettings);
+  const vanDays = new VanDayService(drizzleDb, decisionLog, numbering, vanSalesSettings);
   const preparation = new PreparationService(drizzleDb);
   const packageGroups = new PackageGroupService(drizzleDb, packageShop, packageOrders);
   const packageQuoteRequests = new PackageQuoteRequestService(drizzleDb, packageShop, packageOrders);
@@ -892,6 +895,7 @@ export function getContainer(): AppContainer {
     vans,
     salesReps,
     salesRoutes,
+    vanDays,
     tillSettings,
     heldSales,
     counterCatalogue,

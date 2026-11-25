@@ -10,6 +10,7 @@ import { dayNumber, dueStops, weekdayWords, type EveryWeeks } from '@/lib/van-sa
 import { quantityProblem } from '@/lib/unit-rules';
 import { afterCursor, matching, PAGE_SIZE, pageOf, searchText, type PageInput } from '@/server/domains/settings/paging';
 import { constraintOf, VanSalesError } from './errors';
+import { openDayOf, openDayWords } from './open-days';
 import type { VanSalesSettingsService } from './settings-service';
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
@@ -76,7 +77,7 @@ const refuse = (error: unknown): never => {
 
 const modeOf = (value: string): RouteMode => (value === 'van_sell' || value === 'pre_sell' ? value : 'both');
 const everyOf = (n: number): EveryWeeks => (n === 2 || n === 4 ? n : 1);
-const customerWarning = (c: { isActive: boolean; blocked: string }): string | null => {
+export const customerWarning = (c: { isActive: boolean; blocked: string }): string | null => {
   if (!c.isActive) return 'This customer is no longer in use.';
   return c.blocked === 'all' || c.blocked === 'invoice' ? 'This customer is blocked from being sold to.' : null;
 };
@@ -240,6 +241,10 @@ export class RouteService {
         const modeProblem = routeModeProblem(settings, modeOf(row.mode));
         if (modeProblem !== null) throw new VanSalesError(modeProblem);
         await this.checkParts(tx, companyId, { code: row.code, name: row.name, branchId: row.branchId, mode: modeOf(row.mode), defaultVanId: row.defaultVanId, defaultRepId: row.defaultRepId });
+      }
+      if (!input.active) {
+        const day = await openDayOf(tx, companyId, { routeId: row.id });
+        if (day !== null) throw new VanSalesError(openDayWords('This route', day));
       }
       const status = input.active ? 'active' : 'stopped';
       await tx.update(salesRoutes).set({ status, statusReason: why?.reason ?? null, version: row.version + 1, updatedAt: new Date() }).where(eq(salesRoutes.id, row.id));

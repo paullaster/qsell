@@ -1,6 +1,6 @@
 # Guide 16: Van Sales & Pre-Sales (`/admin/settings/sales/van-sales`, and the Van sales screens under Sales)
 
-> **What is built so far.** This guide describes what a company can use today: **the Van sales settings screen** (which of the two modes are on, and the rules every van day follows), **Vans**, **Sales reps** and **Routes** (set up who sells, from what, and to whom). Van days, loading, selling, collections, the day-end count, the rep phone app, offline selling and reports are built one slice at a time; each adds its screens to this guide in the same change. The full plan is in `docs/architecture/van-sales.md`. Nothing here is switched on for a company until its administrator switches it on.
+> **What is built so far.** This guide describes what a company can use today: **the Van sales settings screen** (which of the two modes are on, and the rules every van day follows), **Vans**, **Sales reps** and **Routes** (set up who sells, from what, and to whom), and **Van days** (planning a day from a route and a date). Loading, loading, selling, collections, the day-end count, the rep phone app, offline selling and reports are built one slice at a time; each adds its screens to this guide in the same change. The full plan is in `docs/architecture/van-sales.md`. Nothing here is switched on for a company until its administrator switches it on.
 
 ## 1. Executive Overview & Commercial Value Proposition
 
@@ -27,7 +27,7 @@ Shrinkage visible per van, per rep and per day; fewer disputed shortages; cash d
 3. **Customers** with their price lists, credit limits and blocks ([Guide 03](03-sales-quotes-and-customer-orders.md), [Guide 04](04-pricing-engine-promotions-and-margins.md)).
 4. **Delivery vehicles** if the company uses the vehicle register ([Guide 06](06-delivery-logistics-and-field-dispatch.md)).
 5. **Van sales settings** (this guide, section 4): switch on the modes the company uses.
-6. **Vans**, then **Sales reps**, then **Routes** (this guide, sections 4 to 6): a route needs a branch, and may name a van and a rep, so make those first. A route's customers must already be on the customer list, and the products of its usual stock must be kept in stock. Permissions: see section 5.
+6. **Vans**, then **Sales reps**, then **Routes**, then **Van days** (this guide, sections 4 to 6): a route needs a branch, and may name a van and a rep, so make those first. A route's customers must already be on the customer list, and the products of its usual stock must be kept in stock. Permissions: see section 5.
 
 **Required permission to open the settings:** *Van sales: settings*. Held by Super Admin and Administrator by default.
 
@@ -37,7 +37,7 @@ Shrinkage visible per van, per rep and per day; fewer disputed shortages; cash d
 
 **Upstream:** products and prices, customers and credit, stock locations, registers and payment methods. **Downstream:** the till's shifts and Z reports, the sales ledger and receipts with KRA signing, stock movements and the books' stock value, delivery runs for pre-sold orders, and customer statements for credit sold and money collected.
 
-**Sub-modules (built as slices):** Settings (built), Vans (built), Sales reps (built), Routes (built), Van days and the load planner, the rep's phone app, Day-end count and reconciliation, Offline selling for reps, Reports.
+**Sub-modules (built as slices):** Settings (built), Vans (built), Sales reps (built), Routes (built), Van days (planning built) and the load planner, the rep's phone app, Day-end count and reconciliation, Offline selling for reps, Reports.
 
 ## 4. Interface-by-Interface Walkthrough
 
@@ -54,7 +54,7 @@ A single card with these parts, top to bottom:
 8. **Reason** (a list the company controls) and **Save**; **Undo** appears once something changed.
 
 ### Sales › Van sales (`/admin/van-sales`)
-The home of the module (needs *Van sales: read*). It shows, when van sales is **switched off** for the company, a card saying so with a button to switch it on in Settings (for people who hold *Van sales: settings*; others are told to ask an administrator); when it is on, two chips (*Van sell on/off*, *Pre-sell on/off*) and a **Change these** link. Below are three cards, **Routes**, **Vans** and **Sales reps**, each with its counts (in use, stopped; selling, paused, ended) and a button that opens its list. Vans and reps can be set up while the modes are still off.
+The home of the module (needs *Van sales: read*). It shows, when van sales is **switched off** for the company, a card saying so with a button to switch it on in Settings (for people who hold *Van sales: settings*; others are told to ask an administrator); when it is on, two chips (*Van sell on/off*, *Pre-sell on/off*) and a **Change these** link. Below are four cards, **Van days**, **Routes**, **Vans** and **Sales reps**, each with its counts (in use, stopped; selling, paused, ended) and a button that opens its list. Vans and reps can be set up while the modes are still off.
 
 ### Sales › Van sales › Vans (`/admin/van-sales/vans`)
 A list of the company's vans, a page at a time, by name.
@@ -84,6 +84,18 @@ Four parts, top to bottom. A route that does not exist shows the not-found page.
 2. **Customers on this route.** The round, in order, each with its place number, name, town and phone, the days it is visited and how often, any note, and a warning chip if the customer is blocked or no longer in use. Buttons: **Add a customer**; on each customer **Up**, **Down**, **Change days** and **Take off route** (asks once). An empty route says so.
 3. **Usual stock of the van.** The products the van should start the day with, each with its quantity and unit, a product search with quantity and **Add to the list**, **Take off** on each line, and **Save the usual stock** (with **Undo** while there are unsaved changes).
 4. **Who is due on a day.** A date box, and the customers a rep would visit that day, in the order of the round, with a count such as *Monday: 3 customers due* or *nobody is due*.
+
+### Sales › Van sales › Van days (`/admin/van-sales/days`)
+A list of van days, the latest date first, a page at a time.
+1. **Search box** (day number, route or rep) and the **Open / Closed / Cancelled / All** buttons (Open is shown first: a day is open until it is closed or cancelled).
+2. **Plan a day** button (needs *Van sales: plan* and at least one mode switched on) opens the **Plan a day** form.
+3. **Each day** shows its date and number (such as `VDY-26-00000012`), a chip for where it is (*Planned*, *Being loaded*, *Out on the route*, *Back at the depot*, *Being counted*, *Closed*, *Cancelled*) and one for what it is for, the route, the rep, the van, and how many of its visits are done. A cancelled day shows **Cancelled because:**.
+4. **Open day** opens the day's own page.
+
+### A van day's page (`/admin/van-sales/days/<day>`)
+1. **The day.** Its state, what it is for, the rep and van, a link **Open the route**, and **Cancel this day** (asks why) while the day has not gone out.
+2. **Visits.** The customers to visit, in order, each with its place number, name, town and phone, the route's note, a state chip (*To visit*, *At the customer*, *Done*, *Skipped*, *Shop closed*), a warning chip if the customer is blocked or no longer in use, and *Added to this day by hand* where it did not come from the route. While the day is planned or being loaded: **Add a customer**, and on each customer who has not been visited **Up**, **Down** and **Take off the day**.
+3. **History.** Everything that has happened to the day, oldest first, each with the time, who did it and, where one was given, the reason.
 
 ## 5. Granular Field-by-Field Reference
 
@@ -147,6 +159,19 @@ Four parts, top to bottom. A route that does not exist shows the not-found page.
 
 **Usual stock** (one line for each product): **Product** (kept in stock, once on the list) and **Quantity** (more than nothing, in the product's own unit: whole numbers for a product counted in pieces).
 
+**Plan a day form:**
+
+| Field | Type | Rules | Required |
+|---|---|---|---|
+| Route | choice from routes in use | the route's mode must be switched on | yes |
+| Date | a date | today or later: a day cannot be planned for a date that has passed | yes |
+| Sales rep | choice from reps who are selling | empty uses the route's usual rep; must do what the route needs | no |
+| Van | choice from vans in use | empty uses the route's usual van; none for a route that only takes orders; must be in the route's branch | no |
+
+**Add a customer to a day:** one customer, in use, not the walk-in customer and not already on the day.
+
+**Reason for cancelling a day:** 3 to 300 characters, kept with the day's history.
+
 **Permissions for the whole module** (granted in Users & Roles, [Guide 07](07-users-roles-and-access-governance.md)):
 
 | Permission | Allows | Held by default |
@@ -202,6 +227,14 @@ Four parts, top to bottom. A route that does not exist shows the not-found page.
 
 **Change, stop or use a route again.** **Change the route** edits its code, name, mode, van and rep (not its branch). **Stop this route** asks why; a stopped route cannot be changed, and its customers and usual stock cannot be edited, until it is used again.
 
+**Plan a day.** *Sales › Van sales › Van days*, **Plan a day**; choose the route; choose the date; choose another rep or van only if the route's usual ones are not going; **Plan the day**. The day opens with its number. The customers due that date, by their days and how often they are visited, are put on it in the order of the round. If no customer is due, the screen says so and suggests another date.
+
+**Arrange the visits.** On the day's page, **Add a customer** (a customer who is not due that date, for a one-off call), **Up** or **Down** to change the order, **Take off the day** to remove a customer who has not been visited. The route itself is not changed.
+
+**Cancel a day.** **Cancel this day**, type why, **Cancel the day**. The rep, the van and the route are free to be planned again for that date. A day that has gone out cannot be cancelled: it runs its course.
+
+**Read the history.** The *History* list on the day's page shows each step with the server's time and who did it.
+
 **Two people at once.** Every change is checked against the version on screen; if someone else saved first the change is refused with *Someone else changed this van (or sales rep)… Reload the page to see the latest.*
 
 **Every change** is in the decision log with the old and new values, the person, the time and the reason.
@@ -224,6 +257,13 @@ Four parts, top to bottom. A route that does not exist shows the not-found page.
 - **Taking a customer off keeps the record** (a past visit will still point to it) and the round closes up. A route is stopped, never deleted.
 - **The usual stock holds each product once**, only products kept in stock, with a quantity that fits the product's unit.
 - **A stopped route cannot be changed**, and cannot be used again while its van or rep is no longer in use or its mode has been switched off.
+- **A day belongs to a route, a rep and a van on a date.** A rep, a van and a route each have one day on a date; planning a second is refused in words. A cancelled day gives them back. A day for a route that only takes orders has no van.
+- **The customers on a day are copied from the route when it is planned.** Changing the route afterwards does not change days already planned; the day's visits can be arranged on the day itself.
+- **A day moves in one direction:** planned, being loaded, out on the route, back at the depot, being counted, closed. It is cancelled only before it goes out. The steps after *planned* are added by the parts of van sales that own them (loading, selling, the count at the end).
+- **A route, van or rep with a day that is not finished (not closed or cancelled) cannot be stopped, paused or ended**; the screen names the day and says to cancel or close it first.
+- **The visits can be arranged only while the day is planned or being loaded**, and a visit that has started cannot be taken off.
+- **The history of a day is append-only.** The database refuses any change or removal of an entry. Each entry has the server's time (never the phone's), who did it, and the reason where one is needed.
+- **Days are numbered from their own series** (`VDY-{YY}-…`, set under Settings › Number series), with no gaps within a year.
 - Every add, change, stop, pause, end and resume is in the decision log with the person, the time and the reason typed.
 - The database itself refuses a stopped van, route, or a paused or ended rep with no reason, a pre-sell route with a van, a visit with no day or one visited every 3 weeks, a discount over 100%, a negative credit or cash limit, and a mode other than van sell or pre-sell.
 - A reason is required for every change, so an auditor can see why a rule was relaxed.
@@ -245,4 +285,8 @@ Four parts, top to bottom. A route that does not exist shows the not-found page.
 - [ ] Set the usual stock for each route's van from what it sells on a normal day.
 - [ ] Verify: choose a date in *Who is due on a day* for a Monday, a fortnightly week and a week off, and compare with what the sales manager expects.
 - [ ] Verify: a customer already on the route is not offered again, and stopping a route's usual van is refused.
-- **Common pitfalls:** giving two routes the same code or name (refused); starting a fortnightly customer's visits in the wrong week (the date sets which weeks count); naming two vans alike (refused); putting a vehicle behind two vans (refused); switching on *require* with a very small distance, which blocks reps in town centres; leaving the approval limit at 0, which sends every small shortage to a second person.
+- [ ] Plan a day for each route for the coming week, and read the visits against what the sales manager expects.
+- [ ] Verify: a second day for the same route, rep or van on the same date is refused; cancelling the first frees them.
+- [ ] Verify: a route with a day planned cannot be stopped; cancel the day, then it can.
+- [ ] Verify: the history shows who planned and who cancelled, with the time.
+- **Common pitfalls:** planning a day before the route has customers due that date (the screen says none is due); planning a day for the usual rep who is already on another route that date (refused); giving two routes the same code or name (refused); starting a fortnightly customer's visits in the wrong week (the date sets which weeks count); naming two vans alike (refused); putting a vehicle behind two vans (refused); switching on *require* with a very small distance, which blocks reps in town centres; leaving the approval limit at 0, which sends every small shortage to a second person.

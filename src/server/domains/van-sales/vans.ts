@@ -6,6 +6,7 @@ import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { locationCodeFor, readReason, readVan, type VanInput, isId } from '@/lib/van-sales/people';
 import { afterCursor, matching, PAGE_SIZE, pageOf, searchText, type PageInput } from '@/server/domains/settings/paging';
 import { constraintOf, VanSalesError } from './errors';
+import { openDayOf, openDayWords } from './open-days';
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
@@ -219,6 +220,8 @@ export class VanService {
           if ((held?.n ?? 0) > 0) throw new VanSalesError(`This van still holds or has promised stock of ${String(held?.n ?? 0)} product${held?.n === 1 ? '' : 's'}. Unload it to the warehouse first.`);
           const [open] = await tx.select({ id: shifts.id }).from(shifts).where(and(eq(shifts.registerId, row.registerId), sql`${shifts.status} IN ('open','closing')`)).limit(1);
           if (open !== undefined) throw new VanSalesError('The van\'s till has a shift open. Close it before stopping the van.');
+          const day = await openDayOf(tx, companyId, { vanId: row.id });
+          if (day !== null) throw new VanSalesError(openDayWords('This van', day));
           const [route] = await tx.select({ name: salesRoutes.name }).from(salesRoutes).where(and(eq(salesRoutes.defaultVanId, row.id), eq(salesRoutes.status, 'active'))).limit(1);
           if (route !== undefined) throw new VanSalesError(`This van is the usual van of the route ${route.name}. Choose another van for that route first.`);
         } else {

@@ -2,6 +2,7 @@
  * Set-up for the van sales tests that a person would do from other screens:
  *   tsx e2e/support/van-fixtures.ts customer <tag> <n>   n customers with a phone and a town, printed as their names (a person makes these under Customers)
  *   tsx e2e/support/van-fixtures.ts product <tag>        a product kept in stock, counted in whole pieces, printed with its name (made under Products)
+ *   tsx e2e/support/van-fixtures.ts day-route <tag>      a route ready to plan a day on: both modes on, a van, a rep, and three customers visited every Monday; printed with their names (set up under Van sales)
  */
 import { execFileSync } from 'node:child_process';
 import { e2eEnvironment } from './env';
@@ -31,12 +32,43 @@ async function product(tag: string): Promise<Record<string, string>> {
   return { name };
 }
 
+async function dayRoute(tag: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { customers: table } = await import('@/server/db/drizzle/schema');
+  const { getContainer } = await import('@/server/di/container');
+  const c = getContainer();
+  const company = await c.companySettings.ensureSeeded();
+  const actor = { type: 'user' as const, id: 'e2e' };
+  await c.reasonCodes.ensureSystemReasons(company.id);
+  const now = await c.vanSalesSettings.screen(company.id);
+  if (!now.settings.vanSell || !now.settings.preSell) await c.vanSalesSettings.save(company.id, actor, { ...now.settings, vanSell: true, preSell: true }, now.version, { code: 'POLICY_CHANGE' });
+  const branch = await c.branches.getDefault(company.id);
+  if (branch === null) throw new Error('e2e fixture: the company has no branch');
+  const email = `e2e-dayrep-${tag}@example.test`.toLowerCase();
+  const repName = `Day Rep ${tag}`;
+  const person = await c.usersAdmin.createUser({ email, password: 'E2eRider-Passw0rd-3', name: repName, phone: '0711000333', role: 'super_admin' });
+  await c.salesReps.create(company.id, actor, { userId: person.id, phone: '', homeBranchId: null, modes: ['van_sell', 'pre_sell'], limits: { maxDiscountPercent: 0, maxCreditPerDay: 0, mayOverridePrice: false, maySellOnCredit: false } });
+  const vanName = `Day van ${tag}`;
+  const van = await c.vans.create(company.id, actor, { name: vanName, branchId: branch.id, vehicleId: null, cashAccountId: null, maxCash: null });
+  const routeName = `Day route ${tag}`;
+  const route = await c.salesRoutes.create(company.id, actor, { code: `DAY-${tag}`.toUpperCase(), name: routeName, branchId: branch.id, mode: 'both', defaultVanId: van.id, defaultRepId: (await c.salesReps.page(company.id, { query: repName, status: 'all' })).rows[0]?.id ?? null });
+  const shops: string[] = [];
+  for (let i = 1; i <= 3; i += 1) {
+    const name = `Duka day ${tag} ${String(i)}`;
+    const [row] = await db.insert(table).values({ companyId: company.id, number: `DY${tag}${String(i)}`.toUpperCase(), name, phone: `07120${String(i).padStart(5, '0')}`, city: 'Ruiru', accountType: 'cash' }).returning({ id: table.id });
+    await c.salesRoutes.addStop(company.id, actor, route.id, { customerId: row?.id ?? '', visitDays: 1, every: 1, anchor: '2026-11-02', note: '' });
+    shops.push(name);
+  }
+  return { route: routeName, rep: repName, van: vanName, shops: shops.join('|') };
+}
+
 async function main(): Promise<void> {
   const [command, tag, count] = process.argv.slice(2);
   let result: Record<string, string> | null = null;
   if (command === 'customer' && tag !== undefined) result = await customers(tag, Number(count ?? '1'));
   if (command === 'product' && tag !== undefined) result = await product(tag);
-  if (result === null) throw new Error('usage: van-fixtures customer <tag> <n> | product <tag>');
+  if (command === 'day-route' && tag !== undefined) result = await dayRoute(tag);
+  if (result === null) throw new Error('usage: van-fixtures customer <tag> <n> | product <tag> | day-route <tag>');
   process.stdout.write(`FIXTURE ${JSON.stringify(result)}\n`);
 }
 

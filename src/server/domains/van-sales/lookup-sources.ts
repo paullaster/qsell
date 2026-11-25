@@ -1,5 +1,6 @@
 import { and, eq, isNull, sql, type SQL } from 'drizzle-orm';
-import { bankAccounts, branches, customers, deliveryVehicles, products, salesReps, users, vans } from '@/server/db/drizzle/schema';
+import { bankAccounts, branches, customers, deliveryVehicles, products, salesReps, salesRoutes, users, vans } from '@/server/db/drizzle/schema';
+import type { PermissionKey } from '@/server/domains/access-control/permissions';
 import { LookupFilterError, acceptFilters, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
 import { isId } from '@/lib/van-sales/people';
 import { STAFF_SQL } from './reps';
@@ -92,59 +93,82 @@ const idFilter = (filters: Record<string, string>, name: string): string | null 
   return value;
 };
 
-/** Vans in use, for a route's usual van; with the filter `branch`, only the vans of that branch. */
-const vansInUse = tableSource({
-  key: 'van-vans',
-  permission: 'van_sales:manage',
-  table: vans,
-  id: vans.id,
-  label: vans.name,
-  searchColumns: [vans.name],
-  select: { branchId: vans.branchId },
-  scope: ({ companyId, filters }) => {
-    const branch = idFilter(filters, 'branch');
-    const conditions: SQL[] = [eq(vans.companyId, companyId), eq(vans.status, 'active')];
-    if (branch !== null) conditions.push(eq(vans.branchId, branch));
-    return [and(...conditions) ?? sql`false`];
-  },
-  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: null, badge: null }),
-});
+/** Vans in use, for a route's usual van or a day's van; with the filter `branch`, only the vans of that branch. */
+const vansInUse = (key: string, permission: PermissionKey) =>
+  tableSource({
+    key,
+    permission,
+    table: vans,
+    id: vans.id,
+    label: vans.name,
+    searchColumns: [vans.name],
+    select: { branchId: vans.branchId },
+    scope: ({ companyId, filters }) => {
+      const branch = idFilter(filters, 'branch');
+      const conditions: SQL[] = [eq(vans.companyId, companyId), eq(vans.status, 'active')];
+      if (branch !== null) conditions.push(eq(vans.branchId, branch));
+      return [and(...conditions) ?? sql`false`];
+    },
+    toOption: (row) => ({ id: text(row.id), label: text(row.label), description: null, badge: null }),
+  });
 
-/** Sales reps who are selling, for a route's usual rep. */
-const repsSelling = tableSource({
-  key: 'van-reps',
-  permission: 'van_sales:manage',
-  table: salesReps,
-  id: salesReps.id,
-  label: salesReps.name,
-  searchColumns: [salesReps.name, salesReps.phone],
-  select: { phone: salesReps.phone },
+/** Sales reps who are selling, for a route's usual rep or a day's rep. */
+const repsSelling = (key: string, permission: PermissionKey) =>
+  tableSource({
+    key,
+    permission,
+    table: salesReps,
+    id: salesReps.id,
+    label: salesReps.name,
+    searchColumns: [salesReps.name, salesReps.phone],
+    select: { phone: salesReps.phone },
+    scope: ({ companyId, filters }) => {
+      acceptFilters(filters, {});
+      return [and(eq(salesReps.companyId, companyId), eq(salesReps.status, 'active')) ?? sql`false`];
+    },
+    toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.phone) === '' ? null : text(row.phone), badge: null }),
+  });
+
+/** The place a customer shows in a list: town and phone. */
+const placeOf = (row: Record<string, unknown>): string | null => {
+  const place = [text(row.city), text(row.phone)].filter((x) => x !== '').join(' · ');
+  return place === '' ? null : place;
+};
+
+/** Customers who can be put on a route (filter `route` hides those already on it) or added to a day (filter `day` hides those already on its visits). */
+const customersFor = (key: string, permission: PermissionKey, on: 'route' | 'day') =>
+  tableSource({
+    key,
+    permission,
+    table: customers,
+    id: customers.id,
+    label: customers.name,
+    searchColumns: [customers.name, customers.phone, customers.number, customers.email],
+    select: { city: customers.city, phone: customers.phone },
+    scope: ({ companyId, filters }) => {
+      const where = idFilter(filters, on);
+      const conditions: SQL[] = [eq(customers.companyId, companyId), eq(customers.isActive, true), eq(customers.isWalkIn, false)];
+      if (where !== null && on === 'route') conditions.push(sql`NOT EXISTS (SELECT 1 FROM route_stops s WHERE s.route_id = ${where}::uuid AND s.customer_id = ${customers.id} AND s.active)`);
+      if (where !== null && on === 'day') conditions.push(sql`NOT EXISTS (SELECT 1 FROM van_visits v WHERE v.day_id = ${where}::uuid AND v.customer_id = ${customers.id})`);
+      return [and(...conditions) ?? sql`false`];
+    },
+    toOption: (row) => ({ id: text(row.id), label: text(row.label), description: placeOf(row), badge: null }),
+  });
+
+/** Routes in use, for planning a day: each shows what it is for and its usual van and rep. */
+const routesInUse = tableSource({
+  key: 'van-plan-routes',
+  permission: 'van_sales:plan',
+  table: salesRoutes,
+  id: salesRoutes.id,
+  label: salesRoutes.name,
+  searchColumns: [salesRoutes.name, salesRoutes.code],
+  select: { code: salesRoutes.code, mode: salesRoutes.mode },
   scope: ({ companyId, filters }) => {
     acceptFilters(filters, {});
-    return [and(eq(salesReps.companyId, companyId), eq(salesReps.status, 'active')) ?? sql`false`];
+    return [and(eq(salesRoutes.companyId, companyId), eq(salesRoutes.status, 'active')) ?? sql`false`];
   },
-  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.phone) === '' ? null : text(row.phone), badge: null }),
-});
-
-/** Customers who can be put on a route: in use, not the walk-in customer; with the filter `route`, not already on it. */
-const customersForRoute = tableSource({
-  key: 'van-customers',
-  permission: 'van_sales:manage',
-  table: customers,
-  id: customers.id,
-  label: customers.name,
-  searchColumns: [customers.name, customers.phone, customers.number, customers.email],
-  select: { city: customers.city, phone: customers.phone },
-  scope: ({ companyId, filters }) => {
-    const route = idFilter(filters, 'route');
-    const conditions: SQL[] = [eq(customers.companyId, companyId), eq(customers.isActive, true), eq(customers.isWalkIn, false)];
-    if (route !== null) conditions.push(sql`NOT EXISTS (SELECT 1 FROM route_stops s WHERE s.route_id = ${route}::uuid AND s.customer_id = ${customers.id} AND s.active)`);
-    return [and(...conditions) ?? sql`false`];
-  },
-  toOption: (row) => {
-    const place = [text(row.city), text(row.phone)].filter((x) => x !== '').join(' · ');
-    return { id: text(row.id), label: text(row.label), description: place === '' ? null : place, badge: null };
-  },
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.code), badge: null, meta: { mode: text(row.mode) } }),
 });
 
 /** Products a van can carry (kept in stock); with the filter `route`, not already on that route's usual stock. */
@@ -165,4 +189,18 @@ const productsForVan = tableSource({
   toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.sku) === '' ? null : text(row.sku), badge: null }),
 });
 
-export const VAN_SALES_LOOKUP_SOURCES: LookupSource[] = [branchesToChoose, cashAccounts, freeVehicles, staffToSell, vansInUse, repsSelling, customersForRoute, productsForVan];
+export const VAN_SALES_LOOKUP_SOURCES: LookupSource[] = [
+  branchesToChoose,
+  cashAccounts,
+  freeVehicles,
+  staffToSell,
+  vansInUse('van-vans', 'van_sales:manage'),
+  repsSelling('van-reps', 'van_sales:manage'),
+  customersFor('van-customers', 'van_sales:manage', 'route'),
+  productsForVan,
+  // The same lists for the people who plan days (who may not set up vans, reps and routes).
+  routesInUse,
+  vansInUse('van-plan-vans', 'van_sales:plan'),
+  repsSelling('van-plan-reps', 'van_sales:plan'),
+  customersFor('van-plan-customers', 'van_sales:plan', 'day'),
+];

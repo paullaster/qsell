@@ -135,8 +135,11 @@ test.describe('van sales: routes', () => {
     // Take one off: the rest close up.
     const confirmTakeOff = customers.getByRole('button', { name: `Confirm: Take ${shops[1] ?? ''} off this route` });
     await open(customers.getByRole('button', { name: `Take ${shops[1] ?? ''} off this route` }), confirmTakeOff);
-    await confirmTakeOff.click();
-    await expect(page.getByRole('status').filter({ hasText: `${shops[1] ?? ''} is off the route` })).toBeVisible({ timeout: 30_000 });
+    // Press until the result shows (a press can land as the list redraws); once it has worked the button is gone, so it never acts twice.
+    await expect(async () => {
+      if (await confirmTakeOff.isVisible()) await confirmTakeOff.click();
+      await expect(page.getByRole('status').filter({ hasText: `${shops[1] ?? ''} is off the route` })).toBeVisible({ timeout: 4000 });
+    }).toPass({ timeout: 60_000 });
     await expect(stops).toHaveCount(2);
 
     // Usual stock: a product with a quantity, a fraction is refused for a product counted in whole pieces, then saved.
