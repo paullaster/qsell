@@ -4,7 +4,8 @@ export const PRINTABLE_DOCUMENTS = ['quote', 'invoice', 'receipt'] as const;
 export type PrintableDocument = (typeof PRINTABLE_DOCUMENTS)[number];
 export const HEADER_POSITIONS = ['above_company', 'below_company'] as const;
 export type DocumentHeaderPosition = (typeof HEADER_POSITIONS)[number];
-export const FOOTER_POSITIONS = ['after_totals', 'after_terms'] as const;
+/** `page_bottom` is the foot of every page. It replaces `after_terms`, which put the note in the middle of the page under the terms. */
+export const FOOTER_POSITIONS = ['page_bottom', 'after_totals'] as const;
 export type DocumentFooterPosition = (typeof FOOTER_POSITIONS)[number];
 
 export interface DocumentLayout {
@@ -20,7 +21,7 @@ const EMPTY_LAYOUT: DocumentLayout = {
   headerText: '',
   headerPosition: 'above_company',
   footerText: '',
-  footerPosition: 'after_terms',
+  footerPosition: 'page_bottom',
 };
 
 export const DEFAULT_DOCUMENT_LAYOUTS: DocumentLayouts = {
@@ -41,8 +42,10 @@ export function resolveDocumentLayouts(
       const headerPosition = HEADER_POSITIONS.find(
         (position) => position === source.headerPosition,
       );
+      // Layouts saved before the foot of the page was offered say `after_terms`; they meant the footer.
       const footerPosition = FOOTER_POSITIONS.find(
-        (position) => position === source.footerPosition,
+        (position) =>
+          position === (source.footerPosition === 'after_terms' ? 'page_bottom' : source.footerPosition),
       );
       let footerText = '';
       if (typeof source.footerText === 'string') footerText = source.footerText;
@@ -75,7 +78,10 @@ export function documentLayoutsProblem(value: unknown): string | null {
     if (!HEADER_POSITIONS.some((position) => position === layout.headerPosition)) {
       return `Choose a valid header position for ${document}.`;
     }
-    if (!FOOTER_POSITIONS.some((position) => position === layout.footerPosition)) {
+    if (
+      !FOOTER_POSITIONS.some((position) => position === layout.footerPosition) &&
+      layout.footerPosition !== 'after_terms'
+    ) {
       return `Choose a valid footer position for ${document}.`;
     }
   }

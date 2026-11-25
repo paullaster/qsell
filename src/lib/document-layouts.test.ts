@@ -8,11 +8,18 @@ describe('company printable document layouts', () => {
         headerText: '',
         headerPosition: 'above_company',
         footerText: 'Valid for 30 days',
-        footerPosition: 'after_terms',
+        footerPosition: 'page_bottom',
       },
       invoice: { headerText: '', footerText: '' },
       receipt: { headerText: '', footerText: '' },
     });
+  });
+
+  it('reads a footer saved as "after terms" as the foot of the page', () => {
+    expect(
+      resolveDocumentLayouts({ quote: { footerText: 'x', footerPosition: 'after_terms' } }).quote
+        .footerPosition,
+    ).toBe('page_bottom');
   });
 
   it('keeps the previous invoice footer as a migration fallback', () => {

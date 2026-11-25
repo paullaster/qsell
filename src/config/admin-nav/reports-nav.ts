@@ -5,6 +5,7 @@ import {
   REPORTS,
   type FamilyCode,
 } from '@/server/domains/reports/registry';
+import { reportModules } from '@/server/domains/reports/registry/modules';
 import type { AdminNavIconName, AdminNavItem } from './types';
 
 /**
@@ -27,6 +28,43 @@ const FAMILY_ICONS: Record<FamilyCode, AdminNavIconName> = {
   people: 'UserCog',
   operations: 'Settings',
 };
+
+/**
+ * Settings > Reports: the heading every downloaded report carries, for all reports and, one level down, for each module of
+ * reports. The modules are the same ones the Reports menu lists, so a new module of reports gets its settings page here.
+ */
+export function reportSettingsNav(): AdminNavItem {
+  return {
+    id: 'settings-reports',
+    title: 'Reports',
+    name: 'settings-reports',
+    href: '/admin/settings/reports',
+    description: 'What the heading of a downloaded report shows: the business name, logo, address and contacts',
+    icon: 'BarChart3',
+    subLinks: [
+      {
+        id: 'settings-reports-general',
+        title: 'All reports',
+        name: 'settings-reports-general',
+        href: '/admin/settings/reports/general',
+        description: 'The heading used by every report unless its module has its own',
+        icon: 'FileText',
+        permission: 'company:manage',
+      },
+      ...reportModules().map(
+        (m): AdminNavItem => ({
+          id: `settings-reports-${m.code}`,
+          title: m.label,
+          name: `settings-reports-${m.code}`,
+          href: `/admin/settings/reports/${m.code}`,
+          description: `The heading of ${m.label.toLowerCase()} reports`,
+          icon: FAMILY_ICONS[m.code as FamilyCode],
+          permission: 'company:manage',
+        }),
+      ),
+    ],
+  };
+}
 
 export function reportsNavModules(): AdminNavItem[] {
   const modules: AdminNavItem[] = [];

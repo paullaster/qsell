@@ -121,6 +121,10 @@ export const BANNER_LIMITS = { banners: 5, title: 80, text: 240, cta: 30, href: 
 export interface CompanyUiConfigRaw {
   /** Company-specific printable document headers, footer notes and placement. Validated at the company settings boundary. */
   documentLayouts?: unknown;
+  /** What the heading of a report download carries (see `lib/print-branding`). Validated where it is saved. */
+  reportPrint?: unknown;
+  /** What the top of a printed record, such as a cash sale receipt, carries. */
+  recordPrint?: unknown;
   productGrid?: {
     /** Columns at ~1140px. Smaller viewports scale down from this. Default: 4 */
     desktopColumns?: number;

@@ -90,7 +90,7 @@ test.describe('report downloads', () => {
     expect(csv.status()).toBe(200);
     expect(csv.headers()['content-type']).toContain('text/csv');
     expect(csv.headers()['content-disposition']).toMatch(
-      /attachment; filename="receivables-ageing/,
+      /attachment; filename="[a-z0-9-]+_receivables-ageing_\d{8}-\d{6}\.csv"/,
     );
     expect(csv.headers()['x-file-sha256']).toMatch(/^[0-9a-f]{64}$/);
     // The file opens in Excel with the right characters: it starts with a byte-order mark.
