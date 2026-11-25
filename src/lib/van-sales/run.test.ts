@@ -57,7 +57,8 @@ describe('what a visit can do', () => {
     expect(canMoveVisit('arrived', 'closed_shop')).toBe(true);
   });
   it('ends with no sale only with a reason', () => {
-    expect(FINISH_OUTCOMES).toEqual(['no_sale']);
+    expect(FINISH_OUTCOMES).toEqual(['sold', 'no_sale']);
+    expect(readFinish({ outcome: 'sold' })).toEqual({ ok: true, finish: { outcome: 'sold', reason: null } });
     expect(readFinish({ outcome: 'no_sale', reason: ' Has enough stock ' })).toEqual({ ok: true, finish: { outcome: 'no_sale', reason: 'Has enough stock' } });
     expect(readFinish({ outcome: 'no_sale' }).ok).toBe(false);
     expect(readFinish({ outcome: 'no_sale', reason: 'no' }).ok).toBe(false);

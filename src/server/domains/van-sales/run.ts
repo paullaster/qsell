@@ -1,6 +1,6 @@
 import { and, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { customerAddresses, customers, salesReps, shifts, vanDays, vanLoads, vanVisits, vans } from '@/server/db/drizzle/schema';
+import { customerAddresses, customers, shifts, vanDayOrders, vanDays, vanLoads, vanVisits } from '@/server/db/drizzle/schema';
 import type { Actor } from '@/server/kernel/context';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { parseCount } from '@/server/domains/selling/shifts/shift-rules';
@@ -10,6 +10,7 @@ import { isId } from '@/lib/van-sales/people';
 import { arrivalProblem, canMoveVisit, goOutProblem, metresBetween, readFinish, readFloat, readPosition, readWhy } from '@/lib/van-sales/run';
 import { routeModeProblem, type RouteMode } from '@/lib/van-sales/settings';
 import { recordDayEvent } from './day-events';
+import { ownDay } from './own-day';
 import type { DayDetail, VanDayService } from './days';
 import { constraintOf, VanSalesError } from './errors';
 import type { VanSalesSettingsService } from './settings-service';
@@ -34,21 +35,8 @@ export class VanRunService {
     private readonly settings: VanSalesSettingsService,
   ) {}
 
-  /** The day and its rep, when the person is that rep (and may sell). */
   private async ownDay(companyId: string, actor: Actor, dayId: string, maySell: boolean) {
-    if (!isId(dayId)) throw new VanSalesError('That day could not be found.');
-    const [row] = await this.db
-      .select({ d: vanDays, repName: salesReps.name, repUser: salesReps.userId, repStatus: salesReps.status, registerId: vans.registerId })
-      .from(vanDays)
-      .innerJoin(salesReps, eq(salesReps.id, vanDays.repId))
-      .leftJoin(vans, eq(vans.id, vanDays.vanId))
-      .where(and(eq(vanDays.companyId, companyId), eq(vanDays.id, dayId)))
-      .limit(1);
-    if (row === undefined) throw new VanSalesError('That day could not be found.');
-    if (row.repUser !== actor.id) throw new VanSalesError(`Only ${row.repName} runs their own day: the stock and the cash are in their care.`);
-    if (!maySell) throw new VanSalesError('You are not allowed to sell from a van.');
-    if (row.repStatus !== 'active') throw new VanSalesError('You are not selling at the moment, so you cannot run a day.');
-    return row;
+    return await ownDay(this.db, companyId, actor, dayId, maySell);
   }
 
   // ── Going out ────────────────────────────────────────────────────────
@@ -163,6 +151,10 @@ export class VanRunService {
       if (day === undefined) throw new VanSalesError('That day could not be found.');
       const visit = await this.visitOf(tx, day.id, visitId);
       if (visit.v.status !== 'arrived') throw new VanSalesError(`Arrive at ${visit.name} before finishing the visit.`);
+      const [made] = await tx.select({ n: sql<number>`count(*)::int` }).from(vanDayOrders).where(eq(vanDayOrders.visitId, visit.v.id));
+      const sales = made?.n ?? 0;
+      if (read.finish.outcome === 'sold' && sales === 0) throw new VanSalesError(`Nothing has been sold at ${visit.name}. Sell something here, or finish the visit with no sale.`);
+      if (read.finish.outcome === 'no_sale' && sales > 0) throw new VanSalesError(`There ${sales === 1 ? 'is a sale' : 'are sales'} at ${visit.name}, so the visit is finished as sold.`);
       await tx.update(vanVisits).set({ status: 'done', outcome: read.finish.outcome, noSaleReason: read.finish.reason, departedAt: new Date(), version: visit.v.version + 1, updatedAt: new Date() }).where(eq(vanVisits.id, visit.v.id));
       await this.bump(tx, day.id, day.version);
       await recordDayEvent(tx, this.decisions, companyId, day.id, actor, 'visit.done', { reason: read.finish.reason ?? undefined, detail: { customer: visit.name, customerId: visit.customerId, outcome: read.finish.outcome } });

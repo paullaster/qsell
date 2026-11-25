@@ -19,6 +19,8 @@ export interface CashSaleInput {
   tenders: { methodId: string; amount: number; reference: string }[];
   /** One key for one attempt at one sale: a retry of the same sale (the connection dropped, the button pressed twice) finds the order it made. */
   saleKey: string;
+  /** Issue the stock from this one place only (a sale made from a van). */
+  fromLocationId?: string;
   /** A sale rung up offline: the prices the customer paid (accepted as they are), and that it was sold already. */
   offline?: { quotedItems: NonNullable<PlaceExtra['quotedItems']>; quotedTotals: NonNullable<PlaceExtra['quotedTotals']> };
   /** A sale made from a quote: the quote's prices stand and the order keeps the quote it came from. */
@@ -150,6 +152,7 @@ export class CashSaleService {
       {
         shiftId: shift.shiftId,
         idempotencyKey: input.saleKey,
+        ...(input.fromLocationId === undefined ? {} : { fromLocationId: input.fromLocationId }),
         ...(input.offline === undefined ? {} : { quotedItems: input.offline.quotedItems, quotedTotals: input.offline.quotedTotals, skipOfferedCheck: true }),
         ...(input.fromQuote === undefined ? {} : { quotedItems: input.fromQuote.quotedItems, quotedTotals: input.fromQuote.quotedTotals, skipOfferedCheck: true, sourceQuoteId: input.fromQuote.quoteId }),
         // The payment is checked against the priced total before anything is held or saved: a short payment never makes an unpaid sale.

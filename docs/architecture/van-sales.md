@@ -257,3 +257,11 @@ Route optimisation by traffic (the delivery planners are reused for the order of
 - **Screens:** *Send the day out* (ready or not and why, the float, the button) and, on each visit, the rep's buttons and what happened there; an add-on-the-road form with its own lookup `van-rep-customers` (behind `van_sales:sell`).
 - **Decision:** the reason for finishing a visit with no sale or skipping is the rep's own words (3 to 300 characters), not yet a company-controlled list; a catalogue can replace it without changing the data.
 - **Not yet:** selling at a visit (V-5b), finishing a visit as sold, collections and returns (V-7), the rep's phone app (V-8).
+
+### V-5b (2026-11-25): selling from the van
+- **One-place stock:** a sale may name the place its stock comes from (`fromLocationId`), carried from the sale through the order writer and the reservation into the candidate query. With it, only that place is tried, whatever its channel and sellable flag; short stock there is a refusal.
+- **Data:** migration 0219 `van_day_orders` ties each van sale (an ordinary cash or credit sale) to its day and visit, once per order, kind cash or credit, total not negative. The day's sales and takings are read from it and from the sales' tenders.
+- **Server:** `VanSaleService` (price, sell, forDay, tenderChoices). Cash: `CashSaleService.complete` with the rep as the actor (their shift is the van's till shift). Credit: `SalesOrderService.place(..., 'credit_sale')` with a total check against the rep's daily credit. Rep rights are checked first (price, discount, credit). A retry with the same key finds the sale already made.
+- **Visits:** a visit with sales finishes as `sold`; with none, only as `no_sale`.
+- **Screens:** Sell form on an arrived visit (products on the van, quantities, price or discount where allowed, payment buttons, change), and the Sales panel. New lookup `van-stock-products`.
+- **Not yet:** receipt printing from the van screen (the receipt is in Cash Sales and is reprinted from there; V-8 brings the phone app), pre-sell orders and drops (V-6), collections and returns (V-7).

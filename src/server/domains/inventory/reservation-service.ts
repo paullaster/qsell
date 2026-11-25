@@ -26,6 +26,8 @@ export interface ReserveOptions {
   branchId?: string | null;
   /** The shopper pays now, so the hold lapses if they do not (when the company sets a hold time). */
   payNow?: boolean;
+  /** Take the stock from this one place only (a sale made from a van). */
+  fromLocationId?: string | null;
 }
 
 function newId(prefix: string): string {
@@ -94,6 +96,7 @@ export class InventoryReservationService {
         lines: items,
         channel: options.channel ?? 'ecommerce',
         branchId: options.branchId ?? null,
+        fromLocationId: options.fromLocationId ?? null,
         expiresAt,
         actor,
       });

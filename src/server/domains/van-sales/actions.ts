@@ -8,6 +8,7 @@ import { VanSalesError } from './errors';
 import type { RepView } from './reps';
 import type { DayDetail, DayView } from './days';
 import type { LoadView, OnVanRow, Suggestion } from './loads';
+import type { DaySales, TenderChoice, VanSaleView } from './sales';
 import { goOutProblem } from '@/lib/van-sales/run';
 import type { ParView, RouteView, StopView } from './routes';
 import type { VanView } from './vans';
@@ -287,6 +288,13 @@ export interface DayScreen {
   outProblem: string | null;
   /** The company lets reps add a customer on the road. */
   offRouteAllowed: boolean;
+  /** What the day has sold and how it was paid. */
+  sales: DaySales;
+  /** The ways the rep can take payment, and what the rep may do alone (only for the rep). */
+  tenders: TenderChoice[];
+  repLimits: { maxDiscountPercent: number; maxCreditPerDay: number; mayOverridePrice: boolean; maySellOnCredit: boolean } | null;
+  /** Set only on the answer to a sale: what was just sold, to show the rep. */
+  lastSale?: VanSaleView;
 }
 
 async function dayScreen(companyId: string, id: string, userId: string): Promise<DayScreen> {
@@ -298,8 +306,11 @@ async function dayScreen(companyId: string, id: string, userId: string): Promise
   const wantsLoad = canPlan && day.vanId !== null && (day.status === 'out' || ((day.status === 'planned' || day.status === 'loading') && !loads.some((l) => l.kind === 'load' && l.cancelledAt === null)));
   const suggestion = wantsLoad ? await c.vanLoads.suggest(companyId, id) : null;
   const settings = await c.vanSalesSettings.current(companyId);
+  const isRep = rep.userId === userId;
+  const selling = day.status === 'out' && isRep && maySell;
+  const [sales, tenders] = await Promise.all([c.vanSales.forDay(companyId, id), selling ? c.vanSales.tenderChoices(companyId, day.branchId) : Promise.resolve([])]);
   const loadSigned = loads.some((l) => l.kind === 'load' && l.cancelledAt === null && l.signedAt !== null);
-  return { detail, canPlan, loads, onVan, suggestion, isRep: rep.userId === userId, maySell, outProblem: goOutProblem({ status: day.status, mode: day.mode, loadSigned }), offRouteAllowed: settings.offRoute === 'allow' };
+  return { detail, canPlan, loads, onVan, suggestion, isRep, maySell, sales, tenders, repLimits: isRep ? { maxDiscountPercent: rep.maxDiscountPercent, maxCreditPerDay: rep.maxCreditPerDay, mayOverridePrice: rep.mayOverridePrice, maySellOnCredit: rep.maySellOnCredit } : null, outProblem: goOutProblem({ status: day.status, mode: day.mode, loadSigned }), offRouteAllowed: settings.offRoute === 'allow' };
 }
 
 export async function dayScreenAction(id: unknown) {
@@ -423,4 +434,40 @@ export async function closedShopAction(raw: unknown) {
 export async function addOnRouteAction(raw: unknown) {
   const i = obj(raw);
   return await runDay(i.dayId, async (c, companyId, actor, dayId, maySell) => await c.vanRun.addOnRoute(companyId, actor, dayId, i.customerId, maySell));
+}
+
+// ── Selling (the rep's own) ──────────────────────────────────────────────
+
+export interface PricedSale {
+  subtotal: number;
+  tax: number;
+  total: number;
+  lines: { productId: string; quantity: number; unitPrice: number; lineTotal: number }[];
+}
+
+/** What the lines would total for the customer at this visit, priced by the server as the sale will be. Saves nothing. */
+export async function priceVanSaleAction(raw: unknown) {
+  const i = obj(raw);
+  return await runSetting(
+    'van_sales:read',
+    async ({ companyId, userId }): Promise<PricedSale> => {
+      const priced = await getContainer().vanSales.price(companyId, { type: 'user', id: userId }, text(i.dayId) ?? '', i, await canPermission('van_sales:sell'));
+      return { subtotal: priced.subtotal, tax: priced.tax, total: priced.total, lines: priced.lines };
+    },
+    { friendly },
+  );
+}
+
+/** Sells at a visit, paid now or on the customer's account. Answers with the day and what was sold. */
+export async function sellVanAction(raw: unknown) {
+  const i = obj(raw);
+  return await runSetting(
+    'van_sales:read',
+    async ({ companyId, userId }): Promise<DayScreen> => {
+      const dayId = typeof i.dayId === 'string' ? i.dayId : '';
+      const sale = await getContainer().vanSales.sell(companyId, { type: 'user', id: userId }, dayId, i, await canPermission('van_sales:sell'));
+      return { ...(await dayScreen(companyId, dayId, userId)), lastSale: sale };
+    },
+    { paths: PATHS, friendly },
+  );
 }

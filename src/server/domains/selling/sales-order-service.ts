@@ -58,6 +58,8 @@ export interface PlaceExtra {
   quotedItems?: Parameters<typeof OrderWriteService.createOrder>[0]['quotedItems'];
   quotedTotals?: Parameters<typeof OrderWriteService.createOrder>[0]['quotedTotals'];
   skipOfferedCheck?: boolean;
+  /** Issue the stock from this one place only: a sale made from a van is issued from the van. */
+  fromLocationId?: string;
   /** The quote this order came from: the order keeps it, and the quote's own prices stand. */
   sourceQuoteId?: string;
 }

@@ -10,6 +10,7 @@ import { WhyPanel } from './WhyPanel';
 import type { DayCall } from './day/call';
 import { HistoryPanel } from './day/HistoryPanel';
 import { RunPanel } from './day/RunPanel';
+import { SalesPanel } from './day/SalesPanel';
 import { LoadPanel } from './day/LoadPanel';
 import { VisitsPanel } from './day/VisitsPanel';
 
@@ -31,7 +32,7 @@ function Body({ initial }: { initial: DayScreen }) {
     const r = await attempt(call);
     if (r.ok) {
       setScreen(r.data);
-      setNotice({ kind: 'ok', text: okText });
+      setNotice({ kind: 'ok', text: typeof okText === 'function' ? okText(r.data) : okText });
       return null;
     }
     setNotice({ kind: 'error', text: r.error });
@@ -63,6 +64,7 @@ function Body({ initial }: { initial: DayScreen }) {
       </section>
       <RunPanel screen={screen} run={run} />
       <VisitsPanel screen={screen} run={run} />
+      <SalesPanel screen={screen} />
       <LoadPanel screen={screen} run={run} />
       <HistoryPanel events={events} />
     </div>

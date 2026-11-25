@@ -12,6 +12,7 @@ import { canArrangeVisits, VISIT_STATUS_WORDS } from '@/lib/van-sales/days';
 import { currentPosition } from '@/lib/browser-position';
 import { WhyPanel } from '../WhyPanel';
 import type { DayCall } from './call';
+import { SellForm } from './SellForm';
 
 /** The customers to visit on the day, in order. While the day is being got ready they can be added, moved and taken off. */
 export function VisitsPanel({ screen, run }: { screen: DayScreen; run: DayCall }) {
@@ -55,14 +56,15 @@ export function VisitsPanel({ screen, run }: { screen: DayScreen; run: DayCall }
         <p role="status" className="rounded-lg border border-line p-6 text-center text-sm text-fg-muted">No customer on this day.</p>
       ) : (
         <ol className="space-y-2" aria-label="Visits in order">
-          {visits.map((v, i) => <VisitRow key={v.id} visit={v} first={i === 0} last={i === visits.length - 1} dayId={day.id} may={may} mayRun={mayRun} run={run} />)}
+          {visits.map((v, i) => <VisitRow key={v.id} visit={v} first={i === 0} last={i === visits.length - 1} screen={screen} may={may} mayRun={mayRun} run={run} />)}
         </ol>
       )}
     </section>
   );
 }
 
-function VisitRow({ visit, first, last, dayId, may, mayRun, run }: { visit: VisitView; first: boolean; last: boolean; dayId: string; may: boolean; mayRun: boolean; run: DayCall }) {
+function VisitRow({ visit, first, last, screen, may, mayRun, run }: { visit: VisitView; first: boolean; last: boolean; screen: DayScreen; may: boolean; mayRun: boolean; run: DayCall }) {
+  const dayId = screen.detail.day.id;
   const where = [visit.customerPlace, visit.customerPhone].filter((x): x is string => x !== null && x !== '').join(' · ');
   return (
     <li className="space-y-2 rounded-lg border border-line p-3">
@@ -78,7 +80,7 @@ function VisitRow({ visit, first, last, dayId, may, mayRun, run }: { visit: Visi
         {visit.customerWarning === null ? null : <Chip tone="amber">{visit.customerWarning}</Chip>}
       </div>
       <VisitFacts visit={visit} />
-      {mayRun ? <RunActions visit={visit} dayId={dayId} run={run} /> : null}
+      {mayRun ? <RunActions visit={visit} screen={screen} run={run} /> : null}
       {may && visit.status === 'planned' ? (
         <div className="flex flex-wrap gap-2">
           <button type="button" className={buttonClass} disabled={first} onClick={() => void run(moveVisitAction({ dayId, id: visit.id, by: -1 }), `${visit.customerName} moved up.`)} aria-label={`Move ${visit.customerName} up`}>Up</button>
@@ -104,8 +106,10 @@ function VisitFacts({ visit }: { visit: VisitView }) {
 }
 
 /** The rep's steps at a customer: arrive (the phone says where it is), finish with no sale, skip, or find the shop shut. */
-function RunActions({ visit, dayId, run }: { visit: VisitView; dayId: string; run: DayCall }) {
-  const [mode, setMode] = useState<'view' | 'skip' | 'finish'>('view');
+function RunActions({ visit, screen, run }: { visit: VisitView; screen: DayScreen; run: DayCall }) {
+  const dayId = screen.detail.day.id;
+  const mayVanSell = screen.detail.day.vanName !== null && screen.detail.day.mode !== 'pre_sell';
+  const [mode, setMode] = useState<'view' | 'skip' | 'finish' | 'sell'>('view');
   const [busy, setBusy] = useState(false);
   const name = visit.customerName;
   const go = async (call: Parameters<DayCall>[0], text: string) => {
@@ -121,17 +125,21 @@ function RunActions({ visit, dayId, run }: { visit: VisitView; dayId: string; ru
     setBusy(false);
     if (answer === null) setMode('view');
   };
+  const sales = screen.sales.rows.filter((r) => r.visitId === visit.id).length;
   if (visit.status === 'done' || visit.status === 'skipped' || visit.status === 'closed_shop') return null;
   return (
     <div className="space-y-2">
       {mode === 'view' ? (
         <div className="flex flex-wrap gap-2">
           {visit.status === 'planned' ? <button type="button" className={primaryClass} disabled={busy} onClick={() => void arrive()} aria-label={`Arrive at ${name}`}>{busy ? 'Arriving…' : 'Arrive'}</button> : null}
-          {visit.status === 'arrived' ? <button type="button" className={buttonClass} onClick={() => setMode('finish')} aria-label={`Finish the visit to ${name} with no sale`}>Finish: no sale</button> : null}
+          {visit.status === 'arrived' && mayVanSell ? <button type="button" className={primaryClass} onClick={() => setMode('sell')} aria-label={`Sell to ${name}`}>Sell</button> : null}
+          {visit.status === 'arrived' && sales === 0 ? <button type="button" className={buttonClass} onClick={() => setMode('finish')} aria-label={`Finish the visit to ${name} with no sale`}>Finish: no sale</button> : null}
+          {visit.status === 'arrived' && sales > 0 ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void go(finishVisitAction({ dayId, id: visit.id, outcome: 'sold' }), `The visit to ${name} is finished.`)} aria-label={`Finish the visit to ${name}`}>Finish the visit</button> : null}
           {visit.status === 'planned' ? <button type="button" className={buttonClass} onClick={() => setMode('skip')} aria-label={`Skip ${name}`}>Skip</button> : null}
           <InlineConfirm label={`${name}'s shop is closed`} action="Shop closed" confirm="Yes, it is shut" busy={busy} onConfirm={() => void go(closedShopAction({ dayId, id: visit.id }), `${name}'s shop was found closed.`)} />
         </div>
       ) : null}
+      {mode === 'sell' ? <SellForm screen={screen} visitId={visit.id} customer={name} run={run} onDone={() => setMode('view')} onCancel={() => setMode('view')} /> : null}
       {mode === 'skip' ? <WhyPanel label={`Skip ${name}`} action="Skip this customer" busy={busy} onCancel={() => setMode('view')} onConfirm={(reason) => void go(skipVisitAction({ dayId, id: visit.id, reason }), `${name} is skipped.`)} /> : null}
       {mode === 'finish' ? <WhyPanel label={`Finish ${name}`} action="Finish the visit" busy={busy} onCancel={() => setMode('view')} onConfirm={(reason) => void go(finishVisitAction({ dayId, id: visit.id, outcome: 'no_sale', reason }), `The visit to ${name} is finished with no sale.`)} /> : null}
     </div>

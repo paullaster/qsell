@@ -49,8 +49,8 @@ export const VISIT_MOVES: Record<VisitStatus, readonly VisitStatus[]> = {
 };
 export const canMoveVisit = (from: VisitStatus, to: VisitStatus): boolean => VISIT_MOVES[from].includes(to);
 
-/** How a visit ends, where nothing was sold; a visit with sales ends as sold. */
-export const FINISH_OUTCOMES = ['no_sale'] as const;
+/** How a visit ends: sold (there are sales at it) or with no sale (and the reason). */
+export const FINISH_OUTCOMES = ['sold', 'no_sale'] as const;
 export type FinishOutcome = (typeof FINISH_OUTCOMES)[number];
 
 export interface FinishInput {
@@ -65,11 +65,12 @@ export function readWhy(raw: unknown): { ok: true; reason: string } | { ok: fals
   return { ok: true, reason };
 }
 
-/** Reads how a visit ends: no sale needs the reason. */
+/** Reads how a visit ends: sold needs nothing more; no sale needs the reason. */
 export function readFinish(raw: unknown): { ok: true; finish: FinishInput } | { ok: false; error: string } {
   const r = isRecord(raw) ? raw : {};
   const outcome = FINISH_OUTCOMES.find((o) => o === r.outcome);
   if (outcome === undefined) return { ok: false, error: 'Say how the visit ended.' };
+  if (outcome === 'sold') return { ok: true, finish: { outcome, reason: null } };
   const why = readWhy(r.reason);
   if (!why.ok) return { ok: false, error: `A visit with no sale needs a reason. ${why.error}` };
   return { ok: true, finish: { outcome, reason: why.reason } };

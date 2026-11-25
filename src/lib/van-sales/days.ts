@@ -66,6 +66,7 @@ export const DAY_EVENT_WORDS: Record<string, string> = {
   'day.load_signed': 'The load was signed for',
   'day.load_cancelled': 'The load was called off',
   'day.out': 'The day went out on the route',
+  'day.sale_made': 'A sale was made from the van',
   'day.visit_added_on_route': 'The rep added a customer on the road',
   'visit.arrived': 'The rep arrived at a customer',
   'visit.done': 'A visit was finished',

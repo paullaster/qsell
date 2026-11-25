@@ -20,6 +20,11 @@ export interface ReserveInput {
   channel: SalesChannel;
   /** The order's branch: locations of that branch are tried first. */
   branchId?: string | null;
+  /**
+   * Take the stock from this one place and no other: a sale made from a van is issued from the van, whatever channel it came through and
+   * whether or not the place is sellable to that channel. Short stock there is a refusal, never a quiet draw from another place.
+   */
+  fromLocationId?: string | null;
   /** When the hold lapses if nothing settles it. None holds it until settled or released. */
   expiresAt?: Date | null;
   actor: string;
@@ -86,10 +91,15 @@ export class StockReservations {
     if (remaining.length === 0) return { ok: true, reserved: [] };
 
     const branch = input.branchId ?? null;
+    const pinned = input.fromLocationId ?? null;
     const candidates = await tx
       .select({ id: stockLocations.id, code: stockLocations.code })
       .from(stockLocations)
-      .where(and(eq(stockLocations.companyId, input.companyId), eq(stockLocations.isActive, true), eq(stockLocations.isSellable, true), sql`${input.channel} = ANY (${stockLocations.sellsChannels})`))
+      .where(
+        pinned === null
+          ? and(eq(stockLocations.companyId, input.companyId), eq(stockLocations.isActive, true), eq(stockLocations.isSellable, true), sql`${input.channel} = ANY (${stockLocations.sellsChannels})`)
+          : and(eq(stockLocations.companyId, input.companyId), eq(stockLocations.isActive, true), eq(stockLocations.id, pinned)),
+      )
       .orderBy(sql`COALESCE(${stockLocations.branchId} = ${branch}::uuid, false) DESC`, sql`${stockLocations.isDefault} DESC`, asc(stockLocations.code));
 
     // Lock every balance that could supply these lines, always in the same order.

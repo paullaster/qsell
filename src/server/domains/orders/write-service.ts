@@ -177,6 +177,8 @@ export const OrderWriteService = {
     selling?: SellingSettings;
     /** The quote this order is made from; kept on the order so it can show where it came from. */
     sourceQuoteId?: string;
+    /** Issue this order's stock from this one place only (a sale made from a van), whatever its channel. */
+    fromLocationId?: string;
     /** The till shift a counter sale is rung up in, and the screen's key for this attempt (a retry finds the order made instead of making another). */
     shiftId?: string;
     idempotencyKey?: string;
@@ -797,6 +799,7 @@ export const OrderWriteService = {
       {
         channel: isSalesChannel(salesModule) ? salesModule : 'ecommerce',
         branchId: branchId ?? null,
+        ...(params.fromLocationId === undefined ? {} : { fromLocationId: params.fromLocationId }),
         // A shopper paying now holds stock only for the hold time. A kind of sale the company's settings govern keeps its own stock as it chose (until issued, or until paid).
         payNow: params.selling === undefined && (ONLINE_PAYMENT_METHODS as readonly string[]).includes(params.paymentMethod),
       },

@@ -190,6 +190,29 @@ const productsFor = (key: string, permission: PermissionKey) =>
     toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.sku) === '' ? null : text(row.sku), badge: null }),
   });
 
+/** Products with stock on a day's van that is not promised, for selling: the filter `day` names the day. */
+const productsOnVan = tableSource({
+  key: 'van-stock-products',
+  permission: 'van_sales:sell',
+  table: products,
+  id: products.id,
+  label: products.name,
+  searchColumns: [products.name, products.sku, products.stockCode],
+  select: { sku: products.sku },
+  scope: ({ filters }) => {
+    const day = idFilter(filters, 'day');
+    if (day === null) throw new LookupFilterError('Choose the day first.');
+    return [
+      and(
+        isNull(products.deletedAt),
+        eq(products.inventoryKind, 'inventory'),
+        sql`EXISTS (SELECT 1 FROM stock_balances b JOIN van_days d ON d.id = ${day}::uuid JOIN vans v ON v.id = d.van_id WHERE b.location_id = v.location_id AND b.product_id = ${products.id} AND b.on_hand - b.reserved > 0)`,
+      ) ?? isNull(products.deletedAt),
+    ];
+  },
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.sku) === '' ? null : text(row.sku), badge: null }),
+});
+
 /** The warehouses and stores a van can be loaded from. */
 const loadSources = tableSource({
   key: 'van-load-sources',
@@ -222,5 +245,6 @@ export const VAN_SALES_LOOKUP_SOURCES: LookupSource[] = [
   customersFor('van-plan-customers', 'van_sales:plan', 'day'),
   customersFor('van-rep-customers', 'van_sales:sell', 'day'),
   productsFor('van-plan-products', 'van_sales:plan'),
+  productsOnVan,
   loadSources,
 ];

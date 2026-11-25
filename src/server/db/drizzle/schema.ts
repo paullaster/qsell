@@ -5261,6 +5261,32 @@ export const vanLoads = pgTable(
 );
 
 /**
+ * A sale made from a van at a visit (docs/architecture/van-sales.md §3, §8): the order itself is an ordinary cash sale or credit sale, issued
+ * from the van's own stock; this ties it to the day and the visit it was made at, so the day's sales, takings and credit are read from here.
+ */
+export const vanDayOrders = pgTable(
+  'van_day_orders',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    dayId: uuid('day_id').notNull().references(() => vanDays.id, { onDelete: 'restrict' }),
+    visitId: uuid('visit_id').notNull().references(() => vanVisits.id, { onDelete: 'restrict' }),
+    orderId: text('order_id').notNull().references(() => orders.id, { onDelete: 'restrict' }),
+    kind: text('kind').notNull(),
+    total: numeric('total', { precision: 14, scale: 2 }).notNull(),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('van_day_orders_order_uidx').on(t.orderId),
+    index('van_day_orders_day_idx').on(t.dayId, t.createdAt),
+    index('van_day_orders_visit_idx').on(t.visitId),
+    check('van_day_orders_kind_chk', sql`${t.kind} IN ('cash','credit')`),
+    check('van_day_orders_total_chk', sql`${t.total} >= 0`),
+  ],
+);
+
+/**
  * What happened to a van day, in order, each with its server time, who did it and why: append-only (a database trigger refuses any change
  * or delete). The day's status is a projection of this.
  */
