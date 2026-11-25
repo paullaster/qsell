@@ -52,6 +52,12 @@ export const DAY_EVENT_WORDS: Record<string, string> = {
   'day.visit_added': 'A customer was added to the visits',
   'day.visit_removed': 'A customer was taken off the visits',
   'day.visits_ordered': 'The visits were put in a new order',
+  'day.loading': 'Loading began',
+  'day.load_created': 'A load was made up',
+  'day.load_approved': 'The load was approved',
+  'day.load_shipped': 'The load left the warehouse',
+  'day.load_signed': 'The load was signed for',
+  'day.load_cancelled': 'The load was called off',
 };
 
 /** The modes a rep lacks for a route, in words; empty when the rep does everything the route needs. */

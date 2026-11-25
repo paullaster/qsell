@@ -1,13 +1,13 @@
 {
   "version": "1.0.0",
-  "gitSha": "51e0415",
-  "versionTag": "v1.0.0-51e0415",
-  "buildDate": "2026-11-25T03:19:27.075Z",
-  "sourceChecksum": "cb8120dc2a573f48719bab194bdc20599cf17d6cd75d8e96bad4244712d9f6dc",
-  "pdfFilename": "omnicommerce-implementor-guide-v1.0.0-51e0415.pdf",
-  "pdfUrl": "/downloads/omnicommerce-implementor-guide-v1.0.0-51e0415.pdf",
-  "pdfSizeBytes": 500434,
+  "gitSha": "512d870",
+  "versionTag": "v1.0.0-512d870",
+  "buildDate": "2026-11-25T05:57:36.754Z",
+  "sourceChecksum": "a8319405a8f0667ccd4c90b736b3996b3d06a9eea471dca8a268a5f18814ac1f",
+  "pdfFilename": "omnicommerce-implementor-guide-v1.0.0-512d870.pdf",
+  "pdfUrl": "/downloads/omnicommerce-implementor-guide-v1.0.0-512d870.pdf",
+  "pdfSizeBytes": 504617,
   "chaptersCount": 17,
-  "pdfSha256": "22eab64d500568534c449a14cb7ecf20cc2f420eac64e59dbc1f6c2178c51c6d",
-  "pdfPageCount": 149
+  "pdfSha256": "17c8dec9466edd066781af2949ffcd3eb246c2444952900850220883eafe6992",
+  "pdfPageCount": 150
 }

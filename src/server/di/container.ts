@@ -35,6 +35,7 @@ import { VanService } from '@/server/domains/van-sales/vans';
 import { RepService } from '@/server/domains/van-sales/reps';
 import { RouteService } from '@/server/domains/van-sales/routes';
 import { VanDayService } from '@/server/domains/van-sales/days';
+import { VanLoadService } from '@/server/domains/van-sales/loads';
 import { PartialBillingService } from '@/server/domains/selling/partial-billing-service';
 import { CashSaleService } from '@/server/domains/selling/cash-sales/cash-sale-service';
 import { ShiftService } from '@/server/domains/selling/shifts/shift-service';
@@ -435,6 +436,7 @@ export interface AppContainer {
   salesReps: RepService;
   salesRoutes: RouteService;
   vanDays: VanDayService;
+  vanLoads: VanLoadService;
   tillSettings: TillSettingsService;
   heldSales: HeldSaleService;
   counterCatalogue: CounterCatalogueService;
@@ -704,6 +706,8 @@ export function getContainer(): AppContainer {
   const salesReps = new RepService(drizzleDb, decisionLog);
   const salesRoutes = new RouteService(drizzleDb, decisionLog, vanSalesSettings);
   const vanDays = new VanDayService(drizzleDb, decisionLog, numbering, vanSalesSettings);
+  const stockTransfers = new TransferService({ db: drizzleDb, ledger: stockLedger, numbering, decisionLog });
+  const vanLoads = new VanLoadService(drizzleDb, decisionLog, stockTransfers);
   const preparation = new PreparationService(drizzleDb);
   const packageGroups = new PackageGroupService(drizzleDb, packageShop, packageOrders);
   const packageQuoteRequests = new PackageQuoteRequestService(drizzleDb, packageShop, packageOrders);
@@ -736,7 +740,7 @@ export function getContainer(): AppContainer {
     stockShadow,
     stockSettings: deliveryServices.stockSettings,
     stockReservations,
-    stockTransfers: new TransferService({ db: drizzleDb, ledger: stockLedger, numbering, decisionLog }),
+    stockTransfers,
     stockCounts: new CountService({ db: drizzleDb, ledger: stockLedger, numbering, decisionLog }),
     stockCutover: new StockCutover(drizzleDb, stockShadow, stockLocations, decisionLog),
     users,
@@ -896,6 +900,7 @@ export function getContainer(): AppContainer {
     salesReps,
     salesRoutes,
     vanDays,
+    vanLoads,
     tillSettings,
     heldSales,
     counterCatalogue,

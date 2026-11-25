@@ -7,6 +7,7 @@ import { ReasonError } from '@/server/kernel/reason-codes/service';
 import { VanSalesError } from './errors';
 import type { RepView } from './reps';
 import type { DayDetail, DayView } from './days';
+import type { LoadView, OnVanRow, Suggestion } from './loads';
 import type { ParView, RouteView, StopView } from './routes';
 import type { VanView } from './vans';
 import { VAN_SALES_DEFAULTS, type VanSalesSettings } from '@/lib/van-sales/settings';
@@ -272,16 +273,30 @@ export async function planDayAction(raw: unknown) {
 export interface DayScreen {
   detail: DayDetail;
   canPlan: boolean;
+  /** The loads and top-ups made up for the day, oldest first. */
+  loads: LoadView[];
+  /** What is on the van now. */
+  onVan: OnVanRow[];
+  /** What the planner suggests loading, when a load can be made up now. */
+  suggestion: Suggestion | null;
+  /** The person looking is the day's own rep. */
+  isRep: boolean;
+  maySell: boolean;
 }
 
-async function dayScreen(companyId: string, id: string): Promise<DayScreen> {
-  const detail = await getContainer().vanDays.find(companyId, id);
+async function dayScreen(companyId: string, id: string, userId: string): Promise<DayScreen> {
+  const c = getContainer();
+  const detail = await c.vanDays.find(companyId, id);
   if (detail === null) throw new SettingsError('That day could not be found.', 'NOT_FOUND');
-  return { detail, canPlan: await canPermission('van_sales:plan') };
+  const day = detail.day;
+  const [loads, onVan, canPlan, maySell, rep] = await Promise.all([c.vanLoads.list(companyId, id), c.vanLoads.onVan(companyId, id), canPermission('van_sales:plan'), canPermission('van_sales:sell'), c.salesReps.get(companyId, day.repId)]);
+  const wantsLoad = canPlan && day.vanId !== null && (day.status === 'out' || ((day.status === 'planned' || day.status === 'loading') && !loads.some((l) => l.kind === 'load' && l.cancelledAt === null)));
+  const suggestion = wantsLoad ? await c.vanLoads.suggest(companyId, id) : null;
+  return { detail, canPlan, loads, onVan, suggestion, isRep: rep.userId === userId, maySell };
 }
 
 export async function dayScreenAction(id: unknown) {
-  return await runSetting('van_sales:read', async ({ companyId }): Promise<DayScreen> => await dayScreen(companyId, typeof id === 'string' ? id : ''), { friendly });
+  return await runSetting('van_sales:read', async ({ companyId, userId }): Promise<DayScreen> => await dayScreen(companyId, typeof id === 'string' ? id : '', userId), { friendly });
 }
 
 const changeDay = async (id: unknown, change: (c: ReturnType<typeof getContainer>, companyId: string, actor: { type: 'user'; id: string }, dayId: string) => Promise<unknown>) =>
@@ -290,7 +305,7 @@ const changeDay = async (id: unknown, change: (c: ReturnType<typeof getContainer
     async ({ companyId, userId }): Promise<DayScreen> => {
       const dayId = typeof id === 'string' ? id : '';
       await change(getContainer(), companyId, { type: 'user', id: userId }, dayId);
-      return await dayScreen(companyId, dayId);
+      return await dayScreen(companyId, dayId, userId);
     },
     { paths: PATHS, friendly },
   );
@@ -313,4 +328,47 @@ export async function removeVisitAction(raw: unknown) {
 export async function moveVisitAction(raw: unknown) {
   const i = obj(raw);
   return await changeDay(i.dayId, async (c, companyId, actor, dayId) => await c.vanDays.moveVisit(companyId, actor, dayId, text(i.id) ?? '', i.by));
+}
+
+// ── Loading ──────────────────────────────────────────────────────────────
+
+/** What the planner suggests loading, from a chosen warehouse. */
+export async function loadSuggestAction(raw: unknown) {
+  const i = obj(raw);
+  return await runSetting('van_sales:plan', async ({ companyId }): Promise<Suggestion> => await getContainer().vanLoads.suggest(companyId, text(i.dayId) ?? '', i.fromLocationId), { friendly });
+}
+
+export async function createLoadAction(raw: unknown) {
+  const i = obj(raw);
+  return await changeDay(i.dayId, async (c, companyId, actor, dayId) => await c.vanLoads.create(companyId, actor, dayId, i));
+}
+
+export async function approveLoadAction(raw: unknown) {
+  const i = obj(raw);
+  return await changeDay(i.dayId, async (c, companyId, actor) => await c.vanLoads.approve(companyId, actor, text(i.id) ?? ''));
+}
+
+export async function shipLoadAction(raw: unknown) {
+  const i = obj(raw);
+  return await changeDay(i.dayId, async (c, companyId, actor) => await c.vanLoads.ship(companyId, actor, text(i.id) ?? ''));
+}
+
+export async function cancelLoadAction(raw: unknown) {
+  const i = obj(raw);
+  return await changeDay(i.dayId, async (c, companyId, actor) => await c.vanLoads.cancel(companyId, actor, text(i.id) ?? '', i.reason));
+}
+
+/** The rep signs for the load; the office may sign for them with a reason. Who may is decided by the service from who is signed in. */
+export async function signLoadAction(raw: unknown) {
+  const i = obj(raw);
+  return await runSetting(
+    'van_sales:read',
+    async ({ companyId, userId }): Promise<DayScreen> => {
+      const dayId = typeof i.dayId === 'string' ? i.dayId : '';
+      const [maySell, mayPlan] = await Promise.all([canPermission('van_sales:sell'), canPermission('van_sales:plan')]);
+      await getContainer().vanLoads.sign(companyId, { type: 'user', id: userId }, text(i.id) ?? '', i, { maySell, mayPlan });
+      return await dayScreen(companyId, dayId, userId);
+    },
+    { paths: PATHS, friendly },
+  );
 }

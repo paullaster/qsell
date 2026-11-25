@@ -5215,6 +5215,42 @@ export const vanVisits = pgTable(
 );
 
 /**
+ * A load put on a van for a day: a stock transfer from a warehouse to the van's own stock place, with who signed for it (the rep, or the office
+ * on the rep's behalf with a reason) and when (docs/architecture/van-sales.md §6.2, §6.3). The first is the day's load; later ones are top-ups
+ * while the day is out. The transfer holds the stock and its steps; this holds what belongs to the day.
+ */
+export const vanLoads = pgTable(
+  'van_loads',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    dayId: uuid('day_id').notNull().references(() => vanDays.id, { onDelete: 'restrict' }),
+    kind: text('kind').notNull(),
+    transferId: uuid('transfer_id').notNull().references(() => stockDocuments.id, { onDelete: 'restrict' }),
+    fromLocationId: uuid('from_location_id').notNull().references(() => stockLocations.id, { onDelete: 'restrict' }),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    signedBy: text('signed_by'),
+    signedAt: timestamp('signed_at', { withTimezone: true }),
+    /** Signed by someone other than the rep (with the reason in `signReason`): the office, when the rep signed on paper or is on the road. */
+    signedOnBehalf: boolean('signed_on_behalf').notNull().default(false),
+    signReason: text('sign_reason'),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    cancelReason: text('cancel_reason'),
+  },
+  (t) => [
+    uniqueIndex('van_loads_transfer_uidx').on(t.transferId),
+    // A day has one load that is still wanted; top-ups may be several.
+    uniqueIndex('van_loads_day_load_uidx').on(t.dayId).where(sql`${t.kind} = 'load' AND ${t.cancelledAt} IS NULL`),
+    index('van_loads_day_idx').on(t.dayId, t.createdAt),
+    check('van_loads_kind_chk', sql`${t.kind} IN ('load','top_up')`),
+    check('van_loads_signed_chk', sql`(${t.signedBy} IS NULL) = (${t.signedAt} IS NULL)`),
+    check('van_loads_behalf_chk', sql`NOT ${t.signedOnBehalf} OR (${t.signReason} IS NOT NULL AND length(btrim(${t.signReason})) > 0)`),
+    check('van_loads_cancelled_chk', sql`((${t.cancelledAt} IS NULL) = (${t.cancelReason} IS NULL)) AND (${t.cancelledAt} IS NULL OR ${t.signedAt} IS NULL)`),
+  ],
+);
+
+/**
  * What happened to a van day, in order, each with its server time, who did it and why: append-only (a database trigger refuses any change
  * or delete). The day's status is a projection of this.
  */

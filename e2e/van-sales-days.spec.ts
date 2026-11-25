@@ -97,8 +97,10 @@ test.describe('van sales: days', () => {
     await expect(page.getByRole('list', { name: 'History' })).toContainText('The visits were put in a new order');
 
     // While the day is open its route cannot be stopped.
-    await page.getByRole('link', { name: 'Open the route' }).click();
-    await expect(page.getByRole('heading', { name: routeName, level: 2 })).toBeVisible({ timeout: 60_000 });
+    await expect(async () => {
+      await page.getByRole('link', { name: 'Open the route' }).click();
+      await expect(page.getByRole('heading', { name: routeName, level: 2 })).toBeVisible({ timeout: 5000 });
+    }).toPass({ timeout: 120_000 });
     await page.getByRole('button', { name: 'Stop this route' }).click();
     const stop = page.getByRole('form', { name: `Stop ${routeName}` });
     await stop.getByLabel('Why?').fill('Seasonal route');

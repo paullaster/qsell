@@ -1,6 +1,6 @@
 # Guide 16: Van Sales & Pre-Sales (`/admin/settings/sales/van-sales`, and the Van sales screens under Sales)
 
-> **What is built so far.** This guide describes what a company can use today: **the Van sales settings screen** (which of the two modes are on, and the rules every van day follows), **Vans**, **Sales reps** and **Routes** (set up who sells, from what, and to whom), and **Van days** (planning a day from a route and a date). Loading, loading, selling, collections, the day-end count, the rep phone app, offline selling and reports are built one slice at a time; each adds its screens to this guide in the same change. The full plan is in `docs/architecture/van-sales.md`. Nothing here is switched on for a company until its administrator switches it on.
+> **What is built so far.** This guide describes what a company can use today: **the Van sales settings screen** (which of the two modes are on, and the rules every van day follows), **Vans**, **Sales reps** and **Routes** (set up who sells, from what, and to whom), **Van days** (planning a day from a route and a date) and **Loading** (making up a load, sending it and signing for it). Selling, loading, selling, collections, the day-end count, the rep phone app, offline selling and reports are built one slice at a time; each adds its screens to this guide in the same change. The full plan is in `docs/architecture/van-sales.md`. Nothing here is switched on for a company until its administrator switches it on.
 
 ## 1. Executive Overview & Commercial Value Proposition
 
@@ -27,7 +27,7 @@ Shrinkage visible per van, per rep and per day; fewer disputed shortages; cash d
 3. **Customers** with their price lists, credit limits and blocks ([Guide 03](03-sales-quotes-and-customer-orders.md), [Guide 04](04-pricing-engine-promotions-and-margins.md)).
 4. **Delivery vehicles** if the company uses the vehicle register ([Guide 06](06-delivery-logistics-and-field-dispatch.md)).
 5. **Van sales settings** (this guide, section 4): switch on the modes the company uses.
-6. **Vans**, then **Sales reps**, then **Routes**, then **Van days** (this guide, sections 4 to 6): a route needs a branch, and may name a van and a rep, so make those first. A route's customers must already be on the customer list, and the products of its usual stock must be kept in stock. Permissions: see section 5.
+6. **Vans**, then **Sales reps**, then **Routes**, then **Van days** and loading (this guide, sections 4 to 6); loading also needs **stock by location** switched on under Inventory, and a warehouse or store to load from: a route needs a branch, and may name a van and a rep, so make those first. A route's customers must already be on the customer list, and the products of its usual stock must be kept in stock. Permissions: see section 5.
 
 **Required permission to open the settings:** *Van sales: settings*. Held by Super Admin and Administrator by default.
 
@@ -37,7 +37,7 @@ Shrinkage visible per van, per rep and per day; fewer disputed shortages; cash d
 
 **Upstream:** products and prices, customers and credit, stock locations, registers and payment methods. **Downstream:** the till's shifts and Z reports, the sales ledger and receipts with KRA signing, stock movements and the books' stock value, delivery runs for pre-sold orders, and customer statements for credit sold and money collected.
 
-**Sub-modules (built as slices):** Settings (built), Vans (built), Sales reps (built), Routes (built), Van days (planning built) and the load planner, the rep's phone app, Day-end count and reconciliation, Offline selling for reps, Reports.
+**Sub-modules (built as slices):** Settings (built), Vans (built), Sales reps (built), Routes (built), Van days and Loading (built) and the load planner, the rep's phone app, Day-end count and reconciliation, Offline selling for reps, Reports.
 
 ## 4. Interface-by-Interface Walkthrough
 
@@ -96,6 +96,12 @@ A list of van days, the latest date first, a page at a time.
 1. **The day.** Its state, what it is for, the rep and van, a link **Open the route**, and **Cancel this day** (asks why) while the day has not gone out.
 2. **Visits.** The customers to visit, in order, each with its place number, name, town and phone, the route's note, a state chip (*To visit*, *At the customer*, *Done*, *Skipped*, *Shop closed*), a warning chip if the customer is blocked or no longer in use, and *Added to this day by hand* where it did not come from the route. While the day is planned or being loaded: **Add a customer**, and on each customer who has not been visited **Up**, **Down** and **Take off the day**.
 3. **History.** Everything that has happened to the day, oldest first, each with the time, who did it and, where one was given, the reason.
+
+### Loading, on a van day's page
+Below the visits, for a day that has a van (a day that only takes orders has none of this):
+1. **Make up the load** (or **Make up a top-up** once the day is out). Shown to people with *Van sales: plan* while the day has no load that is still wanted. **Load from** chooses the warehouse or store (the day's own branch first). The list below is what the route's usual stock suggests: for each product the usual quantity, what is already on the van, what the warehouse has that is not promised to a customer, and how much is **short** when the warehouse cannot give it all. Each line has a quantity to change and **Take off**; **Add a product** adds one that is not in the usual stock. **Ask for the load** makes it up.
+2. **Loads.** Each load or top-up shows its number, where it has got to (*Asked for*, *Approved*, *On its way to the van*, *Partly signed for*, *Signed for*, *Cancelled*), where it is from, what was asked, sent and signed for on each line, and who signed and when. The buttons offered are only the next step: **Approve** (where the company wants a second person to), **Send it**, **Sign for the load**, **Call it off**.
+3. **On the van now.** What the van holds, from the stock records, with anything already promised.
 
 ## 5. Granular Field-by-Field Reference
 
@@ -172,6 +178,8 @@ A list of van days, the latest date first, a page at a time.
 
 **Reason for cancelling a day:** 3 to 300 characters, kept with the day's history.
 
+**Make up the load:** *Load from* (a warehouse or store in use), then one line for each product with a **quantity to load** (more than nothing, in the product's own unit) and, if wanted, products added by hand. **Call it off** and **Sign for the load** each take what is described in the steps below.
+
 **Permissions for the whole module** (granted in Users & Roles, [Guide 07](07-users-roles-and-access-governance.md)):
 
 | Permission | Allows | Held by default |
@@ -235,6 +243,18 @@ A list of van days, the latest date first, a page at a time.
 
 **Read the history.** The *History* list on the day's page shows each step with the server's time and who did it.
 
+**Make up a load.** On the day's page, choose where to load from, check the suggested quantities, change or add as needed, **Ask for the load**. The day moves to *Being loaded* and a stock transfer from the warehouse to the van is asked for. Nothing has left the warehouse yet.
+
+**Approve.** Only where Inventory settings ask for a second person to approve transfers: someone other than the person who asked approves it.
+
+**Send it.** The stock leaves the warehouse and is on its way to the van. It is refused, naming the product, if the warehouse does not have that much that is not promised to a customer.
+
+**Sign for the load.** The rep counts what arrived on the van: everything that was sent, unless the count is changed. If something did not arrive, put what was counted; the rest stays on its way and is settled under **Stock › Transfers** (written off or sent back). **The rep signs for their own load.** The office may sign for a rep who is on the road or signed the paper copy, but must give a reason, and the load shows that it was signed on the rep's behalf, by whom, and why. Once signed, the stock is on the van.
+
+**Call it off.** Before the stock has left the warehouse, **Call it off** with a reason; the day may then make another load. A load that has left cannot be called off.
+
+**A top-up.** While the day is out on the route, the planner makes up a top-up in the same way (**Make up a top-up**), and it is sent and signed for like a load. A day may have several.
+
 **Two people at once.** Every change is checked against the version on screen; if someone else saved first the change is refused with *Someone else changed this van (or sales rep)… Reload the page to see the latest.*
 
 **Every change** is in the decision log with the old and new values, the person, the time and the reason.
@@ -264,6 +284,13 @@ A list of van days, the latest date first, a page at a time.
 - **The visits can be arranged only while the day is planned or being loaded**, and a visit that has started cannot be taken off.
 - **The history of a day is append-only.** The database refuses any change or removal of an entry. Each entry has the server's time (never the phone's), who did it, and the reason where one is needed.
 - **Days are numbered from their own series** (`VDY-{YY}-…`, set under Settings › Number series), with no gaps within a year.
+- **A load is a stock transfer** from a warehouse or store to the van's own stock place, so it follows the company's transfer rules (approval, stock not promised to customers) and appears under *Stock › Transfers* with its number. Stock-by-location must be switched on; if it is not, the screen says so.
+- **The stock moves twice:** it leaves the warehouse when the load is **sent**, and arrives on the van when the rep **signs**. In between it is in transit and belongs to neither place.
+- **The suggestion is the route's usual stock less what is on the van** (never below nothing), limited by what the warehouse has that is not promised to a customer. Orders already taken for the day's customers will be added to it when pre-selling is built.
+- **One load a day**, plus top-ups once the day is out. A second load is refused while one is still wanted.
+- **Signing is the rep's.** Anyone else needs *Van sales: plan* and a typed reason, and it is recorded as signed on the rep's behalf.
+- **A day with stock loaded cannot be cancelled** while a load has not left the warehouse (call it off first), while one is on its way (sign for it or settle it), or while its stock is on the van (bring it back to the warehouse with a transfer from the van under *Stock › Transfers*).
+- **Van stock is for the van's reps.** No shop, quote or warehouse order can take it.
 - Every add, change, stop, pause, end and resume is in the decision log with the person, the time and the reason typed.
 - The database itself refuses a stopped van, route, or a paused or ended rep with no reason, a pre-sell route with a van, a visit with no day or one visited every 3 weeks, a discount over 100%, a negative credit or cash limit, and a mode other than van sell or pre-sell.
 - A reason is required for every change, so an auditor can see why a rule was relaxed.
@@ -289,4 +316,9 @@ A list of van days, the latest date first, a page at a time.
 - [ ] Verify: a second day for the same route, rep or van on the same date is refused; cancelling the first frees them.
 - [ ] Verify: a route with a day planned cannot be stopped; cancel the day, then it can.
 - [ ] Verify: the history shows who planned and who cancelled, with the time.
-- **Common pitfalls:** planning a day before the route has customers due that date (the screen says none is due); planning a day for the usual rep who is already on another route that date (refused); giving two routes the same code or name (refused); starting a fortnightly customer's visits in the wrong week (the date sets which weeks count); naming two vans alike (refused); putting a vehicle behind two vans (refused); switching on *require* with a very small distance, which blocks reps in town centres; leaving the approval limit at 0, which sends every small shortage to a second person.
+- [ ] Switch on stock by location (Inventory) and make sure each warehouse or store a van loads from exists.
+- [ ] Set the usual stock on each route, then plan a day and read the suggested load against what the warehouse has.
+- [ ] Verify: ask for, send and sign for a load; the warehouse falls when it is sent and the van's stock rises when it is signed for.
+- [ ] Verify: the office signing for a rep is refused without a reason and shows as signed on their behalf.
+- [ ] Verify: a day with stock on its van cannot be cancelled until the stock is brought back.
+- **Common pitfalls:** loading before stock by location is switched on (the screen says so); signing a load that was never sent; expecting stock to be on the van when the load was only asked for; planning a day before the route has customers due that date (the screen says none is due); planning a day for the usual rep who is already on another route that date (refused); giving two routes the same code or name (refused); starting a fortnightly customer's visits in the wrong week (the date sets which weeks count); naming two vans alike (refused); putting a vehicle behind two vans (refused); switching on *require* with a very small distance, which blocks reps in town centres; leaving the approval limit at 0, which sends every small shortage to a second person.

@@ -2,6 +2,7 @@
  * Set-up for the van sales tests that a person would do from other screens:
  *   tsx e2e/support/van-fixtures.ts customer <tag> <n>   n customers with a phone and a town, printed as their names (a person makes these under Customers)
  *   tsx e2e/support/van-fixtures.ts product <tag>        a product kept in stock, counted in whole pieces, printed with its name (made under Products)
+ *   tsx e2e/support/van-fixtures.ts par <route name> <product id> <quantity>  sets the usual stock of a route's van to one product (set under Routes)
  *   tsx e2e/support/van-fixtures.ts day-route <tag>      a route ready to plan a day on: both modes on, a van, a rep, and three customers visited every Monday; printed with their names (set up under Van sales)
  */
 import { execFileSync } from 'node:child_process';
@@ -62,13 +63,24 @@ async function dayRoute(tag: string): Promise<Record<string, string>> {
   return { route: routeName, rep: repName, van: vanName, shops: shops.join('|') };
 }
 
+async function par(routeName: string, productId: string, quantity: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const c = getContainer();
+  const company = await c.companySettings.ensureSeeded();
+  const [route] = (await c.salesRoutes.page(company.id, { query: routeName, status: 'all' })).rows;
+  if (route === undefined) throw new Error(`e2e fixture: no route called ${routeName}`);
+  await c.salesRoutes.setPar(company.id, { type: 'user', id: 'e2e' }, route.id, [{ productId, quantity: Number(quantity) }], route.version);
+  return { route: route.name };
+}
+
 async function main(): Promise<void> {
-  const [command, tag, count] = process.argv.slice(2);
+  const [command, tag, count, third] = process.argv.slice(2);
   let result: Record<string, string> | null = null;
   if (command === 'customer' && tag !== undefined) result = await customers(tag, Number(count ?? '1'));
   if (command === 'product' && tag !== undefined) result = await product(tag);
   if (command === 'day-route' && tag !== undefined) result = await dayRoute(tag);
-  if (result === null) throw new Error('usage: van-fixtures customer <tag> <n> | product <tag> | day-route <tag>');
+  if (command === 'par' && tag !== undefined && count !== undefined && third !== undefined) result = await par(tag, count, third);
+  if (result === null) throw new Error('usage: van-fixtures customer <tag> <n> | product <tag> | day-route <tag> | par <route name> <product id> <quantity>');
   process.stdout.write(`FIXTURE ${JSON.stringify(result)}\n`);
 }
 

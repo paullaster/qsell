@@ -1,5 +1,5 @@
-import { and, eq, isNull, sql, type SQL } from 'drizzle-orm';
-import { bankAccounts, branches, customers, deliveryVehicles, products, salesReps, salesRoutes, users, vans } from '@/server/db/drizzle/schema';
+import { and, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
+import { bankAccounts, branches, customers, deliveryVehicles, products, salesReps, salesRoutes, stockLocations, users, vans } from '@/server/db/drizzle/schema';
 import type { PermissionKey } from '@/server/domains/access-control/permissions';
 import { LookupFilterError, acceptFilters, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
 import { isId } from '@/lib/van-sales/people';
@@ -172,21 +172,38 @@ const routesInUse = tableSource({
 });
 
 /** Products a van can carry (kept in stock); with the filter `route`, not already on that route's usual stock. */
-const productsForVan = tableSource({
-  key: 'van-products',
-  permission: 'van_sales:manage',
-  table: products,
-  id: products.id,
-  label: products.name,
-  searchColumns: [products.name, products.sku, products.stockCode],
-  select: { sku: products.sku },
-  scope: ({ filters }) => {
-    const route = idFilter(filters, 'route');
-    const conditions: SQL[] = [isNull(products.deletedAt), eq(products.inventoryKind, 'inventory')];
-    if (route !== null) conditions.push(sql`NOT EXISTS (SELECT 1 FROM route_par_levels p WHERE p.route_id = ${route}::uuid AND p.product_id = ${products.id})`);
-    return [and(...conditions) ?? isNull(products.deletedAt)];
+const productsFor = (key: string, permission: PermissionKey) =>
+  tableSource({
+    key,
+    permission,
+    table: products,
+    id: products.id,
+    label: products.name,
+    searchColumns: [products.name, products.sku, products.stockCode],
+    select: { sku: products.sku },
+    scope: ({ filters }) => {
+      const route = idFilter(filters, 'route');
+      const conditions: SQL[] = [isNull(products.deletedAt), eq(products.inventoryKind, 'inventory')];
+      if (route !== null) conditions.push(sql`NOT EXISTS (SELECT 1 FROM route_par_levels p WHERE p.route_id = ${route}::uuid AND p.product_id = ${products.id})`);
+      return [and(...conditions) ?? isNull(products.deletedAt)];
+    },
+    toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.sku) === '' ? null : text(row.sku), badge: null }),
+  });
+
+/** The warehouses and stores a van can be loaded from. */
+const loadSources = tableSource({
+  key: 'van-load-sources',
+  permission: 'van_sales:plan',
+  table: stockLocations,
+  id: stockLocations.id,
+  label: stockLocations.name,
+  searchColumns: [stockLocations.name, stockLocations.code],
+  select: { code: stockLocations.code },
+  scope: ({ companyId, filters }) => {
+    acceptFilters(filters, {});
+    return [and(eq(stockLocations.companyId, companyId), eq(stockLocations.isActive, true), inArray(stockLocations.kind, ['warehouse', 'store'])) ?? sql`false`];
   },
-  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.sku) === '' ? null : text(row.sku), badge: null }),
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.code), badge: null }),
 });
 
 export const VAN_SALES_LOOKUP_SOURCES: LookupSource[] = [
@@ -197,10 +214,12 @@ export const VAN_SALES_LOOKUP_SOURCES: LookupSource[] = [
   vansInUse('van-vans', 'van_sales:manage'),
   repsSelling('van-reps', 'van_sales:manage'),
   customersFor('van-customers', 'van_sales:manage', 'route'),
-  productsForVan,
+  productsFor('van-products', 'van_sales:manage'),
   // The same lists for the people who plan days (who may not set up vans, reps and routes).
   routesInUse,
   vansInUse('van-plan-vans', 'van_sales:plan'),
   repsSelling('van-plan-reps', 'van_sales:plan'),
   customersFor('van-plan-customers', 'van_sales:plan', 'day'),
+  productsFor('van-plan-products', 'van_sales:plan'),
+  loadSources,
 ];

@@ -1,6 +1,6 @@
-import { and, asc, desc, eq, ilike, inArray, ne, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, ilike, inArray, isNull, ne, or, sql, type SQL } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, customers, routeStops, salesReps, salesRoutes, users, vanDayEvents, vanDays, vanVisits, vans } from '@/server/db/drizzle/schema';
+import { branches, customers, routeStops, salesReps, salesRoutes, stockBalances, stockDocuments, users, vanDayEvents, vanDays, vanLoads, vanVisits, vans } from '@/server/db/drizzle/schema';
 import type { Actor } from '@/server/kernel/context';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { NumberSeriesService } from '@/server/kernel/numbering/service';
@@ -12,6 +12,7 @@ import { routeModeProblem, type RouteMode } from '@/lib/van-sales/settings';
 import { dueStops } from '@/lib/van-sales/visits';
 import { decodeCursor, encodeCursor, escapeLike } from '@/server/domains/lookups/request';
 import { PAGE_SIZE, searchText, type PageInput } from '@/server/domains/settings/paging';
+import { recordDayEvent, type DayEventEntry } from './day-events';
 import { constraintOf, VanSalesError } from './errors';
 import { customerWarning } from './routes';
 import type { VanSalesSettingsService } from './settings-service';
@@ -233,9 +234,8 @@ export class VanDayService {
 
   // ── Planning ─────────────────────────────────────────────────────────
 
-  private async record(tx: Tx, companyId: string, dayId: string, actor: Actor, action: string, entry: { from?: DayStatus; to?: DayStatus; reason?: string; detail?: Record<string, unknown> } = {}): Promise<void> {
-    await tx.insert(vanDayEvents).values({ companyId, dayId, action, actorType: actor.type, actorId: actor.id ?? null, fromStatus: entry.from ?? null, toStatus: entry.to ?? null, reason: entry.reason ?? null, detail: entry.detail ?? {} });
-    await this.decisions.record({ companyId, actor, subject: { type: 'van_day', id: dayId }, action, reason: { text: entry.reason ?? action }, inputs: entry.from === undefined ? {} : { status: entry.from }, outcome: { ...(entry.to === undefined ? {} : { status: entry.to }), ...(entry.detail ?? {}) } }, tx);
+  private async record(tx: Tx, companyId: string, dayId: string, actor: Actor, action: string, entry: DayEventEntry = {}): Promise<void> {
+    await recordDayEvent(tx, this.decisions, companyId, dayId, actor, action, entry);
   }
 
   /** Plans a day for a route on a date: the rep and van from the route unless others are chosen, and the customers due that day as its visits. */
@@ -323,12 +323,36 @@ export class VanDayService {
       const day = await this.locked(tx, companyId, id, input.expectedVersion);
       const from = readDayStatus(day.status) ?? 'planned';
       if (!canMoveDay(from, 'cancelled')) throw new VanSalesError(from === 'cancelled' ? 'This day is already cancelled.' : `A day that is ${DAY_STATUS_WORDS[from].toLowerCase()} cannot be cancelled.`);
+      await this.loadProblem(tx, day.id, day.vanId);
       await tx.update(vanDays).set({ status: 'cancelled', statusReason: why.reason, version: day.version + 1, updatedAt: new Date() }).where(eq(vanDays.id, day.id));
       await this.record(tx, companyId, day.id, actor, 'day.cancelled', { from, to: 'cancelled', reason: why.reason });
     });
     const found = await this.find(companyId, id);
     if (found === null) throw new VanSalesError('That day could not be found.');
     return found;
+  }
+
+  /**
+   * A day with stock loaded for it is not cancelled until that stock is back: a load not yet sent is called off first, one on its way is
+   * signed for or settled, and what is on the van goes back to the warehouse by a transfer.
+   */
+  private async loadProblem(tx: Tx, dayId: string, vanId: string | null): Promise<void> {
+    const loads = await tx
+      .select({ number: stockDocuments.number, state: stockDocuments.state, locationId: vans.locationId })
+      .from(vanLoads)
+      .innerJoin(stockDocuments, eq(stockDocuments.id, vanLoads.transferId))
+      .innerJoin(vanDays, eq(vanDays.id, vanLoads.dayId))
+      .leftJoin(vans, eq(vans.id, vanDays.vanId))
+      .where(and(eq(vanLoads.dayId, dayId), isNull(vanLoads.cancelledAt)));
+    const unsent = loads.find((l) => ['draft', 'requested', 'approved'].includes(l.state));
+    if (unsent !== undefined) throw new VanSalesError(`The load ${unsent.number} has not left the warehouse. Call it off first, then cancel the day.`);
+    const travelling = loads.find((l) => l.state === 'shipped' || l.state === 'partly_received');
+    if (travelling !== undefined) throw new VanSalesError(`The load ${travelling.number} is on its way to the van. Sign for it, or settle what did not arrive under Stock › Transfers, before cancelling the day.`);
+    const location = loads[0]?.locationId ?? null;
+    if (loads.length > 0 && vanId !== null && location !== null) {
+      const [held] = await tx.select({ n: sql<number>`count(*)::int` }).from(stockBalances).where(and(eq(stockBalances.locationId, location), sql`(${stockBalances.onHand} <> 0 OR ${stockBalances.reserved} <> 0)`));
+      if ((held?.n ?? 0) > 0) throw new VanSalesError('Stock from this day\'s load is still on the van. Bring it back to the warehouse with a transfer from the van (Stock › Transfers), then cancel the day.');
+    }
   }
 
   // ── The visits, while the day is being got ready ─────────────────────
