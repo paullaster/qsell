@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { NO_LIMITS } from './rep-limits';
-import { creditAmountProblem, paymentState, readSale, repSaleProblem, saleLinesOf, tendersOf, type SaleLine } from './sell';
+import { creditAmountProblem, paymentState, readOrder, readSale, repSaleProblem, saleLinesOf, tendersOf, type SaleLine } from './sell';
 
 const id = (n: number): string => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const key = '11111111-1111-4111-8111-111111111111';
@@ -76,5 +76,25 @@ describe('the sale as it is typed', () => {
     expect(paymentState(200, [{ methodId: 'm1', amount: '100', reference: '' }, { methodId: 'm2', amount: '100', reference: 'QK1' }])).toEqual({ paid: 200, short: 0, change: 0 });
     expect(paymentState(200, [{ methodId: 'm1', amount: '500', reference: '' }])).toEqual({ paid: 500, short: 0, change: 300 });
     expect(paymentState(200, [])).toEqual({ paid: 0, short: 200, change: 0 });
+  });
+});
+
+describe('reading an order', () => {
+  const base = { visitId: '9f1c7e1e-3b0a-4a8e-8d6b-2b4f6f0a1c11', saleKey: '3f2c7e1e-3b0a-4a8e-8d6b-2b4f6f0a1c22', neededOn: '2026-12-02', lines: [{ productId: 'prod_a', quantity: 3 }] };
+  it('reads the visit, the lines and the day needed', () => {
+    expect(readOrder(base)).toEqual({ ok: true, order: base });
+    expect(readOrder({ ...base, neededOn: '' })).toMatchObject({ ok: true, order: { neededOn: '' } });
+  });
+  it('refuses what cannot be an order', () => {
+    expect(readOrder(null)).toEqual({ ok: false, error: 'The order could not be read.' });
+    expect(readOrder({ ...base, visitId: 'x' })).toMatchObject({ ok: false, error: expect.stringContaining('Choose the visit') as string });
+    expect(readOrder({ ...base, saleKey: 'nope' })).toMatchObject({ ok: false, error: expect.stringContaining('told apart') as string });
+    expect(readOrder({ ...base, lines: [] })).toMatchObject({ ok: false });
+    expect(readOrder({ ...base, neededOn: '2026-02-30' })).toMatchObject({ ok: false, error: expect.stringContaining('not a date') as string });
+    expect(readOrder({ ...base, neededOn: 'tomorrow' })).toMatchObject({ ok: false });
+  });
+  it('takes no price and no discount: an order is priced by the system', () => {
+    expect(readOrder({ ...base, lines: [{ productId: 'prod_a', quantity: 1, unitPrice: 5 }] })).toMatchObject({ ok: false, error: expect.stringContaining('priced by the system') as string });
+    expect(readOrder({ ...base, lines: [{ productId: 'prod_a', quantity: 1, discount: { kind: 'percent', value: 2 } }] })).toMatchObject({ ok: false });
   });
 });

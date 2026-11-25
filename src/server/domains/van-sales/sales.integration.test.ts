@@ -282,11 +282,67 @@ describe.skipIf(url === undefined || url === '')('selling from the van (database
   describe('finishing a visit with sales', () => {
     it('is as sold, never as no sale, and a sold visit needs a sale', async () => {
       const s = await outDay();
-      await expect(c.vanRun.finish(companyId, as(s.user), s.day.id, s.v1?.id ?? '', { outcome: 'sold' }, true)).rejects.toThrow('Nothing has been sold at');
+      await expect(c.vanRun.finish(companyId, as(s.user), s.day.id, s.v1?.id ?? '', { outcome: 'sold' }, true)).rejects.toThrow('Nothing has been sold or ordered at');
       await sell(s);
-      await expect(c.vanRun.finish(companyId, as(s.user), s.day.id, s.v1?.id ?? '', { outcome: 'no_sale', reason: 'Changed my mind' }, true)).rejects.toThrow('is a sale at');
+      await expect(c.vanRun.finish(companyId, as(s.user), s.day.id, s.v1?.id ?? '', { outcome: 'no_sale', reason: 'Changed my mind' }, true)).rejects.toThrow('is a sale or order at');
       const done = await c.vanRun.finish(companyId, as(s.user), s.day.id, s.v1?.id ?? '', { outcome: 'sold' }, true);
       expect(done.visits[0]).toMatchObject({ status: 'done', outcome: 'sold', noSaleReason: null });
+    });
+  });
+
+  describe('an order taken at a visit', () => {
+    const order = async (s: Awaited<ReturnType<typeof outDay>>, over: Record<string, unknown> = {}, visitId = s.v1?.id) => await c.vanSales.order(companyId, as(s.user), s.day.id, { visitId, saleKey: randomUUID(), neededOn: '2026-12-15', lines: [{ productId: s.p, quantity: 4 }], ...over }, true);
+
+    it('is an ordinary sales order priced by the server, with the stock held at the warehouse, tied to the day and the visit', async () => {
+      const s = await outDay({ mode: 'pre_sell' });
+      const priced = await c.vanSales.price(companyId, as(s.user), s.day.id, { visitId: s.v1?.id, kind: 'order', lines: lines(s.p, 4) }, true);
+      expect(priced).toMatchObject({ ok: true, total: 400 });
+      const made = await order(s);
+      expect(made).toMatchObject({ total: 400, customerName: s.a.name, waitingForApproval: false });
+      const [row] = await db.select().from(schema.orders).where(eq(schema.orders.orderNumber, made.orderNumber));
+      expect(row).toMatchObject({ salesModule: 'sales_order', customerName: s.a.name });
+      // Held at the warehouse for the delivery; nothing paid, nothing issued.
+      const held = await at(s.p, warehouse);
+      expect(held.r).toBeGreaterThanOrEqual(4);
+      const sales = await c.vanSales.forDay(companyId, s.day.id);
+      expect(sales.rows).toEqual([expect.objectContaining({ orderNumber: made.orderNumber, kind: 'order', total: 400, visitId: s.v1?.id })]);
+      expect(sales).toMatchObject({ ordered: 400, totals: { all: 0, cash: 0, credit: 0 } });
+      expect((await c.vanDays.find(companyId, s.day.id))?.events.at(-1)).toMatchObject({ action: 'day.order_taken', words: 'An order was taken' });
+    });
+
+    it('finds the order it made when the same key is sent again, and holds the stock once', async () => {
+      const s = await outDay({ mode: 'pre_sell' });
+      const saleKey = randomUUID();
+      const before = (await at(s.p, warehouse)).r;
+      const first = await order(s, { saleKey });
+      const again = await order(s, { saleKey });
+      expect(again.orderNumber).toBe(first.orderNumber);
+      expect((await at(s.p, warehouse)).r - before).toBe(4);
+      expect((await c.vanSales.forDay(companyId, s.day.id)).rows).toHaveLength(1);
+    });
+
+    it('is finished as order taken, or as sold and ordered when something was also sold, and never as no sale', async () => {
+      const s = await outDay({ mode: 'pre_sell' });
+      await order(s);
+      await expect(c.vanRun.finish(companyId, as(s.user), s.day.id, s.v1?.id ?? '', { outcome: 'no_sale', reason: 'Changed my mind' }, true)).rejects.toThrow('is a sale or order at');
+      expect((await c.vanRun.finish(companyId, as(s.user), s.day.id, s.v1?.id ?? '', { outcome: 'sold' }, true)).visits[0]).toMatchObject({ status: 'done', outcome: 'order_taken' });
+      const both = await outDay({ mode: 'both' });
+      await order(both);
+      await sell(both);
+      expect((await c.vanRun.finish(companyId, as(both.user), both.day.id, both.v1?.id ?? '', { outcome: 'sold' }, true)).visits[0]).toMatchObject({ outcome: 'sold_and_ordered' });
+    });
+
+    it('is refused on a day that only sells from the van, with no price or discount, past the stock, or before arriving', async () => {
+      const vanOnly = await outDay({ mode: 'van_sell' });
+      await expect(order(vanOnly)).rejects.toThrow('only sells from the van');
+      const s = await outDay({ mode: 'pre_sell', arrive: false });
+      await expect(order(s)).rejects.toThrow(`Arrive at ${s.a.name} before selling to them`);
+      await c.vanRun.arrive(companyId, as(s.user), s.day.id, s.v1?.id ?? '', {}, true);
+      await expect(order(s, { lines: [{ productId: s.p, quantity: 1, unitPrice: 5 }] })).rejects.toThrow('priced by the system');
+      await expect(order(s, { neededOn: 'soon' })).rejects.toThrow('not a date');
+      await expect(order(s, { lines: [{ productId: s.p, quantity: 5000 }] })).rejects.toThrow();
+      await expect(c.vanSales.order(companyId, actor, s.day.id, { visitId: s.v1?.id, saleKey: randomUUID(), lines: [{ productId: s.p, quantity: 1 }] }, true)).rejects.toThrow('runs their own day');
+      expect((await c.vanSales.forDay(companyId, s.day.id)).rows).toEqual([]);
     });
   });
 

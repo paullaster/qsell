@@ -268,7 +268,7 @@ describe.skipIf(url === undefined || url === '')('running a van day (database)',
       await expect(c.vanRun.finish(companyId, as(s.user), s.day.id, v2?.id ?? '', { outcome: 'no_sale', reason: 'Not here' }, true)).rejects.toThrow('Arrive at');
       await expect(c.vanRun.finish(companyId, as(s.user), s.day.id, v1?.id ?? '', { outcome: 'no_sale' }, true)).rejects.toThrow('needs a reason');
       await expect(c.vanRun.finish(companyId, as(s.user), s.day.id, v1?.id ?? '', { outcome: 'won', reason: 'whatever the reason' }, true)).rejects.toThrow('how the visit ended');
-      await expect(c.vanRun.finish(companyId, as(s.user), s.day.id, v1?.id ?? '', { outcome: 'sold' }, true)).rejects.toThrow('Nothing has been sold at');
+      await expect(c.vanRun.finish(companyId, as(s.user), s.day.id, v1?.id ?? '', { outcome: 'sold' }, true)).rejects.toThrow('Nothing has been sold or ordered at');
       const done = await c.vanRun.finish(companyId, as(s.user), s.day.id, v1?.id ?? '', { outcome: 'no_sale', reason: 'Has enough stock for the week' }, true);
       expect(done.visits[0]).toMatchObject({ status: 'done', outcome: 'no_sale', noSaleReason: 'Has enough stock for the week' });
       expect(done.visits[0]?.departedAt).not.toBeNull();

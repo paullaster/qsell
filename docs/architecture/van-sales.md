@@ -265,3 +265,10 @@ Route optimisation by traffic (the delivery planners are reused for the order of
 - **Visits:** a visit with sales finishes as `sold`; with none, only as `no_sale`.
 - **Screens:** Sell form on an arrived visit (products on the van, quantities, price or discount where allowed, payment buttons, change), and the Sales panel. New lookup `van-stock-products`.
 - **Not yet:** receipt printing from the van screen (the receipt is in Cash Sales and is reprinted from there; V-8 brings the phone app), pre-sell orders and drops (V-6), collections and returns (V-7).
+
+### V-6a (2026-11-25): orders taken at a visit
+- **Data:** migration 0220 lets `van_day_orders` hold `order` beside `cash` and `credit`. Visit outcomes `order_taken` and `sold_and_ordered` were already allowed by the visit's check.
+- **Pure:** `readOrder` (visit, lines with no price or discount, the day needed, the retry key).
+- **Server:** `VanSaleService.order` places an ordinary `sales_order` through the same order writer (priced by the server, stock held at the warehouse, the company's approval and credit rules), tied to the day and visit, a retry finding the order made. The scene check is shared with selling: day out, mode allows it, visit under way, customer can be sold to. Finishing a visit works out the stored outcome from what was taken at it. The day's list marks orders and totals them apart from money taken.
+- **Screens:** the same form as selling with *Take an order* (any product, quantity, needed-on date, no payment), and an *Orders for later* line on the Sales panel. New lookup `van-rep-products`.
+- **Not yet (V-6b):** drops, that is delivering a pre-sold order on a van day: planned from the orders of the day's customers, their stock moved onto the van by the load, delivered, partly, refused or failed, with a reason; and the load planner adding the drops.

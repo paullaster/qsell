@@ -1,0 +1,2 @@
+ALTER TABLE "van_day_orders" DROP CONSTRAINT "van_day_orders_kind_chk";--> statement-breakpoint
+ALTER TABLE "van_day_orders" ADD CONSTRAINT "van_day_orders_kind_chk" CHECK ("van_day_orders"."kind" IN ('cash','credit','order'));

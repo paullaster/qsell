@@ -105,6 +105,31 @@ export function readSale(raw: unknown): SaleRead {
   return { ok: true, sale: { visitId: raw.visitId, kind, lines: lines.lines, tenders, saleKey: raw.saleKey } };
 }
 
+/** An order taken at a visit, for delivery later: what the customer wants and the day they want it. Prices are never sent. */
+export interface OrderInput {
+  visitId: string;
+  /** Only product and quantity: an order is priced by the server, and a rep's own price or discount does not apply to it. */
+  lines: { productId: string; quantity: number }[];
+  /** The day the customer needs it (`YYYY-MM-DD`), or empty. */
+  neededOn: string;
+  saleKey: string;
+}
+
+const isCalendarDay = (day: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(day) && new Date(`${day}T00:00:00Z`).toISOString().slice(0, 10) === day;
+
+/** Reads an order as the rep's phone sent it. */
+export function readOrder(raw: unknown): { ok: true; order: OrderInput } | { ok: false; error: string } {
+  if (!isRecord(raw)) return { ok: false, error: 'The order could not be read.' };
+  if (!isId(raw.visitId)) return { ok: false, error: 'Choose the visit the order is taken at.' };
+  if (typeof raw.saleKey !== 'string' || !UUID.test(raw.saleKey)) return { ok: false, error: 'This order could not be told apart from another. Start the order again.' };
+  const lines = readSaleLines(raw.lines);
+  if (!lines.ok) return lines;
+  if (lines.lines.some((l) => l.unitPrice !== undefined || l.discount !== undefined)) return { ok: false, error: 'An order is priced by the system. Take the order without a price or a discount.' };
+  const neededOn = typeof raw.neededOn === 'string' ? raw.neededOn.trim() : '';
+  if (neededOn !== '' && !isCalendarDay(neededOn)) return { ok: false, error: 'The day the customer needs the order is not a date.' };
+  return { ok: true, order: { visitId: raw.visitId, lines: lines.lines.map((l) => ({ productId: l.productId, quantity: l.quantity })), neededOn, saleKey: raw.saleKey } };
+}
+
 /**
  * Holds a sale to what the rep may do on their own, before any price is worked out: a price they typed needs the right to change prices, a
  * discount must be within their limit, and a sale on account needs the right to give credit. The amount of credit is checked once the

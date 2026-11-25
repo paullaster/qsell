@@ -114,6 +114,12 @@ Below the visits, for a day that has a van (a day that only takes orders has non
 4. **Sales** shows what the day has sold, the total, and how it was taken (cash, mobile money, card, on account).
 5. **Finish the visit.** A visit with a sale is finished as sold; a visit with no sale is finished with a reason. The two cannot be mixed.
 
+### Taking an order at a visit, on a van day's page (the rep's own)
+1. **Take an order.** On a visit the rep has arrived at, in a day whose route takes orders (pre-sell or both) while Pre-sell is switched on. The rep searches any product (not only what is on the van, since the goods come later), types the quantity and, if the customer wants it by a day, **Needed on**. The system works out the total at the customer's own prices; the rep cannot type a price or a discount on an order.
+2. **Take the order.** Nothing is paid and nothing leaves the van. The order is an ordinary sales order: it appears under Sales Orders, its stock is held at the warehouse, and it follows the company's normal approval and credit rules.
+3. **Sales** on the day lists the order marked *Order* and shows **Orders for later** apart from the money taken, so the day's takings are not overstated.
+4. **Finish the visit.** A visit with an order is recorded as *Order taken*; with a sale as well, *Sold and order taken*. A visit with either cannot be finished as no sale.
+
 ## 5. Granular Field-by-Field Reference
 
 | Field | Type | Allowed | Default | Required |
@@ -328,6 +334,10 @@ Below the visits, for a day that has a van (a day that only takes orders has non
 - **A retry never sells twice.** If the connection drops and the rep presses again, the same sale is found, not made again.
 - **Blocked or stopped customers** cannot be sold to. Selling needs a visit under way, a day that is out, and a mode that sells from a van; a day that only takes orders sells nothing from the van.
 - **Cash goes into the day's till shift** opened when the day was sent out; the shift's count at the end of the day is the cash the rep must hand over.
+- **An order is priced by the system.** The rep's own price and discount rights do not apply to an order; the customer's own price list does.
+- **An order holds stock at the warehouse**, as any sales order does, and is refused if the warehouse cannot cover it. The van's stock is not touched; delivering it is done later (a delivery run, or a drop on a van day).
+- **A route that only sells from the van takes no orders**, and a route that only takes orders sells nothing from a van.
+- **A retry never takes an order twice.**
 - Every add, change, stop, pause, end and resume is in the decision log with the person, the time and the reason typed.
 - The database itself refuses a stopped van, route, or a paused or ended rep with no reason, a pre-sell route with a van, a visit with no day or one visited every 3 weeks, a discount over 100%, a negative credit or cash limit, and a mode other than van sell or pre-sell.
 - A reason is required for every change, so an auditor can see why a rule was relaxed.
@@ -365,4 +375,6 @@ Below the visits, for a day that has a van (a day that only takes orders has non
 - [ ] Verify: a sale made at a visit takes stock from the van only (Stock by location) and appears on the till's shift.
 - [ ] Verify: a rep without the right to change prices or give discounts is refused; credit is refused past the rep's daily allowance.
 - [ ] Test sale: sell 2 of a product for cash with more than the total handed over and check the change shown.
+- [ ] Verify: an order taken at a visit appears under Sales Orders for the right customer, with its stock held at the warehouse.
+- [ ] Verify: a van-only route offers no *Take an order* button, and an order-only day offers no *Sell*.
 - **Common pitfalls:** asking the office to send a day out for the rep (refused: the rep does it); requiring the rep to be near a customer who has no map pin (the visit starts and the distance is not known); loading before stock by location is switched on (the screen says so); signing a load that was never sent; expecting stock to be on the van when the load was only asked for; planning a day before the route has customers due that date (the screen says none is due); planning a day for the usual rep who is already on another route that date (refused); giving two routes the same code or name (refused); starting a fortnightly customer's visits in the wrong week (the date sets which weeks count); naming two vans alike (refused); putting a vehicle behind two vans (refused); switching on *require* with a very small distance, which blocks reps in town centres; leaving the approval limit at 0, which sends every small shortage to a second person.

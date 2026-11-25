@@ -26,6 +26,12 @@ const modeOf = (value: string): RouteMode => (value === 'van_sell' || value === 
  * the road where the company allows it. A rep runs only their own day: the cash and the stock are in their custody. Every step is in the day's
  * history with the server's time (the phone's own time is kept beside it).
  */
+/** How a visit with something taken at it is recorded: sales, orders, or both. */
+const storedOutcome = (sales: number, orders: number): 'sold' | 'order_taken' | 'sold_and_ordered' => {
+  if (sales > 0 && orders > 0) return 'sold_and_ordered';
+  return orders > 0 ? 'order_taken' : 'sold';
+};
+
 export class VanRunService {
   constructor(
     private readonly db: DrizzleDb,
@@ -151,11 +157,13 @@ export class VanRunService {
       if (day === undefined) throw new VanSalesError('That day could not be found.');
       const visit = await this.visitOf(tx, day.id, visitId);
       if (visit.v.status !== 'arrived') throw new VanSalesError(`Arrive at ${visit.name} before finishing the visit.`);
-      const [made] = await tx.select({ n: sql<number>`count(*)::int` }).from(vanDayOrders).where(eq(vanDayOrders.visitId, visit.v.id));
-      const sales = made?.n ?? 0;
-      if (read.finish.outcome === 'sold' && sales === 0) throw new VanSalesError(`Nothing has been sold at ${visit.name}. Sell something here, or finish the visit with no sale.`);
-      if (read.finish.outcome === 'no_sale' && sales > 0) throw new VanSalesError(`There ${sales === 1 ? 'is a sale' : 'are sales'} at ${visit.name}, so the visit is finished as sold.`);
-      await tx.update(vanVisits).set({ status: 'done', outcome: read.finish.outcome, noSaleReason: read.finish.reason, departedAt: new Date(), version: visit.v.version + 1, updatedAt: new Date() }).where(eq(vanVisits.id, visit.v.id));
+      const made = await tx.select({ kind: vanDayOrders.kind, n: sql<number>`count(*)::int` }).from(vanDayOrders).where(eq(vanDayOrders.visitId, visit.v.id)).groupBy(vanDayOrders.kind);
+      const orders = made.find((m) => m.kind === 'order')?.n ?? 0;
+      const sales = made.filter((m) => m.kind !== 'order').reduce((n, m) => n + m.n, 0);
+      if (read.finish.outcome === 'sold' && sales + orders === 0) throw new VanSalesError(`Nothing has been sold or ordered at ${visit.name}. Sell or take an order here, or finish the visit with no sale.`);
+      if (read.finish.outcome === 'no_sale' && sales + orders > 0) throw new VanSalesError(`There ${sales + orders === 1 ? 'is a sale or order' : 'are sales or orders'} at ${visit.name}, so the visit is finished as done, not as no sale.`);
+      const stored = read.finish.outcome === 'no_sale' ? 'no_sale' : storedOutcome(sales, orders);
+      await tx.update(vanVisits).set({ status: 'done', outcome: stored, noSaleReason: read.finish.reason, departedAt: new Date(), version: visit.v.version + 1, updatedAt: new Date() }).where(eq(vanVisits.id, visit.v.id));
       await this.bump(tx, day.id, day.version);
       await recordDayEvent(tx, this.decisions, companyId, day.id, actor, 'visit.done', { reason: read.finish.reason ?? undefined, detail: { customer: visit.name, customerId: visit.customerId, outcome: read.finish.outcome } });
     });

@@ -8,9 +8,9 @@ import { kes } from '@/lib/till/tile-style';
 /** What the day has sold so far and how it was paid. Shown once something has been sold. */
 export function SalesPanel({ screen }: { screen: DayScreen }) {
   const when = useWhen();
-  const { rows, totals } = screen.sales;
+  const { rows, totals, ordered } = screen.sales;
   if (rows.length === 0) return null;
-  const parts: [string, number][] = [['Cash', totals.cash], ['M-Pesa and other mobile money', totals.mobileMoney], ['Card', totals.card], ['On account', totals.credit]];
+  const parts: [string, number][] = [['Cash', totals.cash], ['M-Pesa and other mobile money', totals.mobileMoney], ['Card', totals.card], ['On account', totals.credit], ['Orders for later', ordered]];
   return (
     <section className={`${cardClass} space-y-3`} aria-label="Sales">
       <div className="flex flex-wrap items-center gap-2">
@@ -27,6 +27,7 @@ export function SalesPanel({ screen }: { screen: DayScreen }) {
           <li key={r.orderId} className="flex flex-wrap items-center gap-2 rounded-lg border border-line p-3 text-sm">
             <span className="min-w-0 flex-1 basis-40"><span className="font-semibold text-fg-strong">{r.customerName}</span> <span className="text-fg-muted">{r.orderNumber} · {when(r.at)}</span></span>
             {r.kind === 'credit' ? <Chip tone="amber">On account</Chip> : null}
+            {r.kind === 'order' ? <Chip tone="sky">Order</Chip> : null}
             <span className="font-mono font-semibold">{kes(r.total)}</span>
           </li>
         ))}

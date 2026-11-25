@@ -8,7 +8,7 @@ import { VanSalesError } from './errors';
 import type { RepView } from './reps';
 import type { DayDetail, DayView } from './days';
 import type { LoadView, OnVanRow, Suggestion } from './loads';
-import type { DaySales, TenderChoice, VanSaleView } from './sales';
+import type { DaySales, OrderTakenView, TenderChoice, VanSaleView } from './sales';
 import { goOutProblem } from '@/lib/van-sales/run';
 import type { ParView, RouteView, StopView } from './routes';
 import type { VanView } from './vans';
@@ -295,6 +295,10 @@ export interface DayScreen {
   repLimits: { maxDiscountPercent: number; maxCreditPerDay: number; mayOverridePrice: boolean; maySellOnCredit: boolean } | null;
   /** Set only on the answer to a sale: what was just sold, to show the rep. */
   lastSale?: VanSaleView;
+  /** Set only on the answer to an order: what was just taken. */
+  lastOrder?: OrderTakenView;
+  /** Orders may be taken on this day (the company has pre-sell on and the route takes orders). */
+  ordersAllowed: boolean;
 }
 
 async function dayScreen(companyId: string, id: string, userId: string): Promise<DayScreen> {
@@ -310,7 +314,7 @@ async function dayScreen(companyId: string, id: string, userId: string): Promise
   const selling = day.status === 'out' && isRep && maySell;
   const [sales, tenders] = await Promise.all([c.vanSales.forDay(companyId, id), selling ? c.vanSales.tenderChoices(companyId, day.branchId) : Promise.resolve([])]);
   const loadSigned = loads.some((l) => l.kind === 'load' && l.cancelledAt === null && l.signedAt !== null);
-  return { detail, canPlan, loads, onVan, suggestion, isRep, maySell, sales, tenders, repLimits: isRep ? { maxDiscountPercent: rep.maxDiscountPercent, maxCreditPerDay: rep.maxCreditPerDay, mayOverridePrice: rep.mayOverridePrice, maySellOnCredit: rep.maySellOnCredit } : null, outProblem: goOutProblem({ status: day.status, mode: day.mode, loadSigned }), offRouteAllowed: settings.offRoute === 'allow' };
+  return { detail, canPlan, loads, onVan, suggestion, isRep, maySell, sales, tenders, ordersAllowed: settings.preSell && day.mode !== 'van_sell', repLimits: isRep ? { maxDiscountPercent: rep.maxDiscountPercent, maxCreditPerDay: rep.maxCreditPerDay, mayOverridePrice: rep.mayOverridePrice, maySellOnCredit: rep.maySellOnCredit } : null, outProblem: goOutProblem({ status: day.status, mode: day.mode, loadSigned }), offRouteAllowed: settings.offRoute === 'allow' };
 }
 
 export async function dayScreenAction(id: unknown) {
@@ -467,6 +471,20 @@ export async function sellVanAction(raw: unknown) {
       const dayId = typeof i.dayId === 'string' ? i.dayId : '';
       const sale = await getContainer().vanSales.sell(companyId, { type: 'user', id: userId }, dayId, i, await canPermission('van_sales:sell'));
       return { ...(await dayScreen(companyId, dayId, userId)), lastSale: sale };
+    },
+    { paths: PATHS, friendly },
+  );
+}
+
+/** Takes an order at a visit, for delivery later. Answers with the day and the order taken. */
+export async function takeOrderAction(raw: unknown) {
+  const i = obj(raw);
+  return await runSetting(
+    'van_sales:read',
+    async ({ companyId, userId }): Promise<DayScreen> => {
+      const dayId = typeof i.dayId === 'string' ? i.dayId : '';
+      const order = await getContainer().vanSales.order(companyId, { type: 'user', id: userId }, dayId, i, await canPermission('van_sales:sell'));
+      return { ...(await dayScreen(companyId, dayId, userId)), lastOrder: order };
     },
     { paths: PATHS, friendly },
   );

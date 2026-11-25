@@ -93,13 +93,15 @@ function VisitRow({ visit, first, last, screen, may, mayRun, run }: { visit: Vis
 }
 
 /** What happened at the visit, in words: when the rep arrived and how far from the shop, how it ended, and why. */
+const OUTCOME_WORDS: Record<string, string> = { sold: 'Sold', order_taken: 'Order taken', sold_and_ordered: 'Sold and order taken', no_sale: 'No sale' };
+
 function VisitFacts({ visit }: { visit: VisitView }) {
   const when = useWhen();
   if (visit.arrivedAt === null && visit.noSaleReason === null && visit.outcome === null) return null;
   return (
     <p className="text-xs text-fg-muted" data-testid="visit-facts">
       {visit.arrivedAt === null ? '' : `Arrived ${when(visit.arrivedAt)}${visit.distanceM === null ? '' : `, ${String(visit.distanceM)} m from the shop`}. `}
-      {visit.outcome === 'no_sale' ? 'No sale' : ''}
+      {OUTCOME_WORDS[visit.outcome ?? ''] ?? ''}
       {visit.noSaleReason === null ? '' : `${visit.outcome === 'no_sale' ? ': ' : 'Because: '}${visit.noSaleReason}`}
     </p>
   );
@@ -109,7 +111,8 @@ function VisitFacts({ visit }: { visit: VisitView }) {
 function RunActions({ visit, screen, run }: { visit: VisitView; screen: DayScreen; run: DayCall }) {
   const dayId = screen.detail.day.id;
   const mayVanSell = screen.detail.day.vanName !== null && screen.detail.day.mode !== 'pre_sell';
-  const [mode, setMode] = useState<'view' | 'skip' | 'finish' | 'sell'>('view');
+  const mayOrder = screen.ordersAllowed;
+  const [mode, setMode] = useState<'view' | 'skip' | 'finish' | 'sell' | 'order'>('view');
   const [busy, setBusy] = useState(false);
   const name = visit.customerName;
   const go = async (call: Parameters<DayCall>[0], text: string) => {
@@ -133,13 +136,15 @@ function RunActions({ visit, screen, run }: { visit: VisitView; screen: DayScree
         <div className="flex flex-wrap gap-2">
           {visit.status === 'planned' ? <button type="button" className={primaryClass} disabled={busy} onClick={() => void arrive()} aria-label={`Arrive at ${name}`}>{busy ? 'Arriving…' : 'Arrive'}</button> : null}
           {visit.status === 'arrived' && mayVanSell ? <button type="button" className={primaryClass} onClick={() => setMode('sell')} aria-label={`Sell to ${name}`}>Sell</button> : null}
+          {visit.status === 'arrived' && mayOrder ? <button type="button" className={mayVanSell ? buttonClass : primaryClass} onClick={() => setMode('order')} aria-label={`Take an order from ${name}`}>Take an order</button> : null}
           {visit.status === 'arrived' && sales === 0 ? <button type="button" className={buttonClass} onClick={() => setMode('finish')} aria-label={`Finish the visit to ${name} with no sale`}>Finish: no sale</button> : null}
           {visit.status === 'arrived' && sales > 0 ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void go(finishVisitAction({ dayId, id: visit.id, outcome: 'sold' }), `The visit to ${name} is finished.`)} aria-label={`Finish the visit to ${name}`}>Finish the visit</button> : null}
           {visit.status === 'planned' ? <button type="button" className={buttonClass} onClick={() => setMode('skip')} aria-label={`Skip ${name}`}>Skip</button> : null}
           <InlineConfirm label={`${name}'s shop is closed`} action="Shop closed" confirm="Yes, it is shut" busy={busy} onConfirm={() => void go(closedShopAction({ dayId, id: visit.id }), `${name}'s shop was found closed.`)} />
         </div>
       ) : null}
-      {mode === 'sell' ? <SellForm screen={screen} visitId={visit.id} customer={name} run={run} onDone={() => setMode('view')} onCancel={() => setMode('view')} /> : null}
+      {mode === 'order' ? <SellForm screen={screen} visitId={visit.id} customer={name} mode="order" run={run} onDone={() => setMode('view')} onCancel={() => setMode('view')} /> : null}
+      {mode === 'sell' ? <SellForm screen={screen} visitId={visit.id} customer={name} mode="sell" run={run} onDone={() => setMode('view')} onCancel={() => setMode('view')} /> : null}
       {mode === 'skip' ? <WhyPanel label={`Skip ${name}`} action="Skip this customer" busy={busy} onCancel={() => setMode('view')} onConfirm={(reason) => void go(skipVisitAction({ dayId, id: visit.id, reason }), `${name} is skipped.`)} /> : null}
       {mode === 'finish' ? <WhyPanel label={`Finish ${name}`} action="Finish the visit" busy={busy} onCancel={() => setMode('view')} onConfirm={(reason) => void go(finishVisitAction({ dayId, id: visit.id, outcome: 'no_sale', reason }), `The visit to ${name} is finished with no sale.`)} /> : null}
     </div>
