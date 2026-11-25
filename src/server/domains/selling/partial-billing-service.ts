@@ -8,6 +8,7 @@ import type { NumberSeriesService } from '@/server/kernel/numbering/service';
 import { businessDate } from '@/server/kernel/numbering/business-date';
 import { invoicePlanFor } from '@/server/domains/delivery/invoice-plan';
 import { billingState, leftToInvoice, planBilling, type BillableLine, type BillingAsk, type PlannedBilling } from './domain/partial-billing';
+import { lineOrder } from '@/server/domains/orders/line-order';
 
 export class BillingError extends Error {}
 
@@ -89,7 +90,7 @@ export class PartialBillingService {
       .leftJoin(products, eq(products.id, orderItems.productId))
       .leftJoin(unitsOfMeasure, eq(unitsOfMeasure.id, products.baseUnitId))
       .where(eq(orderItems.orderId, orderId))
-      .orderBy(orderItems.id);
+      .orderBy(...lineOrder);
     const taken = items.length === 0 ? [] : await db
       .select({ itemId: orderBillingLines.orderItemId, quantity: sql<string>`SUM(${orderBillingLines.quantity})::text`, amount: sql<string>`SUM(${orderBillingLines.amount})::text` })
       .from(orderBillingLines)

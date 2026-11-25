@@ -134,6 +134,50 @@ describe.skipIf(url === undefined || url === '')('counter sales (database)', () 
     }
   });
 
+  it('keeps the lines of a sale in the order they were rung up, on the receipt and in the order, and numbers each place once', async () => {
+    const person = await user('lines');
+    await shiftFor(person, 1000);
+    const products = [await tea(100), await tea(110), await tea(120), await tea(130), await tea(140), await tea(150)];
+    // Six lines can fall in 720 orders: a receipt that only sometimes keeps the order would show here.
+    for (let sale = 0; sale < 3; sale += 1) {
+      const lines = products.map((productId, i) => ({ productId, quantity: i + 1 }));
+      const total = lines.reduce((sum, l, i) => sum + l.quantity * (100 + i * 10), 0);
+      const done = await c.cashSales.complete(companyId, { userId: person.id, branchId: null }, { customerId: null, lines, tenders: [{ methodId: methods.cash, amount: total, reference: '' }], saleKey: randomUUID() });
+      if (!done.ok) throw new Error(done.error);
+      expect(done.sale.lines.map((l) => l.quantity)).toEqual([1, 2, 3, 4, 5, 6]);
+      expect(done.sale.lines.map((l) => l.unitPrice)).toEqual([100, 110, 120, 130, 140, 150]);
+      const rows = await db.select({ lineNo: schema.orderItems.lineNo, quantity: schema.orderItems.quantity }).from(schema.orderItems).where(eq(schema.orderItems.orderId, done.sale.orderId)).orderBy(schema.orderItems.lineNo);
+      expect(rows.map((r) => r.lineNo)).toEqual([1, 2, 3, 4, 5, 6]);
+      expect(rows.map((r) => r.quantity)).toEqual([1, 2, 3, 4, 5, 6]);
+      // The order as the rest of the system reads it keeps the same order.
+      const order = await c.orders.getById(done.sale.orderId);
+      expect(order?.items.map((i) => i.quantity)).toEqual([1, 2, 3, 4, 5, 6]);
+      // The reprint is the same receipt.
+      const again = await c.cashSales.summary(done.sale.orderId);
+      expect(again.lines.map((l) => l.quantity)).toEqual([1, 2, 3, 4, 5, 6]);
+    }
+  });
+
+  it('refuses a place on an order that is used twice or is not a real place, whichever way it is written', async () => {
+    const person = await user('linesdb');
+    await shiftFor(person, 1000);
+    const product = await tea(100);
+    const done = await c.cashSales.complete(companyId, { userId: person.id, branchId: null }, { customerId: null, lines: [{ productId: product, quantity: 1 }, { productId: product, quantity: 2 }], tenders: [{ methodId: methods.cash, amount: 300, reference: '' }], saleKey: randomUUID() });
+    if (!done.ok) throw new Error(done.error);
+    const why = async (p: Promise<unknown>) => {
+      const e = (await p.then(() => null, (err: unknown) => err)) as { message?: string; cause?: { message?: string } } | null;
+      return e === null ? null : `${e.message ?? ''} ${e.cause?.message ?? ''}`;
+    };
+    const lines = await db.select({ id: schema.orderItems.id }).from(schema.orderItems).where(eq(schema.orderItems.orderId, done.sale.orderId)).orderBy(schema.orderItems.lineNo);
+    expect(lines).toHaveLength(2);
+    expect(await why(db.update(schema.orderItems).set({ lineNo: 1 }).where(eq(schema.orderItems.id, lines[1]?.id ?? '')))).toContain('order_items_order_line_uidx');
+    expect(await why(db.update(schema.orderItems).set({ lineNo: 0 }).where(eq(schema.orderItems.id, lines[1]?.id ?? '')))).toContain('order_items_line_no_chk');
+    // An order from before line numbers were kept still reads in its old order (by id), after any numbered lines.
+    await db.update(schema.orderItems).set({ lineNo: null }).where(eq(schema.orderItems.orderId, done.sale.orderId));
+    const old = await c.orders.getById(done.sale.orderId);
+    expect(old?.items).toHaveLength(2);
+  });
+
   it('refuses a payment that does not cover the sale before anything is held or saved', async () => {
     const person = await user('short');
     await shiftFor(person);

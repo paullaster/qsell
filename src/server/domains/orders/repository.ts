@@ -7,6 +7,7 @@ import type { Order, OrderItem, OrderStatus, PaymentStatus, PaymentProvider } fr
 import { OrderStages, type StageActor } from './stages';
 import type { StageSource } from '@/lib/order-stages';
 import { WEB_SHOP_ORDER } from './order-origin';
+import { lineOrder } from './line-order';
 
 function num(v: string | number): number {
   return typeof v === 'number' ? v : Number(v);
@@ -154,8 +155,9 @@ export class OrderRepository {
 
       if (order.items.length) {
         await tx.insert(orderItems).values(
-          order.items.map((item) => ({
+          order.items.map((item, index) => ({
             orderId: order.id,
+            lineNo: index + 1,
             productId: item.productId,
             productName: item.productName,
             sku: item.sku,
@@ -296,7 +298,7 @@ export class OrderRepository {
   /** The orders with their items, all items read in one query however many orders there are. */
   private async withItems(rows: OrderRow[]): Promise<Order[]> {
     if (rows.length === 0) return [];
-    const items = await this.db.select().from(orderItems).where(inArray(orderItems.orderId, rows.map((r) => r.id)));
+    const items = await this.db.select().from(orderItems).where(inArray(orderItems.orderId, rows.map((r) => r.id))).orderBy(...lineOrder);
     const byOrder = new Map<string, OrderItem[]>();
     for (const r of items) byOrder.set(r.orderId, [...(byOrder.get(r.orderId) ?? []), toItem(r)]);
     return rows.map((row) => mapOrderRow(row, byOrder.get(row.id) ?? []));
@@ -350,7 +352,7 @@ export class OrderRepository {
   }
 
   private async loadItems(orderId: string): Promise<OrderItem[]> {
-    const rows = await this.db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
+    const rows = await this.db.select().from(orderItems).where(eq(orderItems.orderId, orderId)).orderBy(...lineOrder);
     return rows.map(toItem);
   }
 }

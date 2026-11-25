@@ -3463,6 +3463,8 @@ export const orderItems = pgTable(
     orderId: text('order_id')
       .notNull()
       .references(() => orders.id, { onDelete: 'cascade' }),
+    /** The line's place on the order, from 1, in the order it was rung up. Null on orders from before this was kept: they read in the order they always did, by id. */
+    lineNo: integer('line_no'),
     productId: text('product_id').notNull(),
     productName: text('product_name').notNull(),
     sku: text('sku').notNull(),
@@ -3490,7 +3492,13 @@ export const orderItems = pgTable(
     /** The price per one of that unit, exactly as typed or worked out: the line's amount is this times the entered quantity. */
     enteredUnitPrice: numeric('entered_unit_price', { precision: 14, scale: 4 }),
   },
-  (t) => [index('order_items_order_idx').on(t.orderId), index('order_items_unit_idx').on(t.unitId)],
+  (t) => [
+    index('order_items_order_idx').on(t.orderId),
+    index('order_items_unit_idx').on(t.unitId),
+    // A place on an order is used once, and is a real place.
+    uniqueIndex('order_items_order_line_uidx').on(t.orderId, t.lineNo).where(sql`${t.lineNo} IS NOT NULL`),
+    check('order_items_line_no_chk', sql`${t.lineNo} IS NULL OR ${t.lineNo} > 0`),
+  ],
 );
 
 /**

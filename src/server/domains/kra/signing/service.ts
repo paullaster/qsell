@@ -45,6 +45,7 @@ import {
 
 import { has, required, trimToNull } from '@/lib/values';
 import { invoicePlanFor, type OrderInvoicePlan } from '@/server/domains/delivery/invoice-plan';
+import { lineOrder } from '@/server/domains/orders/line-order';
 
 /** What is sent to KRA for a document. Built only once the policy has said "sign". */
 export interface SignableInvoice {
@@ -199,7 +200,8 @@ export class DocumentSigningService {
           const lines = await this.db
             .select()
             .from(orderItems)
-            .where(eq(orderItems.orderId, order.id));
+            .where(eq(orderItems.orderId, order.id))
+            .orderBy(...lineOrder);
           const goods = lines.map((l) => ({
             productId: l.productId,
             qty: l.quantity,
