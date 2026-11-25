@@ -1,7 +1,7 @@
 'use client';
 
 import { use, useState } from 'react';
-import { Building2, FileText, ImagePlus, Landmark, MapPin, Phone, Save } from 'lucide-react';
+import { Building2, FileText, ImagePlus, Landmark, MapPin, Phone, Save, Smartphone } from 'lucide-react';
 import {
   type companyProfileAction,
   saveCompanyProfileAction,
@@ -15,6 +15,8 @@ import {
   type Notice,
 } from '@/components/ui/screen-kit';
 import { profilePayload, type ProfileForm, type ProfileView } from '@/lib/company-forms';
+import { APP_NAME_MAX, APP_SHORT_NAME_MAX, installedNames } from '@/lib/pwa-name';
+import { AppNamePreview } from './AppNamePreview';
 import { LogoUpload } from './LogoUpload';
 import { Section, TextField } from './fields';
 
@@ -33,6 +35,7 @@ function ProfileScreen({ initial }: { initial: ProfileView }) {
   const [logoUrl, setLogoUrl] = useState(initial.logoUrl);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
+  const installed = installedNames({ tradingName: form.tradingName, appName: form.appName, appShortName: form.appShortName });
   const set =
     <K extends keyof ProfileForm>(key: K) =>
     (value: ProfileForm[K]) =>
@@ -105,6 +108,31 @@ function ProfileScreen({ initial }: { initial: ProfileView }) {
             <LogoUpload onUploaded={setLogoUrl} />
           </div>
         </div>
+      </Section>
+
+      <Section
+        title="Installed app"
+        icon={<Smartphone className="h-4 w-4 text-indigo-600" aria-hidden="true" />}
+      >
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <TextField
+            label="App name"
+            value={form.appName}
+            onChange={set('appName')}
+            placeholder={form.tradingName}
+            maxLength={APP_NAME_MAX}
+            hint="Shown when the app is installed and when it opens. Left empty, the trading name is used."
+          />
+          <TextField
+            label="Name under the icon"
+            value={form.appShortName}
+            onChange={set('appShortName')}
+            placeholder={installed.shortName}
+            maxLength={APP_SHORT_NAME_MAX}
+            hint={`Phones cut anything past about ${String(APP_SHORT_NAME_MAX)} letters. Left empty, whole words of the app name that fit are used.`}
+          />
+        </div>
+        <AppNamePreview name={installed.name} shortName={installed.shortName} logoUrl={logoUrl} accentColor={initial.accentColor} />
       </Section>
 
       <Section

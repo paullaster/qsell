@@ -51,6 +51,8 @@ describe.skipIf(url === '')('company setup (database)', () => {
       bankName: 'Test Bank',
       bankAccountNumber: '12345',
       tagline: 'Hello',
+      appName: 'Setup Shop',
+      appShortName: 'Setup',
     };
     const checked = profilePayload(form);
     if (!checked.ok) throw new Error(checked.error);
@@ -61,17 +63,26 @@ describe.skipIf(url === '')('company setup (database)', () => {
       kraPin: 'P012345678Q',
       bankName: 'Test Bank',
       tagline: 'Hello',
+      appName: 'Setup Shop',
+      appShortName: 'Setup',
     });
 
-    const cleared = profilePayload({ ...form, bankName: '', bankAccountNumber: '', tagline: '  ' });
+    const cleared = profilePayload({ ...form, bankName: '', bankAccountNumber: '', tagline: '  ', appName: ' ', appShortName: '' });
     if (!cleared.ok) throw new Error(cleared.error);
     const after = await c.companySettings.update(cleared.payload);
     expect(after).toMatchObject({
       bankName: null,
       bankAccountNumber: null,
       tagline: null,
+      appName: null,
+      appShortName: null,
       legalName: 'Setup Test Ltd',
     });
+  });
+
+  it('refuses, in the database itself, an installed-app name too long to show', async () => {
+    await expect(c.companySettings.update({ appShortName: 'A name far too long' })).rejects.toThrow();
+    await expect(c.companySettings.update({ appName: '' })).rejects.toThrow();
   });
 
   it('changes one part of the stored look without touching the others, even when saved one after the other', async () => {
