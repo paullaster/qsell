@@ -131,6 +131,12 @@ Below the visits, for a day that has a van (a day that only takes orders has non
 1. **Cash on the van** shows what the van's till should hold now (the float, plus cash sales, less cash refunds and cash taken off) against the van's limit (set on the van under Vans, *Cash limit*). It says *Within the limit*, *Near the limit* (from nine tenths of it) or *Over the limit*, and when near or over it tells the rep how much to take off. A limit warns; it never stops a sale.
 2. **Take cash off the van** (the rep, while the day is out or coming back). The rep types the amount, chooses where it goes (*The safe*, *A bank run* or *The office*) and may add a note. The amount cannot be more than the van holds. The list below shows each drop with its time and note.
 
+### Collecting money at a visit, on a van day's page
+1. **Collect.** On a visit the rep has arrived at, a customer who owes money has a **Collect** button. The form shows what the customer owes in total and the open invoices, oldest first.
+2. **Take the payment.** The rep chooses how the customer paid (cash, M-Pesa or card as set up for the branch), types the amount and, where the way of paying asks for one, its reference (the M-Pesa code or the card slip number). The amount cannot be more than the customer owes.
+3. **What happens.** The payment is recorded as an ordinary customer receipt and applied to the customer's open invoices, oldest first. Cash is also put into the van's till shift, so the cash the van should hold goes up by the same amount; M-Pesa and card go straight to the company's account and do not change the van's cash.
+4. **Money collected** lists each payment under the day's Sales, with the receipt number. A visit where only money was collected is recorded as *Collected*, and cannot be finished as no sale.
+
 ## 5. Granular Field-by-Field Reference
 
 | Field | Type | Allowed | Default | Required |
@@ -357,6 +363,11 @@ Below the visits, for a day that has a van (a day that only takes orders has non
 - **A cash drop is a paid-out of the van's till shift.** The till's expected cash falls by the same amount, the shift's report shows the movement with its reason, and the drop is recorded in the same step, so one cannot exist without the other.
 - **Only the day's own rep takes cash off the van**, as with the rest of the day. A supervisor sees the cash and the drops live on the day's page.
 - **A drop is counted in at the other end later.** Each drop has room for the person who counted it in and when; this is filled when the day is reconciled.
+- **Only what is owed is collected.** A customer who owes nothing cannot be collected from, and no more than they owe is taken. Advance payments are not taken at a visit.
+- **A payment is applied oldest invoice first**, as any receipt is, and an order that follows those invoices becomes paid when they are. A delivery that was refused because its order had not been paid for can go ahead once the order's invoice is settled this way.
+- **A retry never takes the money twice.** If the connection drops and the rep presses again, the same payment is found.
+- **A reference is needed** where the way of paying asks for one, and a reference already used on another receipt is refused.
+- **Cash collected is part of the till count** at the end of the day, with the sales and the float.
 - Every add, change, stop, pause, end and resume is in the decision log with the person, the time and the reason typed.
 - The database itself refuses a stopped van, route, or a paused or ended rep with no reason, a pre-sell route with a van, a visit with no day or one visited every 3 weeks, a discount over 100%, a negative credit or cash limit, and a mode other than van sell or pre-sell.
 - A reason is required for every change, so an auditor can see why a rule was relaxed.
@@ -401,4 +412,6 @@ Below the visits, for a day that has a van (a day that only takes orders has non
 - [ ] Test delivery: deliver a paid order at a customer and check the delivery under Deliveries, the order's timeline, and the van's stock.
 - [ ] Verify: each van has a cash limit that suits the route, set under Vans.
 - [ ] Test: with the van near its limit, make a cash drop and check the till's expected cash on the Shifts screen falls by the same amount.
+- [ ] Verify: the ways of paying a rep may use (cash, M-Pesa, card) are set up for the branch and are usable for customer receipts.
+- [ ] Test: collect part of an open invoice in cash at a visit and check the receipt under Receipts, the invoice's remaining amount, and the van's cash.
 - **Common pitfalls:** asking the office to send a day out for the rep (refused: the rep does it); requiring the rep to be near a customer who has no map pin (the visit starts and the distance is not known); loading before stock by location is switched on (the screen says so); signing a load that was never sent; expecting stock to be on the van when the load was only asked for; planning a day before the route has customers due that date (the screen says none is due); planning a day for the usual rep who is already on another route that date (refused); giving two routes the same code or name (refused); starting a fortnightly customer's visits in the wrong week (the date sets which weeks count); naming two vans alike (refused); putting a vehicle behind two vans (refused); switching on *require* with a very small distance, which blocks reps in town centres; leaving the approval limit at 0, which sends every small shortage to a second person.

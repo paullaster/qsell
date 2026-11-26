@@ -5351,6 +5351,37 @@ export const vanCashDrops = pgTable(
 );
 
 /**
+ * Money a customer paid the rep at a visit against what they owe (docs/architecture/van-sales.md §7, collections). The payment itself is an
+ * ordinary customer receipt, posted and applied to the customer's open invoices oldest first; this ties it to the day and the visit, and, for
+ * cash, to the paid-in that puts the cash into the van's till shift.
+ */
+export const vanDayCollections = pgTable(
+  'van_day_collections',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    dayId: uuid('day_id').notNull().references(() => vanDays.id, { onDelete: 'restrict' }),
+    visitId: uuid('visit_id').notNull().references(() => vanVisits.id, { onDelete: 'restrict' }),
+    receiptId: uuid('receipt_id').notNull().references(() => customerReceipts.id, { onDelete: 'restrict' }),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    /** How it was paid: cash goes into the van's till; mobile money and card go straight to the company's account. */
+    methodKind: text('method_kind').notNull(),
+    movementId: uuid('movement_id').references(() => shiftMovements.id, { onDelete: 'restrict' }),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('van_day_collections_receipt_uidx').on(t.receiptId),
+    uniqueIndex('van_day_collections_movement_uidx').on(t.movementId),
+    index('van_day_collections_day_idx').on(t.dayId, t.createdAt),
+    index('van_day_collections_visit_idx').on(t.visitId),
+    check('van_day_collections_amount_chk', sql`${t.amount} > 0`),
+    check('van_day_collections_kind_chk', sql`${t.methodKind} IN ('cash','mobile_money','card')`),
+    check('van_day_collections_cash_chk', sql`(${t.methodKind} = 'cash') = (${t.movementId} IS NOT NULL)`),
+  ],
+);
+
+/**
  * What happened to a van day, in order, each with its server time, who did it and why: append-only (a database trigger refuses any change
  * or delete). The day's status is a projection of this.
  */

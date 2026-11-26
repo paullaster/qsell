@@ -295,3 +295,11 @@ A drop is delivering a pre-sold order from the van on a van day. Reading the cod
 - **Screens:** the Cash on the van panel with the state, the words and the drop form.
 - **Not yet:** a supervisor's alert outside the day's page, and counting a drop in at the other end (V-9).
 - **Next in V-7:** collections (a payment taken from a customer at a visit, which also pays an order at delivery) and returns of goods at a visit.
+
+### V-7b (2026-11-26): collections at a visit
+- **Data:** 0224 `van_day_collections` (day, visit, the receipt, amount, how it was paid, and for cash the till's paid-in movement; a collection in cash always has its movement and no other has one; one per receipt).
+- **Pure:** `readCollect` (visit, way of paying, amount, reference, retry key) and `collectProblem` (the day out, the rep at the customer, something owed, no more than owed).
+- **Server:** `VanCollectionService.collect`: an ordinary customer receipt (created with the retry key so a retry finds it, posted with oldest-first allocation) and, for cash, a paid-in on the van's till shift linked to the collection in the same transaction; `owing` (the open invoices of customers at visits under way) and `forDay`.
+- **Visits:** a visit with only money collected finishes as `collected_only`.
+- **Screens:** Collect on a visit (what is owed, the payment form) and a Money collected list under the day's Sales.
+- **Not yet:** collecting an advance or a payment on an order that has no invoice, and the returns of goods at a visit (V-7c).

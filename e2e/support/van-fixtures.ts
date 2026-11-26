@@ -6,6 +6,7 @@
  *   tsx e2e/support/van-fixtures.ts day-route <tag> [admin]  ... with `admin`, the rep is the e2e admin account itself, so the browser can run the day as the rep
  *   tsx e2e/support/van-fixtures.ts reset-rep <any>      cancels the open days of the e2e admin as a rep and closes its open shifts, so the next test starts clean
  *   tsx e2e/support/van-fixtures.ts order <customer name> <product id> <quantity>  a paid sales order for that customer, holding its stock (taken under Sales Orders)
+ *   tsx e2e/support/van-fixtures.ts owe <customer name> <amount>  an open invoice on that customer's account (a credit sale leaves one)
  *   tsx e2e/support/van-fixtures.ts limit <van name> <amount>  the most cash the van should carry (set under Vans)
  *   tsx e2e/support/van-fixtures.ts moment <payment|dispatch|delivery>  when the shop issues stock (set under Stock settings)
  *   tsx e2e/support/van-fixtures.ts day-route <tag>      a route ready to plan a day on: both modes on, a van, a rep, and three customers visited every Monday; printed with their names (set up under Van sales)
@@ -119,6 +120,22 @@ async function placeOrder(customerName: string, productId: string, quantity: str
   return { orderNumber: placed.orderNumber };
 }
 
+async function owe(customerName: string, amount: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { customers } = await import('@/server/db/drizzle/schema');
+  const { eq } = await import('drizzle-orm');
+  const { randomUUID } = await import('node:crypto');
+  const { getContainer } = await import('@/server/di/container');
+  const c = getContainer();
+  const company = await c.companySettings.ensureSeeded();
+  const [customer] = await db.select({ id: customers.id }).from(customers).where(eq(customers.name, customerName));
+  if (customer === undefined) throw new Error('e2e fixture: the customer does not exist');
+  const documentNo = `INV-E2E-${randomUUID().slice(0, 6).toUpperCase()}`;
+  await c.finance.customerLedger.addEntry(db, { companyId: company.id, customerId: customer.id, documentType: 'invoice', documentNo, amountCents: Math.round(Number(amount) * 100), currency: 'KES', postingDate: '2026-11-01', dueDate: new Date('2026-11-20T00:00:00Z') });
+  await db.update(customers).set({ balance: amount }).where(eq(customers.id, customer.id));
+  return { documentNo };
+}
+
 async function cashLimit(vanName: string, amount: string): Promise<Record<string, string>> {
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
   const { vans } = await import('@/server/db/drizzle/schema');
@@ -155,6 +172,7 @@ async function main(): Promise<void> {
   if (command === 'order' && tag !== undefined && count !== undefined && third !== undefined) result = await placeOrder(tag, count, third);
   if (command === 'moment' && tag !== undefined) result = await issueMoment(tag);
   if (command === 'limit' && tag !== undefined && count !== undefined) result = await cashLimit(tag, count);
+  if (command === 'owe' && tag !== undefined && count !== undefined) result = await owe(tag, count);
   if (command === 'par' && tag !== undefined && count !== undefined && third !== undefined) result = await par(tag, count, third);
   if (result === null) throw new Error('usage: van-fixtures customer <tag> <n> | product <tag> | day-route <tag> [admin] | reset-rep <any> | par <route name> <product id> <quantity>');
   process.stdout.write(`FIXTURE ${JSON.stringify(result)}\n`);

@@ -1569,6 +1569,13 @@
       "when": 1795671416364,
       "tag": "0223_van_cash_drops",
       "breakpoints": true
+    },
+    {
+      "idx": 224,
+      "version": "7",
+      "when": 1795673450511,
+      "tag": "0224_van_day_collections",
+      "breakpoints": true
     }
   ]
 }

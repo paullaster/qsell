@@ -76,6 +76,7 @@ export const DAY_EVENT_WORDS: Record<string, string> = {
   'day.drop_short': 'A delivery could not be held on the van',
   'day.drop_delivered': 'An order was delivered',
   'day.cash_dropped': 'Cash was taken off the van',
+  'day.collected': 'Money was collected from a customer',
   'day.drop_refused': 'A customer refused a delivery',
   'day.drop_failed': 'A delivery could not be made',
   'day.visit_added_on_route': 'The rep added a customer on the road',

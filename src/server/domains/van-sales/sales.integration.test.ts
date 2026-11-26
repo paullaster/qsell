@@ -117,6 +117,12 @@ describe.skipIf(url === undefined || url === '')('selling from the van (database
     await c.stockSettings.setLedgerMode(companyId, true, { requireCleanShadow: false });
     const now = await c.vanSalesSettings.screen(companyId);
     await c.vanSalesSettings.save(companyId, actor, { ...VAN_SALES_DEFAULTS, ...now.settings, vanSell: true, preSell: true, position: 'record', offRoute: 'allow' }, now.version, reason);
+    // A chart is applied before any account is added by hand: any account at all stops a template from being applied later, for every file after this one.
+    const financeCtx = { companyId, actor, origin: { surface: 'test', action: 'setup' } };
+    await c.finance.setup.applyTemplate(financeCtx, 'kenya', { fiscalYearStart: '2026-01-01' }).catch((error: unknown) => {
+      if (!(error instanceof Error) || !error.message.includes('already has a chart')) throw error;
+    });
+    await c.finance.paymentMethods.seedStandard(financeCtx).catch(() => undefined);
     const [existing] = await db.select({ id: schema.paymentProviderConfigs.id }).from(schema.paymentProviderConfigs).limit(1);
     const provider = existing ?? (await db.insert(schema.paymentProviderConfigs).values({ companyId, providerCode: 'manual', displayName: 'Manual', isSystem: true, isEnabled: true, apiBaseUrl: 'https://manual.invalid', environment: 'sandbox' } as never).returning({ id: schema.paymentProviderConfigs.id }))[0];
     const run = randomUUID().slice(0, 6).toUpperCase();
@@ -282,9 +288,9 @@ describe.skipIf(url === undefined || url === '')('selling from the van (database
   describe('finishing a visit with sales', () => {
     it('is as sold, never as no sale, and a sold visit needs a sale', async () => {
       const s = await outDay();
-      await expect(c.vanRun.finish(companyId, as(s.user), s.day.id, s.v1?.id ?? '', { outcome: 'sold' }, true)).rejects.toThrow('Nothing has been sold, ordered or delivered at');
+      await expect(c.vanRun.finish(companyId, as(s.user), s.day.id, s.v1?.id ?? '', { outcome: 'sold' }, true)).rejects.toThrow('Nothing has been sold, ordered, delivered or collected at');
       await sell(s);
-      await expect(c.vanRun.finish(companyId, as(s.user), s.day.id, s.v1?.id ?? '', { outcome: 'no_sale', reason: 'Changed my mind' }, true)).rejects.toThrow('sale, order or delivery at');
+      await expect(c.vanRun.finish(companyId, as(s.user), s.day.id, s.v1?.id ?? '', { outcome: 'no_sale', reason: 'Changed my mind' }, true)).rejects.toThrow('sale, order, delivery or payment at');
       const done = await c.vanRun.finish(companyId, as(s.user), s.day.id, s.v1?.id ?? '', { outcome: 'sold' }, true);
       expect(done.visits[0]).toMatchObject({ status: 'done', outcome: 'sold', noSaleReason: null });
     });
@@ -324,7 +330,7 @@ describe.skipIf(url === undefined || url === '')('selling from the van (database
     it('is finished as order taken, or as sold and ordered when something was also sold, and never as no sale', async () => {
       const s = await outDay({ mode: 'pre_sell' });
       await order(s);
-      await expect(c.vanRun.finish(companyId, as(s.user), s.day.id, s.v1?.id ?? '', { outcome: 'no_sale', reason: 'Changed my mind' }, true)).rejects.toThrow('sale, order or delivery at');
+      await expect(c.vanRun.finish(companyId, as(s.user), s.day.id, s.v1?.id ?? '', { outcome: 'no_sale', reason: 'Changed my mind' }, true)).rejects.toThrow('sale, order, delivery or payment at');
       expect((await c.vanRun.finish(companyId, as(s.user), s.day.id, s.v1?.id ?? '', { outcome: 'sold' }, true)).visits[0]).toMatchObject({ status: 'done', outcome: 'order_taken' });
       const both = await outDay({ mode: 'both' });
       await order(both);

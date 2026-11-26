@@ -11,6 +11,7 @@ import type { LoadView, OnVanRow, Suggestion } from './loads';
 import type { DaySales, OrderTakenView, TenderChoice, VanSaleView } from './sales';
 import type { DropView } from './drops';
 import type { CashView } from './cash';
+import type { CollectionView, OwingView } from './collections';
 import { goOutProblem } from '@/lib/van-sales/run';
 import type { ParView, RouteView, StopView } from './routes';
 import type { VanView } from './vans';
@@ -303,6 +304,9 @@ export interface DayScreen {
   ordersAllowed: boolean;
   /** The orders to deliver from the van on this day, with where their stock is. */
   drops: DropView[];
+  /** What the customers at visits under way owe, and the money collected on the day. */
+  owing: OwingView[];
+  collections: CollectionView[];
   /** The cash on the van against its limit and the drops made; null when the day has no van till. */
   cash: CashView | null;
   /** The planner may add orders to deliver: a day with a van that takes both kinds of work, before it goes out. */
@@ -320,9 +324,9 @@ async function dayScreen(companyId: string, id: string, userId: string): Promise
   const settings = await c.vanSalesSettings.current(companyId);
   const isRep = rep.userId === userId;
   const selling = day.status === 'out' && isRep && maySell;
-  const [sales, tenders, drops, cash] = await Promise.all([c.vanSales.forDay(companyId, id), selling ? c.vanSales.tenderChoices(companyId, day.branchId) : Promise.resolve([]), c.vanDrops.forDay(companyId, id), c.vanCash.forDay(companyId, id)]);
+  const [sales, tenders, drops, cash, owing, collections] = await Promise.all([c.vanSales.forDay(companyId, id), selling ? c.vanSales.tenderChoices(companyId, day.branchId) : Promise.resolve([]), c.vanDrops.forDay(companyId, id), c.vanCash.forDay(companyId, id), c.vanCollections.owing(companyId, id), c.vanCollections.forDay(companyId, id)]);
   const loadSigned = loads.some((l) => l.kind === 'load' && l.cancelledAt === null && l.signedAt !== null);
-  return { detail, canPlan, loads, onVan, suggestion, isRep, maySell, sales, tenders, drops, cash, canAddDrops: canPlan && settings.preSell && day.vanId !== null && day.mode === 'both' && (day.status === 'planned' || day.status === 'loading'), ordersAllowed: settings.preSell && day.mode !== 'van_sell', repLimits: isRep ? { maxDiscountPercent: rep.maxDiscountPercent, maxCreditPerDay: rep.maxCreditPerDay, mayOverridePrice: rep.mayOverridePrice, maySellOnCredit: rep.maySellOnCredit } : null, outProblem: goOutProblem({ status: day.status, mode: day.mode, loadSigned }), offRouteAllowed: settings.offRoute === 'allow' };
+  return { detail, canPlan, loads, onVan, suggestion, isRep, maySell, sales, tenders, drops, cash, owing, collections, canAddDrops: canPlan && settings.preSell && day.vanId !== null && day.mode === 'both' && (day.status === 'planned' || day.status === 'loading'), ordersAllowed: settings.preSell && day.mode !== 'van_sell', repLimits: isRep ? { maxDiscountPercent: rep.maxDiscountPercent, maxCreditPerDay: rep.maxCreditPerDay, mayOverridePrice: rep.mayOverridePrice, maySellOnCredit: rep.maySellOnCredit } : null, outProblem: goOutProblem({ status: day.status, mode: day.mode, loadSigned }), offRouteAllowed: settings.offRoute === 'allow' };
 }
 
 export async function dayScreenAction(id: unknown) {
@@ -528,4 +532,10 @@ export async function closeDropAction(raw: unknown) {
 export async function cashDropAction(raw: unknown) {
   const i = obj(raw);
   return await runDay(i.dayId, async (c, companyId, actor, dayId, maySell) => await c.vanCash.drop(companyId, actor, dayId, i, maySell));
+}
+
+/** The rep collects money from the customer they are at, against what they owe. */
+export async function collectAction(raw: unknown) {
+  const i = obj(raw);
+  return await runDay(i.dayId, async (c, companyId, actor, dayId, maySell) => await c.vanCollections.collect(companyId, actor, dayId, i, maySell));
 }
