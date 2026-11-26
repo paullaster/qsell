@@ -9,6 +9,7 @@ import { ROUTE_MODE_WORDS } from '@/lib/van-sales/settings';
 import { WhyPanel } from './WhyPanel';
 import type { DayCall } from './day/call';
 import { HistoryPanel } from './day/HistoryPanel';
+import { CashPanel } from './day/CashPanel';
 import { DropsPanel } from './day/DropsPanel';
 import { RunPanel } from './day/RunPanel';
 import { SalesPanel } from './day/SalesPanel';
@@ -67,6 +68,7 @@ function Body({ initial }: { initial: DayScreen }) {
       <VisitsPanel screen={screen} run={run} />
       <DropsPanel screen={screen} run={run} />
       <SalesPanel screen={screen} />
+      <CashPanel screen={screen} run={run} />
       <LoadPanel screen={screen} run={run} />
       <HistoryPanel events={events} />
     </div>

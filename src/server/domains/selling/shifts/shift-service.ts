@@ -228,6 +228,12 @@ export class ShiftService {
 
   /** Cash put into or taken out of the till during the shift, with the reason. Only the person whose shift it is may do it (a supervisor may for anyone's). */
   async move(companyId: string, who: { userId: string; supervisor: boolean }, shiftId: string, input: { kind: 'paid_in' | 'paid_out'; amount: number; reason: string }): Promise<{ ok: true } | { ok: false; error: string }> {
+    const moved = await this.moveLinked(companyId, who, shiftId, input);
+    return moved.ok ? { ok: true } : moved;
+  }
+
+  /** The same, for a caller that has a record of its own to keep with the movement: `link` runs in the same transaction with the movement's id, and the id is returned. */
+  async moveLinked(companyId: string, who: { userId: string; supervisor: boolean }, shiftId: string, input: { kind: 'paid_in' | 'paid_out'; amount: number; reason: string }, link?: (tx: Tx, movementId: string) => Promise<void>): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
     const reason = input.reason.trim();
     if (reason.length < 3 || reason.length > 200) return { ok: false, error: 'Say why, in 3 to 200 characters.' };
     const [shift] = await this.db.select().from(shifts).where(and(eq(shifts.id, shiftId), eq(shifts.companyId, companyId))).limit(1);
@@ -240,12 +246,17 @@ export class ShiftService {
       if (input.amount > f.expected + 1e-9) return { ok: false, error: `The till holds ${String(f.expected)}: you cannot take out more than that.` };
     }
     try {
-      await this.db.insert(shiftMovements).values({ shiftId: shift.id, kind: input.kind, amount: String(input.amount), reason, createdBy: who.userId });
+      const id = await this.db.transaction(async (tx) => {
+        const [made] = await tx.insert(shiftMovements).values({ shiftId: shift.id, kind: input.kind, amount: String(input.amount), reason, createdBy: who.userId }).returning({ id: shiftMovements.id });
+        const movementId = made?.id ?? '';
+        if (link !== undefined) await link(tx, movementId);
+        return movementId;
+      });
+      return { ok: true, id };
     } catch (error) {
       if (`${error instanceof Error ? error.message : ''} ${String((error as { cause?: unknown }).cause)}`.includes('closed')) return { ok: false, error: 'That shift is closed.' };
       throw error;
     }
-    return { ok: true };
   }
 
   /** The shift as it stands (the X report while it is open, the Z report once closed). */

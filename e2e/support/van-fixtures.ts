@@ -6,6 +6,7 @@
  *   tsx e2e/support/van-fixtures.ts day-route <tag> [admin]  ... with `admin`, the rep is the e2e admin account itself, so the browser can run the day as the rep
  *   tsx e2e/support/van-fixtures.ts reset-rep <any>      cancels the open days of the e2e admin as a rep and closes its open shifts, so the next test starts clean
  *   tsx e2e/support/van-fixtures.ts order <customer name> <product id> <quantity>  a paid sales order for that customer, holding its stock (taken under Sales Orders)
+ *   tsx e2e/support/van-fixtures.ts limit <van name> <amount>  the most cash the van should carry (set under Vans)
  *   tsx e2e/support/van-fixtures.ts moment <payment|dispatch|delivery>  when the shop issues stock (set under Stock settings)
  *   tsx e2e/support/van-fixtures.ts day-route <tag>      a route ready to plan a day on: both modes on, a van, a rep, and three customers visited every Monday; printed with their names (set up under Van sales)
  */
@@ -118,6 +119,14 @@ async function placeOrder(customerName: string, productId: string, quantity: str
   return { orderNumber: placed.orderNumber };
 }
 
+async function cashLimit(vanName: string, amount: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { vans } = await import('@/server/db/drizzle/schema');
+  const { eq } = await import('drizzle-orm');
+  await db.update(vans).set({ maxCash: amount }).where(eq(vans.name, vanName));
+  return { limit: amount };
+}
+
 async function issueMoment(moment: string): Promise<Record<string, string>> {
   const { getContainer } = await import('@/server/di/container');
   const c = getContainer();
@@ -145,6 +154,7 @@ async function main(): Promise<void> {
   if (command === 'reset-rep') result = await resetRep();
   if (command === 'order' && tag !== undefined && count !== undefined && third !== undefined) result = await placeOrder(tag, count, third);
   if (command === 'moment' && tag !== undefined) result = await issueMoment(tag);
+  if (command === 'limit' && tag !== undefined && count !== undefined) result = await cashLimit(tag, count);
   if (command === 'par' && tag !== undefined && count !== undefined && third !== undefined) result = await par(tag, count, third);
   if (result === null) throw new Error('usage: van-fixtures customer <tag> <n> | product <tag> | day-route <tag> [admin] | reset-rep <any> | par <route name> <product id> <quantity>');
   process.stdout.write(`FIXTURE ${JSON.stringify(result)}\n`);

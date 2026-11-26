@@ -286,3 +286,12 @@ A drop is delivering a pre-sold order from the van on a van day. Reading the cod
 - **Visits:** a visit with an open delivery cannot be finished; one with only deliveries finishes as delivered. Orders taken at a visit now carry the day's branch so a delivery can be planned from it.
 - **Screens:** the Deliveries panel (planner: add an order with `van-day-orders`, take off; rep: Deliver, Refused, Could not deliver) and the stock state of each.
 - **Not yet:** payment at the customer on delivery (the collections in V-7), partial acceptance and return of goods at the door, putting a refused order's hold back at the warehouse when the van is unloaded and refusing to end the day with deliveries open (V-9).
+
+### V-7a (2026-11-26): cash on the van and cash drops
+- **Data:** 0223 `van_cash_drops` (day, the shift's paid-out movement it came from, amount, destination safe, bank run or office, note, room for who counted it in and when). One drop per movement.
+- **Shift:** `ShiftService.move` now returns the movement's id and runs an optional callback in the same transaction, so a drop and its paid-out are written together.
+- **Pure:** `readCashDrop`, `cashState` (near from nine tenths of the limit), `cashWords`, `cashDropProblem`.
+- **Server:** `VanCashService.forDay` (the till's live expected cash against the van's limit, the drops) and `drop` (rep only, day out or returning, no more than the till holds, a paid-out with the reason `Cash drop to ...`, an entry in the day's history).
+- **Screens:** the Cash on the van panel with the state, the words and the drop form.
+- **Not yet:** a supervisor's alert outside the day's page, and counting a drop in at the other end (V-9).
+- **Next in V-7:** collections (a payment taken from a customer at a visit, which also pays an order at delivery) and returns of goods at a visit.

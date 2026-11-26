@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { eq, sql } from 'drizzle-orm';
+import { asc, eq, sql } from 'drizzle-orm';
 import type { getContainer } from '@/server/di/container';
 import type { drizzleDb } from '@/server/db/drizzle/client';
 import type * as schemaModule from '@/server/db/drizzle/schema';
@@ -49,7 +49,7 @@ describe.skipIf(url === undefined || url === '')('van sales settings (database)'
     expect(screen.settings.preSell).toBe(false);
   });
 
-  const logged = async () => (await db.select().from(schema.decisionLog).where(eq(schema.decisionLog.subjectType, 'van_sales_settings'))).filter((l) => l.subjectId === companyId && l.action === 'van_sales_settings.changed');
+  const logged = async () => (await db.select().from(schema.decisionLog).where(eq(schema.decisionLog.subjectType, 'van_sales_settings')).orderBy(asc(schema.decisionLog.occurredAt), asc(schema.decisionLog.id))).filter((l) => l.subjectId === companyId && l.action === 'van_sales_settings.changed');
 
   it('is changed with a reason and the version on screen, and the change is logged with what it was and what it became', async () => {
     // The decision log is append-only, so count only what this test adds.

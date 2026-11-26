@@ -127,6 +127,10 @@ Below the visits, for a day that has a van (a day that only takes orders has non
 4. **Deliver** (the rep, at the customer). When the rep has arrived at the customer, each of that customer's deliveries shows **Deliver**, **Refused** and **Could not deliver**. **Deliver** asks who received the goods and carries the delivery through its steps in one go; the stock is issued from the van and the order shows delivered. **Refused** and **Could not deliver** ask why; the stock stays held on the van until it is unloaded.
 5. **Finish the visit.** A visit cannot be finished while it has a delivery that is not dealt with. A visit with only a delivery is recorded as *Delivered*.
 
+### Cash on the van, on a van day's page
+1. **Cash on the van** shows what the van's till should hold now (the float, plus cash sales, less cash refunds and cash taken off) against the van's limit (set on the van under Vans, *Cash limit*). It says *Within the limit*, *Near the limit* (from nine tenths of it) or *Over the limit*, and when near or over it tells the rep how much to take off. A limit warns; it never stops a sale.
+2. **Take cash off the van** (the rep, while the day is out or coming back). The rep types the amount, chooses where it goes (*The safe*, *A bank run* or *The office*) and may add a note. The amount cannot be more than the van holds. The list below shows each drop with its time and note.
+
 ## 5. Granular Field-by-Field Reference
 
 | Field | Type | Allowed | Default | Required |
@@ -350,6 +354,9 @@ Below the visits, for a day that has a van (a day that only takes orders has non
 - **Set the shop to issue stock at delivery** (Stock settings) for orders that go on a van. An order whose stock was already issued when it was paid cannot be carried on the van, and is refused when it is added.
 - **An order must be paid for, or paid at the door, to be handed over.** If it is not, **Deliver** is refused with the usual reason and the delivery stays where it got to; it carries on once the order is paid. Taking payment at the customer is part of the collections that follow.
 - **A refused or failed delivery keeps its stock on the van** for the unload at the end of the day, and the order can be added to a later day.
+- **A cash drop is a paid-out of the van's till shift.** The till's expected cash falls by the same amount, the shift's report shows the movement with its reason, and the drop is recorded in the same step, so one cannot exist without the other.
+- **Only the day's own rep takes cash off the van**, as with the rest of the day. A supervisor sees the cash and the drops live on the day's page.
+- **A drop is counted in at the other end later.** Each drop has room for the person who counted it in and when; this is filled when the day is reconciled.
 - Every add, change, stop, pause, end and resume is in the decision log with the person, the time and the reason typed.
 - The database itself refuses a stopped van, route, or a paused or ended rep with no reason, a pre-sell route with a van, a visit with no day or one visited every 3 weeks, a discount over 100%, a negative credit or cash limit, and a mode other than van sell or pre-sell.
 - A reason is required for every change, so an auditor can see why a rule was relaxed.
@@ -392,4 +399,6 @@ Below the visits, for a day that has a van (a day that only takes orders has non
 - [ ] Verify: the shop issues stock at delivery (Stock settings) before orders go on a van.
 - [ ] Verify: an order added to a day's deliveries shows under the load planner, ships with the load, and shows *On the van* after the rep signs.
 - [ ] Test delivery: deliver a paid order at a customer and check the delivery under Deliveries, the order's timeline, and the van's stock.
+- [ ] Verify: each van has a cash limit that suits the route, set under Vans.
+- [ ] Test: with the van near its limit, make a cash drop and check the till's expected cash on the Shifts screen falls by the same amount.
 - **Common pitfalls:** asking the office to send a day out for the rep (refused: the rep does it); requiring the rep to be near a customer who has no map pin (the visit starts and the distance is not known); loading before stock by location is switched on (the screen says so); signing a load that was never sent; expecting stock to be on the van when the load was only asked for; planning a day before the route has customers due that date (the screen says none is due); planning a day for the usual rep who is already on another route that date (refused); giving two routes the same code or name (refused); starting a fortnightly customer's visits in the wrong week (the date sets which weeks count); naming two vans alike (refused); putting a vehicle behind two vans (refused); switching on *require* with a very small distance, which blocks reps in town centres; leaving the approval limit at 0, which sends every small shortage to a second person.

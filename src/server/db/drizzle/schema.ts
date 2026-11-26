@@ -5321,6 +5321,36 @@ export const vanDrops = pgTable(
 );
 
 /**
+ * Cash the rep took off the van during the day (docs/architecture/van-sales.md §7, cash limit): paid out of the van's till shift to the safe, a bank
+ * run or the office. The cash leaves the shift through its own paid-out movement, so the till's expected cash falls by the same amount; this
+ * says what the money was for and, later, who counted it in.
+ */
+export const vanCashDrops = pgTable(
+  'van_cash_drops',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    dayId: uuid('day_id').notNull().references(() => vanDays.id, { onDelete: 'restrict' }),
+    movementId: uuid('movement_id').notNull().references(() => shiftMovements.id, { onDelete: 'restrict' }),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    destination: text('destination').notNull(),
+    note: text('note'),
+    /** Who counted it in at the other end, and when: set when the day is reconciled. */
+    witnessedBy: text('witnessed_by'),
+    witnessedAt: timestamp('witnessed_at', { withTimezone: true }),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('van_cash_drops_movement_uidx').on(t.movementId),
+    index('van_cash_drops_day_idx').on(t.dayId, t.createdAt),
+    check('van_cash_drops_amount_chk', sql`${t.amount} > 0`),
+    check('van_cash_drops_destination_chk', sql`${t.destination} IN ('safe','bank_run','office')`),
+    check('van_cash_drops_witness_chk', sql`(${t.witnessedBy} IS NULL) = (${t.witnessedAt} IS NULL)`),
+  ],
+);
+
+/**
  * What happened to a van day, in order, each with its server time, who did it and why: append-only (a database trigger refuses any change
  * or delete). The day's status is a projection of this.
  */
