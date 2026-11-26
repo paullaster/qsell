@@ -3,7 +3,7 @@ import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { products, routeParLevels, salesReps, stockBalances, stockLocations, stockSettings, unitsOfMeasure, users, vanDayShortages, vanDays, vanLoads, vans } from '@/server/db/drizzle/schema';
 import type { Actor } from '@/server/kernel/context';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
-import { LOAD_KINDS, LOAD_STATE_WORDS, UNLOAD_STATE_WORDS, loadSteps, readLoadKind, readSign, suggestLoad, type LoadKind, type LoadSteps } from '@/lib/van-sales/load';
+import { LOAD_KINDS, LOAD_STATE_WORDS, loadStateWords, loadSteps, readLoadKind, readSign, suggestLoad, type LoadKind, type LoadSteps } from '@/lib/van-sales/load';
 import { reconcileProblem, unloadProblem, type UnloadState } from '@/lib/van-sales/back';
 import { shortageNeedsApproval } from '@/lib/van-sales/settle';
 import type { VanSalesSettingsService } from './settings-service';
@@ -220,8 +220,7 @@ export class VanLoadService {
         transferId: r.l.transferId,
         number: transfer.document.number,
         state,
-        // Once the warehouse has counted an unload it is received, whatever is missing: the missing stock is a shortage, not a part that is still to come.
-        stateWords: r.l.cancelledAt === null ? (r.l.kind === 'unload' && r.l.signedAt !== null ? UNLOAD_STATE_WORDS.received : ((r.l.kind === 'unload' ? UNLOAD_STATE_WORDS : LOAD_STATE_WORDS)[state] ?? state)) : LOAD_STATE_WORDS.cancelled ?? 'Cancelled',
+        stateWords: r.l.cancelledAt === null ? loadStateWords(readLoadKind(r.l.kind), state, r.l.signedAt !== null) : (LOAD_STATE_WORDS.cancelled ?? 'Cancelled'),
         fromName: r.from,
         createdAt: r.l.createdAt.toISOString(),
         signedAt: r.l.signedAt?.toISOString() ?? null,

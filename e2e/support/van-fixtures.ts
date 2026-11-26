@@ -7,6 +7,7 @@
  *   tsx e2e/support/van-fixtures.ts reset-rep <any>      cancels the open days of the e2e admin as a rep and closes its open shifts, so the next test starts clean
  *   tsx e2e/support/van-fixtures.ts order <customer name> <product id> <quantity>  a paid sales order for that customer, holding its stock (taken under Sales Orders)
  *   tsx e2e/support/van-fixtures.ts out-day <route name> <place code> <date>  a day planned, loaded from that place as the route's usual stock suggests, signed for and sent out, as the e2e admin rep
+ *   tsx e2e/support/van-fixtures.ts decide <day id> <reason>  the office decides the shortages of a day (the e2e admin is the rep, and the rep does not decide their own)
  *   tsx e2e/support/van-fixtures.ts refundable <any>  lets cash pay customers back (set under Payment methods)
  *   tsx e2e/support/van-fixtures.ts owe <customer name> <amount>  an open invoice on that customer's account (a credit sale leaves one)
  *   tsx e2e/support/van-fixtures.ts limit <van name> <amount>  the most cash the van should carry (set under Vans)
@@ -147,6 +148,16 @@ async function outDay(routeName: string, placeCode: string, date: string): Promi
   return { dayId: day.id, number: day.number };
 }
 
+async function decideShortages(dayId: string, reason: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const c = getContainer();
+  const company = await c.companySettings.ensureSeeded();
+  const office = { type: 'user' as const, id: 'e2e' };
+  const view = await c.vanSettle.view(company.id, dayId);
+  for (const shortage of view.shortages.filter((x) => !x.decided)) await c.vanSettle.decide(company.id, office, dayId, shortage.id, { reason }, { mayReconcile: true, mayApprove: true });
+  return { decided: String(view.shortages.filter((x) => !x.decided).length) };
+}
+
 async function refundable(): Promise<Record<string, string>> {
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
   const { paymentMethods } = await import('@/server/db/drizzle/schema');
@@ -209,6 +220,7 @@ async function main(): Promise<void> {
   if (command === 'limit' && tag !== undefined && count !== undefined) result = await cashLimit(tag, count);
   if (command === 'owe' && tag !== undefined && count !== undefined) result = await owe(tag, count);
   if (command === 'refundable') result = await refundable();
+  if (command === 'decide' && tag !== undefined && count !== undefined) result = await decideShortages(tag, count);
   if (command === 'out-day' && tag !== undefined && count !== undefined && third !== undefined) result = await outDay(tag, count, third);
   if (command === 'par' && tag !== undefined && count !== undefined && third !== undefined) result = await par(tag, count, third);
   if (result === null) throw new Error('usage: van-fixtures customer <tag> <n> | product <tag> | day-route <tag> [admin] | reset-rep <any> | par <route name> <product id> <quantity>');

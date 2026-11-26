@@ -84,20 +84,18 @@ test.describe('van sales: the end of the day', () => {
     await end.getByRole('button', { name: 'Start settling the day' }).click();
     await expect(day).toContainText('Being counted', { timeout: 30_000 });
 
-    // The one missing is a shortage: decided with a reason, written off and charged to the rep by the company's rule.
+    // The one missing is a shortage, to be decided with a reason, written off and charged to the rep by the company's rule.
     const settle = page.getByRole('region', { name: 'Settling the day', exact: true });
     const shortages = settle.getByRole('list', { name: 'Shortages' }).getByRole('listitem');
     await expect(shortages).toHaveCount(1);
     await expect(shortages.first()).toContainText('1 missing');
     await expect(settle.getByTestId('close-problem')).toContainText('1 shortage is still to be decided');
     await expect(settle.getByRole('button', { name: 'Close the day' })).toBeDisabled();
-    await expect(async () => {
-      await shortages.first().getByRole('button', { name: `Decide the shortage of ${soda.name}` }).click();
-      await expect(page.getByRole('form', { name: `Decide ${soda.name}` })).toBeVisible({ timeout: 3000 });
-    }).toPass({ timeout: 60_000 });
-    const decide = page.getByRole('form', { name: `Decide ${soda.name}` });
-    await decide.getByLabel('Why?').fill('A crate was broken on the road');
-    await decide.getByRole('button', { name: 'Write it off and charge the rep' }).click();
+    // The rep never decides the shortages of their own van: the screen says who does, and the office decides.
+    await expect(shortages.first().getByRole('button', { name: `Decide the shortage of ${soda.name}` })).toHaveCount(0);
+    await expect(shortages.first()).toContainText('The office decides the shortages of your van');
+    vanTool('decide', dayFix.dayId ?? '', 'A crate was broken on the road');
+    await page.reload();
     await expect(shortages.first()).toContainText('charged to the rep', { timeout: 30_000 });
     await expect(shortages.first()).toContainText('A crate was broken on the road');
     await expect(settle.getByTestId('close-problem')).toContainText('not been counted and closed');

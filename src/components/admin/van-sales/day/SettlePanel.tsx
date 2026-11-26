@@ -46,7 +46,8 @@ function ShortageRow({ shortage: s, screen, run }: { shortage: ShortageView; scr
         {s.decided ? <Chip tone="gray">{s.decision === 'charge_rep' ? 'Written off, charged to the rep' : 'Written off'}</Chip> : <Chip tone="amber">To decide</Chip>}
       </div>
       {s.decided ? <p className="text-xs text-fg-muted">{s.reason}{s.decidedByName === null ? '' : ` · ${s.decidedByName}`}{s.chargedAmount === null ? '' : ` · ${kes(s.chargedAmount)} charged`}</p> : null}
-      {!s.decided && !mayDecide && s.needsApproval ? <p className="text-xs text-fg-muted">A manager decides this one: it is worth more than the company&apos;s limit.</p> : null}
+      {!s.decided && screen.isRep ? <p className="text-xs text-fg-muted">The office decides the shortages of your van.</p> : null}
+      {!s.decided && !screen.isRep && !mayDecide && s.needsApproval ? <p className="text-xs text-fg-muted">A manager decides this one: it is worth more than the company&apos;s limit.</p> : null}
       {!s.decided && mayDecide && !open ? <button type="button" className={buttonClass} onClick={() => setOpen(true)} aria-label={`Decide the shortage of ${s.productName}`}>Decide</button> : null}
       {open ? (
         <WhyPanel label={`Decide ${s.productName}`} action={RULE_WORDS[s.rule]} busy={busy} onCancel={() => setOpen(false)} onConfirm={(reason) => void (async () => {

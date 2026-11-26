@@ -78,6 +78,12 @@ export const UNLOAD_STATE_WORDS: Record<string, string> = {
   received: 'Received at the warehouse',
 };
 
+/** The words for where a load or an unload has got to. Once the warehouse has counted an unload it is received, whatever is missing: what is missing is a shortage, not a part still to come. */
+export function loadStateWords(kind: LoadKind, state: string, counted: boolean): string {
+  if (kind !== 'unload') return LOAD_STATE_WORDS[state] ?? state;
+  return counted ? (UNLOAD_STATE_WORDS.received ?? state) : (UNLOAD_STATE_WORDS[state] ?? state);
+}
+
 export interface LoadSteps {
   /** A second person agrees (only where the company wants a transfer approved). */
   approve: boolean;
