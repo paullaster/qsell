@@ -41,7 +41,7 @@ export function CashPanel({ screen, run }: { screen: DayScreen; run: DayCall }) 
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="min-w-0 flex-1 basis-48 text-base font-bold text-fg-strong">Cash on the van</h2>
         <span className="font-mono text-base font-bold text-fg-strong" data-testid="van-cash">{kes(view.cash)}</span>
-        <Chip tone={TONE[view.state]}>{STATE_WORDS[view.state]}</Chip>
+        {view.state === 'no_limit' ? null : <Chip tone={TONE[view.state]}>{STATE_WORDS[view.state]}</Chip>}
       </div>
       {view.limit === null ? null : <p className="text-xs text-fg-muted">Limit {kes(view.limit)}</p>}
       {view.words === null ? null : <p role={view.state === 'over' ? 'alert' : 'status'} className={view.state === 'over' ? 'text-sm font-semibold text-red-700' : 'text-sm text-amber-700'}>{view.words}</p>}

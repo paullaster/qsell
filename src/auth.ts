@@ -88,6 +88,8 @@ const PUBLIC_VENDOR_PATHS = new Set(['/vendor/register', '/vendor/invitations/ac
 
 /** A phone fetches the app's manifest without sign-in cookies, so it must be open for the app to be installable. */
 const RIDER_MANIFEST_PATH = '/rider/manifest.webmanifest';
+/** The rep app's manifest is open for the same reason. */
+const REP_MANIFEST_PATH = '/rep/manifest.webmanifest';
 /** The rider app's own sign-in (phone number and PIN) and where a rider chooses their own PIN. */
 export const RIDER_SIGN_IN_PATH = '/rider/sign-in';
 export const RIDER_PIN_PATH = '/rider/pin';
@@ -196,6 +198,15 @@ const authConfig = {
         if (person === undefined) return Response.redirect(new URL(RIDER_SIGN_IN_PATH, request.nextUrl));
         // A PIN the office handed out is replaced with the rider's own before anything else.
         if (person.mustChangePin && path !== RIDER_PIN_PATH) return Response.redirect(new URL(RIDER_PIN_PATH, request.nextUrl));
+        if (person.mustChangePassword) {
+          const target = new URL('/change-password', request.nextUrl);
+          target.searchParams.set('callbackUrl', `${path}${request.nextUrl.search}`);
+          return Response.redirect(target);
+        }
+      }
+      if ((path === '/rep' || path.startsWith('/rep/')) && path !== REP_MANIFEST_PATH) {
+        // A rep signs in as themselves; the pages and actions decide whether they are set up as a rep. Not signed in goes to the sign-in, and back here after it.
+        if (person === undefined) return false;
         if (person.mustChangePassword) {
           const target = new URL('/change-password', request.nextUrl);
           target.searchParams.set('callbackUrl', `${path}${request.nextUrl.search}`);

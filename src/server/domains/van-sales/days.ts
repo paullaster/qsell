@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, ilike, inArray, isNull, ne, or, sql, type SQL } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { branches, customers, routeStops, salesReps, salesRoutes, stockBalances, stockDocuments, users, vanDayEvents, vanDays, vanLoads, vanVisits, vans } from '@/server/db/drizzle/schema';
+import { branches, customerAddresses, customers, routeStops, salesReps, salesRoutes, stockBalances, stockDocuments, users, vanDayEvents, vanDays, vanLoads, vanVisits, vans } from '@/server/db/drizzle/schema';
 import type { Actor } from '@/server/kernel/context';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import type { NumberSeriesService } from '@/server/kernel/numbering/service';
@@ -47,6 +47,8 @@ export interface VisitView {
   customerName: string;
   customerPhone: string | null;
   customerPlace: string | null;
+  /** Where the customer's shop is on the map, when it has been pinned. */
+  pin: { lat: number; lng: number } | null;
   customerWarning: string | null;
   sequence: number;
   status: VisitStatus;
@@ -202,12 +204,22 @@ export class VanDayService {
       .where(and(eq(vanVisits.companyId, companyId), eq(vanVisits.dayId, dayId)))
       .orderBy(asc(vanVisits.sequence), asc(vanVisits.id))
       .limit(1000);
+    const pins = new Map<string, { lat: number; lng: number }>();
+    if (rows.length > 0) {
+      const found = await this.db
+        .select({ customerId: customerAddresses.customerId, lat: customerAddresses.latitude, lng: customerAddresses.longitude })
+        .from(customerAddresses)
+        .where(and(inArray(customerAddresses.customerId, rows.map((r) => r.v.customerId)), sql`${customerAddresses.latitude} IS NOT NULL AND ${customerAddresses.longitude} IS NOT NULL`))
+        .orderBy(sql`${customerAddresses.isDefault} DESC`);
+      for (const f of found) if (!pins.has(f.customerId) && f.lat !== null && f.lng !== null) pins.set(f.customerId, { lat: Number(f.lat), lng: Number(f.lng) });
+    }
     return rows.map((r) => ({
       id: r.v.id,
       customerId: r.v.customerId,
       customerName: r.name,
       customerPhone: r.phone,
       customerPlace: r.city,
+      pin: pins.get(r.v.customerId) ?? null,
       customerWarning: customerWarning(r),
       sequence: r.v.sequence,
       status: readVisitStatus(r.v.status),

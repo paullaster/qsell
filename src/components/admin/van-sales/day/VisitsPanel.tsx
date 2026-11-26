@@ -11,13 +11,14 @@ import type { Choice } from '@/lib/payment-options';
 import { canArrangeVisits, VISIT_STATUS_WORDS } from '@/lib/van-sales/days';
 import { currentPosition } from '@/lib/browser-position';
 import { WhyPanel } from '../WhyPanel';
+import { ContactLinks } from './ContactLinks';
 import type { DayCall } from './call';
 import { CollectForm } from './CollectForm';
 import { ReturnForm } from './ReturnForm';
 import { SellForm } from './SellForm';
 
 /** The customers to visit on the day, in order. While the day is being got ready they can be added, moved and taken off. */
-export function VisitsPanel({ screen, run }: { screen: DayScreen; run: DayCall }) {
+export function VisitsPanel({ screen, run, nextStopId }: { screen: DayScreen; run: DayCall; /** The customer shown in a Next stop card above the list, whose contact links are not repeated here. */ nextStopId?: string }) {
   const { day, visits } = screen.detail;
   const may = screen.canPlan && canArrangeVisits(day.status);
   const mayRun = screen.isRep && screen.maySell && day.status === 'out';
@@ -58,14 +59,14 @@ export function VisitsPanel({ screen, run }: { screen: DayScreen; run: DayCall }
         <p role="status" className="rounded-lg border border-line p-6 text-center text-sm text-fg-muted">No customer on this day.</p>
       ) : (
         <ol className="space-y-2" aria-label="Visits in order">
-          {visits.map((v, i) => <VisitRow key={v.id} visit={v} first={i === 0} last={i === visits.length - 1} screen={screen} may={may} mayRun={mayRun} run={run} />)}
+          {visits.map((v, i) => <VisitRow key={v.id} visit={v} first={i === 0} last={i === visits.length - 1} screen={screen} may={may} mayRun={mayRun} run={run} showContact={v.id !== nextStopId} />)}
         </ol>
       )}
     </section>
   );
 }
 
-function VisitRow({ visit, first, last, screen, may, mayRun, run }: { visit: VisitView; first: boolean; last: boolean; screen: DayScreen; may: boolean; mayRun: boolean; run: DayCall }) {
+function VisitRow({ visit, first, last, screen, may, mayRun, run, showContact }: { visit: VisitView; first: boolean; last: boolean; screen: DayScreen; may: boolean; mayRun: boolean; run: DayCall; showContact: boolean }) {
   const dayId = screen.detail.day.id;
   const where = [visit.customerPlace, visit.customerPhone].filter((x): x is string => x !== null && x !== '').join(' · ');
   return (
@@ -82,6 +83,7 @@ function VisitRow({ visit, first, last, screen, may, mayRun, run }: { visit: Vis
         {visit.customerWarning === null ? null : <Chip tone="amber">{visit.customerWarning}</Chip>}
       </div>
       <VisitFacts visit={visit} />
+      {showContact && (visit.status === 'planned' || visit.status === 'arrived') ? <ContactLinks visit={visit} /> : null}
       {mayRun ? <RunActions visit={visit} screen={screen} run={run} /> : null}
       {may && visit.status === 'planned' ? (
         <div className="flex flex-wrap gap-2">
@@ -151,8 +153,8 @@ function RunActions({ visit, screen, run }: { visit: VisitView; screen: DayScree
       ) : null}
       {mode === 'return' && returnable.length > 0 ? <ReturnForm screen={screen} sales={returnable} visitId={visit.id} customer={name} run={run} onDone={() => setMode('view')} onCancel={() => setMode('view')} /> : null}
       {mode === 'collect' && owing !== undefined ? <CollectForm screen={screen} owing={owing} customer={name} run={run} onDone={() => setMode('view')} onCancel={() => setMode('view')} /> : null}
-      {mode === 'order' ? <SellForm screen={screen} visitId={visit.id} customer={name} mode="order" run={run} onDone={() => setMode('view')} onCancel={() => setMode('view')} /> : null}
-      {mode === 'sell' ? <SellForm screen={screen} visitId={visit.id} customer={name} mode="sell" run={run} onDone={() => setMode('view')} onCancel={() => setMode('view')} /> : null}
+      {mode === 'order' ? <SellForm screen={screen} visitId={visit.id} customer={name} mode="order" usual={screen.usual.find((u) => u.visitId === visit.id)} run={run} onDone={() => setMode('view')} onCancel={() => setMode('view')} /> : null}
+      {mode === 'sell' ? <SellForm screen={screen} visitId={visit.id} customer={name} mode="sell" usual={screen.usual.find((u) => u.visitId === visit.id)} run={run} onDone={() => setMode('view')} onCancel={() => setMode('view')} /> : null}
       {mode === 'skip' ? <WhyPanel label={`Skip ${name}`} action="Skip this customer" busy={busy} onCancel={() => setMode('view')} onConfirm={(reason) => void go(skipVisitAction({ dayId, id: visit.id, reason }), `${name} is skipped.`)} /> : null}
       {mode === 'finish' ? <WhyPanel label={`Finish ${name}`} action="Finish the visit" busy={busy} onCancel={() => setMode('view')} onConfirm={(reason) => void go(finishVisitAction({ dayId, id: visit.id, outcome: 'no_sale', reason }), `The visit to ${name} is finished with no sale.`)} /> : null}
     </div>

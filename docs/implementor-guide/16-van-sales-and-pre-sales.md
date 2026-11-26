@@ -143,6 +143,14 @@ Below the visits, for a day that has a van (a day that only takes orders has non
 3. **What happens.** A credit note corrects the customer's tax invoice, goods that are fit to sell again are counted back **onto the van** they were sold from (damaged goods are not counted back into stock), and a cash refund is handed over out of the van's till shift, so the van's cash goes down by the same amount. Refunds follow the company's refund approvals and limits.
 4. **Goods returned** lists each return under the day's Sales. A visit where goods were taken back is finished as done, never as no sale.
 
+### The rep app (`/rep`, on the rep's phone)
+The same day, built for a thumb in sunlight. A rep signs in with their own account on the usual sign-in page and is brought back to the app; on a phone they can add it to the home screen (it is named after the company). It is never listed by search engines.
+1. **My days** (the home). The days that are the rep's own to run, from yesterday to a fortnight ahead, each a large tap target: the day (*Today*, *Tomorrow* or the date), the route, its state, the van, how many visits are done of the total with a bar, and *Next:* the customer to see. A person who is not set up as a sales rep is told to ask the office.
+2. **A day** (tap it). The day's state, progress and the cash on the van. Before it goes out, the *Send the day out* and loading panels (the rep signs for the load here). Once it is out:
+   - **Next stop** puts the customer to see in front: who and where, **Call**, **WhatsApp** and **Directions** (to the customer's map pin where there is one, otherwise to the place on the card), and one large **I am here** button, which records the arrival.
+   - Below it the same panels as the office screen, in the order a rep needs them: the visits (with *Sell*, *Take an order*, *Collect*, *Return*, *Finish*, *Skip* and *Shop closed*), the sales, collections and returns of the day, the deliveries, the cash and cash drops, the stock on the van, and the day's history.
+3. **Same as last time.** At a customer the rep has arrived at, if the customer has bought through a van before, *Sell* and *Take an order* offer **Same as last time (the order number)**, which fills in what they last bought; the rep changes the quantities and the system prices it as always.
+
 ## 5. Granular Field-by-Field Reference
 
 | Field | Type | Allowed | Default | Required |
@@ -378,6 +386,10 @@ Below the visits, for a day that has a van (a day that only takes orders has non
 - **No more than was sold, and nothing twice.** What has already been returned is taken off what can still be returned, and a repeated press finds the return already made.
 - **Goods fit to sell again go back onto the van**; damaged goods are not counted back into stock.
 - **The refund method must be set up to pay customers back** (Payment methods: usable for customer refunds, with a refund destination). Without one the Return button is not offered.
+- **The app does nothing the office screens do not.** Every step is the same action with the same permission, the same checks and the same history; the app only presents the day for a phone. A rep needs permission to see van sales and to sell from a van.
+- **The app shows only the rep's own days.** A person who is not set up as a rep, or whose rep profile is for someone else, sees none.
+- **Call, WhatsApp and Directions need what is on the customer card:** a Kenyan mobile number for the first two, and a map pin or a place for directions. A button is not shown when there is nothing to make it from.
+- **Working with no signal is a later step.** For now the app needs a connection, and says what to do when an action does not go through.
 - Every add, change, stop, pause, end and resume is in the decision log with the person, the time and the reason typed.
 - The database itself refuses a stopped van, route, or a paused or ended rep with no reason, a pre-sell route with a van, a visit with no day or one visited every 3 weeks, a discount over 100%, a negative credit or cash limit, and a mode other than van sell or pre-sell.
 - A reason is required for every change, so an auditor can see why a rule was relaxed.
@@ -426,4 +438,6 @@ Below the visits, for a day that has a van (a day that only takes orders has non
 - [ ] Test: collect part of an open invoice in cash at a visit and check the receipt under Receipts, the invoice's remaining amount, and the van's cash.
 - [ ] Verify: cash (and M-Pesa if wanted) is set up to pay customers back, and a reason list is set up for returns.
 - [ ] Test: sell for cash at a visit, take one back as fit to sell again, and check the van's stock, the van's cash and the credit note.
+- [ ] Verify: each rep has an account and the permissions to see van sales and sell from a van, and can open the rep app on their phone and add it to the home screen.
+- [ ] Verify: the customers on a route have a mobile number and, for directions, a map pin or a town on their card.
 - **Common pitfalls:** asking the office to send a day out for the rep (refused: the rep does it); requiring the rep to be near a customer who has no map pin (the visit starts and the distance is not known); loading before stock by location is switched on (the screen says so); signing a load that was never sent; expecting stock to be on the van when the load was only asked for; planning a day before the route has customers due that date (the screen says none is due); planning a day for the usual rep who is already on another route that date (refused); giving two routes the same code or name (refused); starting a fortnightly customer's visits in the wrong week (the date sets which weeks count); naming two vans alike (refused); putting a vehicle behind two vans (refused); switching on *require* with a very small distance, which blocks reps in town centres; leaving the approval limit at 0, which sends every small shortage to a second person.

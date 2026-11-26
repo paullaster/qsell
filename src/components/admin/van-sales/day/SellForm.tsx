@@ -23,7 +23,7 @@ function payWords(pay: { short: number; change: number }): string {
 const inputClass = 'min-h-10 w-full rounded-lg border border-line bg-surface px-3 text-sm';
 
 /** What the rep types to sell at a visit: the products on the van, how many, and how it is paid (now, or on the customer's account). */
-export function SellForm({ screen, visitId, customer, mode, run, onDone, onCancel }: { screen: DayScreen; visitId: string; customer: string; mode: 'sell' | 'order'; run: DayCall; onDone: () => void; onCancel: () => void }) {
+export function SellForm({ screen, visitId, customer, mode, usual, run, onDone, onCancel }: { screen: DayScreen; visitId: string; customer: string; mode: 'sell' | 'order'; usual?: { orderNumber: string; lines: { productId: string; name: string; quantity: number }[] }; run: DayCall; onDone: () => void; onCancel: () => void }) {
   const limits = screen.repLimits;
   const ordering = mode === 'order';
   const [kind, setKind] = useState<'cash' | 'credit'>('cash');
@@ -100,6 +100,9 @@ export function SellForm({ screen, visitId, customer, mode, run, onDone, onCance
           <button type="button" className={kind === 'credit' ? primaryClass : buttonClass} aria-pressed={kind === 'credit'} onClick={() => setKind('credit')}>On account</button>
         </div>
       ) : null}
+      {usual === undefined || usual.lines.length === 0 || rows.length > 0 ? null : (
+        <button type="button" className={`${buttonClass} min-h-11 w-full`} onClick={() => setRows(usual.lines.map((l) => ({ productId: l.productId, name: l.name, quantity: String(l.quantity), discount: '', price: '' })))}>Same as last time ({usual.orderNumber})</button>
+      )}
       <ChoicePicker key={fresh} label="Add a product" source={ordering ? 'van-rep-products' : 'van-stock-products'} filters={ordering ? {} : { day: screen.detail.day.id }} choice={pick} onChoice={add} placeholder={ordering ? 'Search products by name or code…' : 'Search what is on the van…'} />
       {rows.length === 0 ? null : (
         <ul className="space-y-2" aria-label="What is being sold">

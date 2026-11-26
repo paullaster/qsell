@@ -13,6 +13,7 @@ import type { DropView } from './drops';
 import type { CashView } from './cash';
 import type { CollectionView, OwingView } from './collections';
 import type { RefundChoice, ReturnMade, ReturnableSale } from './returns';
+import type { RepDayCard, UsualView } from './rep-app';
 import { goOutProblem } from '@/lib/van-sales/run';
 import type { ParView, RouteView, StopView } from './routes';
 import type { VanView } from './vans';
@@ -305,6 +306,8 @@ export interface DayScreen {
   ordersAllowed: boolean;
   /** The orders to deliver from the van on this day, with where their stock is. */
   drops: DropView[];
+  /** What each customer at a visit under way last bought through a van, to repeat in one tap. */
+  usual: UsualView[];
   /** The goods that can be taken back at visits under way, how a customer is paid back, and the returns taken on the day. */
   returnable: ReturnableSale[];
   refundMethods: RefundChoice[];
@@ -329,9 +332,9 @@ async function dayScreen(companyId: string, id: string, userId: string): Promise
   const settings = await c.vanSalesSettings.current(companyId);
   const isRep = rep.userId === userId;
   const selling = day.status === 'out' && isRep && maySell;
-  const [sales, tenders, drops, cash, owing, collections, returnable, refundMethods, returns] = await Promise.all([c.vanSales.forDay(companyId, id), selling ? c.vanSales.tenderChoices(companyId, day.branchId) : Promise.resolve([]), c.vanDrops.forDay(companyId, id), c.vanCash.forDay(companyId, id), c.vanCollections.owing(companyId, id), c.vanCollections.forDay(companyId, id), c.vanReturns.returnable(companyId, id), selling ? c.vanReturns.refundMethods(companyId) : Promise.resolve([]), c.vanReturns.forDay(companyId, id)]);
+  const [sales, tenders, drops, cash, owing, collections, returnable, refundMethods, returns, usual] = await Promise.all([c.vanSales.forDay(companyId, id), selling ? c.vanSales.tenderChoices(companyId, day.branchId) : Promise.resolve([]), c.vanDrops.forDay(companyId, id), c.vanCash.forDay(companyId, id), c.vanCollections.owing(companyId, id), c.vanCollections.forDay(companyId, id), c.vanReturns.returnable(companyId, id), selling ? c.vanReturns.refundMethods(companyId) : Promise.resolve([]), c.vanReturns.forDay(companyId, id), c.repApp.usual(companyId, id)]);
   const loadSigned = loads.some((l) => l.kind === 'load' && l.cancelledAt === null && l.signedAt !== null);
-  return { detail, canPlan, loads, onVan, suggestion, isRep, maySell, sales, tenders, drops, cash, owing, collections, returnable, refundMethods, returns, canAddDrops: canPlan && settings.preSell && day.vanId !== null && day.mode === 'both' && (day.status === 'planned' || day.status === 'loading'), ordersAllowed: settings.preSell && day.mode !== 'van_sell', repLimits: isRep ? { maxDiscountPercent: rep.maxDiscountPercent, maxCreditPerDay: rep.maxCreditPerDay, mayOverridePrice: rep.mayOverridePrice, maySellOnCredit: rep.maySellOnCredit } : null, outProblem: goOutProblem({ status: day.status, mode: day.mode, loadSigned }), offRouteAllowed: settings.offRoute === 'allow' };
+  return { detail, canPlan, loads, onVan, suggestion, isRep, maySell, sales, tenders, drops, cash, owing, collections, returnable, refundMethods, returns, usual, canAddDrops: canPlan && settings.preSell && day.vanId !== null && day.mode === 'both' && (day.status === 'planned' || day.status === 'loading'), ordersAllowed: settings.preSell && day.mode !== 'van_sell', repLimits: isRep ? { maxDiscountPercent: rep.maxDiscountPercent, maxCreditPerDay: rep.maxCreditPerDay, mayOverridePrice: rep.mayOverridePrice, maySellOnCredit: rep.maySellOnCredit } : null, outProblem: goOutProblem({ status: day.status, mode: day.mode, loadSigned }), offRouteAllowed: settings.offRoute === 'allow' };
 }
 
 export async function dayScreenAction(id: unknown) {
@@ -549,4 +552,18 @@ export async function collectAction(raw: unknown) {
 export async function returnGoodsAction(raw: unknown) {
   const i = obj(raw);
   return await runDay(i.dayId, async (c, companyId, actor, dayId, maySell) => await c.vanReturns.take(companyId, actor, dayId, i, maySell));
+}
+
+// ── The rep's phone app ──────────────────────────────────────────────────
+
+export interface MyDays {
+  repName: string;
+  /** Today's date in the business's time zone, to say which day is today. */
+  today: string;
+  days: RepDayCard[];
+}
+
+/** The days that are the signed-in person's to run, for the home of the rep app. Null when they are not set up as a rep. */
+export async function myDaysAction() {
+  return await runSetting('van_sales:read', async ({ companyId, userId }): Promise<MyDays | null> => await getContainer().repApp.myDays(companyId, userId), { friendly });
 }

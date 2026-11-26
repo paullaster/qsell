@@ -310,3 +310,11 @@ A drop is delivering a pre-sold order from the van on a van day. Reading the cod
 - **Server:** `VanReturnService.take` runs the ordinary counter return (credit note, stock back, the refund through the refund flow, cash handed back from the rep's open shift, the same key making a repeat safe) after checking the rep, the day, the visit and that the sale was a cash sale made from this van to the customer at this visit (read from the link of the sale to its visit, because an order's own customer record is matched by email or phone and need not be the visit's customer card).
 - **Screens:** Return on a visit (the sale, quantities, reason, condition, refund method), and a Goods returned list under the day's Sales.
 - **Not yet:** returns of credit sales or orders at a visit, and the rep's phone app (V-8).
+
+### V-8 (2026-11-26): the rep app, online
+- **Where:** `app/rep` (home, `days/[id]`, manifest) with its own shell and a sign-out route, gated in `authorized` for anyone signed in (the pages and actions decide who is a rep) and in the proxy matcher. The manifest is open so a phone can install it. The rider app's PIN sign-in was not reused: reps are staff accounts with a password, so the usual sign-in brings them back to `/rep`.
+- **No new rules:** the day screen reuses the office panels and every action (send out, arrive, sell, order, collect, return, deliver, cash drop) with their permissions; the rep app adds only what a phone needs.
+- **Server:** `RepAppService.myDays` (the rep's days from yesterday to a fortnight ahead with visits done of the total and the next customer) and `usual` (what a customer at a visit under way last bought through a van, on another day); the visit now carries the customer's map pin.
+- **Pure:** `callLink`, `whatsappLink` and `directionsLink` (Kenyan mobile numbers through the rider app's normaliser; the pin or, without one, the place), and the labels (Today, Tomorrow, how far along).
+- **Screens:** My days; a day with a Next stop card (contact links and one large I am here button) above the visits; Same as last time in the sell and order forms.
+- **Not yet:** working with no signal (V-10), a request for more stock from the phone, the rep's own end of day screen (V-9), a PIN sign-in, and a service worker.

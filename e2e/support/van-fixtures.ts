@@ -6,6 +6,7 @@
  *   tsx e2e/support/van-fixtures.ts day-route <tag> [admin]  ... with `admin`, the rep is the e2e admin account itself, so the browser can run the day as the rep
  *   tsx e2e/support/van-fixtures.ts reset-rep <any>      cancels the open days of the e2e admin as a rep and closes its open shifts, so the next test starts clean
  *   tsx e2e/support/van-fixtures.ts order <customer name> <product id> <quantity>  a paid sales order for that customer, holding its stock (taken under Sales Orders)
+ *   tsx e2e/support/van-fixtures.ts out-day <route name> <place code> <date>  a day planned, loaded from that place as the route's usual stock suggests, signed for and sent out, as the e2e admin rep
  *   tsx e2e/support/van-fixtures.ts refundable <any>  lets cash pay customers back (set under Payment methods)
  *   tsx e2e/support/van-fixtures.ts owe <customer name> <amount>  an open invoice on that customer's account (a credit sale leaves one)
  *   tsx e2e/support/van-fixtures.ts limit <van name> <amount>  the most cash the van should carry (set under Vans)
@@ -121,6 +122,31 @@ async function placeOrder(customerName: string, productId: string, quantity: str
   return { orderNumber: placed.orderNumber };
 }
 
+async function outDay(routeName: string, placeCode: string, date: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { salesRoutes, stockLocations, users } = await import('@/server/db/drizzle/schema');
+  const { eq } = await import('drizzle-orm');
+  const { getContainer } = await import('@/server/di/container');
+  const { E2E_ADMIN_EMAIL } = await import('./constants');
+  const c = getContainer();
+  const company = await c.companySettings.ensureSeeded();
+  const [route] = await db.select({ id: salesRoutes.id }).from(salesRoutes).where(eq(salesRoutes.name, routeName));
+  const [place] = await db.select({ id: stockLocations.id }).from(stockLocations).where(eq(stockLocations.code, placeCode));
+  const [admin] = await db.select({ id: users.id }).from(users).where(eq(users.email, E2E_ADMIN_EMAIL));
+  if (route === undefined || place === undefined || admin === undefined) throw new Error('e2e fixture: the route, the place or the e2e admin does not exist');
+  const office = { type: 'user' as const, id: 'e2e' };
+  const rep = { type: 'user' as const, id: admin.id };
+  const { day } = await c.vanDays.plan(company.id, office, { routeId: route.id, date });
+  const suggestion = await c.vanLoads.suggest(company.id, day.id, place.id);
+  const lines = suggestion.rows.filter((r) => r.loadable > 0).map((r) => ({ productId: r.productId, quantity: r.loadable }));
+  const made = (await c.vanLoads.create(company.id, office, day.id, { kind: 'load', fromLocationId: place.id, lines })).at(-1);
+  await c.vanLoads.ship(company.id, office, made?.id ?? '');
+  await c.vanLoads.sign(company.id, rep, made?.id ?? '', {}, { maySell: true, mayPlan: false });
+  const found = await c.vanDays.find(company.id, day.id);
+  await c.vanRun.sendOut(company.id, rep, day.id, { float: 500, expectedVersion: found?.day.version }, true);
+  return { dayId: day.id, number: day.number };
+}
+
 async function refundable(): Promise<Record<string, string>> {
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
   const { paymentMethods } = await import('@/server/db/drizzle/schema');
@@ -183,6 +209,7 @@ async function main(): Promise<void> {
   if (command === 'limit' && tag !== undefined && count !== undefined) result = await cashLimit(tag, count);
   if (command === 'owe' && tag !== undefined && count !== undefined) result = await owe(tag, count);
   if (command === 'refundable') result = await refundable();
+  if (command === 'out-day' && tag !== undefined && count !== undefined && third !== undefined) result = await outDay(tag, count, third);
   if (command === 'par' && tag !== undefined && count !== undefined && third !== undefined) result = await par(tag, count, third);
   if (result === null) throw new Error('usage: van-fixtures customer <tag> <n> | product <tag> | day-route <tag> [admin] | reset-rep <any> | par <route name> <product id> <quantity>');
   process.stdout.write(`FIXTURE ${JSON.stringify(result)}\n`);
