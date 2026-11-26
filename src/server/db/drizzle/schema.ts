@@ -4843,6 +4843,8 @@ export const counterReturns = pgTable(
     reasonText: text('reason_text'),
     /** The goods came back in a state to be sold again and go back into stock. */
     restock: boolean('restock').notNull(),
+    /** Where goods fit to be sold again are counted back, when it is not the default place (a van sale goes back on its van). */
+    restockLocationId: uuid('restock_location_id').references(() => stockLocations.id, { onDelete: 'set null' }),
     stockBack: boolean('stock_back').notNull().default(false),
     refundMethodId: uuid('refund_method_id').references(() => paymentMethods.id, { onDelete: 'restrict' }),
     /** The phone number or details the refund is paid to, for a method that is not cash. */
@@ -5215,7 +5217,7 @@ export const vanVisits = pgTable(
     index('van_visits_day_idx').on(t.dayId, t.sequence, t.id),
     index('van_visits_customer_idx').on(t.customerId, t.createdAt),
     check('van_visits_status_chk', sql`${t.status} IN ('planned','arrived','done','skipped','closed_shop')`),
-    check('van_visits_outcome_chk', sql`${t.outcome} IS NULL OR ${t.outcome} IN ('sold','order_taken','sold_and_ordered','delivered_only','collected_only','no_sale')`),
+    check('van_visits_outcome_chk', sql`${t.outcome} IS NULL OR ${t.outcome} IN ('sold','order_taken','sold_and_ordered','delivered_only','collected_only','returned_only','no_sale')`),
     check('van_visits_sequence_chk', sql`${t.sequence} > 0`),
     check('van_visits_position_chk', sql`(${t.arrivedLatitude} IS NULL) = (${t.arrivedLongitude} IS NULL)`),
     check('van_visits_distance_chk', sql`${t.arrivedDistanceM} IS NULL OR ${t.arrivedDistanceM} >= 0`),
@@ -5378,6 +5380,33 @@ export const vanDayCollections = pgTable(
     check('van_day_collections_amount_chk', sql`${t.amount} > 0`),
     check('van_day_collections_kind_chk', sql`${t.methodKind} IN ('cash','mobile_money','card')`),
     check('van_day_collections_cash_chk', sql`(${t.methodKind} = 'cash') = (${t.movementId} IS NOT NULL)`),
+  ],
+);
+
+/**
+ * Goods a customer gave back to the rep at a visit (docs/architecture/van-sales.md §7, returns). The return itself is an ordinary counter return
+ * of the cash sale: a credit note, the goods back into stock when fit to be sold, and the cash handed back out of the van's till shift. This ties
+ * it to the day and the visit.
+ */
+export const vanDayReturns = pgTable(
+  'van_day_returns',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    dayId: uuid('day_id').notNull().references(() => vanDays.id, { onDelete: 'restrict' }),
+    visitId: uuid('visit_id').notNull().references(() => vanVisits.id, { onDelete: 'restrict' }),
+    orderId: text('order_id').notNull().references(() => orders.id, { onDelete: 'restrict' }),
+    counterReturnId: uuid('counter_return_id').notNull().references(() => counterReturns.id, { onDelete: 'restrict' }),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    restock: boolean('restock').notNull(),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('van_day_returns_return_uidx').on(t.counterReturnId),
+    index('van_day_returns_day_idx').on(t.dayId, t.createdAt),
+    index('van_day_returns_visit_idx').on(t.visitId),
+    check('van_day_returns_amount_chk', sql`${t.amount} > 0`),
   ],
 );
 

@@ -49,6 +49,8 @@ export interface ConfirmItem {
   condition: ReturnCondition;
   disposition: ReturnDisposition;
   note?: string | null;
+  /** Where goods put back into stock are counted in, when it is not the default place. */
+  locationId?: string | null;
 }
 
 const CONDITIONS: ReturnCondition[] = ['good', 'damaged', 'expired', 'wrong_item'];
@@ -185,6 +187,7 @@ export class ReturnReceiptService {
             delta: quantity,
             allowDeleted: true,
             changeType: 'credit_note_restock',
+            ...(it.locationId === undefined || it.locationId === null ? {} : { locationId: it.locationId }),
             referenceId: r.id,
             actor: a.actorId,
             note: `Return ${r.number}: ${quantity} confirmed back into stock.`,

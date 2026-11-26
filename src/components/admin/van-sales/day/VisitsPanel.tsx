@@ -13,6 +13,7 @@ import { currentPosition } from '@/lib/browser-position';
 import { WhyPanel } from '../WhyPanel';
 import type { DayCall } from './call';
 import { CollectForm } from './CollectForm';
+import { ReturnForm } from './ReturnForm';
 import { SellForm } from './SellForm';
 
 /** The customers to visit on the day, in order. While the day is being got ready they can be added, moved and taken off. */
@@ -94,7 +95,7 @@ function VisitRow({ visit, first, last, screen, may, mayRun, run }: { visit: Vis
 }
 
 /** What happened at the visit, in words: when the rep arrived and how far from the shop, how it ended, and why. */
-const OUTCOME_WORDS: Record<string, string> = { sold: 'Sold', order_taken: 'Order taken', sold_and_ordered: 'Sold and order taken', delivered_only: 'Delivered', collected_only: 'Collected', no_sale: 'No sale' };
+const OUTCOME_WORDS: Record<string, string> = { sold: 'Sold', order_taken: 'Order taken', sold_and_ordered: 'Sold and order taken', delivered_only: 'Delivered', collected_only: 'Collected', returned_only: 'Goods returned', no_sale: 'No sale' };
 
 function VisitFacts({ visit }: { visit: VisitView }) {
   const when = useWhen();
@@ -114,7 +115,8 @@ function RunActions({ visit, screen, run }: { visit: VisitView; screen: DayScree
   const mayVanSell = screen.detail.day.vanName !== null && screen.detail.day.mode !== 'pre_sell';
   const mayOrder = screen.ordersAllowed;
   const owing = screen.owing.find((o) => o.visitId === visit.id && o.total > 0);
-  const [mode, setMode] = useState<'view' | 'skip' | 'finish' | 'sell' | 'order' | 'collect'>('view');
+  const returnable = screen.returnable.filter((r) => r.visitId === visit.id);
+  const [mode, setMode] = useState<'view' | 'skip' | 'finish' | 'sell' | 'order' | 'collect' | 'return'>('view');
   const [busy, setBusy] = useState(false);
   const name = visit.customerName;
   const go = async (call: Parameters<DayCall>[0], text: string) => {
@@ -130,7 +132,7 @@ function RunActions({ visit, screen, run }: { visit: VisitView; screen: DayScree
     setBusy(false);
     if (answer === null) setMode('view');
   };
-  const sales = screen.sales.rows.filter((r) => r.visitId === visit.id).length + screen.drops.filter((d) => d.visitId === visit.id && d.state === 'delivered').length + screen.collections.filter((c) => c.visitId === visit.id).length;
+  const sales = screen.sales.rows.filter((r) => r.visitId === visit.id).length + screen.drops.filter((d) => d.visitId === visit.id && d.state === 'delivered').length + screen.collections.filter((c) => c.visitId === visit.id).length + screen.returns.filter((r) => r.visitId === visit.id).length;
   if (visit.status === 'done' || visit.status === 'skipped' || visit.status === 'closed_shop') return null;
   return (
     <div className="space-y-2">
@@ -139,6 +141,7 @@ function RunActions({ visit, screen, run }: { visit: VisitView; screen: DayScree
           {visit.status === 'planned' ? <button type="button" className={primaryClass} disabled={busy} onClick={() => void arrive()} aria-label={`Arrive at ${name}`}>{busy ? 'Arriving…' : 'Arrive'}</button> : null}
           {visit.status === 'arrived' && mayVanSell ? <button type="button" className={primaryClass} onClick={() => setMode('sell')} aria-label={`Sell to ${name}`}>Sell</button> : null}
           {visit.status === 'arrived' && owing !== undefined && screen.tenders.length > 0 ? <button type="button" className={buttonClass} onClick={() => setMode('collect')} aria-label={`Collect from ${name}`}>Collect</button> : null}
+          {visit.status === 'arrived' && returnable.length > 0 && screen.refundMethods.length > 0 ? <button type="button" className={buttonClass} onClick={() => setMode('return')} aria-label={`Take goods back from ${name}`}>Return</button> : null}
           {visit.status === 'arrived' && mayOrder ? <button type="button" className={mayVanSell ? buttonClass : primaryClass} onClick={() => setMode('order')} aria-label={`Take an order from ${name}`}>Take an order</button> : null}
           {visit.status === 'arrived' && sales === 0 ? <button type="button" className={buttonClass} onClick={() => setMode('finish')} aria-label={`Finish the visit to ${name} with no sale`}>Finish: no sale</button> : null}
           {visit.status === 'arrived' && sales > 0 ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void go(finishVisitAction({ dayId, id: visit.id, outcome: 'sold' }), `The visit to ${name} is finished.`)} aria-label={`Finish the visit to ${name}`}>Finish the visit</button> : null}
@@ -146,6 +149,7 @@ function RunActions({ visit, screen, run }: { visit: VisitView; screen: DayScree
           <InlineConfirm label={`${name}'s shop is closed`} action="Shop closed" confirm="Yes, it is shut" busy={busy} onConfirm={() => void go(closedShopAction({ dayId, id: visit.id }), `${name}'s shop was found closed.`)} />
         </div>
       ) : null}
+      {mode === 'return' && returnable.length > 0 ? <ReturnForm screen={screen} sales={returnable} visitId={visit.id} customer={name} run={run} onDone={() => setMode('view')} onCancel={() => setMode('view')} /> : null}
       {mode === 'collect' && owing !== undefined ? <CollectForm screen={screen} owing={owing} customer={name} run={run} onDone={() => setMode('view')} onCancel={() => setMode('view')} /> : null}
       {mode === 'order' ? <SellForm screen={screen} visitId={visit.id} customer={name} mode="order" run={run} onDone={() => setMode('view')} onCancel={() => setMode('view')} /> : null}
       {mode === 'sell' ? <SellForm screen={screen} visitId={visit.id} customer={name} mode="sell" run={run} onDone={() => setMode('view')} onCancel={() => setMode('view')} /> : null}

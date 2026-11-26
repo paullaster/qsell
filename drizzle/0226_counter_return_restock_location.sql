@@ -1,0 +1,2 @@
+ALTER TABLE "counter_returns" ADD COLUMN "restock_location_id" uuid;--> statement-breakpoint
+ALTER TABLE "counter_returns" ADD CONSTRAINT "counter_returns_restock_location_id_stock_locations_id_fk" FOREIGN KEY ("restock_location_id") REFERENCES "public"."stock_locations"("id") ON DELETE set null ON UPDATE no action;

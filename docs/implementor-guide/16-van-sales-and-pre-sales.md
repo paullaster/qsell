@@ -137,6 +137,12 @@ Below the visits, for a day that has a van (a day that only takes orders has non
 3. **What happens.** The payment is recorded as an ordinary customer receipt and applied to the customer's open invoices, oldest first. Cash is also put into the van's till shift, so the cash the van should hold goes up by the same amount; M-Pesa and card go straight to the company's account and do not change the van's cash.
 4. **Money collected** lists each payment under the day's Sales, with the receipt number. A visit where only money was collected is recorded as *Collected*, and cannot be finished as no sale.
 
+### Taking goods back at a visit, on a van day's page
+1. **Return.** On a visit the rep has arrived at, where the customer bought goods for cash from this same van earlier (today or on an earlier day), the rep has a **Return** button. The form lists those sales and, for the one chosen, what can still be returned and at what price.
+2. **Fill it in.** The rep types how many of each product are coming back, chooses a reason from the company's list, adds a note if useful, says whether the goods are **Fit to sell again** or **Damaged**, and chooses how the customer is paid back (cash, or M-Pesa to a number). The amount to pay back is worked out from what the customer paid.
+3. **What happens.** A credit note corrects the customer's tax invoice, goods that are fit to sell again are counted back **onto the van** they were sold from (damaged goods are not counted back into stock), and a cash refund is handed over out of the van's till shift, so the van's cash goes down by the same amount. Refunds follow the company's refund approvals and limits.
+4. **Goods returned** lists each return under the day's Sales. A visit where goods were taken back is finished as done, never as no sale.
+
 ## 5. Granular Field-by-Field Reference
 
 | Field | Type | Allowed | Default | Required |
@@ -368,6 +374,10 @@ Below the visits, for a day that has a van (a day that only takes orders has non
 - **A retry never takes the money twice.** If the connection drops and the rep presses again, the same payment is found.
 - **A reference is needed** where the way of paying asks for one, and a reference already used on another receipt is refused.
 - **Cash collected is part of the till count** at the end of the day, with the sales and the float.
+- **Only a cash sale made from this same van, to this customer, can be returned at a visit.** A credit sale, an order, or a sale from another van or the shop is returned in the usual way (the till, or the office), so the goods are never counted back onto a van they did not come from.
+- **No more than was sold, and nothing twice.** What has already been returned is taken off what can still be returned, and a repeated press finds the return already made.
+- **Goods fit to sell again go back onto the van**; damaged goods are not counted back into stock.
+- **The refund method must be set up to pay customers back** (Payment methods: usable for customer refunds, with a refund destination). Without one the Return button is not offered.
 - Every add, change, stop, pause, end and resume is in the decision log with the person, the time and the reason typed.
 - The database itself refuses a stopped van, route, or a paused or ended rep with no reason, a pre-sell route with a van, a visit with no day or one visited every 3 weeks, a discount over 100%, a negative credit or cash limit, and a mode other than van sell or pre-sell.
 - A reason is required for every change, so an auditor can see why a rule was relaxed.
@@ -414,4 +424,6 @@ Below the visits, for a day that has a van (a day that only takes orders has non
 - [ ] Test: with the van near its limit, make a cash drop and check the till's expected cash on the Shifts screen falls by the same amount.
 - [ ] Verify: the ways of paying a rep may use (cash, M-Pesa, card) are set up for the branch and are usable for customer receipts.
 - [ ] Test: collect part of an open invoice in cash at a visit and check the receipt under Receipts, the invoice's remaining amount, and the van's cash.
+- [ ] Verify: cash (and M-Pesa if wanted) is set up to pay customers back, and a reason list is set up for returns.
+- [ ] Test: sell for cash at a visit, take one back as fit to sell again, and check the van's stock, the van's cash and the credit note.
 - **Common pitfalls:** asking the office to send a day out for the rep (refused: the rep does it); requiring the rep to be near a customer who has no map pin (the visit starts and the distance is not known); loading before stock by location is switched on (the screen says so); signing a load that was never sent; expecting stock to be on the van when the load was only asked for; planning a day before the route has customers due that date (the screen says none is due); planning a day for the usual rep who is already on another route that date (refused); giving two routes the same code or name (refused); starting a fortnightly customer's visits in the wrong week (the date sets which weeks count); naming two vans alike (refused); putting a vehicle behind two vans (refused); switching on *require* with a very small distance, which blocks reps in town centres; leaving the approval limit at 0, which sends every small shortage to a second person.

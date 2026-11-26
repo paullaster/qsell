@@ -222,9 +222,9 @@ describe.skipIf(url === undefined || url === '')('collections from the van (data
   describe('finishing the visit', () => {
     it('is as collected only when money was the only thing done, and never as no sale', async () => {
       const x = await outAtCustomer({ owes: 700 });
-      await expect(c.vanRun.finish(companyId, as(x.s.user), x.s.day.id, x.visit?.id ?? '', { outcome: 'sold' }, true)).rejects.toThrow('Nothing has been sold, ordered, delivered or collected at');
+      await expect(c.vanRun.finish(companyId, as(x.s.user), x.s.day.id, x.visit?.id ?? '', { outcome: 'sold' }, true)).rejects.toThrow('Nothing has been sold, ordered, delivered, collected or returned at');
       await collect(x, { amount: 200 });
-      await expect(c.vanRun.finish(companyId, as(x.s.user), x.s.day.id, x.visit?.id ?? '', { outcome: 'no_sale', reason: 'Nothing wanted' }, true)).rejects.toThrow('payment at');
+      await expect(c.vanRun.finish(companyId, as(x.s.user), x.s.day.id, x.visit?.id ?? '', { outcome: 'no_sale', reason: 'Nothing wanted' }, true)).rejects.toThrow('payment or return at');
       const done = await c.vanRun.finish(companyId, as(x.s.user), x.s.day.id, x.visit?.id ?? '', { outcome: 'sold' }, true);
       expect(done.visits.find((v) => v.id === x.visit?.id)).toMatchObject({ status: 'done', outcome: 'collected_only' });
     });

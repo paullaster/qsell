@@ -303,3 +303,10 @@ A drop is delivering a pre-sold order from the van on a van day. Reading the cod
 - **Visits:** a visit with only money collected finishes as `collected_only`.
 - **Screens:** Collect on a visit (what is owed, the payment form) and a Money collected list under the day's Sales.
 - **Not yet:** collecting an advance or a payment on an order that has no invoice, and the returns of goods at a visit (V-7c).
+
+### V-7c (2026-11-26): returns at a visit
+- **Data:** 0225 `van_day_returns` (day, visit, the sale, the counter return it made, amount, whether the goods were fit to sell again; one per counter return) and the visit outcome `returned_only`; 0226 `counter_returns.restock_location_id`, so a return can count goods back at a chosen place.
+- **Stock:** the return receipt's confirm step took no place and counted goods into the company's default location. It now takes an optional location, which the counter return keeps with the return (so a retry finishes at the same place), and a return at a visit counts fit goods back onto the sale's van.
+- **Server:** `VanReturnService.take` runs the ordinary counter return (credit note, stock back, the refund through the refund flow, cash handed back from the rep's open shift, the same key making a repeat safe) after checking the rep, the day, the visit and that the sale was a cash sale made from this van to the customer at this visit (read from the link of the sale to its visit, because an order's own customer record is matched by email or phone and need not be the visit's customer card).
+- **Screens:** Return on a visit (the sale, quantities, reason, condition, refund method), and a Goods returned list under the day's Sales.
+- **Not yet:** returns of credit sales or orders at a visit, and the rep's phone app (V-8).

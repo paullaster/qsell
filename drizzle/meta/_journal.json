@@ -1576,6 +1576,20 @@
       "when": 1795673450511,
       "tag": "0224_van_day_collections",
       "breakpoints": true
+    },
+    {
+      "idx": 225,
+      "version": "7",
+      "when": 1795677898291,
+      "tag": "0225_van_day_returns",
+      "breakpoints": true
+    },
+    {
+      "idx": 226,
+      "version": "7",
+      "when": 1795678379297,
+      "tag": "0226_counter_return_restock_location",
+      "breakpoints": true
     }
   ]
 }

@@ -17,6 +17,8 @@ export interface CounterReturnInput {
   reason: { code: string; text: string };
   /** The goods are in a state to be sold again and go back into stock. */
   restock: boolean;
+  /** Where they are counted back, when it is not the default place (a sale made from a van goes back on that van). */
+  backTo?: string;
   /** How the customer is paid back: a method that can pay refunds. Cash is handed over at the till; M-Pesa needs the number. */
   refund: { methodId: string; phone: string; /** Cash: who takes the money (the customer's name when left empty). */ recipient?: string };
   /** One key for one return, made when the screen starts it: a repeat finds the return and finishes what is left. */
@@ -115,7 +117,7 @@ export class CounterReturnService {
         const reason = await c.reasonCodes.require(companyId, { code: input.reason.code, text: input.reason.text }, 'refund');
         row = await withAfterCommit(this.db, async (tx) => {
           const cn = await c.creditNotes.issueForOrder({ orderId: input.orderId, lines: input.lines.map((l) => ({ productId: l.productId, quantity: l.quantity })), reason: { code: input.restock ? 'returned_goods' : 'damaged_goods', note: reason.text ?? reason.code }, issuedBy: who.userId, restock: input.restock }, tx);
-          const [made] = await tx.insert(counterReturns).values({ companyId, orderId: input.orderId, idempotencyKey: input.key, creditNoteId: cn.id, requestedBy: who.userId, reasonCode: reason.code, reasonText: reason.text, restock: input.restock, refundMethodId: method.id, payoutDetails: method.kind === 'mobile_money' ? { phone } : { recipientName: (input.refund.recipient ?? '').trim() === '' ? order.customerName : (input.refund.recipient ?? '').trim().slice(0, 80) }, amount: cn.totalAmount, lines: input.lines }).returning();
+          const [made] = await tx.insert(counterReturns).values({ companyId, orderId: input.orderId, idempotencyKey: input.key, creditNoteId: cn.id, requestedBy: who.userId, reasonCode: reason.code, reasonText: reason.text, restock: input.restock, restockLocationId: input.backTo ?? null, refundMethodId: method.id, payoutDetails: method.kind === 'mobile_money' ? { phone } : { recipientName: (input.refund.recipient ?? '').trim() === '' ? order.customerName : (input.refund.recipient ?? '').trim().slice(0, 80) }, amount: cn.totalAmount, lines: input.lines }).returning();
           if (made === undefined) throw new CreditNoteError('NOT_FOUND', 'The return could not be recorded.');
           return made;
         });
@@ -155,7 +157,7 @@ export class CounterReturnService {
         if (receipt !== undefined) {
           const lines = await this.db.select().from(returnReceiptLines).where(eq(returnReceiptLines.receiptId, receipt.id));
           const open = lines.filter((l) => l.expectedQty - l.receivedQty > 0);
-          if (open.length > 0) await c.returns.confirm({ companyId, actorId: userId, origin: ctx.origin }, receipt.id, open.map((l) => ({ lineId: l.id, quantity: l.expectedQty - l.receivedQty, condition: 'good' as const, disposition: 'return_to_stock' as const })));
+          if (open.length > 0) await c.returns.confirm({ companyId, actorId: userId, origin: ctx.origin }, receipt.id, open.map((l) => ({ lineId: l.id, quantity: l.expectedQty - l.receivedQty, condition: 'good' as const, disposition: 'return_to_stock' as const, ...(row.restockLocationId === null ? {} : { locationId: row.restockLocationId }) })));
         }
         await this.db.update(counterReturns).set({ stockBack: true, updatedAt: new Date() }).where(eq(counterReturns.id, row.id));
       } catch (error) {

@@ -6,6 +6,7 @@
  *   tsx e2e/support/van-fixtures.ts day-route <tag> [admin]  ... with `admin`, the rep is the e2e admin account itself, so the browser can run the day as the rep
  *   tsx e2e/support/van-fixtures.ts reset-rep <any>      cancels the open days of the e2e admin as a rep and closes its open shifts, so the next test starts clean
  *   tsx e2e/support/van-fixtures.ts order <customer name> <product id> <quantity>  a paid sales order for that customer, holding its stock (taken under Sales Orders)
+ *   tsx e2e/support/van-fixtures.ts refundable <any>  lets cash pay customers back (set under Payment methods)
  *   tsx e2e/support/van-fixtures.ts owe <customer name> <amount>  an open invoice on that customer's account (a credit sale leaves one)
  *   tsx e2e/support/van-fixtures.ts limit <van name> <amount>  the most cash the van should carry (set under Vans)
  *   tsx e2e/support/van-fixtures.ts moment <payment|dispatch|delivery>  when the shop issues stock (set under Stock settings)
@@ -120,6 +121,14 @@ async function placeOrder(customerName: string, productId: string, quantity: str
   return { orderNumber: placed.orderNumber };
 }
 
+async function refundable(): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { paymentMethods } = await import('@/server/db/drizzle/schema');
+  const { eq } = await import('drizzle-orm');
+  await db.update(paymentMethods).set({ usableFor: ['customer_receipt', 'customer_refund'], refundDestination: 'manual' }).where(eq(paymentMethods.kind, 'cash'));
+  return { ok: 'yes' };
+}
+
 async function owe(customerName: string, amount: string): Promise<Record<string, string>> {
   const { drizzleDb: db } = await import('@/server/db/drizzle/client');
   const { customers } = await import('@/server/db/drizzle/schema');
@@ -173,6 +182,7 @@ async function main(): Promise<void> {
   if (command === 'moment' && tag !== undefined) result = await issueMoment(tag);
   if (command === 'limit' && tag !== undefined && count !== undefined) result = await cashLimit(tag, count);
   if (command === 'owe' && tag !== undefined && count !== undefined) result = await owe(tag, count);
+  if (command === 'refundable') result = await refundable();
   if (command === 'par' && tag !== undefined && count !== undefined && third !== undefined) result = await par(tag, count, third);
   if (result === null) throw new Error('usage: van-fixtures customer <tag> <n> | product <tag> | day-route <tag> [admin] | reset-rep <any> | par <route name> <product id> <quantity>');
   process.stdout.write(`FIXTURE ${JSON.stringify(result)}\n`);
