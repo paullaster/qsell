@@ -86,7 +86,7 @@ export class VanSaleService {
     if (!visit.isActive) throw new VanSalesError(`${visit.name} is no longer in use, so nothing can be sold to them.`);
     if (visit.blocked !== 'none') throw new VanSalesError(`${visit.name} is blocked, so nothing can be sold to them.`);
     const limits = { maxDiscountPercent: Number(own.limits.maxDiscountPercent), maxCreditPerDay: Number(own.limits.maxCreditPerDay), mayOverridePrice: own.limits.mayOverridePrice, maySellOnCredit: own.limits.maySellOnCredit };
-    return { own, visit, limits, vanLocationId: own.vanLocationId ?? '', who: { userId: actor.id ?? '', branchId: null } };
+    return { own, visit, limits, vanLocationId: own.vanLocationId ?? '', who: { userId: actor.id ?? '', branchId: what === 'order' ? own.d.branchId : null } };
   }
 
   /** What the lines would total for this customer, priced by the server as the sale will be (nothing is saved). */

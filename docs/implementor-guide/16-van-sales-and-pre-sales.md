@@ -120,6 +120,13 @@ Below the visits, for a day that has a van (a day that only takes orders has non
 3. **Sales** on the day lists the order marked *Order* and shows **Orders for later** apart from the money taken, so the day's takings are not overstated.
 4. **Finish the visit.** A visit with an order is recorded as *Order taken*; with a sale as well, *Sold and order taken*. A visit with either cannot be finished as no sale.
 
+### Deliveries, on a van day's page
+1. **Add an order** (the planner, before the day goes out). On a day with a van on a route that sells from the van and takes orders, the planner adds an open sales order of a customer who is on the day's visits. If the order has no delivery yet, one is planned: our own riders, from the order's branch, to the customer's address (county, town and street on the customer card). An order that is waiting for approval, closed, already on a delivery, set to another delivery method, or whose stock was already issued is refused with the reason.
+2. **The load counts it.** The load planner adds the order's lines to what the van needs, and treats the stock the order is holding at the warehouse as available to load.
+3. **Where the stock is** is shown on each delivery: *At the warehouse, not loaded yet*, *On its way to the van*, *On the van*, or *Not on the van: the load came short*. A delivery can be taken off the day only while its stock is still at the warehouse.
+4. **Deliver** (the rep, at the customer). When the rep has arrived at the customer, each of that customer's deliveries shows **Deliver**, **Refused** and **Could not deliver**. **Deliver** asks who received the goods and carries the delivery through its steps in one go; the stock is issued from the van and the order shows delivered. **Refused** and **Could not deliver** ask why; the stock stays held on the van until it is unloaded.
+5. **Finish the visit.** A visit cannot be finished while it has a delivery that is not dealt with. A visit with only a delivery is recorded as *Delivered*.
+
 ## 5. Granular Field-by-Field Reference
 
 | Field | Type | Allowed | Default | Required |
@@ -338,6 +345,11 @@ Below the visits, for a day that has a van (a day that only takes orders has non
 - **An order holds stock at the warehouse**, as any sales order does, and is refused if the warehouse cannot cover it. The van's stock is not touched; delivering it is done later (a delivery run, or a drop on a van day).
 - **A route that only sells from the van takes no orders**, and a route that only takes orders sells nothing from a van.
 - **A retry never takes an order twice.**
+- **A delivery is an ordinary delivery document.** It appears under Deliveries with its number, goes through release, picking, packing, sending and delivered, has its customer messages and its place on the order's timeline, and is delivered from the van's stock.
+- **The order's stock moves with the load.** A load cannot ship stock that an order is holding, so when a load ships, the hold of each delivery the load covers in full is set aside (no cancellation is recorded), and when the rep signs for the load the hold is made again on the van. If the load cannot ship, the hold is made again at the warehouse. If the rep signs for less than was sent, the delivery shows as short and cannot be delivered.
+- **Set the shop to issue stock at delivery** (Stock settings) for orders that go on a van. An order whose stock was already issued when it was paid cannot be carried on the van, and is refused when it is added.
+- **An order must be paid for, or paid at the door, to be handed over.** If it is not, **Deliver** is refused with the usual reason and the delivery stays where it got to; it carries on once the order is paid. Taking payment at the customer is part of the collections that follow.
+- **A refused or failed delivery keeps its stock on the van** for the unload at the end of the day, and the order can be added to a later day.
 - Every add, change, stop, pause, end and resume is in the decision log with the person, the time and the reason typed.
 - The database itself refuses a stopped van, route, or a paused or ended rep with no reason, a pre-sell route with a van, a visit with no day or one visited every 3 weeks, a discount over 100%, a negative credit or cash limit, and a mode other than van sell or pre-sell.
 - A reason is required for every change, so an auditor can see why a rule was relaxed.
@@ -377,4 +389,7 @@ Below the visits, for a day that has a van (a day that only takes orders has non
 - [ ] Test sale: sell 2 of a product for cash with more than the total handed over and check the change shown.
 - [ ] Verify: an order taken at a visit appears under Sales Orders for the right customer, with its stock held at the warehouse.
 - [ ] Verify: a van-only route offers no *Take an order* button, and an order-only day offers no *Sell*.
+- [ ] Verify: the shop issues stock at delivery (Stock settings) before orders go on a van.
+- [ ] Verify: an order added to a day's deliveries shows under the load planner, ships with the load, and shows *On the van* after the rep signs.
+- [ ] Test delivery: deliver a paid order at a customer and check the delivery under Deliveries, the order's timeline, and the van's stock.
 - **Common pitfalls:** asking the office to send a day out for the rep (refused: the rep does it); requiring the rep to be near a customer who has no map pin (the visit starts and the distance is not known); loading before stock by location is switched on (the screen says so); signing a load that was never sent; expecting stock to be on the van when the load was only asked for; planning a day before the route has customers due that date (the screen says none is due); planning a day for the usual rep who is already on another route that date (refused); giving two routes the same code or name (refused); starting a fortnightly customer's visits in the wrong week (the date sets which weeks count); naming two vans alike (refused); putting a vehicle behind two vans (refused); switching on *require* with a very small distance, which blocks reps in town centres; leaving the approval limit at 0, which sends every small shortage to a second person.

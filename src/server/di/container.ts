@@ -37,6 +37,7 @@ import { RouteService } from '@/server/domains/van-sales/routes';
 import { VanDayService } from '@/server/domains/van-sales/days';
 import { VanLoadService } from '@/server/domains/van-sales/loads';
 import { VanRunService } from '@/server/domains/van-sales/run';
+import { VanDropService } from '@/server/domains/van-sales/drops';
 import { VanSaleService } from '@/server/domains/van-sales/sales';
 import { PartialBillingService } from '@/server/domains/selling/partial-billing-service';
 import { CashSaleService } from '@/server/domains/selling/cash-sales/cash-sale-service';
@@ -440,6 +441,7 @@ export interface AppContainer {
   vanDays: VanDayService;
   vanLoads: VanLoadService;
   vanRun: VanRunService;
+  vanDrops: VanDropService;
   vanSales: VanSaleService;
   tillSettings: TillSettingsService;
   heldSales: HeldSaleService;
@@ -711,7 +713,8 @@ export function getContainer(): AppContainer {
   const salesRoutes = new RouteService(drizzleDb, decisionLog, vanSalesSettings);
   const vanDays = new VanDayService(drizzleDb, decisionLog, numbering, vanSalesSettings);
   const stockTransfers = new TransferService({ db: drizzleDb, ledger: stockLedger, numbering, decisionLog });
-  const vanLoads = new VanLoadService(drizzleDb, decisionLog, stockTransfers);
+  const vanDrops = new VanDropService(drizzleDb, decisionLog, deliveryServices.orderDeliveries, stockReservations, deliveryServices.deliveryDocuments);
+  const vanLoads = new VanLoadService(drizzleDb, decisionLog, stockTransfers, vanDrops);
   const vanRun = new VanRunService(drizzleDb, decisionLog, shifts, vanDays, vanSalesSettings);
   const vanSales = new VanSaleService(drizzleDb, decisionLog, cashSales, salesOrders, vanSalesSettings);
   const preparation = new PreparationService(drizzleDb);
@@ -908,6 +911,7 @@ export function getContainer(): AppContainer {
     vanDays,
     vanLoads,
     vanRun,
+    vanDrops,
     vanSales,
     tillSettings,
     heldSales,

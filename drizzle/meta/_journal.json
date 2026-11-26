@@ -1548,6 +1548,20 @@
       "when": 1795604620859,
       "tag": "0220_van_day_orders_order_kind",
       "breakpoints": true
+    },
+    {
+      "idx": 221,
+      "version": "7",
+      "when": 1795610184199,
+      "tag": "0221_van_drops",
+      "breakpoints": true
+    },
+    {
+      "idx": 222,
+      "version": "7",
+      "when": 1795610792014,
+      "tag": "0222_van_visit_delivered_only",
+      "breakpoints": true
     }
   ]
 }

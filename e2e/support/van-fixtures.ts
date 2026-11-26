@@ -5,6 +5,8 @@
  *   tsx e2e/support/van-fixtures.ts par <route name> <product id> <quantity>  sets the usual stock of a route's van to one product (set under Routes)
  *   tsx e2e/support/van-fixtures.ts day-route <tag> [admin]  ... with `admin`, the rep is the e2e admin account itself, so the browser can run the day as the rep
  *   tsx e2e/support/van-fixtures.ts reset-rep <any>      cancels the open days of the e2e admin as a rep and closes its open shifts, so the next test starts clean
+ *   tsx e2e/support/van-fixtures.ts order <customer name> <product id> <quantity>  a paid sales order for that customer, holding its stock (taken under Sales Orders)
+ *   tsx e2e/support/van-fixtures.ts moment <payment|dispatch|delivery>  when the shop issues stock (set under Stock settings)
  *   tsx e2e/support/van-fixtures.ts day-route <tag>      a route ready to plan a day on: both modes on, a van, a rep, and three customers visited every Monday; printed with their names (set up under Van sales)
  */
 import { execFileSync } from 'node:child_process';
@@ -91,11 +93,37 @@ async function dayRoute(tag: string, asAdmin = false): Promise<Record<string, st
   const shops: string[] = [];
   for (let i = 1; i <= 3; i += 1) {
     const name = `Duka day ${tag} ${String(i)}`;
-    const [row] = await db.insert(table).values({ companyId: company.id, number: `DY${tag}${String(i)}`.toUpperCase(), name, phone: `07120${String(i).padStart(5, '0')}`, city: 'Ruiru', accountType: 'cash' }).returning({ id: table.id });
+    const [row] = await db.insert(table).values({ companyId: company.id, number: `DY${tag}${String(i)}`.toUpperCase(), name, phone: `0712${String(i)}${tag.replace(/\D/g, '').slice(-5).padStart(5, '0')}`, city: 'Ruiru', accountType: 'cash' }).returning({ id: table.id });
     await c.salesRoutes.addStop(company.id, actor, route.id, { customerId: row?.id ?? '', visitDays: 1, every: 1, anchor: '2026-11-02', note: '' });
     shops.push(name);
   }
   return { route: routeName, rep: repName, van: vanName, shops: shops.join('|') };
+}
+
+async function placeOrder(customerName: string, productId: string, quantity: string): Promise<Record<string, string>> {
+  const { drizzleDb: db } = await import('@/server/db/drizzle/client');
+  const { customers, orders, users } = await import('@/server/db/drizzle/schema');
+  const { eq } = await import('drizzle-orm');
+  const { getContainer } = await import('@/server/di/container');
+  const { E2E_ADMIN_EMAIL } = await import('./constants');
+  const c = getContainer();
+  const company = await c.companySettings.ensureSeeded();
+  const [customer] = await db.select({ id: customers.id }).from(customers).where(eq(customers.name, customerName));
+  const [admin] = await db.select({ id: users.id }).from(users).where(eq(users.email, E2E_ADMIN_EMAIL));
+  if (customer === undefined || admin === undefined) throw new Error('e2e fixture: the customer or the e2e admin does not exist');
+  const branch = await c.branches.getDefault(company.id);
+  const placed = await c.salesOrders.place(company.id, { userId: admin.id, branchId: branch?.id ?? null }, { customerId: customer.id, lines: [{ productId, quantity: Number(quantity) }], paymentMethod: 'counter', neededOn: '', holdUntilPaid: false }, 'sales_order');
+  if (!placed.ok) throw new Error(`e2e fixture: ${placed.error}`);
+  await db.update(orders).set({ paymentStatus: 'paid' }).where(eq(orders.id, placed.orderId));
+  return { orderNumber: placed.orderNumber };
+}
+
+async function issueMoment(moment: string): Promise<Record<string, string>> {
+  const { getContainer } = await import('@/server/di/container');
+  const c = getContainer();
+  const company = await c.companySettings.ensureSeeded();
+  await c.stockSettings.setIssueMoment(company.id, moment);
+  return { moment };
 }
 
 async function par(routeName: string, productId: string, quantity: string): Promise<Record<string, string>> {
@@ -115,6 +143,8 @@ async function main(): Promise<void> {
   if (command === 'product' && tag !== undefined) result = await product(tag);
   if (command === 'day-route' && tag !== undefined) result = await dayRoute(tag, count === 'admin');
   if (command === 'reset-rep') result = await resetRep();
+  if (command === 'order' && tag !== undefined && count !== undefined && third !== undefined) result = await placeOrder(tag, count, third);
+  if (command === 'moment' && tag !== undefined) result = await issueMoment(tag);
   if (command === 'par' && tag !== undefined && count !== undefined && third !== undefined) result = await par(tag, count, third);
   if (result === null) throw new Error('usage: van-fixtures customer <tag> <n> | product <tag> | day-route <tag> [admin] | reset-rep <any> | par <route name> <product id> <quantity>');
   process.stdout.write(`FIXTURE ${JSON.stringify(result)}\n`);

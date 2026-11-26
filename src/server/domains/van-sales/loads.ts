@@ -11,6 +11,7 @@ import { roundQty } from '@/lib/decimal';
 import { StockError } from '@/server/domains/stock/errors';
 import type { TransferService } from '@/server/domains/stock/transfers';
 import { recordDayEvent } from './day-events';
+import type { VanDropService } from './drops';
 import { constraintOf, VanSalesError } from './errors';
 
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
@@ -103,6 +104,7 @@ export class VanLoadService {
     private readonly db: DrizzleDb,
     private readonly decisions: DecisionLog,
     private readonly transfers: TransferService,
+    private readonly drops: VanDropService,
   ) {}
 
   // ── The planner ──────────────────────────────────────────────────────
@@ -142,13 +144,18 @@ export class VanLoadService {
       [source] = await this.sources(this.db, companyId, day.d.branchId);
     }
     if (source === undefined) return { source: null, rows: [], note: 'There is no warehouse or store to load from. Add one under Stock › Locations.' };
-    const par = await this.db
-      .select({ productId: routeParLevels.productId, quantity: routeParLevels.quantity, name: products.name, sku: products.sku, unitName: unitsOfMeasure.name, decimals: unitsOfMeasure.decimals })
-      .from(routeParLevels)
-      .innerJoin(products, eq(products.id, routeParLevels.productId))
+    const usual = await this.db.select({ productId: routeParLevels.productId, quantity: routeParLevels.quantity }).from(routeParLevels).where(eq(routeParLevels.routeId, day.d.routeId));
+    // The deliveries' own holds are on the warehouse shelves now but are set aside when the load ships, so they count as there to be loaded.
+    const drops = await this.drops.needs(companyId, dayId);
+    const wantedIds = [...new Set([...usual.map((u) => u.productId), ...drops.keys()])];
+    if (wantedIds.length === 0) return { source, rows: [], note: 'This route has no usual stock set, so there is nothing to suggest. Set it on the route, or choose the products by hand.' };
+    const info = await this.db
+      .select({ productId: products.id, name: products.name, sku: products.sku, unitName: unitsOfMeasure.name, decimals: unitsOfMeasure.decimals })
+      .from(products)
       .leftJoin(unitsOfMeasure, eq(unitsOfMeasure.id, products.baseUnitId))
-      .where(eq(routeParLevels.routeId, day.d.routeId));
-    if (par.length === 0) return { source, rows: [], note: 'This route has no usual stock set, so there is nothing to suggest. Set it on the route, or choose the products by hand.' };
+      .where(inArray(products.id, wantedIds));
+    const usualBy = new Map(usual.map((u) => [u.productId, u.quantity]));
+    const par = info.map((p) => ({ ...p, quantity: usualBy.get(p.productId) ?? 0 }));
     const ids = par.map((p) => p.productId);
     const [onVan, free] = await Promise.all([
       this.db.select({ productId: stockBalances.productId, n: sql<number>`COALESCE(sum(${stockBalances.onHand}), 0)::float8` }).from(stockBalances).where(and(eq(stockBalances.locationId, day.vanLocationId), inArray(stockBalances.productId, ids))).groupBy(stockBalances.productId),
@@ -156,7 +163,8 @@ export class VanLoadService {
     ]);
     const onVanBy = new Map(onVan.map((r) => [r.productId, r.n]));
     const freeBy = new Map(free.map((r) => [r.productId, Math.max(r.n, 0)]));
-    const plan = suggestLoad({ par: new Map(par.map((p) => [p.productId, p.quantity])), onVan: onVanBy, drops: new Map(), warehouse: freeBy });
+    for (const [productId, quantity] of drops) freeBy.set(productId, (freeBy.get(productId) ?? 0) + quantity);
+    const plan = suggestLoad({ par: new Map(par.map((p) => [p.productId, p.quantity])), onVan: onVanBy, drops, warehouse: freeBy });
     const byProduct = new Map(par.map((p) => [p.productId, p]));
     const rows: SuggestRow[] = plan.flatMap((r) => {
       const p = byProduct.get(r.productId);
@@ -296,7 +304,14 @@ export class VanLoadService {
   async ship(companyId: string, actor: Actor, loadId: string): Promise<LoadView[]> {
     const load = await this.loadFacts(this.db, companyId, loadId);
     if (load.cancelledAt !== null) throw new VanSalesError('That load was called off.');
-    await told(async () => await this.transfers.ship(companyId, { id: actor.id ?? 'system' }, load.transferId));
+    const carried = await told(() => this.transfers.get(companyId, load.transferId));
+    const moved = await this.drops.setAsideForLoad(companyId, actor, load.dayId, new Map(carried.lines.map((l) => [l.productId, l.quantity])));
+    try {
+      await told(async () => await this.transfers.ship(companyId, { id: actor.id ?? 'system' }, load.transferId));
+    } catch (error) {
+      await this.drops.putBack(companyId, actor, load.dayId, moved);
+      throw error;
+    }
     await this.db.transaction(async (tx) => await recordDayEvent(tx, this.decisions, companyId, load.dayId, actor, 'day.load_shipped', { detail: { transferId: load.transferId } }));
     return await this.list(companyId, load.dayId);
   }
@@ -342,6 +357,7 @@ export class VanLoadService {
       if (marked.length === 0) return;
       await recordDayEvent(tx, this.decisions, companyId, load.dayId, actor, 'day.load_signed', { reason: why?.reason, detail: { transferId: load.transferId, quantity: total, onBehalf: !isRep } });
     });
+    await this.drops.holdOnVan(companyId, actor, load.dayId);
     return await this.list(companyId, load.dayId);
   }
 

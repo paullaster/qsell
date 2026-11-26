@@ -1,8 +1,9 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import type { getContainer } from '@/server/di/container';
 import type { drizzleDb } from '@/server/db/drizzle/client';
 import type * as schemaModule from '@/server/db/drizzle/schema';
+import { holdLedgerSwitch } from '@/server/domains/stock/test-support';
 import { VAN_SALES_DEFAULTS } from '@/lib/van-sales/settings';
 
 /**
@@ -22,7 +23,11 @@ describe.skipIf(url === undefined || url === '')('van sales settings (database)'
   const reason = { code: 'POLICY_CHANGE' };
   const on = { ...VAN_SALES_DEFAULTS, vanSell: true, preSell: true };
 
+  let release: () => Promise<void> = () => Promise.resolve();
+
   beforeAll(async () => {
+    // The company's van sales settings are one row that the other van sales database tests change; this file waits its turn.
+    release = await holdLedgerSwitch(url);
     process.env.DATA_ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString('base64');
     const mod = await import('@/server/di/container');
     db = (await import('@/server/db/drizzle/client')).drizzleDb;
@@ -31,6 +36,10 @@ describe.skipIf(url === undefined || url === '')('van sales settings (database)'
     companyId = (await c.companySettings.ensureSeeded()).id;
     await c.reasonCodes.ensureSystemReasons(companyId);
     await db.delete(schema.vanSalesSettings).where(eq(schema.vanSalesSettings.companyId, companyId));
+  });
+
+  afterAll(async () => {
+    await release();
   });
 
   it('is off, with the built-in rules, until the company switches it on', async () => {

@@ -1,5 +1,5 @@
 import { and, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
-import { bankAccounts, branches, customers, deliveryVehicles, products, salesReps, salesRoutes, stockLocations, users, vans } from '@/server/db/drizzle/schema';
+import { bankAccounts, branches, customers, deliveryVehicles, orders, products, salesReps, salesRoutes, stockLocations, users, vans } from '@/server/db/drizzle/schema';
 import type { PermissionKey } from '@/server/domains/access-control/permissions';
 import { LookupFilterError, acceptFilters, tableSource, type LookupSource } from '@/server/domains/lookups/runner';
 import { isId } from '@/lib/van-sales/people';
@@ -213,6 +213,32 @@ const productsOnVan = tableSource({
   toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.sku) === '' ? null : text(row.sku), badge: null }),
 });
 
+/** Open sales orders of the customers on a day's visits that can still be added to its deliveries: the filter `day` names the day. */
+const ordersToDeliver = tableSource({
+  key: 'van-day-orders',
+  permission: 'van_sales:plan',
+  table: orders,
+  id: orders.id,
+  label: orders.orderNumber,
+  searchColumns: [orders.orderNumber, orders.customerName],
+  select: { customer: orders.customerName },
+  scope: ({ filters }) => {
+    const day = idFilter(filters, 'day');
+    if (day === null) throw new LookupFilterError('Choose the day first.');
+    return [
+      and(
+        eq(orders.salesModule, 'sales_order'),
+        sql`${orders.status} NOT IN ('cancelled','refunded','failed','delivered','completed')`,
+        sql`COALESCE(${orders.approvalStatus}, 'approved') NOT IN ('pending','rejected','draft')`,
+        sql`EXISTS (SELECT 1 FROM van_visits v WHERE v.day_id = ${day}::uuid AND v.customer_id = ${orders.tradeCustomerId})`,
+        sql`NOT EXISTS (SELECT 1 FROM van_drops d WHERE d.order_id = ${orders.id} AND d.state = 'planned')`,
+        sql`EXISTS (SELECT 1 FROM stock_reservations r WHERE r.ref_type = 'order' AND r.ref_id = ${orders.id} AND r.state IN ('held','partly_consumed'))`,
+      ) ?? isNull(orders.id),
+    ];
+  },
+  toOption: (row) => ({ id: text(row.id), label: text(row.label), description: text(row.customer), badge: null }),
+});
+
 /** The warehouses and stores a van can be loaded from. */
 const loadSources = tableSource({
   key: 'van-load-sources',
@@ -247,5 +273,6 @@ export const VAN_SALES_LOOKUP_SOURCES: LookupSource[] = [
   productsFor('van-plan-products', 'van_sales:plan'),
   productsFor('van-rep-products', 'van_sales:sell'),
   productsOnVan,
+  ordersToDeliver,
   loadSources,
 ];

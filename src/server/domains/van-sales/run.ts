@@ -1,6 +1,6 @@
 import { and, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { customerAddresses, customers, shifts, vanDayOrders, vanDays, vanLoads, vanVisits } from '@/server/db/drizzle/schema';
+import { customerAddresses, customers, shifts, vanDayOrders, vanDays, vanDrops, vanLoads, vanVisits } from '@/server/db/drizzle/schema';
 import type { Actor } from '@/server/kernel/context';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { parseCount } from '@/server/domains/selling/shifts/shift-rules';
@@ -27,9 +27,10 @@ const modeOf = (value: string): RouteMode => (value === 'van_sell' || value === 
  * history with the server's time (the phone's own time is kept beside it).
  */
 /** How a visit with something taken at it is recorded: sales, orders, or both. */
-const storedOutcome = (sales: number, orders: number): 'sold' | 'order_taken' | 'sold_and_ordered' => {
+const storedOutcome = (sales: number, orders: number, delivered: number): 'sold' | 'order_taken' | 'sold_and_ordered' | 'delivered_only' => {
   if (sales > 0 && orders > 0) return 'sold_and_ordered';
-  return orders > 0 ? 'order_taken' : 'sold';
+  if (orders > 0) return 'order_taken';
+  return sales > 0 || delivered === 0 ? 'sold' : 'delivered_only';
 };
 
 export class VanRunService {
@@ -160,9 +161,13 @@ export class VanRunService {
       const made = await tx.select({ kind: vanDayOrders.kind, n: sql<number>`count(*)::int` }).from(vanDayOrders).where(eq(vanDayOrders.visitId, visit.v.id)).groupBy(vanDayOrders.kind);
       const orders = made.find((m) => m.kind === 'order')?.n ?? 0;
       const sales = made.filter((m) => m.kind !== 'order').reduce((n, m) => n + m.n, 0);
-      if (read.finish.outcome === 'sold' && sales + orders === 0) throw new VanSalesError(`Nothing has been sold or ordered at ${visit.name}. Sell or take an order here, or finish the visit with no sale.`);
-      if (read.finish.outcome === 'no_sale' && sales + orders > 0) throw new VanSalesError(`There ${sales + orders === 1 ? 'is a sale or order' : 'are sales or orders'} at ${visit.name}, so the visit is finished as done, not as no sale.`);
-      const stored = read.finish.outcome === 'no_sale' ? 'no_sale' : storedOutcome(sales, orders);
+      const [dropped] = await tx.select({ n: sql<number>`count(*)::int` }).from(vanDrops).where(and(eq(vanDrops.visitId, visit.v.id), eq(vanDrops.state, 'delivered')));
+      const delivered = dropped?.n ?? 0;
+      const [open] = await tx.select({ n: sql<number>`count(*)::int` }).from(vanDrops).where(and(eq(vanDrops.visitId, visit.v.id), eq(vanDrops.state, 'planned')));
+      if ((open?.n ?? 0) > 0) throw new VanSalesError(`${visit.name} has a delivery that is not dealt with. Deliver it, or say why it was not delivered.`);
+      if (read.finish.outcome === 'sold' && sales + orders + delivered === 0) throw new VanSalesError(`Nothing has been sold, ordered or delivered at ${visit.name}. Sell, take an order or deliver here, or finish the visit with no sale.`);
+      if (read.finish.outcome === 'no_sale' && sales + orders + delivered > 0) throw new VanSalesError(`There ${sales + orders + delivered === 1 ? 'is a sale, order or delivery' : 'are sales, orders or deliveries'} at ${visit.name}, so the visit is finished as done, not as no sale.`);
+      const stored = read.finish.outcome === 'no_sale' ? 'no_sale' : storedOutcome(sales, orders, delivered);
       await tx.update(vanVisits).set({ status: 'done', outcome: stored, noSaleReason: read.finish.reason, departedAt: new Date(), version: visit.v.version + 1, updatedAt: new Date() }).where(eq(vanVisits.id, visit.v.id));
       await this.bump(tx, day.id, day.version);
       await recordDayEvent(tx, this.decisions, companyId, day.id, actor, 'visit.done', { reason: read.finish.reason ?? undefined, detail: { customer: visit.name, customerId: visit.customerId, outcome: read.finish.outcome } });

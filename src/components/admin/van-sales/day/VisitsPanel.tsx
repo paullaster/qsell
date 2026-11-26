@@ -93,7 +93,7 @@ function VisitRow({ visit, first, last, screen, may, mayRun, run }: { visit: Vis
 }
 
 /** What happened at the visit, in words: when the rep arrived and how far from the shop, how it ended, and why. */
-const OUTCOME_WORDS: Record<string, string> = { sold: 'Sold', order_taken: 'Order taken', sold_and_ordered: 'Sold and order taken', no_sale: 'No sale' };
+const OUTCOME_WORDS: Record<string, string> = { sold: 'Sold', order_taken: 'Order taken', sold_and_ordered: 'Sold and order taken', delivered_only: 'Delivered', no_sale: 'No sale' };
 
 function VisitFacts({ visit }: { visit: VisitView }) {
   const when = useWhen();
@@ -128,7 +128,7 @@ function RunActions({ visit, screen, run }: { visit: VisitView; screen: DayScree
     setBusy(false);
     if (answer === null) setMode('view');
   };
-  const sales = screen.sales.rows.filter((r) => r.visitId === visit.id).length;
+  const sales = screen.sales.rows.filter((r) => r.visitId === visit.id).length + screen.drops.filter((d) => d.visitId === visit.id && d.state === 'delivered').length;
   if (visit.status === 'done' || visit.status === 'skipped' || visit.status === 'closed_shop') return null;
   return (
     <div className="space-y-2">

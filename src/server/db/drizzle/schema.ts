@@ -5215,7 +5215,7 @@ export const vanVisits = pgTable(
     index('van_visits_day_idx').on(t.dayId, t.sequence, t.id),
     index('van_visits_customer_idx').on(t.customerId, t.createdAt),
     check('van_visits_status_chk', sql`${t.status} IN ('planned','arrived','done','skipped','closed_shop')`),
-    check('van_visits_outcome_chk', sql`${t.outcome} IS NULL OR ${t.outcome} IN ('sold','order_taken','sold_and_ordered','collected_only','no_sale')`),
+    check('van_visits_outcome_chk', sql`${t.outcome} IS NULL OR ${t.outcome} IN ('sold','order_taken','sold_and_ordered','delivered_only','collected_only','no_sale')`),
     check('van_visits_sequence_chk', sql`${t.sequence} > 0`),
     check('van_visits_position_chk', sql`(${t.arrivedLatitude} IS NULL) = (${t.arrivedLongitude} IS NULL)`),
     check('van_visits_distance_chk', sql`${t.arrivedDistanceM} IS NULL OR ${t.arrivedDistanceM} >= 0`),
@@ -5283,6 +5283,40 @@ export const vanDayOrders = pgTable(
     index('van_day_orders_visit_idx').on(t.visitId),
     check('van_day_orders_kind_chk', sql`${t.kind} IN ('cash','credit','order')`),
     check('van_day_orders_total_chk', sql`${t.total} >= 0`),
+  ],
+);
+
+/**
+ * A pre-sold order to be delivered from the van on a day (docs/architecture/van-sales.md §4.6). The delivery itself is an ordinary delivery
+ * document; this ties the order to the day and the customer's visit and says where its stock is: at the warehouse until the load leaves,
+ * on the way with the load, then held on the van for it. Only one drop of an order is live at a time.
+ */
+export const vanDrops = pgTable(
+  'van_drops',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    dayId: uuid('day_id').notNull().references(() => vanDays.id, { onDelete: 'restrict' }),
+    visitId: uuid('visit_id').notNull().references(() => vanVisits.id, { onDelete: 'restrict' }),
+    orderId: text('order_id').notNull().references(() => orders.id, { onDelete: 'restrict' }),
+    state: text('state').notNull().default('planned'),
+    stockState: text('stock_state').notNull().default('at_warehouse'),
+    /** The sales channel the order's stock was held under, kept so a hold put back looks as the first one did. */
+    holdChannel: text('hold_channel'),
+    reason: text('reason'),
+    deliveryId: uuid('delivery_id'),
+    version: integer('version').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('van_drops_live_order_uidx').on(t.orderId).where(sql`${t.state} = 'planned'`),
+    index('van_drops_day_idx').on(t.dayId, t.createdAt),
+    index('van_drops_visit_idx').on(t.visitId),
+    check('van_drops_state_chk', sql`${t.state} IN ('planned','delivered','partly','refused','failed')`),
+    check('van_drops_stock_chk', sql`${t.stockState} IN ('at_warehouse','on_the_way','on_van','short')`),
+    check('van_drops_reason_chk', sql`${t.state} NOT IN ('refused','failed') OR (${t.reason} IS NOT NULL AND length(btrim(${t.reason})) >= 3)`),
   ],
 );
 

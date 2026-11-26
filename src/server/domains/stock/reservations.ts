@@ -514,6 +514,33 @@ export class StockReservations {
     return { released, holds: holds.length };
   }
 
+  /**
+   * Lets go of a document's holds because the stock is leaving on a load that will carry it to the customer, not because the order is off:
+   * the shelves are freed so the load can be shipped, and nothing is written to the journal of cancellations. Returns what was held and
+   * under which channel, so the stock can be held again on the van, or at the warehouse if the load never gets there.
+   */
+  async setAsideIn(tx: Tx, input: SettleInput & { reason: string }): Promise<{ lines: { productId: string; quantity: number }[]; channel: string | null }> {
+    const holds = await this.openHolds(tx, input.refType, input.refId);
+    const per = new Map<string, number>();
+    let channel: string | null = null;
+    for (const h of holds) {
+      const left = round(h.quantity - h.consumed - h.released);
+      if (left <= 0) continue;
+      await tx
+        .update(stockBalances)
+        .set({ reserved: sql`GREATEST(${stockBalances.reserved} - ${left}, 0)`, version: sql`${stockBalances.version} + 1`, updatedAt: sql`now()` })
+        .where(and(eq(stockBalances.productId, h.productId), eq(stockBalances.locationId, h.locationId), eq(stockBalances.shard, h.shard)));
+      await tx
+        .update(stockReservations)
+        .set({ released: sql`${stockReservations.released} + ${left}`, state: h.consumed > 0 ? 'consumed' : 'released', reason: input.reason.slice(0, 300), stateChangedAt: sql`now()` })
+        .where(eq(stockReservations.id, h.id));
+      per.set(h.productId, round((per.get(h.productId) ?? 0) + left));
+      const recorded = (h.sourcing as { channel?: unknown } | null)?.channel;
+      if (channel === null && typeof recorded === 'string') channel = recorded;
+    }
+    return { lines: [...per].map(([productId, quantity]) => ({ productId, quantity })), channel };
+  }
+
   async release(input: SettleInput & { reason: string; expired?: boolean }): Promise<{ released: number; holds: number }> {
     return await this.db.transaction((tx) => this.releaseIn(tx, input));
   }

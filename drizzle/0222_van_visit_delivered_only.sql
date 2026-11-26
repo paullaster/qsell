@@ -1,0 +1,2 @@
+ALTER TABLE "van_visits" DROP CONSTRAINT "van_visits_outcome_chk";--> statement-breakpoint
+ALTER TABLE "van_visits" ADD CONSTRAINT "van_visits_outcome_chk" CHECK ("van_visits"."outcome" IS NULL OR "van_visits"."outcome" IN ('sold','order_taken','sold_and_ordered','delivered_only','collected_only','no_sale'));

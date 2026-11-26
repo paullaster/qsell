@@ -282,9 +282,9 @@ describe.skipIf(url === undefined || url === '')('selling from the van (database
   describe('finishing a visit with sales', () => {
     it('is as sold, never as no sale, and a sold visit needs a sale', async () => {
       const s = await outDay();
-      await expect(c.vanRun.finish(companyId, as(s.user), s.day.id, s.v1?.id ?? '', { outcome: 'sold' }, true)).rejects.toThrow('Nothing has been sold or ordered at');
+      await expect(c.vanRun.finish(companyId, as(s.user), s.day.id, s.v1?.id ?? '', { outcome: 'sold' }, true)).rejects.toThrow('Nothing has been sold, ordered or delivered at');
       await sell(s);
-      await expect(c.vanRun.finish(companyId, as(s.user), s.day.id, s.v1?.id ?? '', { outcome: 'no_sale', reason: 'Changed my mind' }, true)).rejects.toThrow('is a sale or order at');
+      await expect(c.vanRun.finish(companyId, as(s.user), s.day.id, s.v1?.id ?? '', { outcome: 'no_sale', reason: 'Changed my mind' }, true)).rejects.toThrow('sale, order or delivery at');
       const done = await c.vanRun.finish(companyId, as(s.user), s.day.id, s.v1?.id ?? '', { outcome: 'sold' }, true);
       expect(done.visits[0]).toMatchObject({ status: 'done', outcome: 'sold', noSaleReason: null });
     });
@@ -324,7 +324,7 @@ describe.skipIf(url === undefined || url === '')('selling from the van (database
     it('is finished as order taken, or as sold and ordered when something was also sold, and never as no sale', async () => {
       const s = await outDay({ mode: 'pre_sell' });
       await order(s);
-      await expect(c.vanRun.finish(companyId, as(s.user), s.day.id, s.v1?.id ?? '', { outcome: 'no_sale', reason: 'Changed my mind' }, true)).rejects.toThrow('is a sale or order at');
+      await expect(c.vanRun.finish(companyId, as(s.user), s.day.id, s.v1?.id ?? '', { outcome: 'no_sale', reason: 'Changed my mind' }, true)).rejects.toThrow('sale, order or delivery at');
       expect((await c.vanRun.finish(companyId, as(s.user), s.day.id, s.v1?.id ?? '', { outcome: 'sold' }, true)).visits[0]).toMatchObject({ status: 'done', outcome: 'order_taken' });
       const both = await outDay({ mode: 'both' });
       await order(both);

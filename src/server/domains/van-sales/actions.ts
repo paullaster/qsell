@@ -9,6 +9,7 @@ import type { RepView } from './reps';
 import type { DayDetail, DayView } from './days';
 import type { LoadView, OnVanRow, Suggestion } from './loads';
 import type { DaySales, OrderTakenView, TenderChoice, VanSaleView } from './sales';
+import type { DropView } from './drops';
 import { goOutProblem } from '@/lib/van-sales/run';
 import type { ParView, RouteView, StopView } from './routes';
 import type { VanView } from './vans';
@@ -299,6 +300,10 @@ export interface DayScreen {
   lastOrder?: OrderTakenView;
   /** Orders may be taken on this day (the company has pre-sell on and the route takes orders). */
   ordersAllowed: boolean;
+  /** The orders to deliver from the van on this day, with where their stock is. */
+  drops: DropView[];
+  /** The planner may add orders to deliver: a day with a van that takes both kinds of work, before it goes out. */
+  canAddDrops: boolean;
 }
 
 async function dayScreen(companyId: string, id: string, userId: string): Promise<DayScreen> {
@@ -312,9 +317,9 @@ async function dayScreen(companyId: string, id: string, userId: string): Promise
   const settings = await c.vanSalesSettings.current(companyId);
   const isRep = rep.userId === userId;
   const selling = day.status === 'out' && isRep && maySell;
-  const [sales, tenders] = await Promise.all([c.vanSales.forDay(companyId, id), selling ? c.vanSales.tenderChoices(companyId, day.branchId) : Promise.resolve([])]);
+  const [sales, tenders, drops] = await Promise.all([c.vanSales.forDay(companyId, id), selling ? c.vanSales.tenderChoices(companyId, day.branchId) : Promise.resolve([]), c.vanDrops.forDay(companyId, id)]);
   const loadSigned = loads.some((l) => l.kind === 'load' && l.cancelledAt === null && l.signedAt !== null);
-  return { detail, canPlan, loads, onVan, suggestion, isRep, maySell, sales, tenders, ordersAllowed: settings.preSell && day.mode !== 'van_sell', repLimits: isRep ? { maxDiscountPercent: rep.maxDiscountPercent, maxCreditPerDay: rep.maxCreditPerDay, mayOverridePrice: rep.mayOverridePrice, maySellOnCredit: rep.maySellOnCredit } : null, outProblem: goOutProblem({ status: day.status, mode: day.mode, loadSigned }), offRouteAllowed: settings.offRoute === 'allow' };
+  return { detail, canPlan, loads, onVan, suggestion, isRep, maySell, sales, tenders, drops, canAddDrops: canPlan && settings.preSell && day.vanId !== null && day.mode === 'both' && (day.status === 'planned' || day.status === 'loading'), ordersAllowed: settings.preSell && day.mode !== 'van_sell', repLimits: isRep ? { maxDiscountPercent: rep.maxDiscountPercent, maxCreditPerDay: rep.maxCreditPerDay, mayOverridePrice: rep.mayOverridePrice, maySellOnCredit: rep.maySellOnCredit } : null, outProblem: goOutProblem({ status: day.status, mode: day.mode, loadSigned }), offRouteAllowed: settings.offRoute === 'allow' };
 }
 
 export async function dayScreenAction(id: unknown) {
@@ -488,4 +493,30 @@ export async function takeOrderAction(raw: unknown) {
     },
     { paths: PATHS, friendly },
   );
+}
+
+// ── Deliveries from the van ──────────────────────────────────────────────
+
+/** The planner adds an order to the day's deliveries. */
+export async function addDropAction(raw: unknown) {
+  const i = obj(raw);
+  return await changeDay(i.dayId, async (c, companyId, actor, dayId) => await c.vanDrops.add(companyId, actor, dayId, typeof i.orderId === 'string' ? i.orderId : ''));
+}
+
+/** The planner takes a delivery off the day, while its stock has not left the warehouse. */
+export async function removeDropAction(raw: unknown) {
+  const i = obj(raw);
+  return await changeDay(i.dayId, async (c, companyId, actor, dayId) => await c.vanDrops.remove(companyId, actor, dayId, text(i.id) ?? ''));
+}
+
+/** The rep delivers the order to the customer they are at. */
+export async function deliverDropAction(raw: unknown) {
+  const i = obj(raw);
+  return await runDay(i.dayId, async (c, companyId, actor, dayId, maySell) => await c.vanDrops.deliver(companyId, actor, dayId, text(i.id) ?? '', i, maySell));
+}
+
+/** The rep closes a delivery that was refused or could not be made, with the reason. */
+export async function closeDropAction(raw: unknown) {
+  const i = obj(raw);
+  return await runDay(i.dayId, async (c, companyId, actor, dayId, maySell) => await c.vanDrops.close(companyId, actor, dayId, text(i.id) ?? '', i.state === 'refused' ? 'refused' : 'failed', i.reason, maySell));
 }
