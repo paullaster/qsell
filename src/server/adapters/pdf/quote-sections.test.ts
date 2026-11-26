@@ -17,7 +17,7 @@ async function printed(
     headerText: string;
     headerPosition: 'above_company' | 'below_company';
     footerText: string;
-    footerPosition: 'after_totals' | 'after_terms';
+    footerPosition: 'after_totals' | 'page_bottom';
   },
 ): Promise<string[]> {
   const drawn: string[] = [];
@@ -131,7 +131,23 @@ describe('a printed quote', () => {
     });
     expect(text).toContain('Quotation: renewable energy system');
     expect(text).toContain('Offer valid for 21 days');
-    expect(text).toContain(
+  });
+
+  it('prints the company footer at the foot of the page in place of the standard closing line', async () => {
+    const standard =
+      'This quotation is subject to the stated validity and terms. It is not a tax invoice or confirmation of payment.';
+    const text = await printed(true, {
+      headerText: '',
+      headerPosition: 'above_company',
+      footerText: 'Offer valid for 21 days',
+      footerPosition: 'page_bottom',
+    });
+    expect(text).toContain('Offer valid for 21 days');
+    expect(text).not.toContain(standard);
+  });
+
+  it('keeps the standard closing line when the company has written no footer', async () => {
+    expect(await printed(true)).toContain(
       'This quotation is subject to the stated validity and terms. It is not a tax invoice or confirmation of payment.',
     );
   });

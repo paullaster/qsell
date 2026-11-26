@@ -87,7 +87,7 @@ Configures the core identity of the business. Divided into five sections:
 
 ### Sub-Module 2: Document Layouts (`/admin/company/documents`)
 Controls the appearance and custom text printed on customer-facing paper and PDF documents:
-- **Quotes**: Header text, footer notes (e.g. *"Valid for 30 days. Prices inclusive of 16% VAT"*), and alignment.
+- **Quotes**: Header text, footer notes (e.g. *"Valid for 30 days. Prices inclusive of 16% VAT"*), and where they sit. A footer note has two places: **Foot of the page** (the default, repeated at the bottom of every page above the page number) or **Right after the totals**. Whichever is chosen, the note **replaces** the document's standard closing line (for a quote, *"This quotation is subject to the stated validity and terms…"*); the standard line comes back only when the footer note is left empty. Layouts saved earlier as *After payment terms and conditions* now print at the foot of the page.
 - **Invoices & Proforma Invoices**: Payment instructions, bank details placement, tax breakdown notes, and late interest warnings.
 - **Receipts**: Counter receipt footers (e.g. *"Goods once sold cannot be returned without receipt"*), cashier signature line, and QR code placement.
 

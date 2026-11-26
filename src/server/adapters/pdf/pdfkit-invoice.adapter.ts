@@ -587,10 +587,17 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
         y = doc.y + 10;
       }
 
-      if (customFooter !== '' && layout.footerPosition === 'after_terms') {
-        doc.fillColor(muted).font('Helvetica').fontSize(8);
-        doc.text(customFooter, M, y, { width: CONTENT_W, lineGap: 2 });
-        y = doc.y + 6;
+      // The company's own footer stands in for the document's standard closing line, wherever it is placed.
+      const footerAtBottom = customFooter !== '' && layout.footerPosition === 'page_bottom';
+      let footerHeight = 0;
+      if (footerAtBottom) {
+        doc.font('Helvetica').fontSize(8);
+        footerHeight = doc.heightOfString(customFooter, { width: CONTENT_W, lineGap: 2 });
+        // The last page keeps its footer clear of what was written above it.
+        if (y > PAGE_H - 48 - footerHeight - 8) {
+          doc.addPage();
+          doc.rect(0, 0, PAGE_W, 6).fill(accent);
+        }
       }
 
       let footerNote =
@@ -602,8 +609,7 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
         footerNote =
           'This proforma invoice is a quotation for payment. It is not a tax invoice and does not confirm receipt of funds.';
       }
-      const showStandardNote = isQuote || customFooter === '';
-      if (showStandardNote) {
+      if (customFooter === '') {
         doc.fillColor(muted).font('Helvetica').fontSize(8);
         const invoiceNote = has(payload.company.invoiceFooterNote)
           ? payload.company.invoiceFooterNote
@@ -617,6 +623,17 @@ export class PdfKitInvoiceAdapter implements InvoicePdfPort {
       const pages = doc.bufferedPageRange();
       for (let i = 0; i < pages.count; i += 1) {
         doc.switchToPage(i);
+        if (footerAtBottom) {
+          doc
+            .fillColor(muted)
+            .font('Helvetica')
+            .fontSize(8)
+            .text(customFooter, M, PAGE_H - 46 - footerHeight, {
+              width: CONTENT_W,
+              lineGap: 2,
+              height: footerHeight + 2,
+            });
+        }
         doc
           .moveTo(M, PAGE_H - 40)
           .lineTo(M + CONTENT_W, PAGE_H - 40)

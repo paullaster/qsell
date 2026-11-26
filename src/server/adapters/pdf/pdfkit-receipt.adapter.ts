@@ -338,7 +338,7 @@ export function renderReceiptPdf(receipt: ReceiptDocument, generatedOn: string):
       .stroke();
     doc.fillColor(MUTED).font('Helvetica').fontSize(8);
     const receiptFooter =
-      layout.footerText.trim() !== '' && layout.footerPosition === 'after_terms'
+      layout.footerText.trim() !== '' && layout.footerPosition === 'page_bottom'
         ? layout.footerText.trim()
         : (company.invoiceFooterNote ?? 'Thank you for your payment.');
     doc.text(receiptFooter, M, footerY + 10, { width: CW });

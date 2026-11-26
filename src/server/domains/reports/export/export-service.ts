@@ -1,12 +1,14 @@
 import { createHash } from 'node:crypto';
 import { plainText } from '@/lib/reports/messages';
 import type { AccessControlService } from '@/server/domains/access-control/engine';
-import { businessDate } from '@/server/kernel/numbering/business-date';
+import { businessTimeZone, formatBusinessTime } from '@/server/kernel/numbering/business-date';
 import { readChoice } from '../engine/params';
 import type { ReportAuditSink, ReportRunner } from '../engine/run';
+import { coverageOf } from './coverage';
 import { buildCsv } from './csv';
+import { exportFileName, slugOf } from './file-name';
 import { buildPdf } from './pdf';
-import { tableProblems, type ExportFacts } from './table';
+import { tableProblems, type ExportBrand, type ExportFacts } from './table';
 import { buildXlsx } from './xlsx';
 
 export const EXPORT_FORMATS = ['csv', 'xlsx', 'pdf'] as const;
@@ -40,15 +42,7 @@ export type ExportResult =
   | { ok: false; code: ExportErrorCode; error: string };
 
 /** A file name from words: lower case letters, digits and hyphens only, so it can never carry a path or a header. */
-export function slug(text: string): string {
-  const s = text
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return s === '' ? 'report' : s.slice(0, 60);
-}
+export const slug = (text: string): string => slugOf(text, 'report');
 
 /**
  * Turns a report into a file. It needs `reports:export` *and* the report's own permissions (the runner checks those
@@ -63,7 +57,10 @@ export class ReportExportService {
       access: Pick<AccessControlService, 'can'>;
       audit: ReportAuditSink;
       companyName: () => Promise<string>;
+      /** The heading the company chose for the reports of this module (the report's family). */
+      brand?: (family: string) => Promise<ExportBrand | undefined>;
       clock?: () => Date;
+      timeZone?: () => string;
     },
   ) {}
 
@@ -122,13 +119,21 @@ export class ReportExportService {
       };
     }
 
+    const now = (this.deps.clock ?? (() => new Date()))();
+    const timeZone = (this.deps.timeZone ?? businessTimeZone)();
+    const companyName = await this.deps.companyName();
+    const coverage = coverageOf(run.data, run.meta.asOf, timeZone);
+    const brand = await this.deps.brand?.(def.family);
     const facts: ExportFacts = {
-      companyName: await this.deps.companyName(),
+      companyName,
       reportTitle: plainText(def.titleId),
       question: plainText(def.questionId),
       asOf: run.meta.asOf,
-      scope: '',
+      scope: coverage.scope,
       definitionsVersion: run.meta.definitionsVersion,
+      period: coverage.period,
+      printedAt: formatBusinessTime(now, timeZone),
+      ...(brand === undefined ? {} : { brand }),
     };
 
     let content: Buffer;
@@ -165,12 +170,17 @@ export class ReportExportService {
       };
     }
 
-    const day = businessDate((this.deps.clock ?? (() => new Date()))());
     return {
       ok: true,
       content,
       mime: MIME[format],
-      fileName: `${slug(plainText(def.titleId))}-${day}.${format}`,
+      fileName: exportFileName({
+        business: companyName,
+        report: facts.reportTitle,
+        now,
+        timeZone,
+        extension: format,
+      }),
       sha256,
       rows: table.rows.length,
     };

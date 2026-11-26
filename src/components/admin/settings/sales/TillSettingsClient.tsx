@@ -46,7 +46,7 @@ function Body({ initial }: { initial: TillSettingsView }) {
 
   return (
     <div className="max-w-3xl space-y-5">
-      <PageHeader title="Cash Sales" intro="Choose how the counter looks for everyone who sells at it, and what its receipts say about discounts." />
+      <PageHeader title="Cash Sales" intro="Choose how the counter looks for everyone who sells at it, and what its receipts say." />
       <Message notice={notice} />
       <section className={`${cardClass} space-y-4`}>
         <div>
