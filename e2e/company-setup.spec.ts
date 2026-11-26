@@ -63,6 +63,38 @@ test.describe('company setup', () => {
     await noHorizontalScroll(page);
   });
 
+  test('the installed app is named by the company: the short name ends on a whole word, the choice reaches the manifest and the page, and clearing it brings the trading name back', async ({ page, request }) => {
+    await open(page, '/admin/company/profile', 'Company profile');
+    const form = page.getByRole('form', { name: 'Company profile' });
+    const appName = form.getByLabel('App name', { exact: true });
+    const short = form.getByLabel('Name under the icon');
+    await expect(short).toHaveAttribute('maxlength', '12');
+
+    // A long name is shown in full where there is room, and under the icon as whole words that fit.
+    await appName.fill('E2E Trading Online Shop For Everyone');
+    await expect(page.getByTestId('app-name-preview')).toHaveText('E2E Trading Online Shop For Everyone');
+    await expect(page.getByTestId('app-short-preview')).toHaveText('E2E Trading');
+    await short.fill('E2E Shop');
+    await expect(page.getByTestId('app-short-preview')).toHaveText('E2E Shop');
+    await form.getByRole('button', { name: 'Save profile' }).click();
+    await expect(form.getByRole('status')).toContainText('Company profile saved.', { timeout: 30_000 });
+
+    const manifest = (await (await request.get('/manifest.webmanifest')).json()) as { name: string; short_name: string };
+    expect(manifest).toMatchObject({ name: 'E2E Trading Online Shop For Everyone', short_name: 'E2E Shop' });
+    await page.goto('/');
+    await expect(page.locator('meta[name="apple-mobile-web-app-title"]')).toHaveAttribute('content', 'E2E Shop');
+    await noHorizontalScroll(page);
+
+    // Emptied, the trading name is used again.
+    await open(page, '/admin/company/profile', 'Company profile');
+    await appName.fill('');
+    await short.fill('');
+    await form.getByRole('button', { name: 'Save profile' }).click();
+    await expect(form.getByRole('status')).toContainText('Company profile saved.', { timeout: 30_000 });
+    const back = (await (await request.get('/manifest.webmanifest')).json()) as { name: string; short_name: string };
+    expect(back).toMatchObject({ name: 'E2E Trading', short_name: 'E2E Trading' });
+  });
+
   test('appearance: colours and density are saved, a bad colour never is', async ({ page }) => {
     await open(page, '/admin/company/appearance', 'Appearance');
     await noNativeSelect(page);

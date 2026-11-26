@@ -1489,28 +1489,28 @@
     {
       "idx": 212,
       "version": "7",
-      "when": 1795486328556,
+      "when": 1795571111877,
       "tag": "0212_van_sales_settings",
       "breakpoints": true
     },
     {
       "idx": 213,
       "version": "7",
-      "when": 1795493268787,
+      "when": 1795571111878,
       "tag": "0213_vans_and_reps",
       "breakpoints": true
     },
     {
       "idx": 214,
       "version": "7",
-      "when": 1795551743579,
+      "when": 1795571111879,
       "tag": "0214_order_item_line_no",
       "breakpoints": true
     },
     {
       "idx": 215,
       "version": "7",
-      "when": 1795568731316,
+      "when": 1795571111880,
       "tag": "0215_sales_routes",
       "breakpoints": true
     },
@@ -1603,6 +1603,13 @@
       "version": "7",
       "when": 1795718103618,
       "tag": "0228_van_day_shortages",
+      "breakpoints": true
+    },
+    {
+      "idx": 229,
+      "version": "7",
+      "when": 1795719999362,
+      "tag": "0229_pwa_app_name",
       "breakpoints": true
     }
   ]

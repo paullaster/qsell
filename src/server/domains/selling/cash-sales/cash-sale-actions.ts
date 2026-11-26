@@ -2,6 +2,8 @@
 
 import { canPermission, requirePermission } from '@/server/domains/access-control/guard';
 import { getContainer } from '@/server/di/container';
+import { brandBlock, resolveRecordPrint, type BrandBlock } from '@/lib/print-branding';
+import { toCompanyProfile } from '@/server/domains/company/repository';
 import type { ShiftReport } from '../shifts/shift-service';
 import { parseCashSale, parseCashSaleLines, parseCounterReturn } from './cash-sale-input';
 import type { ReturnSummary } from './counter-return-service';
@@ -35,8 +37,13 @@ export interface CashSalesScreen {
   canPrice: boolean;
   /** May offer a discount of their own while selling: they have the permission and the company allows it at their branch. Only then is the discount input shown. */
   canDiscount: boolean;
-  /** The shop's trading name, for the top of the printed receipt. */
-  shopName: string;
+  /** The top of the printed receipt: the shop's name and whatever else the company chose to show under it. */
+  receiptBrand: BrandBlock;
+}
+
+async function receiptBrand(c: ReturnType<typeof getContainer>): Promise<BrandBlock> {
+  const company = await c.companySettings.ensureSeeded();
+  return brandBlock(toCompanyProfile(company), resolveRecordPrint(company.uiConfig.recordPrint).cash_sale);
 }
 
 const cursorOf = (raw: unknown): { k: string; id: string } | null => {
@@ -90,7 +97,7 @@ export async function cashSalesScreenAction(): Promise<{ ok: true; data: CashSal
     const shift = mine === null ? null : await c.shifts.report(companyId, mine);
     const listed = await c.cashSales.list(companyId, who.readAll ? {} : { userId: who.userId });
     const canReturn = await canPermission('cash_sales:return');
-    return { ok: true, data: { shift, sales: { rows: listed.rows, next: encode(listed.next) }, can: { create: who.create, readAll: who.readAll, return: canReturn }, returns: canReturn ? await c.counterReturns.unfinished(companyId, who.readAll ? {} : { userId: who.userId }) : [], offlineEnabled: (await c.offlineSales.settings(companyId)).enabled, ...await till(c, companyId), canPrice: await canPermission('cash_sales:price'), canDiscount: await mayDiscount(companyId, who.userId), shopName: (await c.companySettings.getProfile()).tradingName } };
+    return { ok: true, data: { shift, sales: { rows: listed.rows, next: encode(listed.next) }, can: { create: who.create, readAll: who.readAll, return: canReturn }, returns: canReturn ? await c.counterReturns.unfinished(companyId, who.readAll ? {} : { userId: who.userId }) : [], offlineEnabled: (await c.offlineSales.settings(companyId)).enabled, ...await till(c, companyId), canPrice: await canPermission('cash_sales:price'), canDiscount: await mayDiscount(companyId, who.userId), receiptBrand: await receiptBrand(c) } };
   } catch (error) {
     console.error('[cash sales] screen', error);
     return { ok: false, error: 'The counter could not be loaded. Please try again.' };

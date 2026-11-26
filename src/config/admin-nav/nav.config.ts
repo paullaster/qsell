@@ -1,5 +1,5 @@
 import type { AdminNavItem } from './types';
-import { reportsNavModules } from './reports-nav';
+import { reportSettingsNav, reportsNavModules } from './reports-nav';
 
 /**
  * Central admin navbar configuration.
@@ -1454,7 +1454,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
             title: 'Cash Sales',
             name: 'settings-sales-cash-sales',
             href: '/admin/settings/sales/cash-sales',
-            description: 'How the counter looks: inside the admin page, or as a full-screen till',
+            description: 'How the counter looks, and what the receipt shows about discounts and about the business',
             icon: 'LayoutGrid',
             permission: 'selling_settings:manage',
           },
@@ -1506,6 +1506,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
           },
         ],
       },
+      reportSettingsNav(),
       {
         id: 'settings-business-time',
         title: 'Business Time Zone',

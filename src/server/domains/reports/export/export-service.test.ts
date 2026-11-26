@@ -93,6 +93,7 @@ function setup(s: Setup = {}) {
     },
     companyName: () => Promise.resolve('Acme Traders Ltd'),
     clock: () => NOW,
+    timeZone: () => 'Africa/Nairobi',
   });
   return { service, entries };
 }
@@ -105,7 +106,7 @@ describe('export service', () => {
       expect(r.ok, format).toBe(true);
       if (!r.ok) continue;
       expect(r.sha256).toBe(createHash('sha256').update(r.content).digest('hex'));
-      expect(r.fileName).toBe(`receivables-ageing-2026-03-10.${format}`);
+      expect(r.fileName).toBe(`acme-traders-ltd_receivables-ageing_20260310-210000.${format}`);
       expect(r.rows).toBe(2);
       expect(entries).toHaveLength(1);
       expect(entries[0]).toMatchObject({

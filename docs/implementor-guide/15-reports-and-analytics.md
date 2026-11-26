@@ -94,6 +94,13 @@ Headline figures with change against the comparison period, a sales trend chart,
 - **Branch picker** (only for people who may choose a branch): a searchable list, never a drop-down menu.
 - **Statement line:** the dates covered, the comparison dates, the scope ("All branches" or the branch name) and "Updated" with the time the figures were made.
 
+### 4.4a Downloaded files: heading, contents and names
+- **File name.** Every download is named `<business>_<report>_<date>-<time>`, for example `sm-engineering-limited_stock-valuation_20261125-041300.pdf`. The business is the trading name, the time is the business time zone to the second, and the same pattern applies to CSV, Excel and PDF, so files sort by when they were made.
+- **PDF page one** opens with the business name, then whatever the company chose to show under it (see *Report headings* below), then the report name, the question it answers, and one line saying what it covers: the days of the period, or "As at" a date and time for a report of a position (stock), followed by the branch or locations.
+- **PDF table.** Rows grow to fit long product or customer names, so nothing is cut off or printed over the next row. Numbers are grouped in thousands, money has two decimals, percentages carry the sign, and the heading row repeats on every page.
+- **PDF footer.** Business name, report name, when it was printed, and the page number. The internal definitions version is not printed; CSV and Excel keep it, with the as-of time, in their closing rows and Details sheet.
+- **Report headings** (`/admin/settings/reports`, needs the *Company & Settings* permission). The default is the business name only, as before. **All reports** (`/admin/settings/reports/general`) has eight switches: **Logo**, **Registered name** (when different from the trading name), **Tagline**, **Address**, **Email**, **Phone numbers**, **Website** and **KRA PIN**, with a preview built from the company's own details and two presets (**Standard letterhead**: logo, registered name, address, email and phone; **Business name only**). Each module of reports (Sales, Finance, Products and inventory and so on, one screen each under Settings → Reports) follows the general heading until **Use the heading of all reports** is unticked; it then keeps its own choice, and ticking the box again removes it. A detail the company profile does not hold is flagged beside its switch and is simply left off the page.
+
 ### 4.5 Report activity (`/admin/reports/activity`)
 A list of runs and downloads: who, which report, when, format and the file fingerprint. Newest first; more rows load on request.
 
@@ -162,6 +169,7 @@ Money is shown with the currency and thousands separators (for example KES 12,50
 4. Grant `reports:all_branches` to head-office staff; leave branch managers without it.
 5. Confirm the business time zone and base currency (Guide 13).
 6. Confirm each report's own permission is given to the right role (for example `receivables_ageing:read`).
+7. Fill in the company profile (name, logo, address, email, phone) and choose the report heading under Settings → Reports.
 
 **Test transactions**
 1. Sign in as a branch manager. Open Reports: only permitted reports appear. The branch picker is absent or limited to their branches.
@@ -171,6 +179,7 @@ Money is shown with the currency and thousands separators (for example KES 12,50
 5. Open Report activity: three entries with your name, format and fingerprint.
 6. Sign in as someone without `reports:export`: the download is refused.
 7. On a phone (390 px wide): no sideways scrolling; tables appear as cards.
+8. Under Settings → Reports → All reports choose **Standard letterhead**, save, and download Stock valuation as a PDF: the business name, logo, address, email and phone sit above the report name, no row is cut off, and the file is named business, report and time.
 
 **Common pitfalls**
 - Giving `reports:read` without the report's own permission: the card is hidden or the report reports as missing.

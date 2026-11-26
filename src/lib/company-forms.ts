@@ -5,12 +5,15 @@ import {
   type ProductGridDesktopColumns,
 } from '@/config/company-ui/types';
 import { has } from '@/lib/values';
+import { APP_NAME_MAX, APP_SHORT_NAME_MAX } from '@/lib/pwa-name';
 
 /** The company profile as the form holds it: every field text, an empty box meaning "not set". */
 export interface ProfileForm {
   legalName: string;
   tradingName: string;
   tagline: string;
+  appName: string;
+  appShortName: string;
   email: string;
   phone: string;
   tel: string;
@@ -37,6 +40,8 @@ export const profileFormFrom = (row: CompanySettingsRow): ProfileView => ({
   legalName: row.legalName,
   tradingName: row.tradingName,
   tagline: row.tagline ?? '',
+  appName: row.appName ?? '',
+  appShortName: row.appShortName ?? '',
   email: row.email,
   phone: row.phone,
   tel: row.tel ?? '',
@@ -61,6 +66,8 @@ export const profileFormFrom = (row: CompanySettingsRow): ProfileView => ({
 export type ProfileUpdate = Omit<
   { [K in keyof ProfileForm]: ProfileForm[K] },
   | 'tagline'
+  | 'appName'
+  | 'appShortName'
   | 'tel'
   | 'website'
   | 'locationLabel'
@@ -72,6 +79,8 @@ export type ProfileUpdate = Omit<
   | 'bankAccountNumber'
 > & {
   tagline: string | null;
+  appName: string | null;
+  appShortName: string | null;
   tel: string | null;
   website: string | null;
   locationLabel: string | null;
@@ -98,6 +107,8 @@ const REQUIRED: [keyof ProfileForm, string, number][] = [
 ];
 const OPTIONAL: [keyof ProfileForm, string, number][] = [
   ['tagline', 'Tagline', 120],
+  ['appName', 'The app name', APP_NAME_MAX],
+  ['appShortName', 'The name under the icon', APP_SHORT_NAME_MAX],
   ['locationLabel', 'Location label', 120],
   ['vatNumber', 'VAT number', 40],
   ['registrationNumber', 'Registration number', 40],
@@ -171,6 +182,8 @@ export function profilePayload(
       legalName: form.legalName.trim(),
       tradingName: form.tradingName.trim(),
       tagline: orNull(form.tagline),
+      appName: orNull(form.appName),
+      appShortName: orNull(form.appShortName),
       email,
       phone,
       tel: orNull(form.tel),

@@ -114,6 +114,9 @@ export const companySettings = pgTable(
     country: text('country').notNull().default('Kenya'),
     locationLabel: text('location_label'),
     tagline: text('tagline'),
+    /** The name the installed app goes by (null: the trading name), and the short one under its icon (null: made from the name). */
+    appName: text('app_name'),
+    appShortName: text('app_short_name'),
     kraPin: text('kra_pin').notNull().default(''),
     vatNumber: text('vat_number'),
     registrationNumber: text('registration_number'),
@@ -145,6 +148,7 @@ export const companySettings = pgTable(
     index('company_settings_active_updated_idx')
       .on(t.updatedAt.desc())
       .where(sql`${t.isActive}`),
+    check('company_settings_app_name_chk', sql`(${t.appName} IS NULL OR char_length(${t.appName}) BETWEEN 1 AND 45) AND (${t.appShortName} IS NULL OR char_length(${t.appShortName}) BETWEEN 1 AND 12)`),
     check('company_settings_timezone_chk', sql`${t.timezone} ~ '^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$' AND char_length(${t.timezone}) <= 64`),
   ],
 );

@@ -10,6 +10,13 @@ import {
 import { toPublicCompany } from '@/lib/company-view';
 import { resolveCompanyUiConfig, resolveSupportConfig } from '@/config/company-ui';
 import { resolveDocumentLayouts } from '@/lib/document-layouts';
+import {
+  PLAIN_HEADING,
+  STANDARD_LETTERHEAD,
+  headingFor,
+  resolveRecordPrint,
+  resolveReportPrint,
+} from '@/lib/print-branding';
 
 /**
  * Company setup against a real database: the profile is saved from the checked form (empty boxes clear the
@@ -51,6 +58,8 @@ describe.skipIf(url === '')('company setup (database)', () => {
       bankName: 'Test Bank',
       bankAccountNumber: '12345',
       tagline: 'Hello',
+      appName: 'Setup Shop',
+      appShortName: 'Setup',
     };
     const checked = profilePayload(form);
     if (!checked.ok) throw new Error(checked.error);
@@ -61,17 +70,26 @@ describe.skipIf(url === '')('company setup (database)', () => {
       kraPin: 'P012345678Q',
       bankName: 'Test Bank',
       tagline: 'Hello',
+      appName: 'Setup Shop',
+      appShortName: 'Setup',
     });
 
-    const cleared = profilePayload({ ...form, bankName: '', bankAccountNumber: '', tagline: '  ' });
+    const cleared = profilePayload({ ...form, bankName: '', bankAccountNumber: '', tagline: '  ', appName: ' ', appShortName: '' });
     if (!cleared.ok) throw new Error(cleared.error);
     const after = await c.companySettings.update(cleared.payload);
     expect(after).toMatchObject({
       bankName: null,
       bankAccountNumber: null,
       tagline: null,
+      appName: null,
+      appShortName: null,
       legalName: 'Setup Test Ltd',
     });
+  });
+
+  it('refuses, in the database itself, an installed-app name too long to show', async () => {
+    await expect(c.companySettings.update({ appShortName: 'A name far too long' })).rejects.toThrow();
+    await expect(c.companySettings.update({ appName: '' })).rejects.toThrow();
   });
 
   it('changes one part of the stored look without touching the others, even when saved one after the other', async () => {
@@ -123,6 +141,26 @@ describe.skipIf(url === '')('company setup (database)', () => {
     expect(view.tradingName).toBe(row.tradingName);
   });
 
+  it('keeps the report heading and the receipt heading beside the other stored settings', async () => {
+    const letterhead = { ...STANDARD_LETTERHEAD };
+    await c.companySettings.setUiConfigSection('reportPrint', {
+      general: letterhead,
+      modules: { sales: { ...PLAIN_HEADING, email: true } },
+    });
+    const saved = await c.companySettings.setUiConfigSection('recordPrint', {
+      cash_sale: { ...PLAIN_HEADING, phone: true },
+    });
+    const report = resolveReportPrint(saved.uiConfig.reportPrint, ['sales', 'finance']);
+    expect(report.general).toEqual(letterhead);
+    expect(headingFor(report, 'sales').email).toBe(true);
+    expect(headingFor(report, 'finance')).toEqual(letterhead);
+    expect(resolveRecordPrint(saved.uiConfig.recordPrint).cash_sale.phone).toBe(true);
+    // Saving the second part did not touch the first, nor the layouts.
+    expect(saved.uiConfig.documentLayouts).toEqual(
+      (await c.companySettings.ensureSeeded()).uiConfig.documentLayouts,
+    );
+  });
+
   it('saves printable quote and invoice layouts on the company row and resolves defaults for receipts', async () => {
     const layouts = resolveDocumentLayouts({
       quote: {
@@ -135,7 +173,7 @@ describe.skipIf(url === '')('company setup (database)', () => {
         headerText: '',
         headerPosition: 'above_company',
         footerText: 'Pay within 14 days',
-        footerPosition: 'after_terms',
+        footerPosition: 'page_bottom',
       },
     });
     const saved = await c.companySettings.setDocumentLayouts(layouts);
@@ -153,7 +191,7 @@ describe.skipIf(url === '')('company setup (database)', () => {
       headerText: '',
       headerPosition: 'above_company',
       footerText: '',
-      footerPosition: 'after_terms',
+      footerPosition: 'page_bottom',
     });
   });
 });

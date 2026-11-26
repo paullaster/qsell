@@ -62,6 +62,9 @@ test.describe('analysis reports', () => {
     const pdf = await page.request.get('/api/admin/reports/stock-valuation/export?format=pdf');
     expect(pdf.status()).toBe(200);
     expect((await pdf.body()).subarray(0, 4).toString('latin1')).toBe('%PDF');
+    expect(pdf.headers()['content-disposition']).toMatch(
+      /filename="[a-z0-9-]+_stock-valuation_\d{8}-\d{6}\.pdf"/,
+    );
   });
 });
 

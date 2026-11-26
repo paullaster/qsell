@@ -278,8 +278,8 @@ function Counter({ initial }: { initial: CashSalesScreen }) {
         {canSell && !desktop && cartOpen ? <Modal title="The sale" onClose={() => setCartOpen(false)}><div className="flex max-h-[70dvh] flex-col overflow-hidden rounded-xl border border-line">{cartPane}</div></Modal> : null}
         {canSell && paying && priced !== null && start !== null ? <PayDialog total={priced.total} methods={start.methods} busy={busy} problem={problem} unfinished={unfinished} onPay={(t) => void complete(t)} onClose={() => { if (!busy) setPaying(false); }} /> : null}
         {holding ? <HeldDialog rows={held} busy={busy} problem={heldProblem} onRecall={(id) => void recall(id)} onDiscard={(id) => void giveUp(id)} onClose={() => setHolding(false)} /> : null}
-        {receipt === null ? null : <SaleDone sale={receipt} shopName={data.shopName} receiptDiscount={data.receiptDiscount} onClose={() => { setReceipt(null); searchRef.current?.focus(); }} />}
-        {reprint === null ? null : <ReceiptPrinter sale={reprint} shopName={data.shopName} receiptDiscount={data.receiptDiscount} onDone={reprinted} />}
+        {receipt === null ? null : <SaleDone sale={receipt} brand={data.receiptBrand} receiptDiscount={data.receiptDiscount} onClose={() => { setReceipt(null); searchRef.current?.focus(); }} />}
+        {reprint === null ? null : <ReceiptPrinter sale={reprint} brand={data.receiptBrand} receiptDiscount={data.receiptDiscount} onDone={reprinted} />}
         {showSales ? <Modal title="Sales" wide onClose={() => setShowSales(false)}><div className="space-y-4">{salesBlock}</div></Modal> : null}
         {choosingPackage === null ? null : <QuotePackageDialog money={money} from={PACKAGES} editing={{ productId: choosingPackage, servings: 1, picks: [] }} onClose={() => setChoosingPackage(null)} onChosen={(chosen) => { setCart((c) => addToCart(c, { productId: chosen.productId, name: chosen.summary, listPrice: null, imageUrl: '', quantity: chosen.servings, package: { picks: chosen.picks, note: chosen.note } }, nextKey())); setChoosingPackage(null); }} />}
       </div>

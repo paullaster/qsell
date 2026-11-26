@@ -148,7 +148,7 @@ function DocumentLayoutsScreen({ initial }: { initial: DocumentLayouts }) {
             <Field
               id={`${document}-footer`}
               label="Footer note"
-              hint="Optional business-specific text printed with the document."
+              hint="Replaces the standard closing line of the document."
             >
               <textarea
                 id={`${document}-footer`}
@@ -168,19 +168,19 @@ function DocumentLayoutsScreen({ initial }: { initial: DocumentLayouts }) {
               >
                 <button
                   type="button"
+                  aria-pressed={layouts[document].footerPosition === 'page_bottom'}
+                  className={`min-h-11 rounded-lg border px-3 text-sm ${layouts[document].footerPosition === 'page_bottom' ? 'border-indigo-600 bg-indigo-50 font-semibold text-indigo-900' : 'border-line text-fg-muted'}`}
+                  onClick={() => update(document, 'footerPosition', 'page_bottom')}
+                >
+                  Foot of the page
+                </button>
+                <button
+                  type="button"
                   aria-pressed={layouts[document].footerPosition === 'after_totals'}
                   className={`min-h-11 rounded-lg border px-3 text-sm ${layouts[document].footerPosition === 'after_totals' ? 'border-indigo-600 bg-indigo-50 font-semibold text-indigo-900' : 'border-line text-fg-muted'}`}
                   onClick={() => update(document, 'footerPosition', 'after_totals')}
                 >
-                  After totals
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={layouts[document].footerPosition === 'after_terms'}
-                  className={`min-h-11 rounded-lg border px-3 text-sm ${layouts[document].footerPosition === 'after_terms' ? 'border-indigo-600 bg-indigo-50 font-semibold text-indigo-900' : 'border-line text-fg-muted'}`}
-                  onClick={() => update(document, 'footerPosition', 'after_terms')}
-                >
-                  After payment terms and conditions
+                  Right after the totals
                 </button>
               </div>
             </fieldset>

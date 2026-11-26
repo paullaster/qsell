@@ -10,6 +10,8 @@ const good: ProfileForm = {
   legalName: ' Acme Ltd ',
   tradingName: 'Acme',
   tagline: '',
+  appName: '',
+  appShortName: '',
   email: ' Sales@Acme.CO.KE ',
   phone: '+254 700 000 000',
   tel: '',
@@ -43,11 +45,19 @@ describe('company profile', () => {
         email: 'sales@acme.co.ke',
         kraPin: 'P051234567Z',
         tagline: null,
+        appName: null,
+        appShortName: null,
         tel: null,
         website: null,
         bankName: null,
       },
     });
+  });
+
+  it('keeps the names the installed app goes by, and refuses ones too long to show', () => {
+    expect(profilePayload({ ...good, appName: ' Acme Shop ', appShortName: 'Acme' })).toMatchObject({ ok: true, payload: { appName: 'Acme Shop', appShortName: 'Acme' } });
+    expect(errorOf({ appShortName: 'Acme Hardware Shop' })).toMatch(/under the icon is up to 12/);
+    expect(errorOf({ appName: 'A'.repeat(46) })).toMatch(/app name is up to 45/);
   });
 
   it('does not need a KRA PIN, VAT number or registration number to save', () => {

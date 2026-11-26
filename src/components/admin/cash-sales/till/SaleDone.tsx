@@ -8,11 +8,12 @@ import { useWhen } from '@/components/business-time';
 import { Modal } from '@/components/ui/Modal';
 import type { SaleSummary } from '@/server/domains/selling/cash-sales/cash-sale-service';
 import { orElse } from '@/lib/values';
+import type { BrandBlock } from '@/lib/print-branding';
 import { kes } from '@/lib/till/tile-style';
 import type { ReceiptDiscount } from '@/server/domains/selling/cash-sales/till-rules';
 
 /** After the sale: the receipt, the change to give in large figures, print, and the next sale one press away. */
-export function SaleDone({ sale, shopName, receiptDiscount, onClose }: { sale: SaleSummary; shopName: string; receiptDiscount: ReceiptDiscount; onClose: () => void }) {
+export function SaleDone({ sale, brand, receiptDiscount, onClose }: { sale: SaleSummary; brand: BrandBlock; receiptDiscount: ReceiptDiscount; onClose: () => void }) {
   return (
     <Modal title="Sale complete" onClose={onClose}>
       <section aria-label="Receipt" data-testid="receipt" className="space-y-4">
@@ -35,7 +36,7 @@ export function SaleDone({ sale, shopName, receiptDiscount, onClose }: { sale: S
           ))}
         </dl>
         {sale.warning === undefined ? null : <p role="alert" className="text-sm text-amber-700">{sale.warning}</p>}
-        <PrintedReceipt sale={sale} shopName={shopName} receiptDiscount={receiptDiscount} />
+        <PrintedReceipt sale={sale} brand={brand} receiptDiscount={receiptDiscount} />
         <div className="flex flex-wrap gap-2 print:hidden">
           <button type="button" className="inline-flex min-h-12 cursor-pointer items-center rounded-xl border border-line px-5 text-sm font-semibold text-fg hover:bg-hover" onClick={() => window.print()}>Print receipt</button>
           <button type="button" autoFocus className="inline-flex min-h-12 flex-1 cursor-pointer items-center justify-center rounded-xl bg-indigo-600 px-5 text-base font-bold text-white hover:bg-indigo-500" onClick={onClose} data-testid="new-sale">New sale</button>
@@ -55,6 +56,8 @@ const RECEIPT_CSS = `
   .receipt-print h1 { margin: 0; font-size: 16px; text-align: center; }
   .receipt-print p { margin: 0; }
   .receipt-print .c { text-align: center; }
+  .receipt-print .small { font-size: 10.5px; }
+  .receipt-print .logo { display: block; margin: 0 auto 2mm; max-width: 40mm; max-height: 18mm; object-fit: contain; filter: grayscale(1) contrast(1.4); }
   .receipt-print hr { border: 0; border-top: 1px dashed #000; margin: 6px 0; }
   .receipt-print .row { display: flex; justify-content: space-between; gap: 8px; }
   .receipt-print .big { font-size: 14px; font-weight: 700; }
@@ -63,23 +66,41 @@ const RECEIPT_CSS = `
 const askOnce = printOnce();
 
 /** A finished sale's slip straight to the printer, with no window in between (the Receipt button of the sales list). */
-export function ReceiptPrinter({ sale, shopName, receiptDiscount, onDone }: { sale: SaleSummary; shopName: string; receiptDiscount: ReceiptDiscount; onDone: () => void }) {
+export function ReceiptPrinter({ sale, brand, receiptDiscount, onDone }: { sale: SaleSummary; brand: BrandBlock; receiptDiscount: ReceiptDiscount; onDone: () => void }) {
+  const logo = brand.logoUrl;
   useEffect(() => {
     window.addEventListener('afterprint', onDone, { once: true });
     // The printer is asked once for this sale, even if React mounts this twice (development, a recompile, a parent re-render).
-    askOnce(sale, () => window.print());
+    const ask = () => askOnce(sale, () => window.print());
+    // A logo that is still on its way would print as a blank gap, so the printer is asked once it has arrived (or failed to).
+    if (logo === null) ask();
+    else {
+      const picture = new window.Image();
+      picture.onload = ask;
+      picture.onerror = ask;
+      picture.src = logo;
+    }
     return () => window.removeEventListener('afterprint', onDone);
-  }, [sale, onDone]);
-  return <PrintedReceipt sale={sale} shopName={shopName} receiptDiscount={receiptDiscount} />;
+  }, [sale, onDone, logo]);
+  return <PrintedReceipt sale={sale} brand={brand} receiptDiscount={receiptDiscount} />;
 }
 
-function PrintedReceipt({ sale, shopName, receiptDiscount }: { sale: SaleSummary; shopName: string; receiptDiscount: ReceiptDiscount }) {
+function PrintedReceipt({ sale, brand, receiptDiscount }: { sale: SaleSummary; brand: BrandBlock; receiptDiscount: ReceiptDiscount }) {
   const when = useWhen();
   if (typeof document === 'undefined') return null;
   return createPortal(
     <div className="receipt-print" data-testid="receipt-print" aria-hidden>
       <style>{RECEIPT_CSS}</style>
-      <h1>{shopName}</h1>
+      {brand.logoUrl === null ? null : (
+        // eslint-disable-next-line @next/next/no-img-element -- printed from a hidden block, where a lazy-loaded image would never load
+        <img src={brand.logoUrl} alt="" className="logo" loading="eager" />
+      )}
+      <h1>{brand.name}</h1>
+      {[brand.legalName, brand.tagline, brand.address, ...brand.contacts, brand.kraPin].map((line) =>
+        line === null ? null : (
+          <p key={line} className="c small">{line}</p>
+        ),
+      )}
       <p className="c">Receipt {orElse(sale.receiptNumber, sale.orderNumber)}</p>
       <p className="c">{when(sale.at)}</p>
       <hr />

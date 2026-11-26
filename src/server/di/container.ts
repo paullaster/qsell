@@ -53,7 +53,9 @@ import { EmailRouteService } from '@/server/domains/email-routing/email-route-se
 import { PackageQuoteRequestService } from '@/server/domains/pricing/package-quote-request-service';
 import { PriceGuardConfigService } from '@/server/domains/pricing/guard-config-service';
 import type { EmailPort, InvoicePdfPort } from '@/server/ports/communications';
-import { PdfKitInvoiceAdapter } from '@/server/adapters/pdf/pdfkit-invoice.adapter';
+import { PdfKitInvoiceAdapter, resolveLocalLogoPath } from '@/server/adapters/pdf/pdfkit-invoice.adapter';
+import { brandBlock, headingFor, resolveReportPrint } from '@/lib/print-branding';
+import { reportModuleCodes } from '@/server/domains/reports/registry/modules';
 import { emailRuntimeConfig } from '@/server/adapters/email/config';
 import {
   ConsoleEmailAdapter,
@@ -73,7 +75,7 @@ import { salesExecutors } from '@/server/domains/reports/executors/sales';
 import { receivablesAgeingExecutor } from '@/server/domains/reports/executors/receivables-ageing';
 import { payablesAgeingExecutor } from '@/server/domains/reports/executors/payables-ageing';
 import { drizzleDb, kernelDb, type DrizzleDb } from '@/server/db/drizzle/client';
-import { CompanySettingsRepository } from '@/server/domains/company/repository';
+import { CompanySettingsRepository, toCompanyProfile } from '@/server/domains/company/repository';
 import { InvoiceService } from '@/server/domains/invoices/service';
 import { BranchRepository, OrganizationRepository } from '@/server/domains/branches/repository';
 import { PaymentRegistry } from '@/server/domains/payments/registry';
@@ -663,6 +665,12 @@ export function getContainer(): AppContainer {
     companyName: async () => {
       const company = await companySettings.ensureSeeded();
       return company.tradingName.trim() === '' ? company.legalName : company.tradingName;
+    },
+    brand: async (family) => {
+      const company = await companySettings.ensureSeeded();
+      const show = headingFor(resolveReportPrint(company.uiConfig.reportPrint, reportModuleCodes()), family);
+      const { logoUrl, ...block } = brandBlock(toCompanyProfile(company), show);
+      return { ...block, logoPath: resolveLocalLogoPath(logoUrl) };
     },
   });
   const vendorInsights = new VendorInsightsService(drizzleDb);
