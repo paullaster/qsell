@@ -71,6 +71,12 @@ describe.skipIf(url === undefined || url === '')('offline selling (database)', (
     schema = await import('@/server/db/drizzle/schema');
     c = mod.getContainer();
     companyId = (await c.companySettings.ensureSeeded()).id;
+    // A chart is applied before any account is added by hand: any account at all stops a template from being applied later, for every file after this one.
+    const financeCtx = { companyId, actor, origin: { surface: 'test', action: 'setup' } };
+    await c.finance.setup.applyTemplate(financeCtx, 'kenya', { fiscalYearStart: '2026-01-01' }).catch((error: unknown) => {
+      if (!(error instanceof Error) || !error.message.includes('already has a chart')) throw error;
+    });
+    await c.finance.paymentMethods.seedStandard(financeCtx).catch(() => undefined);
     await c.reasonCodes.ensureSystemReasons(companyId);
     itemTypeId = `it_ol_${randomUUID().slice(0, 8)}`;
     await db.insert(schema.itemTypes).values({ id: itemTypeId, code: Math.floor(Math.random() * 1e9), name: itemTypeId });
