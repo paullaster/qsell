@@ -14,6 +14,7 @@ import type { CashView } from './cash';
 import type { CollectionView, OwingView } from './collections';
 import type { RefundChoice, ReturnMade, ReturnableSale } from './returns';
 import type { RepDayCard, UsualView } from './rep-app';
+import type { UnloadState } from '@/lib/van-sales/back';
 import { goOutProblem } from '@/lib/van-sales/run';
 import type { ParView, RouteView, StopView } from './routes';
 import type { VanView } from './vans';
@@ -317,6 +318,10 @@ export interface DayScreen {
   collections: CollectionView[];
   /** The cash on the van against its limit and the drops made; null when the day has no van till. */
   cash: CashView | null;
+  /** The end of the day: why the rep cannot come back yet, where the unload has got to, and why it cannot be started or the day settled. */
+  end: { backProblem: string | null; unload: UnloadState; onVan: number; unloadProblem: string | null; reconcileProblem: string | null };
+  /** The signed-in person may receive unloads and settle van days. */
+  mayReconcile: boolean;
   /** The planner may add orders to deliver: a day with a van that takes both kinds of work, before it goes out. */
   canAddDrops: boolean;
 }
@@ -332,9 +337,9 @@ async function dayScreen(companyId: string, id: string, userId: string): Promise
   const settings = await c.vanSalesSettings.current(companyId);
   const isRep = rep.userId === userId;
   const selling = day.status === 'out' && isRep && maySell;
-  const [sales, tenders, drops, cash, owing, collections, returnable, refundMethods, returns, usual] = await Promise.all([c.vanSales.forDay(companyId, id), selling ? c.vanSales.tenderChoices(companyId, day.branchId) : Promise.resolve([]), c.vanDrops.forDay(companyId, id), c.vanCash.forDay(companyId, id), c.vanCollections.owing(companyId, id), c.vanCollections.forDay(companyId, id), c.vanReturns.returnable(companyId, id), selling ? c.vanReturns.refundMethods(companyId) : Promise.resolve([]), c.vanReturns.forDay(companyId, id), c.repApp.usual(companyId, id)]);
+  const [sales, tenders, drops, cash, owing, collections, returnable, refundMethods, returns, usual, endFacts, backProblem, mayReconcile] = await Promise.all([c.vanSales.forDay(companyId, id), selling ? c.vanSales.tenderChoices(companyId, day.branchId) : Promise.resolve([]), c.vanDrops.forDay(companyId, id), c.vanCash.forDay(companyId, id), c.vanCollections.owing(companyId, id), c.vanCollections.forDay(companyId, id), c.vanReturns.returnable(companyId, id), selling ? c.vanReturns.refundMethods(companyId) : Promise.resolve([]), c.vanReturns.forDay(companyId, id), c.repApp.usual(companyId, id), c.vanLoads.endFacts(companyId, id), c.vanRun.backProblemOf(companyId, id), canPermission('van_sales:reconcile')]);
   const loadSigned = loads.some((l) => l.kind === 'load' && l.cancelledAt === null && l.signedAt !== null);
-  return { detail, canPlan, loads, onVan, suggestion, isRep, maySell, sales, tenders, drops, cash, owing, collections, returnable, refundMethods, returns, usual, canAddDrops: canPlan && settings.preSell && day.vanId !== null && day.mode === 'both' && (day.status === 'planned' || day.status === 'loading'), ordersAllowed: settings.preSell && day.mode !== 'van_sell', repLimits: isRep ? { maxDiscountPercent: rep.maxDiscountPercent, maxCreditPerDay: rep.maxCreditPerDay, mayOverridePrice: rep.mayOverridePrice, maySellOnCredit: rep.maySellOnCredit } : null, outProblem: goOutProblem({ status: day.status, mode: day.mode, loadSigned }), offRouteAllowed: settings.offRoute === 'allow' };
+  return { detail, canPlan, loads, onVan, suggestion, isRep, maySell, sales, tenders, drops, cash, owing, collections, returnable, refundMethods, returns, usual, end: { backProblem, ...endFacts }, mayReconcile, canAddDrops: canPlan && settings.preSell && day.vanId !== null && day.mode === 'both' && (day.status === 'planned' || day.status === 'loading'), ordersAllowed: settings.preSell && day.mode !== 'van_sell', repLimits: isRep ? { maxDiscountPercent: rep.maxDiscountPercent, maxCreditPerDay: rep.maxCreditPerDay, mayOverridePrice: rep.mayOverridePrice, maySellOnCredit: rep.maySellOnCredit } : null, outProblem: goOutProblem({ status: day.status, mode: day.mode, loadSigned }), offRouteAllowed: settings.offRoute === 'allow' };
 }
 
 export async function dayScreenAction(id: unknown) {
@@ -566,4 +571,32 @@ export interface MyDays {
 /** The days that are the signed-in person's to run, for the home of the rep app. Null when they are not set up as a rep. */
 export async function myDaysAction() {
   return await runSetting('van_sales:read', async ({ companyId, userId }): Promise<MyDays | null> => await getContainer().repApp.myDays(companyId, userId), { friendly });
+}
+
+// ── The end of the day ───────────────────────────────────────────────────
+
+/** The rep says they are back at the depot. */
+export async function comeBackAction(raw: unknown) {
+  const i = obj(raw);
+  return await runDay(i.dayId, async (c, companyId, actor, dayId, maySell) => await c.vanRun.comeBack(companyId, actor, dayId, i, maySell));
+}
+
+/** The rep unloads the van: everything on it goes back to the warehouse as a transfer. */
+export async function unloadVanAction(raw: unknown) {
+  const i = obj(raw);
+  return await runDay(i.dayId, async (c, companyId, actor, dayId, maySell) => await c.vanLoads.unload(companyId, actor, dayId, maySell));
+}
+
+/** The warehouse receives the unload, counting what came off the van. */
+export async function receiveUnloadAction(raw: unknown) {
+  const i = obj(raw);
+  return await runDay(i.dayId, async (c, companyId, actor) => {
+    await c.vanLoads.receive(companyId, actor, text(i.id) ?? '', i, await canPermission('van_sales:reconcile'));
+  });
+}
+
+/** The office starts settling the day. */
+export async function startReconcilingAction(raw: unknown) {
+  const i = obj(raw);
+  return await runDay(i.dayId, async (c, companyId, actor, dayId) => await c.vanLoads.startReconciling(companyId, actor, dayId, await canPermission('van_sales:reconcile')));
 }

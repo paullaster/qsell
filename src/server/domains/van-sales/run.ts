@@ -1,6 +1,6 @@
-import { and, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { customerAddresses, customers, shifts, vanDayCollections, vanDayOrders, vanDayReturns, vanDays, vanDrops, vanLoads, vanVisits } from '@/server/db/drizzle/schema';
+import { customerAddresses, customers, orders, shifts, vanDayCollections, vanDayOrders, vanDayReturns, vanDays, vanDrops, vanLoads, vanVisits } from '@/server/db/drizzle/schema';
 import type { Actor } from '@/server/kernel/context';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { parseCount } from '@/server/domains/selling/shifts/shift-rules';
@@ -11,6 +11,7 @@ import { arrivalProblem, canMoveVisit, goOutProblem, metresBetween, readFinish, 
 import { routeModeProblem, type RouteMode } from '@/lib/van-sales/settings';
 import { recordDayEvent } from './day-events';
 import { ownDay } from './own-day';
+import { backProblem } from '@/lib/van-sales/back';
 import type { DayDetail, VanDayService } from './days';
 import { constraintOf, VanSalesError } from './errors';
 import type { VanSalesSettingsService } from './settings-service';
@@ -46,6 +47,32 @@ export class VanRunService {
 
   private async ownDay(companyId: string, actor: Actor, dayId: string, maySell: boolean) {
     return await ownDay(this.db, companyId, actor, dayId, maySell);
+  }
+
+  // ── Coming back ──────────────────────────────────────────────────────
+
+  /** Why the day cannot come back yet (an unfinished visit, a delivery with no result), or null: for the screen and for the step itself. */
+  async backProblemOf(companyId: string, dayId: string): Promise<string | null> {
+    const [day] = await this.db.select({ status: vanDays.status }).from(vanDays).where(and(eq(vanDays.id, dayId), eq(vanDays.companyId, companyId)));
+    if (day === undefined) return null;
+    const visits = await this.db.select({ name: customers.name, status: vanVisits.status }).from(vanVisits).innerJoin(customers, eq(customers.id, vanVisits.customerId)).where(eq(vanVisits.dayId, dayId)).orderBy(asc(vanVisits.sequence));
+    const drops = await this.db.select({ number: orders.orderNumber }).from(vanDrops).innerJoin(orders, eq(orders.id, vanDrops.orderId)).where(and(eq(vanDrops.dayId, dayId), eq(vanDrops.state, 'planned'))).orderBy(asc(vanDrops.createdAt));
+    return backProblem({ dayStatus: day.status, visits, openDeliveries: drops.map((d) => d.number) });
+  }
+
+  /** The rep says they are back at the depot: every visit is finished or skipped and every delivery has its result. Selling stops; the unload and the count follow. */
+  async comeBack(companyId: string, actor: Actor, dayId: string, raw: unknown, maySell: boolean): Promise<void> {
+    const i = obj(raw);
+    const own = await this.ownDay(companyId, actor, dayId, maySell);
+    if (i.expectedVersion !== own.d.version) throw new VanSalesError('Someone else changed this day while you were looking at it. Reload the page to see the latest.');
+    const problem = await this.backProblemOf(companyId, dayId);
+    if (problem !== null) throw new VanSalesError(problem);
+    await this.db.transaction(async (tx) => {
+      const [locked] = await tx.select().from(vanDays).where(eq(vanDays.id, dayId)).limit(1).for('update');
+      if (locked?.version !== own.d.version || readDayStatus(locked.status) !== 'out') throw new VanSalesError('The day changed while it was coming back. Reload the page and try again.');
+      await tx.update(vanDays).set({ status: 'returning', version: locked.version + 1, updatedAt: new Date() }).where(eq(vanDays.id, dayId));
+      await recordDayEvent(tx, this.decisions, companyId, dayId, actor, 'day.back', { from: 'out', to: 'returning' });
+    });
   }
 
   // ── Going out ────────────────────────────────────────────────────────

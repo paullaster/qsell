@@ -11,6 +11,7 @@ import { ROUTE_MODE_WORDS } from '@/lib/van-sales/settings';
 import { ContactLinks } from '@/components/admin/van-sales/day/ContactLinks';
 import { CashPanel } from '@/components/admin/van-sales/day/CashPanel';
 import { DropsPanel } from '@/components/admin/van-sales/day/DropsPanel';
+import { EndPanel } from '@/components/admin/van-sales/day/EndPanel';
 import { HistoryPanel } from '@/components/admin/van-sales/day/HistoryPanel';
 import { LoadPanel } from '@/components/admin/van-sales/day/LoadPanel';
 import { RunPanel } from '@/components/admin/van-sales/day/RunPanel';
@@ -59,6 +60,7 @@ function Body({ initial }: { initial: DayScreen }) {
       </section>
       <Message notice={notice} />
       <RunPanel screen={screen} run={run} />
+      <EndPanel screen={screen} run={run} />
       <NextStop screen={screen} run={run} />
       <VisitsPanel screen={screen} run={run} nextStopId={nextStopOf(screen)?.id} />
       <SalesPanel screen={screen} />

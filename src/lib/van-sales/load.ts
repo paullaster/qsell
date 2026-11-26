@@ -51,9 +51,12 @@ export const shortWords = (row: Pick<LoadRow, 'wanted' | 'loadable' | 'short'>):
 
 // ── A load once it is made (docs/architecture/van-sales.md §6.2, §6.3) ────────────────────────────────────────────
 
+/** What can be made up and asked for from the planner: the day's load, or a top-up while the day is out. */
 export const LOAD_KINDS = ['load', 'top_up'] as const;
-export type LoadKind = (typeof LOAD_KINDS)[number];
-export const LOAD_KIND_WORDS: Record<LoadKind, string> = { load: 'Load', top_up: 'Top-up' };
+/** What a van's transfer can be: those two going onto the van, and the unload at the end of the day coming off it. */
+export type LoadKind = (typeof LOAD_KINDS)[number] | 'unload';
+export const LOAD_KIND_WORDS: Record<LoadKind, string> = { load: 'Load', top_up: 'Top-up', unload: 'Unload' };
+export const readLoadKind = (value: string): LoadKind => (value === 'top_up' || value === 'unload' ? value : 'load');
 
 /** The steps of the stock transfer a load is made of, in the words a load shows. */
 export const LOAD_STATE_WORDS: Record<string, string> = {
@@ -65,6 +68,14 @@ export const LOAD_STATE_WORDS: Record<string, string> = {
   received: 'Signed for',
   closed: 'Closed',
   cancelled: 'Cancelled',
+};
+
+/** The same steps for the unload at the end of the day, in the direction it goes: back to the warehouse, received there. */
+export const UNLOAD_STATE_WORDS: Record<string, string> = {
+  ...LOAD_STATE_WORDS,
+  shipped: 'On its way to the warehouse',
+  partly_received: 'Partly received',
+  received: 'Received at the warehouse',
 };
 
 export interface LoadSteps {
@@ -79,13 +90,14 @@ export interface LoadSteps {
 }
 
 /** What can be done to a load now, from where its transfer has got to. */
-export function loadSteps(load: { state: string; signed: boolean; cancelled: boolean; needsApproval: boolean }): LoadSteps {
+export function loadSteps(load: { state: string; signed: boolean; cancelled: boolean; needsApproval: boolean; kind?: LoadKind }): LoadSteps {
   if (load.cancelled) return { approve: false, ship: false, sign: false, cancel: false };
   return {
     approve: load.state === 'requested' && load.needsApproval,
     ship: load.state === 'approved' || (load.state === 'requested' && !load.needsApproval),
     sign: !load.signed && (load.state === 'shipped' || load.state === 'partly_received'),
-    cancel: load.state === 'draft' || load.state === 'requested' || load.state === 'approved',
+    // An unload is not called off: the stock on the van is settled by being received, or by a shortage being decided.
+    cancel: load.kind !== 'unload' && (load.state === 'draft' || load.state === 'requested' || load.state === 'approved'),
   };
 }
 

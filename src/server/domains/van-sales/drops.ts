@@ -244,6 +244,37 @@ export class VanDropService {
     });
   }
 
+  /**
+   * The van is being unloaded: the stock held on it for a delivery that was refused or could not be made is set aside, so the stock can leave, and
+   * the delivery is marked on its way back. It is held again at the warehouse when the unload is received (`rehomeAfterUnload`).
+   */
+  async setAsideForUnload(companyId: string, actor: Actor, dayId: string): Promise<string[]> {
+    return await this.db.transaction(async (tx) => {
+      const drops = await tx.select({ d: vanDrops, number: orders.orderNumber }).from(vanDrops).innerJoin(orders, eq(orders.id, vanDrops.orderId)).where(and(eq(vanDrops.companyId, companyId), eq(vanDrops.dayId, dayId), inArray(vanDrops.state, ['refused', 'failed']), eq(vanDrops.stockState, 'on_van'))).orderBy(asc(vanDrops.createdAt)).for('update');
+      const moved: string[] = [];
+      for (const drop of drops) {
+        const held = await this.reservations.setAsideIn(tx, { companyId, refType: 'order', refId: drop.d.orderId, actor: actor.id ?? 'system', reason: `Coming back from the van for ${drop.number}` });
+        await tx.update(vanDrops).set({ stockState: 'on_the_way', holdChannel: held.channel ?? drop.d.holdChannel, version: drop.d.version + 1, updatedAt: new Date() }).where(eq(vanDrops.id, drop.d.id));
+        await recordDayEvent(tx, this.decisions, companyId, dayId, actor, 'day.drop_on_the_way', { detail: { order: drop.number, coming: 'back' } });
+        moved.push(drop.d.id);
+      }
+      return moved;
+    });
+  }
+
+  /** The unload has been received at the warehouse: each of those deliveries is held at the warehouse again, or marked short if what came back does not cover it. */
+  async rehomeAfterUnload(companyId: string, actor: Actor, dayId: string): Promise<void> {
+    const ids = await this.db.select({ id: vanDrops.id }).from(vanDrops).where(and(eq(vanDrops.dayId, dayId), inArray(vanDrops.state, ['refused', 'failed']), eq(vanDrops.stockState, 'on_the_way')));
+    await this.putBack(companyId, actor, dayId, ids.map((r) => r.id));
+  }
+
+  /** Deliveries on this day that are not dealt with yet: they stop the day coming back. */
+  async open(companyId: string, dayId: string): Promise<string[]> {
+    if (!isId(dayId)) return [];
+    const rows = await this.db.select({ number: orders.orderNumber }).from(vanDrops).innerJoin(orders, eq(orders.id, vanDrops.orderId)).where(and(eq(vanDrops.companyId, companyId), eq(vanDrops.dayId, dayId), eq(vanDrops.state, 'planned'))).orderBy(asc(vanDrops.createdAt));
+    return rows.map((r) => r.number);
+  }
+
   /** The load did not ship: each of those deliveries has its hold made again at the warehouse. A hold that cannot be made again is said so, in the day's history. */
   async putBack(companyId: string, actor: Actor, dayId: string, dropIds: readonly string[]): Promise<void> {
     for (const id of dropIds) {

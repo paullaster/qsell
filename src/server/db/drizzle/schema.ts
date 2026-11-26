@@ -5255,7 +5255,8 @@ export const vanLoads = pgTable(
     // A day has one load that is still wanted; top-ups may be several.
     uniqueIndex('van_loads_day_load_uidx').on(t.dayId).where(sql`${t.kind} = 'load' AND ${t.cancelledAt} IS NULL`),
     index('van_loads_day_idx').on(t.dayId, t.createdAt),
-    check('van_loads_kind_chk', sql`${t.kind} IN ('load','top_up')`),
+    check('van_loads_kind_chk', sql`${t.kind} IN ('load','top_up','unload')`),
+    uniqueIndex('van_loads_day_unload_uidx').on(t.dayId).where(sql`${t.kind} = 'unload' AND ${t.cancelledAt} IS NULL`),
     check('van_loads_signed_chk', sql`(${t.signedBy} IS NULL) = (${t.signedAt} IS NULL)`),
     check('van_loads_behalf_chk', sql`NOT ${t.signedOnBehalf} OR (${t.signReason} IS NOT NULL AND length(btrim(${t.signReason})) > 0)`),
     check('van_loads_cancelled_chk', sql`((${t.cancelledAt} IS NULL) = (${t.cancelReason} IS NULL)) AND (${t.cancelledAt} IS NULL OR ${t.signedAt} IS NULL)`),

@@ -11,6 +11,7 @@ import type { DayCall } from './day/call';
 import { HistoryPanel } from './day/HistoryPanel';
 import { CashPanel } from './day/CashPanel';
 import { DropsPanel } from './day/DropsPanel';
+import { EndPanel } from './day/EndPanel';
 import { RunPanel } from './day/RunPanel';
 import { SalesPanel } from './day/SalesPanel';
 import { LoadPanel } from './day/LoadPanel';
@@ -65,6 +66,7 @@ function Body({ initial }: { initial: DayScreen }) {
         {cancelling ? <WhyPanel label={`Cancel ${day.number}`} action="Cancel the day" busy={busy} onCancel={() => setCancelling(false)} onConfirm={(reason) => void cancel(reason)} /> : null}
       </section>
       <RunPanel screen={screen} run={run} />
+      <EndPanel screen={screen} run={run} />
       <VisitsPanel screen={screen} run={run} />
       <DropsPanel screen={screen} run={run} />
       <SalesPanel screen={screen} />

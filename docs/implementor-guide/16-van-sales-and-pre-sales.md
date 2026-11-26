@@ -151,6 +151,12 @@ The same day, built for a thumb in sunlight. A rep signs in with their own accou
    - Below it the same panels as the office screen, in the order a rep needs them: the visits (with *Sell*, *Take an order*, *Collect*, *Return*, *Finish*, *Skip* and *Shop closed*), the sales, collections and returns of the day, the deliveries, the cash and cash drops, the stock on the van, and the day's history.
 3. **Same as last time.** At a customer the rep has arrived at, if the customer has bought through a van before, *Sell* and *Take an order* offer **Same as last time (the order number)**, which fills in what they last bought; the rep changes the quantities and the system prices it as always.
 
+### Coming back and unloading, on a van day's page
+1. **I am back at the depot** (the rep, from the day's **End of the day** panel). Available once every visit is finished or skipped and every delivery has its result (delivered, refused or not delivered); until then the panel says what is in the way, by name. The day moves to *Back at the depot*, and selling, orders, collections and returns stop.
+2. **Unload the van** (the rep, on a day with a van). Everything the system says is on the van goes back to the warehouse as a transfer, which leaves the van at once (or after approval, where the company asks for transfers to be approved). It appears among the day's loads as *Unload*, *On its way to the warehouse*. Stock held on the van for a delivery that was refused is let go so it can leave.
+3. **Receive at the warehouse** (the warehouse, with the permission to settle van days). On the unload card, the warehouse counts what came off the van. Everything that was sent is filled in; if something is missing, the count is changed and what was not counted stays on its way as a shortage to be decided when the day is settled. Stock held for a refused delivery is held again at the warehouse for its order.
+4. **Start settling the day** (the office). Available once the unload is received (or the van was empty, or the day takes orders only). The day moves to *Being counted*.
+
 ## 5. Granular Field-by-Field Reference
 
 | Field | Type | Allowed | Default | Required |
@@ -390,6 +396,10 @@ The same day, built for a thumb in sunlight. A rep signs in with their own accou
 - **The app shows only the rep's own days.** A person who is not set up as a rep, or whose rep profile is for someone else, sees none.
 - **Call, WhatsApp and Directions need what is on the customer card:** a Kenyan mobile number for the first two, and a map pin or a place for directions. A button is not shown when there is nothing to make it from.
 - **Working with no signal is a later step.** For now the app needs a connection, and says what to do when an action does not go through.
+- **A day cannot come back with a visit unfinished or a delivery without a result.** Finish or skip each visit (with a reason); deliver each order or say why it was refused or could not be made.
+- **The whole van is unloaded.** What the system says is on the van is sent back; what the warehouse counts is what arrives. The difference is a shortage, left in transit until it is decided. An unload is not called off: it is received, or its shortage decided.
+- **A refused delivery's stock goes back to its order.** It is held at the warehouse again for the order when the unload is received, so the order can be delivered another day.
+- **Only the day's own rep says the day is back and unloads the van**; receiving the unload and starting the settling need the permission to settle van days.
 - Every add, change, stop, pause, end and resume is in the decision log with the person, the time and the reason typed.
 - The database itself refuses a stopped van, route, or a paused or ended rep with no reason, a pre-sell route with a van, a visit with no day or one visited every 3 weeks, a discount over 100%, a negative credit or cash limit, and a mode other than van sell or pre-sell.
 - A reason is required for every change, so an auditor can see why a rule was relaxed.
@@ -440,4 +450,6 @@ The same day, built for a thumb in sunlight. A rep signs in with their own accou
 - [ ] Test: sell for cash at a visit, take one back as fit to sell again, and check the van's stock, the van's cash and the credit note.
 - [ ] Verify: each rep has an account and the permissions to see van sales and sell from a van, and can open the rep app on their phone and add it to the home screen.
 - [ ] Verify: the customers on a route have a mobile number and, for directions, a map pin or a town on their card.
+- [ ] Verify: a person at the warehouse has the permission to settle van days, so they can receive unloads.
+- [ ] Test: finish a day, unload the van and receive it with one product short, and check the shortage is left in transit and the stock on the van is nil.
 - **Common pitfalls:** asking the office to send a day out for the rep (refused: the rep does it); requiring the rep to be near a customer who has no map pin (the visit starts and the distance is not known); loading before stock by location is switched on (the screen says so); signing a load that was never sent; expecting stock to be on the van when the load was only asked for; planning a day before the route has customers due that date (the screen says none is due); planning a day for the usual rep who is already on another route that date (refused); giving two routes the same code or name (refused); starting a fortnightly customer's visits in the wrong week (the date sets which weeks count); naming two vans alike (refused); putting a vehicle behind two vans (refused); switching on *require* with a very small distance, which blocks reps in town centres; leaving the approval limit at 0, which sends every small shortage to a second person.

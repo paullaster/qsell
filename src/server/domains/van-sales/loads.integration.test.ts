@@ -345,7 +345,7 @@ describe.skipIf(url === undefined || url === '')('loading a van (database)', () 
       const s = await setup([[p, 5]]);
       const made = await load(s.day.id, [[p, 5]]);
       const bad = async (set: string) => await refusedBy(db.execute(sql.raw(`UPDATE van_loads SET ${set} WHERE id = '${made?.id ?? ''}'`)));
-      expect(await bad("kind = 'unload'")).toContain('van_loads_kind_chk');
+      expect(await bad("kind = 'return'")).toContain('van_loads_kind_chk');
       expect(await bad("signed_by = 'someone'")).toContain('van_loads_signed_chk');
       expect(await bad("signed_on_behalf = true")).toContain('van_loads_behalf_chk');
       expect(await bad("cancelled_at = now()")).toContain('van_loads_cancelled_chk');

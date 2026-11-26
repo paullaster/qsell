@@ -318,3 +318,10 @@ A drop is delivering a pre-sold order from the van on a van day. Reading the cod
 - **Pure:** `callLink`, `whatsappLink` and `directionsLink` (Kenyan mobile numbers through the rider app's normaliser; the pin or, without one, the place), and the labels (Today, Tomorrow, how far along).
 - **Screens:** My days; a day with a Next stop card (contact links and one large I am here button) above the visits; Same as last time in the sell and order forms.
 - **Not yet:** working with no signal (V-10), a request for more stock from the phone, the rep's own end of day screen (V-9), a PIN sign-in, and a service worker.
+
+### V-9a (2026-11-26): coming back and the unload
+- **Data:** 0227 lets `van_loads` hold the `unload` kind, with one live unload per day.
+- **Pure:** `backProblem` (every visit finished or skipped, every delivery with a result), `unloadProblem`, `reconcileProblem` (a van with stock has been unloaded and received) and the unload's state words.
+- **Server:** `VanRunService.comeBack` (the rep; out to back); `VanLoadService.unload` (a transfer van to warehouse of everything on the van, asked for and, without a transfer approval rule, shipped at once; holds for refused deliveries let go first), `receive` (the warehouse's count by product, anything not counted left in transit, the refused deliveries' holds made again at the warehouse), `startReconciling` (the office; back to being counted) and `endFacts` for the screen.
+- **Screens:** the End of the day panel (I am back, Unload the van, Start settling) and the unload card with its receive form.
+- **Not yet (V-9b):** deciding the shortages (a reason, the company's limit for a second person, charge to the rep or write off), counting the cash and closing the till shift, keeping stock on the van overnight where the company allows it, and closing the day.

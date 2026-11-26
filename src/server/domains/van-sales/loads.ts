@@ -3,7 +3,8 @@ import type { DrizzleDb } from '@/server/db/drizzle/client';
 import { products, routeParLevels, salesReps, stockBalances, stockLocations, stockSettings, unitsOfMeasure, users, vanDays, vanLoads, vans } from '@/server/db/drizzle/schema';
 import type { Actor } from '@/server/kernel/context';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
-import { LOAD_KINDS, LOAD_STATE_WORDS, loadSteps, readSign, suggestLoad, type LoadKind, type LoadSteps } from '@/lib/van-sales/load';
+import { LOAD_KINDS, LOAD_STATE_WORDS, UNLOAD_STATE_WORDS, loadSteps, readLoadKind, readSign, suggestLoad, type LoadKind, type LoadSteps } from '@/lib/van-sales/load';
+import { reconcileProblem, unloadProblem, type UnloadState } from '@/lib/van-sales/back';
 import { isId, readReason } from '@/lib/van-sales/people';
 import { readPar } from '@/lib/van-sales/routes';
 import { readDayStatus } from '@/lib/van-sales/days';
@@ -11,6 +12,7 @@ import { roundQty } from '@/lib/decimal';
 import { StockError } from '@/server/domains/stock/errors';
 import type { TransferService } from '@/server/domains/stock/transfers';
 import { recordDayEvent } from './day-events';
+import { ownDay } from './own-day';
 import type { VanDropService } from './drops';
 import { constraintOf, VanSalesError } from './errors';
 
@@ -211,11 +213,11 @@ export class VanLoadService {
       views.push({
         id: r.l.id,
         dayId: r.l.dayId,
-        kind: r.l.kind === 'top_up' ? 'top_up' : 'load',
+        kind: readLoadKind(r.l.kind),
         transferId: r.l.transferId,
         number: transfer.document.number,
         state,
-        stateWords: r.l.cancelledAt === null ? (LOAD_STATE_WORDS[state] ?? state) : LOAD_STATE_WORDS.cancelled ?? 'Cancelled',
+        stateWords: r.l.cancelledAt === null ? ((r.l.kind === 'unload' ? UNLOAD_STATE_WORDS : LOAD_STATE_WORDS)[state] ?? state) : LOAD_STATE_WORDS.cancelled ?? 'Cancelled',
         fromName: r.from,
         createdAt: r.l.createdAt.toISOString(),
         signedAt: r.l.signedAt?.toISOString() ?? null,
@@ -225,7 +227,7 @@ export class VanLoadService {
         cancelledAt: r.l.cancelledAt?.toISOString() ?? null,
         cancelReason: r.l.cancelReason,
         lines: transfer.lines.map((x) => ({ productId: x.productId, productName: x.productName, asked: x.quantity, shipped: x.shippedQuantity, received: x.receivedQuantity, inTransit: x.inTransit })),
-        steps: loadSteps({ state, signed: r.l.signedAt !== null, cancelled: r.l.cancelledAt !== null, needsApproval }),
+        steps: loadSteps({ state, signed: r.l.signedAt !== null, cancelled: r.l.cancelledAt !== null, needsApproval, kind: readLoadKind(r.l.kind) }),
       });
     }
     return views;
@@ -304,6 +306,12 @@ export class VanLoadService {
   async ship(companyId: string, actor: Actor, loadId: string): Promise<LoadView[]> {
     const load = await this.loadFacts(this.db, companyId, loadId);
     if (load.cancelledAt !== null) throw new VanSalesError('That load was called off.');
+    if (load.kind === 'unload') {
+      // The stock held on the van for refused deliveries was set aside when the unload was made up, so the transfer's check of free stock passes.
+      await told(async () => await this.transfers.ship(companyId, { id: actor.id ?? 'system' }, load.transferId));
+      await this.db.transaction(async (tx) => await recordDayEvent(tx, this.decisions, companyId, load.dayId, actor, 'day.unload_shipped', { detail: { transferId: load.transferId } }));
+      return await this.list(companyId, load.dayId);
+    }
     const carried = await told(() => this.transfers.get(companyId, load.transferId));
     const moved = await this.drops.setAsideForLoad(companyId, actor, load.dayId, new Map(carried.lines.map((l) => [l.productId, l.quantity])));
     try {
@@ -325,6 +333,7 @@ export class VanLoadService {
     const read = readSign(raw);
     if (!read.ok) throw new VanSalesError(read.error);
     const load = await this.loadFacts(this.db, companyId, loadId);
+    if (load.kind === 'unload') throw new VanSalesError('An unload is received at the warehouse, not signed for on the van.');
     const day = await this.dayFacts(this.db, companyId, load.dayId);
     const isRep = actor.id === day.repUserId;
     if (!isRep && !who.mayPlan) throw new VanSalesError(`Only ${day.repName} signs for their own load. The office may sign for them, with a reason.`);
@@ -359,6 +368,121 @@ export class VanLoadService {
     });
     await this.drops.holdOnVan(companyId, actor, load.dayId);
     return await this.list(companyId, load.dayId);
+  }
+
+  // ── The end of the day (docs/architecture/van-sales.md §5.3) ──────────
+
+  /** Where the unload of a day has got to: not asked, asked, on its way to the warehouse, or received there. */
+  async unloadStateOf(companyId: string, dayId: string): Promise<UnloadState> {
+    const [row] = await this.db.select().from(vanLoads).where(and(eq(vanLoads.companyId, companyId), eq(vanLoads.dayId, dayId), eq(vanLoads.kind, 'unload'), isNull(vanLoads.cancelledAt))).limit(1);
+    if (row === undefined) return 'none';
+    if (row.signedAt !== null) return 'received';
+    const state = (await told(() => this.transfers.get(companyId, row.transferId))).document.state;
+    return state === 'shipped' || state === 'partly_received' ? 'on_its_way' : 'asked';
+  }
+
+  /** Why the day cannot be settled yet and why the van cannot be unloaded, for the screen. */
+  async endFacts(companyId: string, dayId: string): Promise<{ unload: UnloadState; onVan: number; unloadProblem: string | null; reconcileProblem: string | null }> {
+    const day = await this.dayFacts(this.db, companyId, dayId);
+    const status = readDayStatus(day.d.status) ?? 'planned';
+    const [unload, rows] = await Promise.all([this.unloadStateOf(companyId, dayId), this.onVan(companyId, dayId)]);
+    const onVan = rows.filter((r) => r.onHand > 0).length;
+    const f = { dayStatus: status, hasVan: day.vanLocationId !== null, productsOnVan: onVan, unload };
+    return { unload, onVan, unloadProblem: unloadProblem(f), reconcileProblem: reconcileProblem(f) };
+  }
+
+  /**
+   * The rep unloads the van at the end of the day: everything the ledger says is on it goes back to the warehouse as a transfer, asked for and (where the
+   * company does not want it approved) sent at once. Stock held on the van for a delivery that was refused is set aside so it can leave, and is held again
+   * at the warehouse when the unload is received.
+   */
+  async unload(companyId: string, actor: Actor, dayId: string, maySell: boolean): Promise<LoadView[]> {
+    const own = await ownDay(this.db, companyId, actor, dayId, maySell);
+    const day = await this.dayFacts(this.db, companyId, dayId);
+    const status = readDayStatus(own.d.status) ?? 'planned';
+    const rows = (await this.onVan(companyId, dayId)).filter((r) => r.onHand > 0);
+    const problem = unloadProblem({ dayStatus: status, hasVan: day.vanLocationId !== null, productsOnVan: rows.length, unload: await this.unloadStateOf(companyId, dayId) });
+    if (problem !== null) throw new VanSalesError(problem);
+    const vanLocation = day.vanLocationId ?? '';
+    const [warehouse] = await this.sources(this.db, companyId, day.d.branchId);
+    if (warehouse === undefined) throw new VanSalesError('There is no warehouse or store to unload to. Add one under Stock › Locations.');
+    await this.drops.setAsideForUnload(companyId, actor, dayId);
+    const doc = { id: actor.id ?? 'system' };
+    let made: { id: string; number: string };
+    try {
+      made = await told(async () => {
+        const m = await this.transfers.create(companyId, doc, { fromLocationId: vanLocation, toLocationId: warehouse.id, note: `Unload of ${day.d.number}`, lines: rows.map((r) => ({ productId: r.productId, quantity: r.onHand })) });
+        await this.transfers.request(companyId, doc, m.id);
+        return m;
+      });
+    } catch (error) {
+      await this.drops.holdOnVan(companyId, actor, dayId);
+      throw error;
+    }
+    let loadId = '';
+    try {
+      await this.db.transaction(async (tx) => {
+        const [locked] = await tx.select().from(vanDays).where(eq(vanDays.id, dayId)).limit(1).for('update');
+        if (readDayStatus(locked?.status ?? '') !== 'returning') throw new VanSalesError('The day changed while the van was being unloaded. Reload the page and try again.');
+        const [row] = await tx.insert(vanLoads).values({ companyId, dayId, kind: 'unload', transferId: made.id, fromLocationId: vanLocation, createdBy: actor.id ?? 'system' }).returning({ id: vanLoads.id });
+        loadId = row?.id ?? '';
+        await tx.update(vanDays).set({ version: locked.version + 1, updatedAt: new Date() }).where(eq(vanDays.id, dayId));
+        await recordDayEvent(tx, this.decisions, companyId, dayId, actor, 'day.unload_created', { detail: { transfer: made.number, lines: rows.length } });
+      });
+    } catch (error) {
+      await this.transfers.cancel(companyId, doc, made.id, 'The unload could not be attached to its day').catch(() => undefined);
+      await this.drops.holdOnVan(companyId, actor, dayId);
+      if (constraintOf(error) === 'van_loads_day_unload_uidx') throw new VanSalesError('The van is already being unloaded.');
+      throw error;
+    }
+    const needsApproval = await this.needsApproval(companyId);
+    return needsApproval ? await this.list(companyId, dayId) : await this.ship(companyId, actor, loadId);
+  }
+
+  /**
+   * The warehouse receives the unload: what was counted off the van, by product (everything that was sent when none are named). What did not arrive stays in
+   * transit as a shortage to be decided. Stock held for refused deliveries is held again at the warehouse. Only a person who settles van days does this.
+   */
+  async receive(companyId: string, actor: Actor, loadId: string, raw: unknown, mayReconcile: boolean): Promise<LoadView[]> {
+    if (!mayReconcile) throw new VanSalesError('You are not allowed to receive an unload.');
+    const read = readSign(raw);
+    if (!read.ok) throw new VanSalesError(read.error);
+    const load = await this.loadFacts(this.db, companyId, loadId);
+    if (load.kind !== 'unload') throw new VanSalesError('That is a load, not an unload. The rep signs for a load.');
+    if (load.cancelledAt !== null) throw new VanSalesError('That unload was called off.');
+    if (load.signedAt !== null) throw new VanSalesError('This unload has already been received.');
+    const transfer = await told(() => this.transfers.get(companyId, load.transferId));
+    if (transfer.document.state !== 'shipped' && transfer.document.state !== 'partly_received') throw new VanSalesError('This unload has not left the van yet, so there is nothing to receive.');
+    const asked = read.sign.entries;
+    if (asked !== null) for (const e of asked) if (!transfer.lines.some((l) => l.productId === e.productId)) throw new VanSalesError('A product you counted is not on this unload.');
+    const entries = transfer.lines.flatMap((l) => {
+      const q = asked === null ? l.inTransit : (asked.find((e) => e.productId === l.productId)?.quantity ?? 0);
+      if (q > l.inTransit) throw new VanSalesError(`Only ${String(l.inTransit)} of "${l.productName}" was sent, and ${String(q)} was counted.`);
+      return q > 0 ? [{ lineId: l.id, quantity: q }] : [];
+    });
+    if (entries.length > 0) await told(async () => await this.transfers.receive(companyId, { id: actor.id ?? 'system' }, load.transferId, entries));
+    const total = roundQty(entries.reduce((n, e) => n + e.quantity, 0));
+    const short = roundQty(transfer.lines.reduce((n, l) => n + l.inTransit, 0) - total);
+    await this.db.transaction(async (tx) => {
+      const marked = await tx.update(vanLoads).set({ signedBy: actor.id ?? 'system', signedAt: new Date(), signedOnBehalf: false, signReason: null }).where(and(eq(vanLoads.id, load.id), isNull(vanLoads.signedAt))).returning({ id: vanLoads.id });
+      if (marked.length === 0) return;
+      await recordDayEvent(tx, this.decisions, companyId, load.dayId, actor, 'day.unload_received', { detail: { transferId: load.transferId, quantity: total, short } });
+    });
+    await this.drops.rehomeAfterUnload(companyId, actor, load.dayId);
+    return await this.list(companyId, load.dayId);
+  }
+
+  /** The office starts settling the day once the van is unloaded and received (or was empty): the day moves from back to reconciling. */
+  async startReconciling(companyId: string, actor: Actor, dayId: string, mayReconcile: boolean): Promise<void> {
+    if (!mayReconcile) throw new VanSalesError('You are not allowed to settle a van day.');
+    const facts = await this.endFacts(companyId, dayId);
+    if (facts.reconcileProblem !== null) throw new VanSalesError(facts.reconcileProblem);
+    await this.db.transaction(async (tx) => {
+      const [locked] = await tx.select().from(vanDays).where(and(eq(vanDays.id, dayId), eq(vanDays.companyId, companyId))).limit(1).for('update');
+      if (readDayStatus(locked?.status ?? '') !== 'returning') throw new VanSalesError('The day changed. Reload the page and try again.');
+      await tx.update(vanDays).set({ status: 'reconciling', version: locked.version + 1, updatedAt: new Date() }).where(eq(vanDays.id, dayId));
+      await recordDayEvent(tx, this.decisions, companyId, dayId, actor, 'day.reconciling', { from: 'returning', to: 'reconciling' });
+    });
   }
 
   /** Calls off a load that has not left the warehouse. */
