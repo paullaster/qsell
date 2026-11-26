@@ -132,6 +132,8 @@ Dedicated rich-text editors for mandatory legal and operational pages:
 |---|---|---|---|---|
 | **Logo** | Brand mark on shop & invoices. | Image Upload | Optional | Accepts PNG, JPEG, WebP, SVG up to 2MB. Square or landscape. |
 | **Storefront Tagline** | Subtitle below brand name. | Text (Max 120 chars) | Optional | e.g., *"Solar PV & Electrical Supplies"*. |
+| **App name** | The name the installed app (home-screen or desktop app) goes by: shown in the install box and on the opening screen. | Text (Max 45 chars) | Optional | Left empty, the trading name is used. |
+| **Name under the icon** | The short name written under the icon on a phone's home screen. | Text (Max 12 chars) | Optional | Phones cut anything longer. Left empty, whole words of the app name that fit are used, and a name never ends on "&" or "and". |
 | **Legal Name** | Official registered company name. | Text (Max 120 chars) | **Required** | Must match Certificate of Incorporation. |
 | **Trading Name** | Public brand name seen by customers. | Text (Max 120 chars) | **Required** | Displayed in website header and titles. |
 | **KRA PIN** | Corporate tax identification number. | Text (Monospace, 11 chars) | Optional | Can be left empty and added later. When given, it must match the pattern: Letter (`A` or `P`), 9 digits, ending in a letter (e.g. `P051234567Z`). |
@@ -161,11 +163,12 @@ Dedicated rich-text editors for mandatory legal and operational pages:
 2. In the **Brand & logo** section, click **Upload logo** (or drag and drop an image file into the drop zone).
 3. The uploaded logo previews immediately inside the **Brand preview** card.
 4. Fill in the **Legal name** and **Trading name**. The **KRA PIN**, **VAT number** and **Registration number** can be left empty and added later; documents leave them out until they are entered.
-5. In the **Address & location** section, enter the physical street address, city, and county.
-6. In the **Banking** section, enter the bank name and account number where customer wire transfers should be directed.
-7. Click the **Save profile** button in the top right header.
-8. The button displays *"Saving…"*, then returns to *"Save profile"*.
-9. A green confirmation banner displays: *"Company profile saved."*
+5. In the **Installed app** section, set the **App name** and, if the app name is long, the **Name under the icon**. The preview beside the boxes shows the icon with its short name and the full name as the install box shows it. A company with a long trading name should choose a short name of its own, because phones that cut a name do so at the end. Customers who already installed the app see the new name after the phone next refreshes the app's details (iPhones keep the name given when it was added until the icon is added again).
+6. In the **Address & location** section, enter the physical street address, city, and county.
+7. In the **Banking** section, enter the bank name and account number where customer wire transfers should be directed.
+8. Click the **Save profile** button in the top right header.
+9. The button displays *"Saving…"*, then returns to *"Save profile"*.
+10. A green confirmation banner displays: *"Company profile saved."*
 
 ### Action 2: Customizing Document Header and Footer Notes
 1. Navigate to `/admin/company/documents`.

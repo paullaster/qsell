@@ -1485,6 +1485,13 @@
       "when": 1795483234426,
       "tag": "0211_report_audit",
       "breakpoints": true
+    },
+    {
+      "idx": 212,
+      "version": "7",
+      "when": 1795571111876,
+      "tag": "0212_pwa_app_name",
+      "breakpoints": true
     }
   ]
 }

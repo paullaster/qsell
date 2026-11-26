@@ -3,6 +3,7 @@ import { siteVerification, storefrontSeo } from '@/server/domains/storefront/seo
 import { countryCode } from '@/lib/seo/jsonld';
 import { homeDescription, homeKeywords, homeTitle } from '@/lib/seo/text';
 import { shareImageUrl } from '@/lib/seo/share';
+import { installedNames } from '@/lib/pwa-name';
 import { getThemeModeAction } from '@/server/domains/theme/actions';
 import { CompanyUiConfigProvider } from '@/components/company/CompanyUiConfigProvider';
 import { ThemeProvider } from '@/components/theme/ThemeProvider';
@@ -21,6 +22,7 @@ export async function generateMetadata(): Promise<Metadata> {
   try {
     const { company, ui, base } = await storefrontSeo();
     const title = homeTitle(company);
+    const installed = installedNames(company);
     const description = homeDescription(company, { guarantee: ui.support.guarantees[0]?.text });
     const logoUrl = resolveCompanyLogoUrl(company.logoUrl);
     const logoCard = logoUrl === null ? null : shareImageUrl(base, logoUrl);
@@ -28,7 +30,9 @@ export async function generateMetadata(): Promise<Metadata> {
       metadataBase: new URL(base),
       title: { default: title, template: `%s | ${company.tradingName}` },
       description,
-      applicationName: company.tradingName,
+      applicationName: installed.name,
+      // iPhones name the home-screen icon from this, and from the page title when it is missing.
+      appleWebApp: { title: installed.shortName },
       keywords: homeKeywords(company),
       authors: [{ name: company.legalName }],
       creator: company.legalName,

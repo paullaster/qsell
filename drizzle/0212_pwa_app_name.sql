@@ -1,0 +1,3 @@
+ALTER TABLE "company_settings" ADD COLUMN "app_name" text;--> statement-breakpoint
+ALTER TABLE "company_settings" ADD COLUMN "app_short_name" text;--> statement-breakpoint
+ALTER TABLE "company_settings" ADD CONSTRAINT "company_settings_app_name_chk" CHECK (("company_settings"."app_name" IS NULL OR char_length("company_settings"."app_name") BETWEEN 1 AND 45) AND ("company_settings"."app_short_name" IS NULL OR char_length("company_settings"."app_short_name") BETWEEN 1 AND 12));

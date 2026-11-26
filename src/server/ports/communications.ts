@@ -19,6 +19,8 @@ export interface CompanyProfile {
   country: string;
   locationLabel?: string | null;
   tagline?: string | null;
+  appName?: string | null;
+  appShortName?: string | null;
   kraPin: string;
   vatNumber?: string | null;
   registrationNumber?: string | null;
