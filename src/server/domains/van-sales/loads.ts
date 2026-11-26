@@ -1,10 +1,12 @@
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { DrizzleDb } from '@/server/db/drizzle/client';
-import { products, routeParLevels, salesReps, stockBalances, stockLocations, stockSettings, unitsOfMeasure, users, vanDays, vanLoads, vans } from '@/server/db/drizzle/schema';
+import { products, routeParLevels, salesReps, stockBalances, stockLocations, stockSettings, unitsOfMeasure, users, vanDayShortages, vanDays, vanLoads, vans } from '@/server/db/drizzle/schema';
 import type { Actor } from '@/server/kernel/context';
 import type { DecisionLog } from '@/server/kernel/decision-log/service';
 import { LOAD_KINDS, LOAD_STATE_WORDS, UNLOAD_STATE_WORDS, loadSteps, readLoadKind, readSign, suggestLoad, type LoadKind, type LoadSteps } from '@/lib/van-sales/load';
 import { reconcileProblem, unloadProblem, type UnloadState } from '@/lib/van-sales/back';
+import { shortageNeedsApproval } from '@/lib/van-sales/settle';
+import type { VanSalesSettingsService } from './settings-service';
 import { isId, readReason } from '@/lib/van-sales/people';
 import { readPar } from '@/lib/van-sales/routes';
 import { readDayStatus } from '@/lib/van-sales/days';
@@ -107,6 +109,7 @@ export class VanLoadService {
     private readonly decisions: DecisionLog,
     private readonly transfers: TransferService,
     private readonly drops: VanDropService,
+    private readonly settings: VanSalesSettingsService,
   ) {}
 
   // ── The planner ──────────────────────────────────────────────────────
@@ -217,7 +220,8 @@ export class VanLoadService {
         transferId: r.l.transferId,
         number: transfer.document.number,
         state,
-        stateWords: r.l.cancelledAt === null ? ((r.l.kind === 'unload' ? UNLOAD_STATE_WORDS : LOAD_STATE_WORDS)[state] ?? state) : LOAD_STATE_WORDS.cancelled ?? 'Cancelled',
+        // Once the warehouse has counted an unload it is received, whatever is missing: the missing stock is a shortage, not a part that is still to come.
+        stateWords: r.l.cancelledAt === null ? (r.l.kind === 'unload' && r.l.signedAt !== null ? UNLOAD_STATE_WORDS.received : ((r.l.kind === 'unload' ? UNLOAD_STATE_WORDS : LOAD_STATE_WORDS)[state] ?? state)) : LOAD_STATE_WORDS.cancelled ?? 'Cancelled',
         fromName: r.from,
         createdAt: r.l.createdAt.toISOString(),
         signedAt: r.l.signedAt?.toISOString() ?? null,
@@ -463,9 +467,16 @@ export class VanLoadService {
     if (entries.length > 0) await told(async () => await this.transfers.receive(companyId, { id: actor.id ?? 'system' }, load.transferId, entries));
     const total = roundQty(entries.reduce((n, e) => n + e.quantity, 0));
     const short = roundQty(transfer.lines.reduce((n, l) => n + l.inTransit, 0) - total);
+    const missing = (await told(() => this.transfers.get(companyId, load.transferId))).lines.filter((l) => l.inTransit > 0);
+    const cfg = await this.settings.current(companyId);
     await this.db.transaction(async (tx) => {
       const marked = await tx.update(vanLoads).set({ signedBy: actor.id ?? 'system', signedAt: new Date(), signedOnBehalf: false, signReason: null }).where(and(eq(vanLoads.id, load.id), isNull(vanLoads.signedAt))).returning({ id: vanLoads.id });
       if (marked.length === 0) return;
+      // What did not come off the van waits in transit as a shortage, worth what it cost, for the office to decide.
+      for (const l of missing) {
+        const value = Math.round(l.inTransit * Number(l.unitCost) * 100) / 100;
+        await tx.insert(vanDayShortages).values({ companyId, dayId: load.dayId, loadId: load.id, productId: l.productId, lineId: l.id, quantity: String(l.inTransit), unitCost: l.unitCost, value: value.toFixed(2), rule: cfg.shortage, needsApproval: shortageNeedsApproval(value, cfg.shortageApprovalAbove) }).onConflictDoNothing();
+      }
       await recordDayEvent(tx, this.decisions, companyId, load.dayId, actor, 'day.unload_received', { detail: { transferId: load.transferId, quantity: total, short } });
     });
     await this.drops.rehomeAfterUnload(companyId, actor, load.dayId);

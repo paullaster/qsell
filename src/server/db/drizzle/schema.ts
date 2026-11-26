@@ -5412,6 +5412,49 @@ export const vanDayReturns = pgTable(
 );
 
 /**
+ * Stock that came off the van short at the unload (docs/architecture/van-sales.md §5.3): what the system said was on the van and the warehouse did not
+ * count. It waits in transit until the office decides it: the stock is written off, and by the company's rule the value is also charged to the rep. A
+ * shortage worth more than the company's limit is decided by a manager, never by the person who is settling the day.
+ */
+export const vanDayShortages = pgTable(
+  'van_day_shortages',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id').notNull().references(() => companySettings.id, { onDelete: 'cascade' }),
+    dayId: uuid('day_id').notNull().references(() => vanDays.id, { onDelete: 'restrict' }),
+    loadId: uuid('load_id').notNull().references(() => vanLoads.id, { onDelete: 'restrict' }),
+    productId: text('product_id').notNull().references(() => products.id, { onDelete: 'restrict' }),
+    /** The line of the unload's transfer the stock is still in transit on. */
+    lineId: uuid('line_id').notNull(),
+    quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+    unitCost: numeric('unit_cost', { precision: 14, scale: 4 }).notNull(),
+    /** What it is worth at cost. */
+    value: numeric('value', { precision: 14, scale: 2 }).notNull(),
+    /** The company's rule when this was found: charge the rep, or write it off. */
+    rule: text('rule').notNull(),
+    /** Above the company's limit when found: a manager decides it. */
+    needsApproval: boolean('needs_approval').notNull().default(false),
+    decision: text('decision'),
+    reason: text('reason'),
+    decidedBy: text('decided_by'),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    /** The rep the value is charged to, and how much, when the decision charges the rep. */
+    chargedRepId: uuid('charged_rep_id').references(() => salesReps.id, { onDelete: 'restrict' }),
+    chargedAmount: numeric('charged_amount', { precision: 14, scale: 2 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('van_day_shortages_line_uidx').on(t.loadId, t.productId),
+    index('van_day_shortages_day_idx').on(t.dayId, t.createdAt),
+    check('van_day_shortages_quantity_chk', sql`${t.quantity} > 0 AND ${t.value} >= 0 AND ${t.unitCost} >= 0`),
+    check('van_day_shortages_rule_chk', sql`${t.rule} IN ('charge_rep','write_off')`),
+    check('van_day_shortages_decision_chk', sql`${t.decision} IS NULL OR ${t.decision} IN ('charge_rep','write_off')`),
+    check('van_day_shortages_decided_chk', sql`(${t.decision} IS NULL) = (${t.decidedBy} IS NULL) AND (${t.decision} IS NULL) = (${t.decidedAt} IS NULL) AND (${t.decision} IS NULL) = (${t.reason} IS NULL)`),
+    check('van_day_shortages_charge_chk', sql`(${t.chargedAmount} IS NULL) = (${t.decision} IS DISTINCT FROM 'charge_rep') AND (${t.chargedRepId} IS NULL) = (${t.chargedAmount} IS NULL)`),
+  ],
+);
+
+/**
  * What happened to a van day, in order, each with its server time, who did it and why: append-only (a database trigger refuses any change
  * or delete). The day's status is a projection of this.
  */

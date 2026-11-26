@@ -15,6 +15,7 @@ import type { CollectionView, OwingView } from './collections';
 import type { RefundChoice, ReturnMade, ReturnableSale } from './returns';
 import type { RepDayCard, UsualView } from './rep-app';
 import type { UnloadState } from '@/lib/van-sales/back';
+import type { SettleView } from './settle';
 import { goOutProblem } from '@/lib/van-sales/run';
 import type { ParView, RouteView, StopView } from './routes';
 import type { VanView } from './vans';
@@ -320,8 +321,12 @@ export interface DayScreen {
   cash: CashView | null;
   /** The end of the day: why the rep cannot come back yet, where the unload has got to, and why it cannot be started or the day settled. */
   end: { backProblem: string | null; unload: UnloadState; onVan: number; unloadProblem: string | null; reconcileProblem: string | null };
-  /** The signed-in person may receive unloads and settle van days. */
+  /** The signed-in person may receive unloads and settle van days; and may decide a large shortage, or close a till. */
   mayReconcile: boolean;
+  mayApprove: boolean;
+  mayCloseTill: boolean;
+  /** The shortages of the day, the till, and what is in the way of closing it; for a day that is being counted or is closed. */
+  settle: SettleView | null;
   /** The planner may add orders to deliver: a day with a van that takes both kinds of work, before it goes out. */
   canAddDrops: boolean;
 }
@@ -337,9 +342,9 @@ async function dayScreen(companyId: string, id: string, userId: string): Promise
   const settings = await c.vanSalesSettings.current(companyId);
   const isRep = rep.userId === userId;
   const selling = day.status === 'out' && isRep && maySell;
-  const [sales, tenders, drops, cash, owing, collections, returnable, refundMethods, returns, usual, endFacts, backProblem, mayReconcile] = await Promise.all([c.vanSales.forDay(companyId, id), selling ? c.vanSales.tenderChoices(companyId, day.branchId) : Promise.resolve([]), c.vanDrops.forDay(companyId, id), c.vanCash.forDay(companyId, id), c.vanCollections.owing(companyId, id), c.vanCollections.forDay(companyId, id), c.vanReturns.returnable(companyId, id), selling ? c.vanReturns.refundMethods(companyId) : Promise.resolve([]), c.vanReturns.forDay(companyId, id), c.repApp.usual(companyId, id), c.vanLoads.endFacts(companyId, id), c.vanRun.backProblemOf(companyId, id), canPermission('van_sales:reconcile')]);
+  const [sales, tenders, drops, cash, owing, collections, returnable, refundMethods, returns, usual, endFacts, backProblem, mayReconcile, mayApprove, mayClose, mayCloseTill] = await Promise.all([c.vanSales.forDay(companyId, id), selling ? c.vanSales.tenderChoices(companyId, day.branchId) : Promise.resolve([]), c.vanDrops.forDay(companyId, id), c.vanCash.forDay(companyId, id), c.vanCollections.owing(companyId, id), c.vanCollections.forDay(companyId, id), c.vanReturns.returnable(companyId, id), selling ? c.vanReturns.refundMethods(companyId) : Promise.resolve([]), c.vanReturns.forDay(companyId, id), c.repApp.usual(companyId, id), c.vanLoads.endFacts(companyId, id), c.vanRun.backProblemOf(companyId, id), canPermission('van_sales:reconcile'), canPermission('van_sales:manage'), canPermission('shifts:close'), canPermission('shifts:supervise')]);
   const loadSigned = loads.some((l) => l.kind === 'load' && l.cancelledAt === null && l.signedAt !== null);
-  return { detail, canPlan, loads, onVan, suggestion, isRep, maySell, sales, tenders, drops, cash, owing, collections, returnable, refundMethods, returns, usual, end: { backProblem, ...endFacts }, mayReconcile, canAddDrops: canPlan && settings.preSell && day.vanId !== null && day.mode === 'both' && (day.status === 'planned' || day.status === 'loading'), ordersAllowed: settings.preSell && day.mode !== 'van_sell', repLimits: isRep ? { maxDiscountPercent: rep.maxDiscountPercent, maxCreditPerDay: rep.maxCreditPerDay, mayOverridePrice: rep.mayOverridePrice, maySellOnCredit: rep.maySellOnCredit } : null, outProblem: goOutProblem({ status: day.status, mode: day.mode, loadSigned }), offRouteAllowed: settings.offRoute === 'allow' };
+  return { detail, canPlan, loads, onVan, suggestion, isRep, maySell, sales, tenders, drops, cash, owing, collections, returnable, refundMethods, returns, usual, end: { backProblem, ...endFacts }, mayReconcile, mayApprove, mayCloseTill: mayClose || mayCloseTill, settle: day.status === 'reconciling' || day.status === 'closed' ? await c.vanSettle.view(companyId, id) : null, canAddDrops: canPlan && settings.preSell && day.vanId !== null && day.mode === 'both' && (day.status === 'planned' || day.status === 'loading'), ordersAllowed: settings.preSell && day.mode !== 'van_sell', repLimits: isRep ? { maxDiscountPercent: rep.maxDiscountPercent, maxCreditPerDay: rep.maxCreditPerDay, mayOverridePrice: rep.mayOverridePrice, maySellOnCredit: rep.maySellOnCredit } : null, outProblem: goOutProblem({ status: day.status, mode: day.mode, loadSigned }), offRouteAllowed: settings.offRoute === 'allow' };
 }
 
 export async function dayScreenAction(id: unknown) {
@@ -599,4 +604,24 @@ export async function receiveUnloadAction(raw: unknown) {
 export async function startReconcilingAction(raw: unknown) {
   const i = obj(raw);
   return await runDay(i.dayId, async (c, companyId, actor, dayId) => await c.vanLoads.startReconciling(companyId, actor, dayId, await canPermission('van_sales:reconcile')));
+}
+
+/** The office decides a shortage: the stock is written off with the reason, and by the company's rule the value is charged to the rep. */
+export async function decideShortageAction(raw: unknown) {
+  const i = obj(raw);
+  return await runDay(i.dayId, async (c, companyId, actor, dayId) => await c.vanSettle.decide(companyId, actor, dayId, text(i.id) ?? '', i, { mayReconcile: await canPermission('van_sales:reconcile'), mayApprove: await canPermission('van_sales:manage') }));
+}
+
+/** The van's till is counted and closed. */
+export async function closeVanTillAction(raw: unknown) {
+  const i = obj(raw);
+  return await runDay(i.dayId, async (c, companyId, actor, dayId) => {
+    await c.vanSettle.closeTill(companyId, actor, dayId, i, { mayClose: await canPermission('shifts:close'), supervisor: await canPermission('shifts:supervise') });
+  });
+}
+
+/** The day is closed. */
+export async function closeDayAction(raw: unknown) {
+  const i = obj(raw);
+  return await runDay(i.dayId, async (c, companyId, actor, dayId) => await c.vanSettle.closeDay(companyId, actor, dayId, await canPermission('van_sales:reconcile')));
 }

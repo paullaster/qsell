@@ -157,6 +157,12 @@ The same day, built for a thumb in sunlight. A rep signs in with their own accou
 3. **Receive at the warehouse** (the warehouse, with the permission to settle van days). On the unload card, the warehouse counts what came off the van. Everything that was sent is filled in; if something is missing, the count is changed and what was not counted stays on its way as a shortage to be decided when the day is settled. Stock held for a refused delivery is held again at the warehouse for its order.
 4. **Start settling the day** (the office). Available once the unload is received (or the van was empty, or the day takes orders only). The day moves to *Being counted*.
 
+### Settling and closing the day, on a van day's page
+Once the office starts settling (*Being counted*), the **Settling the day** panel appears.
+1. **Shortages.** Each product the warehouse did not count at the unload is listed with how many are missing and what they are worth at cost. **Decide** (the office) asks why the stock is missing; the missing stock is then written off, and where the company's rule is to charge the rep, its value is also charged to the rep. A shortage worth more than the company's limit is decided by a manager, and says so; the rep whose van it was never decides it.
+2. **The van's till.** The cash in the till is counted (**Cash counted in the till**, with a reason if the count differs from what the till should hold) and the shift is closed through the till's own close, with its report number and difference. A difference beyond the company's allowance needs a supervisor or the approval queue, as at the counter. The rep may close their own till; anyone else must be a supervisor.
+3. **Close the day** (the office). Available once every shortage is decided and the till is closed; until then the panel says which is in the way. The day is *Closed*, and its rep, van and route are free for another day.
+
 ## 5. Granular Field-by-Field Reference
 
 | Field | Type | Allowed | Default | Required |
@@ -400,6 +406,10 @@ The same day, built for a thumb in sunlight. A rep signs in with their own accou
 - **The whole van is unloaded.** What the system says is on the van is sent back; what the warehouse counts is what arrives. The difference is a shortage, left in transit until it is decided. An unload is not called off: it is received, or its shortage decided.
 - **A refused delivery's stock goes back to its order.** It is held at the warehouse again for the order when the unload is received, so the order can be delivered another day.
 - **Only the day's own rep says the day is back and unloads the van**; receiving the unload and starting the settling need the permission to settle van days.
+- **A shortage is written off, not left.** What did not come off the van leaves the stock with the reason given, and cannot be decided twice. Where the company's rule is to charge the rep, the value at cost is recorded against the rep on the day and in its history; it is not yet posted to the books as a receivable on the rep.
+- **The limit for a manager** is the amount in the Van sales settings: above it, only a person with the right to manage van sales decides the shortage. A limit of nothing sends every shortage to a manager.
+- **The till is closed through the till's own rules**: the count, the reason for a difference, the allowance, the supervisor or approval, and the report number are all the shift close's. The day cannot be closed while the till is open or waiting for approval.
+- **A day that only takes orders has no till and no shortages**: it closes as soon as it is being counted.
 - Every add, change, stop, pause, end and resume is in the decision log with the person, the time and the reason typed.
 - The database itself refuses a stopped van, route, or a paused or ended rep with no reason, a pre-sell route with a van, a visit with no day or one visited every 3 weeks, a discount over 100%, a negative credit or cash limit, and a mode other than van sell or pre-sell.
 - A reason is required for every change, so an auditor can see why a rule was relaxed.
@@ -452,4 +462,6 @@ The same day, built for a thumb in sunlight. A rep signs in with their own accou
 - [ ] Verify: the customers on a route have a mobile number and, for directions, a map pin or a town on their card.
 - [ ] Verify: a person at the warehouse has the permission to settle van days, so they can receive unloads.
 - [ ] Test: finish a day, unload the van and receive it with one product short, and check the shortage is left in transit and the stock on the van is nil.
+- [ ] Verify: the Van sales settings say what happens to a shortage (charge the rep or write it off) and the value above which a manager decides it, and a manager has the right to manage van sales.
+- [ ] Test: unload a van one short, decide the shortage, count the till, close the day, and check the stock, the shift report and the day's history.
 - **Common pitfalls:** asking the office to send a day out for the rep (refused: the rep does it); requiring the rep to be near a customer who has no map pin (the visit starts and the distance is not known); loading before stock by location is switched on (the screen says so); signing a load that was never sent; expecting stock to be on the van when the load was only asked for; planning a day before the route has customers due that date (the screen says none is due); planning a day for the usual rep who is already on another route that date (refused); giving two routes the same code or name (refused); starting a fortnightly customer's visits in the wrong week (the date sets which weeks count); naming two vans alike (refused); putting a vehicle behind two vans (refused); switching on *require* with a very small distance, which blocks reps in town centres; leaving the approval limit at 0, which sends every small shortage to a second person.

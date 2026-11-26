@@ -13,6 +13,7 @@ import { CashPanel } from './day/CashPanel';
 import { DropsPanel } from './day/DropsPanel';
 import { EndPanel } from './day/EndPanel';
 import { RunPanel } from './day/RunPanel';
+import { SettlePanel } from './day/SettlePanel';
 import { SalesPanel } from './day/SalesPanel';
 import { LoadPanel } from './day/LoadPanel';
 import { VisitsPanel } from './day/VisitsPanel';
@@ -67,6 +68,7 @@ function Body({ initial }: { initial: DayScreen }) {
       </section>
       <RunPanel screen={screen} run={run} />
       <EndPanel screen={screen} run={run} />
+      <SettlePanel screen={screen} run={run} />
       <VisitsPanel screen={screen} run={run} />
       <DropsPanel screen={screen} run={run} />
       <SalesPanel screen={screen} />

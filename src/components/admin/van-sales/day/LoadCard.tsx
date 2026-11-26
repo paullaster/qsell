@@ -37,7 +37,7 @@ export function LoadCard({ load, screen, run }: { load: LoadView; screen: DayScr
         {load.lines.map((l) => (
           <li key={l.productId} className="flex flex-wrap gap-x-3">
             <span className="font-semibold">{l.productName}</span>{' '}
-            <span className="text-fg-muted">asked {l.asked}{load.state === 'requested' || load.state === 'approved' ? '' : ` · sent ${String(l.shipped)} · ${unloading ? 'received' : 'signed for'} ${String(l.received)}`}{l.inTransit > 0 ? ` · ${String(l.inTransit)} still on its way` : ''}</span>
+            <span className="text-fg-muted">asked {l.asked}{load.state === 'requested' || load.state === 'approved' ? '' : ` · sent ${String(l.shipped)} · ${unloading ? 'received' : 'signed for'} ${String(l.received)}`}{l.inTransit > 0 ? ` · ${String(l.inTransit)} ${unloading && load.signedAt !== null ? 'missing' : 'still on its way'}` : ''}</span>
           </li>
         ))}
       </ul>

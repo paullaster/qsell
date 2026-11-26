@@ -22,7 +22,7 @@ function mondayAhead(weeks: number): string {
 }
 
 test.describe('van sales: the end of the day', () => {
-  test('the rep skips what is left and says they are back, unloads the van, the warehouse receives it and the day starts to be settled', async ({ page }, testInfo) => {
+  test('the rep says they are back and unloads the van, the warehouse receives it one short, the shortage is decided, the till is counted and the day is closed', async ({ page }, testInfo) => {
     test.slow();
     const phone = testInfo.project.name === 'phone';
     const tag = `en${String(Date.now()).slice(-6)}${phone ? 'p' : 'd'}`;
@@ -76,13 +76,44 @@ test.describe('van sales: the end of the day', () => {
       await unload.getByRole('button', { name: 'Receive at the warehouse' }).click();
       await expect(page.getByRole('form', { name: /^Receive / })).toBeVisible({ timeout: 3000 });
     }).toPass({ timeout: 60_000 });
-    await page.getByRole('form', { name: /^Receive / }).getByRole('button', { name: 'Receive it' }).click();
+    const receive = page.getByRole('form', { name: /^Receive / });
+    await receive.getByLabel(`Counted ${soda.name}`).fill('19');
+    await receive.getByRole('button', { name: 'Receive it' }).click();
     await expect(unload).toContainText('Received at the warehouse', { timeout: 30_000 });
     await expect(end.getByTestId('reconcile-problem')).toHaveCount(0);
     await end.getByRole('button', { name: 'Start settling the day' }).click();
     await expect(day).toContainText('Being counted', { timeout: 30_000 });
+
+    // The one missing is a shortage: decided with a reason, written off and charged to the rep by the company's rule.
+    const settle = page.getByRole('region', { name: 'Settling the day', exact: true });
+    const shortages = settle.getByRole('list', { name: 'Shortages' }).getByRole('listitem');
+    await expect(shortages).toHaveCount(1);
+    await expect(shortages.first()).toContainText('1 missing');
+    await expect(settle.getByTestId('close-problem')).toContainText('1 shortage is still to be decided');
+    await expect(settle.getByRole('button', { name: 'Close the day' })).toBeDisabled();
+    await expect(async () => {
+      await shortages.first().getByRole('button', { name: `Decide the shortage of ${soda.name}` }).click();
+      await expect(page.getByRole('form', { name: `Decide ${soda.name}` })).toBeVisible({ timeout: 3000 });
+    }).toPass({ timeout: 60_000 });
+    const decide = page.getByRole('form', { name: `Decide ${soda.name}` });
+    await decide.getByLabel('Why?').fill('A crate was broken on the road');
+    await decide.getByRole('button', { name: 'Write it off and charge the rep' }).click();
+    await expect(shortages.first()).toContainText('charged to the rep', { timeout: 30_000 });
+    await expect(shortages.first()).toContainText('A crate was broken on the road');
+    await expect(settle.getByTestId('close-problem')).toContainText('not been counted and closed');
+
+    // The van's till is counted: the float that went out is what it should hold.
+    const count = page.getByRole('form', { name: 'Count the till' });
+    await count.getByLabel('Cash counted in the till').fill('500');
+    await count.getByRole('button', { name: 'Close the till' }).click();
+    await expect(settle.getByTestId('till-closed')).toContainText('Counted and closed', { timeout: 60_000 });
+    await expect(settle.getByTestId('close-problem')).toHaveCount(0);
+    await settle.getByRole('button', { name: 'Close the day' }).click();
+    await expect(day).toContainText('Closed', { timeout: 30_000 });
+    await expect(page.getByRole('region', { name: 'Settling the day', exact: true })).toContainText('The day is closed');
+    await expect(page.getByRole('button', { name: 'Close the day' })).toHaveCount(0);
     const history = page.getByRole('list', { name: 'History' });
-    for (const words of ['The rep came back to the depot', 'The van was unloaded', 'The unload was received at the warehouse', 'The day started to be settled']) await expect(history).toContainText(words);
+    for (const words of ['The rep came back to the depot', 'The van was unloaded', 'The unload was received at the warehouse', 'The day started to be settled', 'A shortage was decided', 'The till was counted and closed', 'The day was closed']) await expect(history).toContainText(words);
     await noHorizontalScroll(page);
     await noInnerHorizontalScroll(page);
   });

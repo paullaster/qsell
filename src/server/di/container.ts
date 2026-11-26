@@ -40,6 +40,7 @@ import { VanRunService } from '@/server/domains/van-sales/run';
 import { VanCashService } from '@/server/domains/van-sales/cash';
 import { VanCollectionService } from '@/server/domains/van-sales/collections';
 import { VanReturnService } from '@/server/domains/van-sales/returns';
+import { VanSettleService } from '@/server/domains/van-sales/settle';
 import { RepAppService } from '@/server/domains/van-sales/rep-app';
 import { VanDropService } from '@/server/domains/van-sales/drops';
 import { VanSaleService } from '@/server/domains/van-sales/sales';
@@ -449,6 +450,7 @@ export interface AppContainer {
   vanCash: VanCashService;
   vanCollections: VanCollectionService;
   vanReturns: VanReturnService;
+  vanSettle: VanSettleService;
   repApp: RepAppService;
   vanSales: VanSaleService;
   tillSettings: TillSettingsService;
@@ -722,7 +724,8 @@ export function getContainer(): AppContainer {
   const vanDays = new VanDayService(drizzleDb, decisionLog, numbering, vanSalesSettings);
   const stockTransfers = new TransferService({ db: drizzleDb, ledger: stockLedger, numbering, decisionLog });
   const vanDrops = new VanDropService(drizzleDb, decisionLog, deliveryServices.orderDeliveries, stockReservations, deliveryServices.deliveryDocuments);
-  const vanLoads = new VanLoadService(drizzleDb, decisionLog, stockTransfers, vanDrops);
+  const vanLoads = new VanLoadService(drizzleDb, decisionLog, stockTransfers, vanDrops, vanSalesSettings);
+  const vanSettle = new VanSettleService(drizzleDb, decisionLog, stockTransfers, shifts, vanSalesSettings, vanLoads);
   const vanCash = new VanCashService(drizzleDb, decisionLog, shifts);
   const vanReturns = new VanReturnService(drizzleDb, decisionLog, counterReturns);
   const repApp = new RepAppService(drizzleDb);
@@ -927,6 +930,7 @@ export function getContainer(): AppContainer {
     vanCash,
     vanCollections,
     vanReturns,
+    vanSettle,
     repApp,
     vanSales,
     tillSettings,

@@ -15,6 +15,7 @@ import { EndPanel } from '@/components/admin/van-sales/day/EndPanel';
 import { HistoryPanel } from '@/components/admin/van-sales/day/HistoryPanel';
 import { LoadPanel } from '@/components/admin/van-sales/day/LoadPanel';
 import { RunPanel } from '@/components/admin/van-sales/day/RunPanel';
+import { SettlePanel } from '@/components/admin/van-sales/day/SettlePanel';
 import { SalesPanel } from '@/components/admin/van-sales/day/SalesPanel';
 import { VisitsPanel } from '@/components/admin/van-sales/day/VisitsPanel';
 import type { DayCall } from '@/components/admin/van-sales/day/call';
@@ -61,6 +62,7 @@ function Body({ initial }: { initial: DayScreen }) {
       <Message notice={notice} />
       <RunPanel screen={screen} run={run} />
       <EndPanel screen={screen} run={run} />
+      <SettlePanel screen={screen} run={run} />
       <NextStop screen={screen} run={run} />
       <VisitsPanel screen={screen} run={run} nextStopId={nextStopOf(screen)?.id} />
       <SalesPanel screen={screen} />

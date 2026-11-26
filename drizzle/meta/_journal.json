@@ -1597,6 +1597,13 @@
       "when": 1795716439670,
       "tag": "0227_van_loads_unload",
       "breakpoints": true
+    },
+    {
+      "idx": 228,
+      "version": "7",
+      "when": 1795718103618,
+      "tag": "0228_van_day_shortages",
+      "breakpoints": true
     }
   ]
 }
