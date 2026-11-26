@@ -156,7 +156,7 @@ export function AdminOrders({ firstPage }: AdminOrdersProps) {
                     {o.paymentMethod}
                   </span>
                 </div>
-                <Link href={orderHref(o.id)} className={`${buttonClass} w-full`}>
+                <Link href={orderHref(o.id)} className={`${buttonClass} w-full`} aria-label={`Open order ${o.orderNumber}`}>
                   Open order
                 </Link>
               </li>

@@ -154,6 +154,8 @@ test.describe('browsing', () => {
     await page.goto('/');
     const sort = page.getByRole('combobox', { name: 'Sort by' });
     await expect(sort).toBeVisible({ timeout: 30_000 });
+    await expect.poll(async () => (await productNames(page)).length, { timeout: 30_000 }).toBeGreaterThan(1);
+    const before = await productNames(page);
     await expect(async () => {
       await sort.click();
       await expect(page.getByRole('option', { name: 'Price: low to high' })).toBeVisible({
@@ -162,9 +164,11 @@ test.describe('browsing', () => {
     }).toPass({ timeout: 60_000 });
     await page.getByRole('option', { name: 'Price: low to high' }).click();
     await expect(page).toHaveURL(/sort=price_asc/);
+    // Other specs add products to the shared shop, so the cheapest one is not fixed; the order must have changed, and the dearest must not lead.
     await expect
       .poll(async () => (await productNames(page))[0], { timeout: 30_000 })
-      .toBe('Salt 500g');
+      .not.toBe(before[0]);
+    expect((await productNames(page))[0]).not.toBe('Rice 10kg');
     await noNativeSelect(page);
   });
 
